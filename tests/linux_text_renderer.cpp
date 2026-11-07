@@ -25,6 +25,44 @@ void sample(const std::string& text,std::uint8_t language) {
 }
 
 int main(){try{
+    {
+        const std::string message="Escolha uma família para entrar na casa.";
+        const auto natural=odh_host::measure_text_overlay(message,14,14);
+        const auto wrapped=odh_host::measure_text_overlay(message,14,14,78);
+        check(natural.width>wrapped.width&&wrapped.width<=78&&wrapped.height>natural.height,
+            "narrower dialog text wraps onto more lines");
+        for(const auto invalid:{std::string("\xff",1),std::string(32769,'x')}){
+            bool refused=false;
+            try{(void)odh_host::measure_text_overlay(invalid,14,14);}
+            catch(const std::invalid_argument&){refused=true;}
+            check(refused,"measurement applies the same UTF-8 and byte limits as drawing");
+        }
+        for(const auto width:{-1,8193}){
+            bool refused=false;
+            try{(void)odh_host::measure_text_overlay(message,14,14,width);}
+            catch(const std::invalid_argument&){refused=true;}
+            check(refused,"out-of-bounds wrapping width rejected");
+        }
+    }
+    {
+        std::string long_text;for(unsigned n=0;n<1200;++n)long_text+="ação ";long_text+="Fim 日本語";
+        const auto extent=odh_host::measure_text_overlay(long_text,14,11,160);
+        check(long_text.size()>4096&&extent.height>200&&extent.height<8000,"full UTF-8 document beyond old byte limit has exact shaped height");
+        odh::RasterFrame whole{200,static_cast<std::uint32_t>(extent.height+20),
+            std::vector<std::array<std::uint8_t,4>>(200*(extent.height+20),{25,25,25,255}),{}};
+        odh_host::TextOverlayStyle style;style.x=10;style.y=10;style.width=160;style.height=extent.height;
+        style.padding=0;style.font_size_px=11;style.wrap_lines=true;style.background={0,0,0,0};style.pixel_scroll_y=0;
+        (void)odh_host::draw_text_overlay(whole,long_text,14,style);
+        odh::RasterFrame last{200,90,std::vector<std::array<std::uint8_t,4>>(200*90,{25,25,25,255}),{}};
+        style.height=60;style.pixel_scroll_y=extent.height-60;
+        const auto result=odh_host::draw_text_overlay(last,long_text,14,style);
+        check(result.pixels_changed>0,"last shaped UTF-8 rows remain reachable without slicing characters");
+        for(unsigned y=0;y<60;++y)for(unsigned x=0;x<160;++x)
+            check(last.pixels[(y+10)*200+x+10]==whole.pixels[(y+10+extent.height-60)*200+x+10],
+                "pixel viewport equals exact full shaped document crop through final rows");
+        check(last.pixels[9*200+10]==std::array<std::uint8_t,4>{25,25,25,255}&&
+            last.pixels[70*200+10]==std::array<std::uint8_t,4>{25,25,25,255},"scroll rendering cannot overwrite outside its viewport");
+    }
     sample("Cadeiras de Jantar",14);
     sample("ダイニング椅子",15);
     sample("餐椅",17);
@@ -46,5 +84,5 @@ int main(){try{
         (void)odh_host::draw_text_overlay(frame,"abc",14,style);}
     catch(const std::invalid_argument&){rejected=true;}
     check(rejected,"invalid overlay geometry is rejected");
-    std::cout<<"linux text renderer: 19 checks passed\n";return 0;
+    std::cout<<"linux text renderer checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"linux text renderer: "<<error.what()<<'\n';return 1;}}

@@ -97,6 +97,50 @@ int main(){try{
     const DefinitionIndex crossed({definition(10,4,0,7,0),other,definition(12,4,3,7,-1)});
     unresolved(inspect_property_object_assets(multi,crossed,partition,true,64),R::missing_master);
 
+    // The runtime chain may join parts with different canonical masters and a
+    // nonmultitile definition, even across independently authenticated assets.
+    // It is the root's own definition/category that classifies this whole chain.
+    auto root_part=definition(30,4,0,9,0),root_master=definition(31,4,0,9,-1);
+    auto foreign_part=definition(40,7,4,10,0),foreign_master=definition(41,7,4,10,-1);
+    foreign_part.source=foreign_master.source="expansion.far";
+    foreign_part.asset=foreign_master.asset="foreign.iff";
+    const auto standalone=definition(50,7,4);
+    const DefinitionIndex heterogeneous({root_part,root_master,foreign_part,foreign_master,standalone});
+    World joined;object(joined,1,30,31,0,101,0);object(joined,2,40,41,16,32000,0);object(joined,3,50,{},0,-32768,0);at(joined,1);
+    const std::vector<SavedMultitileGroup> joined_partition{{1,{}, {2,3,1}}};
+    result=inspect_property_object_assets(joined,heterogeneous,joined_partition,true,64);
+    check(result.status==PropertyObjectAssetsStatus::resolved&&result.primary==101&&result.architecture_objects==0&&
+        result.groups.size()==1&&result.groups[0].bucket==B::primary,
+        "heterogeneous authenticated chain uses root own classification/value, not foreign type7/category/value");
+    for(const auto id:{std::int16_t{1},std::int16_t{2},std::int16_t{3}}){
+        write(joined,id,15,1);
+        check(inspect_property_object_assets(joined,heterogeneous,joined_partition,true,64).primary==50,
+            "repair of root, foreign-master part or nonmultitile member halves only root value");
+        write(joined,id,15,0);
+    }
+    for(const auto summary:{0u,31u,41u,999u}){
+        auto asserted=joined_partition;asserted[0].master_guid=summary;
+        unresolved(inspect_property_object_assets(joined,heterogeneous,asserted,true,64),R::identity_mismatch);
+    }
+    root_master.definition.build_mode_type=3;
+    const DefinitionIndex architecture_chain({root_part,root_master,foreign_part,foreign_master,standalone});
+    result=inspect_property_object_assets(joined,architecture_chain,joined_partition,true,64);
+    check(result.primary==0&&result.architecture_objects==101,"root effective build3 selects architecture bucket despite foreign build4/type7");
+    for(unsigned wrong=0;wrong<3;++wrong){
+        World forged;
+        object(forged,1,30,wrong==0?41:31,0,101,0);
+        object(forged,2,40,wrong==1?31:41,0,32000,0);
+        object(forged,3,50,wrong==2?std::optional<std::uint32_t>{31}:std::nullopt,0,5,0);at(forged,1);
+        unresolved(inspect_property_object_assets(forged,heterogeneous,joined_partition,true,64),R::identity_mismatch);
+    }
+    auto missing_foreign=foreign_part;missing_foreign.asset="unbound.iff";
+    const DefinitionIndex missing_own_master({root_part,root_master,missing_foreign,foreign_master,standalone});
+    unresolved(inspect_property_object_assets(joined,missing_own_master,joined_partition,true,64),R::missing_master);
+    auto duplicate_joined=joined_partition;duplicate_joined[0].members.push_back(3);
+    unresolved(inspect_property_object_assets(joined,heterogeneous,duplicate_joined,true,64),R::invalid_partition);
+    auto omitted_joined=joined_partition;omitted_joined[0].members.erase(omitted_joined[0].members.begin());
+    unresolved(inspect_property_object_assets(joined,heterogeneous,omitted_joined,true,64),R::incomplete_inventory);
+
     const auto in=[](std::int32_t x,std::int32_t y,std::int16_t level=1,unsigned dimension=64){
         return property_object_position_in_world(EntityPosition{x,y,level,0},dimension);
     };

@@ -6,6 +6,7 @@
 #endif
 #include "resource.hpp"
 #include <cstring>
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <vector>
@@ -88,6 +89,19 @@ int main(int argc,char**argv){try{
     auto first=renderer.render(state,camera);state.frame=.5;auto second=renderer.render(state,camera);
     if(first.image.pixels==second.image.pixels)throw std::runtime_error("animated frame did not change mesh pixels");
     auto repeat=renderer.render(state,camera);if(repeat.image.pixels!=second.image.pixels||repeat.image.depth!=second.image.depth)throw std::runtime_error("cached render changed output");
+    auto hidden=state;hidden.avatar_visible=false;ScenePoseAnchors hidden_anchors;
+    odh::RasterOptions background;background.clear={17,29,43,255};
+    const auto object_only=renderer.render(hidden,camera,background,&hidden_anchors);
+    if(object_only.image.width!=camera.width||object_only.image.height!=camera.height||object_only.image.shaded_samples||
+       !object_only.shaded_samples||std::any_of(hidden_anchors.avatar_slots.begin(),hidden_anchors.avatar_slots.end(),[](const auto& slot){return slot.has_value();})||
+       !std::any_of(object_only.image.pixels.begin(),object_only.image.pixels.end(),[&](const auto& pixel){return pixel!=background.clear;}))
+        throw std::runtime_error("off-lot avatar hid the retained scene object or emitted avatar fragments/anchors");
+    auto shifted_camera=camera;shifted_camera.center_tile[0]+=.25f;
+    if(renderer.render(hidden,shifted_camera,background).image.pixels==object_only.image.pixels)
+        throw std::runtime_error("off-lot avatar changed scene camera projection");
+    if(renderer.render(state,camera).image.pixels!=second.image.pixels)
+        throw std::runtime_error("off-lot render changed subsequent visible avatar output");
+
     if(renderer.cache_clips()!=1||renderer.cache_samples()!=14)throw std::runtime_error("CFP cache duplicated samples");
     auto bad=clips.animations[0];++bad.translations;state.animation=&bad;bool rejected=false;try{renderer.render(state,camera);}catch(const odh::FormatError&){rejected=true;}if(!rejected||renderer.cache_samples()!=14)throw std::runtime_error("mismatched cached header accepted or cache mutated");
     state.animation=&clips.animations[0];state.frame=std::numeric_limits<double>::quiet_NaN();rejected=false;try{renderer.render(state,camera);}catch(const odh::FormatError&){rejected=true;}if(!rejected||renderer.cache_samples()!=14)throw std::runtime_error("nonfinite frame accepted");

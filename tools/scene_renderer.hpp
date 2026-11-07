@@ -6,6 +6,7 @@
 #include "odh/avatar_hands.hpp"
 #include <functional>
 #include <memory>
+#include <optional>
 
 struct SceneHandPart {
     bool right = false;
@@ -18,6 +19,10 @@ struct ScenePart {
     // Traditional TS1 CAS assets are loose CMX/SKN/BMP files. The renderer
     // reads them through the same Mesh/Bitmap structures as archive assets.
     bool loose_skin_assets = false;
+    // Optional exact FAR provenance for mixed base/expansion/CC parts. Empty
+    // fields retain the legacy SceneConfig animation/textures archives.
+    std::string appearance_far, mesh_far, texture_far;
+    bool loose_mesh_asset=false, loose_texture_asset=false;
 };
 
 struct SceneConfig {
@@ -28,6 +33,11 @@ struct SceneConfig {
     std::vector<ScenePart> parts;
 };
 
+struct SceneAnimationLayer {
+    const odh::AnimationHeader* animation=nullptr;
+    double frame=0;
+    float weight=0;
+};
 struct SceneState {
     // Graphics tile coordinates: X/Y planar, Z up. VM conversion belongs to caller.
     std::array<float, 3> avatar_tile{}, object_tile{};
@@ -43,6 +53,13 @@ struct SceneState {
     // Native fresh carry profile: frame0 weight1 local-channel overlay after
     // the ordinary clip. Imported nonzero carry frames are not represented.
     const odh::AnimationHeader* carry_animation = nullptr;
+    // Ordered native locomotion collection. When present this supplies the
+    // primary pose; animation/frame above remain the lane0 diagnostic identity.
+    std::vector<SceneAnimationLayer> animation_layers;
+    std::optional<float> avatar_radians;
+    // No World position (e.g. in a departing vehicle): retain the scene/camera
+    // and objects but emit no avatar geometry, pose sampling or bone anchors.
+    bool avatar_visible = true;
 };
 
 // Final same-draw scale-one bone attachment points in graphics tile coordinates.
@@ -56,6 +73,7 @@ struct ScenePoseAnchors {
 // independent of the lot's isometric WorldProjection; visual calibration is
 // not implied by matching these camera settings.
 struct HeadPortraitCamera {
+    std::uint32_t viewport_size = 74;
     double vertical_fov_radians = 1.0471975511965976; // PI/3
     double zoom = 13.0;
     double distance = 13.5;
@@ -89,7 +107,10 @@ public:
 
     odh::CompositeFrame render(const SceneState&, const odh::WorldProjection&,
                                odh::RasterOptions = {}, ScenePoseAnchors* anchors=nullptr);
-    // Fixed 74x74 portrait view around HEAD; always applies the head-only pose.
+    // Current composed bone facts using the exact draw sampling path, without rasterizing.
+    ScenePoseAnchors pose_anchors(const SceneState&);
+    // Perspective view around HEAD; 74px by default, bounded to 16..512px.
+    // Always applies the head-only pose.
     odh::CompositeFrame render_head_portrait(const SceneState&,
         HeadPortraitCamera = {}, odh::RasterOptions = {});
     // Renderer-owned legacy cache only. An external resolver owns/accounts its

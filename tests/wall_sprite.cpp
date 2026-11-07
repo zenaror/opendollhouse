@@ -38,6 +38,15 @@ int main() { try {
     require(r.image.pixels[0]==red && r.image.depth[0]==0 && r.tested_samples==1 &&
             r.shaded_samples==1 && r.transparent_samples==0 && r.occluded_samples==0,
             "opaque wall and accounting");
+    {
+        auto paint=spr(1,1,Pixel{200,160,120,255});auto lit=layer(paint,d);lit.linear_light={0.25f,0.5f,1};
+        const auto tinted=odh::composite_wall_sprites(b,{lit});
+        require(tinted.image.pixels[0]==Pixel{107,117,120,255}&&tinted.image.depth==r.image.depth&&
+            tinted.shaded_samples==r.shaded_samples,"basic room shader gamma modulates wall RGB, preserving geometry");
+        for(const auto invalid:{-0.01f,1.01f,std::numeric_limits<float>::quiet_NaN()}){
+            lit.linear_light[0]=invalid;rejects([&]{odh::composite_wall_sprites(b,{lit});});
+        }
+    }
     auto ground=b;ground.owner_ids={77};
     require(odh::composite_wall_sprites(ground,{l}).image.owner_ids==
             std::vector<std::uint16_t>{0},"visible wall invalidates ground identity");

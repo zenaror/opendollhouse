@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MPL-2.0
+#pragma once
+#include "odh/ui_bitmap.hpp"
+#include <string_view>
+
+namespace odh_host {
+// Observed original tooltip: black 1px outline, RGB(255,255,230) interior,
+// name only, positioned above the pointer with a 14px gap. Font10 and text
+// padding are provisional; the exact original font has not been authenticated.
+// Empty, multiline/description, over-budget or non-fitting names return none.
+// Invalid UTF8/language/scale/frame bounds throw before painting.
+std::optional<odh::UiBitmapRect> original_tooltip_layout(std::uint32_t width,std::uint32_t height,
+    std::string_view name,std::uint8_t language,std::array<std::int32_t,2> pointer,float scale=1);
+// Only RGB pixels change: depth, owners and raster counters remain untouched.
+std::optional<odh::UiBitmapRect> draw_original_tooltip(odh::RasterFrame&,std::string_view name,
+    std::uint8_t language,std::array<std::int32_t,2> pointer,float scale=1);
+}

@@ -118,6 +118,16 @@ int main() {try {
     require(decode(single).pixels==std::vector<std::array<std::uint8_t,4>>(6,{255,0,0,255}),
             "one-entry indexed palette accepted");
     auto rgb=fixture(24);set(rgb,46,1);rejects([&]{decode(rgb);});
+    {auto embedded=fixture(24);set(embedded,2,0);
+        rejects([&]{decode(embedded);});
+        const auto container_decode=[](const std::string& b){std::istringstream stream(b);return odh::read_bmp(odh::View(stream,b.size()),{},odh::BmpExtentPolicy::iff_container);};
+        require(container_decode(embedded).pixels==expected,"explicit IFF BMP_ extent decodes source zero bfSize without modifying bytes");
+        require(embedded[2]==0&&embedded[3]==0,"container decoding preserves original header bytes");
+        rejects([&]{container_decode(embedded.substr(0,embedded.size()-1));});
+        auto invalid=embedded;set(invalid,10,static_cast<std::uint32_t>(invalid.size()+1));rejects([&]{container_decode(invalid);});
+        invalid=embedded;set(invalid,2,54);rejects([&]{container_decode(invalid);});
+        invalid=embedded;set(invalid,18,0x7fffffff);rejects([&]{container_decode(invalid);});
+    }
     auto with_tail=fixture(24)+"abcd";set(with_tail,2,with_tail.size());
     require(decode(with_tail).remaining_bytes==4,"declared file tail remains visible");
     const auto rle=rle_fixture({0,3,0,1,2,0,0,0,0,3,2,1,0,0,0,0,0,1});

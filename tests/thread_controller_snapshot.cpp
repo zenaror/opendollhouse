@@ -50,7 +50,7 @@ void trace(std::ostream& out,const odh::VmTrace& t){
 }
 std::string values(const odh::EntityThreadControllersSnapshot& s){
     std::ostringstream out;const auto& a=s.sleep;const auto& q=s.interactions;
-    out<<s.thread_interrupt<<';'<<bool(a.actor)<<';';
+    out<<s.thread_interrupt<<';';optional(out,s.schedule_idle_start);out<<bool(a.actor)<<';';
     if(a.actor)out<<a.actor->id<<','<<a.actor->generation<<','<<a.actor->run_generation<<';';
     out<<bool(a.job)<<';';if(a.job)out<<a.job->ticket<<','<<a.job->idle_start<<','<<a.job->deadline<<','<<a.job->argument<<';';
     optional(out,a.last_tick);out<<a.clock<<','<<a.interrupted<<','<<a.notify_resume<<';'<<a.diagnostic.size()<<':'<<a.diagnostic<<';';
@@ -83,6 +83,12 @@ std::string values(const odh::VmSnapshot& s){
     const auto returned=[&](const auto& r){out<<r.ticket<<','<<r.result<<','<<r.code_owner<<','<<r.run_generation<<';';};
     out<<bool(s.interaction_return)<<';';if(s.interaction_return)returned(*s.interaction_return);
     out<<bool(s.external_frame_return)<<';';if(s.external_frame_return)returned(*s.external_frame_return);
+    out<<s.immediate_continuations.size()<<';';
+    for(const auto& continuation:s.immediate_continuations){
+        out<<continuation.ticket<<','<<continuation.parent_depth<<','<<int(continuation.parent_status)<<';';
+        out<<bool(continuation.parent_pending)<<';';if(continuation.parent_pending)pending(*continuation.parent_pending);
+    }
+    out<<bool(s.immediate_return)<<';';if(s.immediate_return)returned(*s.immediate_return);
     return out.str();
 }
 odh::EntityThreadControllersSnapshot roundtrip(const odh::EntityThreadControllersSnapshot& state){
@@ -148,13 +154,14 @@ void wait_and_notifications(){
     Fixture sleeping(Kind::sleep);sleeping.run(1);sleeping.step(1,1);
     require(sleeping.controllers.notify()&&sleeping.controllers.thread_interrupted(),"Sleep Notify retains shared interrupt before reexecution");
     auto notified=restored(sleeping);
-    require(sleeping.run(8)==notified->run(8),"notified Sleep reexecutes identically");same(sleeping,*notified);
+    advance_same(sleeping,*notified,2,8);
     require(!sleeping.controllers.thread_interrupted()&&sleeping.rng_cycles==0,"Notify consumes latch without natural RNG completion");
     Fixture idling(Kind::idle);idling.run(1);idling.step(1,1);auto idle_copy=restored(idling);
     advance_same(idling,*idle_copy,2,1);
-    require(idling.controllers.notify()&&idle_copy->controllers.notify(),"IdleForInput Notify releases both pending tickets");
+    require(idling.controllers.notify()&&idle_copy->controllers.notify()&&idling.vm.pending()&&idle_copy->vm.pending(),
+        "IdleForInput Notify retains both auditable pending tickets until their thread slot");
     auto idle_notified=restored(idling);
-    require(idling.run(8)==idle_notified->run(8),"notified idle resumes matching branch");same(idling,*idle_notified);
+    advance_same(idling,*idle_notified,3,8);
     Fixture interrupted(Kind::idle);interrupted.run(1);
     require(interrupted.controllers.interactions().interrupt(),"standalone idle interrupt recorded");
     auto interrupt_copy=restored(interrupted);advance_same(interrupted,*interrupt_copy,1,8);
@@ -398,9 +405,150 @@ void rejection_and_atomicity(){
     });
     require(capture_guard&&restore_guard,"VM callbacks cannot capture or restore in-flight controller values");
 }
+// Same thread owns the pending parent and immediate child; neither is a
+// surrogate action VM. Use both source wait primitives in each position.
+struct NotifyImmediateFixture {
+    bool parent_sleep,child_sleep;
+    std::uint64_t rng_cycles=0;
+    odh::World world;
+    odh::EntityThreadControllers controllers;
+    odh::Vm vm;
+    NotifyImmediateFixture(bool parent,bool child,bool initialize=true)
+        :parent_sleep(parent),child_sleep(child),controllers(world,1,[this]{++rng_cycles;}),
+         vm({{key(4096),routine({parent?sleep():idle(0),set(2,99)})}},world.vm_memory(),{},
+            [this](const auto& f,const auto& i,const auto& t,const auto& d){
+                if(i.opcode==0)return controllers.sleep_primitive()(f,i,t,d);
+                return controllers.interaction_primitive()(f,i,t,d);
+            },{{22,{{key(4097),routine({child?sleep():idle(0),set(1,33,255)})}}}}) {
+        if(!initialize)return;
+        require(world.create(1,odh::EntityKind::avatar,{0,80,0,16})&&world.create(2,odh::EntityKind::object)&&
+            world.declare_object_word(1,8,0),"source Notify fixture World identities");
+        require(vm.start(key(4096),{1,1,1,0},{10})==odh::VmStatus::running&&controllers.bind(vm),
+            "source Notify fixture binds parent thread");
+    }
+    bool enqueue() {
+        return controllers.interactions().enqueue_ts1(key(4097),{1,2,2,22},{6},50,
+            odh::InteractionQueueMode::normal,4,false,false);
+    }
+};
+void notify_before_immediate_selection() {
+    for(bool parent_sleep:{false,true})for(bool child_sleep:{false,true}){
+        NotifyImmediateFixture control(parent_sleep,child_sleep);
+        require(control.controllers.advance(1)&&control.vm.run(1)==odh::VmStatus::waiting&&
+            control.vm.stack()[0].arguments[0]==9,"parent wait starts at nonzero source tick1");
+        const auto ticket=control.vm.pending()->ticket;
+        for(unsigned tick=2;tick<=3;++tick)require(control.controllers.advance(tick),"source wait remains scheduled");
+        require(control.enqueue()&&control.controllers.advance(4)&&control.vm.pending()->ticket==ticket&&
+            control.vm.immediate_continuations().empty(),"immediate enqueue alone does not awaken future parent wait");
+        const auto before=control.vm.snapshot();
+        require(control.controllers.notify()&&control.controllers.thread_interrupted()&&
+            control.vm.status()==odh::VmStatus::waiting&&control.vm.pending()->ticket==ticket&&
+            control.vm.stack()[0].arguments[0]==9&&control.vm.steps()==before.steps&&
+            !control.controllers.sleep().snapshot().notify_resume&&control.controllers.snapshot().schedule_idle_start==1,
+            "Notify latches source start1 and Interrupt without pre-adjusting parent, clearing job, or forcing return");
+        NotifyImmediateFixture copy(parent_sleep,child_sleep,false);
+        require(copy.world.restore_snapshot(control.world.snapshot())&&
+            copy.vm.restore_snapshot(odh::decode_vm_snapshot(odh::encode_vm_snapshot(control.vm.snapshot())))&&
+            copy.controllers.bind(copy.vm)&&copy.controllers.restore_snapshot(roundtrip(control.controllers.snapshot())),
+            "notified-but-still-pending source wait restores before next actual thread slot");
+        for(auto* fixture:{&control,&copy}){
+            auto& thread=fixture->controllers;auto& vm=fixture->vm;
+            require(thread.advance(5)&&vm.immediate_continuations().size()==1&&
+                vm.immediate_continuations().back().parent_pending->ticket==ticket&&vm.stack()[0].arguments[0]==9,
+                "actual scheduled slot selects immediate before retrying notified parent");
+            require(vm.run(1)==odh::VmStatus::budget_exhausted&&vm.stack().back().pc==1&&
+                vm.stack().back().arguments[0]==2&&vm.stack()[0].arguments[0]==9&&
+                !thread.thread_interrupted()&&fixture->rng_cycles==0&&thread.snapshot().schedule_idle_start==0,
+                "child wait consumes old elapsed clock4 and Interrupt, preserving parent Args without RNG");
+            require(vm.run(1)==odh::VmStatus::yielded&&vm.immediate_return(),
+                "immediate child returns separately after its source wait branch");
+            require(thread.observe()&&vm.status()==odh::VmStatus::running&&vm.stack()[0].pc==0&&
+                vm.stack()[0].arguments[0]==9&&!thread.sleep().snapshot().notify_resume&&
+                vm.run(1)==odh::VmStatus::waiting&&vm.stack()[0].arguments[0]==8&&
+                thread.snapshot().schedule_idle_start==5,
+                "parent sees child's current clock and cleared Interrupt, so waits rather than receiving fake true");
+            const auto state=thread.snapshot();
+            require((parent_sleep?state.sleep.job->deadline:state.interactions.wait->deadline)==14,
+                "resumed parent deadline uses current source clock, not obsolete parent start1");
+        }
+        require(values(control.vm.snapshot())==values(copy.vm.snapshot())&&
+            values(control.controllers.snapshot())==values(copy.controllers.snapshot())&&control.rng_cycles==copy.rng_cycles,
+            "Notify/preemption continuation is identical after portable restore");
+    }
+    { // A lower-ID sender can notify after global staging but before our slot.
+        NotifyImmediateFixture target(true,false);
+        require(target.controllers.advance(1)&&target.vm.run(1)==odh::VmStatus::waiting,"late Notify parent Sleep waits");
+        for(unsigned tick=2;tick<=4;++tick)require(target.controllers.advance(tick),"late Notify clock advances");
+        const auto ticket=target.vm.pending()->ticket;
+        require(target.enqueue()&&target.controllers.stage_tick(5)&&target.controllers.notify()&&
+            target.vm.pending()->ticket==ticket&&target.controllers.before_run(5)&&
+            target.vm.immediate_continuations().back().parent_pending->ticket==ticket,
+            "per-entity preflight notices Interrupt arriving after stage_tick and injects before old Sleep retry");
+    }
+}
+void fresh_birth_clock_join() {
+    Fixture born(Kind::sleep);const auto before_vm=values(born.vm.snapshot());
+    require(born.controllers.join_at(100),"fresh NPC controllers join actual birth tick100");
+    const auto joined=born.controllers.snapshot();
+    require(joined.sleep.clock==100&&joined.sleep.last_tick==100&&
+        joined.interactions.clock==100&&joined.interactions.last_tick==100&&
+        !joined.sleep.actor&&!joined.sleep.job&&joined.interactions.actions.empty()&&
+        values(born.vm.snapshot())==before_vm&&born.rng_cycles==0,
+        "birth join establishes both clocks without dispatch, queue effects or RNG");
+    const auto joined_values=values(joined);
+    require(!born.controllers.join_at(101)&&values(born.controllers.snapshot())==joined_values,
+        "birth join cannot rebase already joined clocks");
+    require(born.controllers.advance(101)&&born.vm.run(1)==odh::VmStatus::waiting&&
+        born.controllers.sleep().snapshot().job->idle_start==101,
+        "NPC Main dispatch and Sleep at101 follow late birth join");
+    Fixture late(Kind::sleep);late.controllers.advance(1);
+    const auto late_before=values(late.controllers.snapshot());
+    require(!late.controllers.join_at(100)&&values(late.controllers.snapshot())==late_before,
+        "already advanced controllers reject late clock rebasing atomically");
+    Fixture waiting(Kind::sleep);waiting.vm.run(1);
+    const auto wait_before=values(waiting.controllers.snapshot());
+    require(!waiting.controllers.join_at(100)&&values(waiting.controllers.snapshot())==wait_before,
+        "active wait cannot be converted to fresh birth");
+    Fixture queued(Kind::actions);require(queued.enqueue(),"birth rejection queue fixture");
+    const auto queue_before=values(queued.controllers.snapshot());
+    require(!queued.controllers.join_at(100)&&values(queued.controllers.snapshot())==queue_before,
+        "queued actions prevent birth rebasing without mutation");
+    Fixture unbound(Kind::idle,false);
+    require(!unbound.controllers.join_at(100),"unbound services reject birth join");
+    Fixture oversized(Kind::idle);const auto untouched=values(oversized.controllers.snapshot());
+    require(!oversized.controllers.join_at(std::uint64_t{UINT32_MAX}+1)&&
+        values(oversized.controllers.snapshot())==untouched,"birth clock respects UINT32 bound atomically");
+    Fixture reentrant(Kind::sleep);bool refused=false;
+    reentrant.vm.run(1,[&](const auto&){refused=!reentrant.controllers.join_at(100);});
+    require(refused&&reentrant.controllers.snapshot().sleep.clock==0,
+        "VM dispatch cannot join controllers or change clock");
+}
+
+void source_dead_callee_reset_boundary(){
+    Fixture f(Kind::actions);require(f.enqueue(),"source reset queue accepted");
+    f.run(1);require(f.vm.stack().back().action_tree,"source reset enters accepted action root");
+    f.run(1);require(f.vm.status()==odh::VmStatus::waiting&&f.controllers.sleep().active(),"action owns actual sleeping wait");
+    const auto target=f.world.find(2)->generation;
+    const auto deadline=f.controllers.snapshot().sleep.job->deadline;
+    require(deadline>1&&f.world.remove_retaining_body({2,target})&&f.world.create(2,odh::EntityKind::object),
+        "dead callee removed without waking foreign action and ID reused");
+    unsigned resets=0;f.vm.temps()[6]=123;f.vm.temp_xl()[0]=456789;
+    f.controllers.set_source_reset_handler([&](odh::Vm& vm,std::uint64_t){
+        ++resets;
+        require(!f.controllers.interactions().active()&&!f.controllers.sleep().active()&&!f.controllers.interactions().completion(),
+            "source reset discards queue/waits without fake completion");
+        return vm.start_after_reset(key(4096),{1,1,0,0},{5})==odh::VmStatus::running;
+    });
+    for(std::uint64_t tick=1;tick<deadline;++tick)
+        require(f.controllers.advance(tick)&&resets==0,"future sleeping action waits for original dispatch deadline before Reset");
+    require(f.controllers.advance(deadline)&&resets==1&&f.vm.stack().size()==1&&!f.vm.stack().back().action_tree&&
+        f.vm.temps()[6]==123&&f.vm.temp_xl()[0]==456789&&!f.controllers.interactions().completion(),
+        "scheduled source dead-callee Reset starts Main with retained Temps/XL and no action completion");
+}
+
 }
 int main(){
-    try{wait_and_notifications();actions_and_boundaries();nested_save_continuation();cancelled_action_continuation();deferred_removal_keeps_cleanup_data();rejection_and_atomicity();
+    try{source_dead_callee_reset_boundary();notify_before_immediate_selection();fresh_birth_clock_join();wait_and_notifications();actions_and_boundaries();nested_save_continuation();cancelled_action_continuation();deferred_removal_keeps_cleanup_data();rejection_and_atomicity();
         std::cout<<"thread_controller_snapshot: "<<checks<<" checks passed (synthetic in-memory continuation only)\n";}
     catch(const std::exception& error){allocation_countdown=-1;std::cerr<<"thread_controller_snapshot: "<<error.what()<<'\n';return 1;}
 }

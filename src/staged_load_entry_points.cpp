@@ -1,5 +1,6 @@
 #include "odh/staged_load_entry_points.hpp"
 #include "odh/entity_next.hpp"
+#include "odh/build_buy_permission.hpp"
 #include <algorithm>
 #include <set>
 
@@ -14,7 +15,7 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     std::uint64_t instruction_budget, WorldLimits world_limits,
     VmMemory supplemental_memory, VmPrimitive supplemental_primitive,
     SoundResolver sound_resolver, const GeometricRoomMap* room_map,
-    std::optional<std::uint64_t> random_seed) {
+    std::optional<std::uint64_t> random_seed,bool initial_build_buy_enabled) {
     StagedLoadEntryPointResult result;
     std::vector<SoundRequest> pending_sound_events;
     std::size_t unresolved_sound_events=0;
@@ -23,9 +24,14 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     std::size_t pending_room_score_refreshes=0;
     std::optional<RandomState> staged_random;
     if(random_seed)staged_random.emplace(*random_seed);
+    BuildBuyPermission build_buy;
+    build_buy.restore({initial_build_buy_enabled});
+    std::vector<bool> pending_build_buy_events;
     auto reject = [&](std::string reason, std::int16_t entity = 0,
                       std::uint16_t action = 0, VmStatus status = VmStatus::ready) {
         result.snapshot.reset();
+        result.build_buy_enabled.reset();
+        result.deferred_build_buy_events.clear();
         result.discarded_sound_events=pending_sound_events.size();
         pending_sound_events.clear();
         result.unresolved_sound_events=unresolved_sound_events;
@@ -58,6 +64,9 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     if (!candidate.restore_snapshot(source)) return reject("source World exceeds candidate limits");
     const auto memory_for = [&supplemental_memory](World& world) {
         auto memory = world.vm_memory();
+        // The provider reads immutable Work.iff only; the staged VM supplies
+        // its own exact per-entity Temp0/Temp1 through the typed callback.
+        memory.job_data=supplemental_memory.job_data;
         if (supplemental_memory.read) {
             const auto world_read = memory.read;
             const auto extra_read = supplemental_memory.read;
@@ -88,9 +97,11 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
         return memory;
     };
     // Profile only the Load-time services whose behavior is established by
-    // the pinned Simitone restore path. The observed client initializes the
-    // registry with InitVMConfig(false), so opcodes 1 and 10 have no handler
-    // and advance through true. Generic EntryPoint dispatch supplies a null
+    // pinned Simitone restore path. LoadingGameScreen uses InitVMConfig(true):
+    // Generic1 is registered and must never be blanket-approved. Opcode10 is
+    // unregistered; VMThread.ExecuteInstruction explicitly branches true for a
+    // null registration. This proves reference control flow, not tutorial UI.
+    // Generic EntryPoint dispatch supplies a null
     // StackObject, so NotifyOutOfIdle (49) has no thread to interrupt and
     // returns true. Refresh(Caller, graphic) only invalidates a
     // render cache, which this unpublished World candidate does not own.
@@ -98,7 +109,7 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     // values. Other Refresh variants and unknown operations still fail closed.
     const VmPrimitive load_profile_primitive = [](const VmFrame&, const Instruction& instruction,
         const std::array<std::int16_t,20>&, const VmDispatch&) {
-        if(instruction.opcode==1||instruction.opcode==10)
+        if(instruction.opcode==10)
             return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
         if(instruction.opcode==49)
             return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
@@ -107,7 +118,10 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
             return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
         return PrimitiveOutcome{};
     };
-    const auto primitive_for = [&](World& world) {
+    const auto primitive_for = [&](World& world,BuildBuyPermission& permission,
+                                   std::vector<bool>& permission_events) {
+        const auto permission_handler=build_buy_permission_primitive(permission,
+            [&permission_events](bool enabled){permission_events.push_back(enabled);});
         VmPrimitive random_handler;
         if(staged_random)random_handler=random_primitive(*staged_random,memory_for(world));
         const auto sound_handler=sound_primitive(world,sound_resolver,{},
@@ -118,11 +132,17 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
             });
         const auto entity_next_handler=entity_next_primitive(world);
         return VmPrimitive{[load_profile_primitive,supplemental_primitive,random_handler,sound_handler,
-                            entity_next_handler,room_map,&pending_room_scores,
+                            entity_next_handler,permission_handler,room_map,&pending_room_scores,
                             &pending_room_score_refreshes,&pending_sound_events,
                             &cancelled_sound_events,&world](
             const VmFrame& frame,const Instruction& instruction,const std::array<std::int16_t,20>& temps,
             const VmDispatch& dispatch) {
+            if(instruction.opcode==1){
+                // Only the implemented shared TS1 architecture modes are
+                // available here. Unknown Generic1 modes keep their effects
+                // explicitly unsupported, even with a supplemental RNG handler.
+                return permission_handler(frame,instruction,temps,dispatch);
+            }
             if(instruction.opcode==8&&random_handler)
                 return random_handler(frame,instruction,temps,dispatch);
             if(instruction.opcode==8&&supplemental_primitive)
@@ -171,7 +191,7 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
             return load_profile_primitive(frame,instruction,temps,dispatch);
         }};
     };
-    const auto candidate_primitive=primitive_for(candidate);
+    const auto candidate_primitive=primitive_for(candidate,build_buy,pending_build_buy_events);
     Vm vm(globals, memory_for(candidate), {}, candidate_primitive, owners);
 
     for (const auto id : entity_order) {
@@ -211,17 +231,19 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
             World sandbox(world_limits, source.attribute_policy);
             if (!sandbox.restore_snapshot(candidate.snapshot()))
                 return reject("cannot create isolated GhostImage sandbox", id, action);
-            const auto sandbox_primitive=primitive_for(sandbox);
+            auto sandbox_permission=build_buy;
+            std::vector<bool> discarded_permission_events;
+            const auto sandbox_primitive=primitive_for(sandbox,sandbox_permission,discarded_permission_events);
             Vm sandbox_vm(globals, memory_for(sandbox), {}, sandbox_primitive, owners);
             const VmContext context{id, id, 0, owner->second};
-            const auto started = sandbox_vm.start(routine_key(action), context, {0, 0, 0, 0});
+            const auto started = sandbox_vm.start(routine_key(action), context, {0, 0, 0, 0},true);
             if (started == VmStatus::running) sandbox_vm.temps() = temporary_registers.at(id);
             status = started == VmStatus::running ? sandbox_vm.run(remaining,trace) : started;
             result.instructions += sandbox_vm.steps();
             diagnostic = sandbox_vm.diagnostic();
         } else {
             const VmContext context{id, id, 0, owner->second};
-            const auto started = vm.start(routine_key(action), context, {0, 0, 0, 0});
+            const auto started = vm.start(routine_key(action), context, {0, 0, 0, 0},true);
             if (started == VmStatus::running) vm.temps() = temporary_registers.at(id);
             status = started == VmStatus::running ? vm.run(remaining,trace) : started;
             result.instructions += vm.steps();
@@ -245,6 +267,8 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     result.cancelled_sound_events=cancelled_sound_events;
     result.room_scores=std::move(pending_room_scores);
     if(staged_random)result.random_seed=staged_random->seed();
+    result.build_buy_enabled=build_buy.enabled();
+    result.deferred_build_buy_events=std::move(pending_build_buy_events);
     result.reason = "all Load actions completed synchronously in the unpublished candidate";
     return result;
 }

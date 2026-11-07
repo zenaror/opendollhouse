@@ -99,46 +99,108 @@ bool decode_utf8(std::string_view text, std::vector<char>& output,
     return true;
 }
 
+std::vector<std::vector<char>> layout_lines(std::string_view utf8, int capacity,
+        bool wrap, std::size_t& missing) {
+    std::vector<char> characters;
+    characters.reserve(utf8.size());
+    if (!decode_utf8(utf8, characters, missing))
+        throw std::invalid_argument("bitmap text overlay input is not valid UTF-8");
+
+    std::vector<std::vector<char>> lines;
+    if(wrap) {
+        std::size_t start=0;
+        do {
+            auto end=start;while(end<characters.size()&&characters[end]!='\n')++end;
+            if(end==start)lines.emplace_back();
+            auto cursor=start;
+            while(cursor<end) {
+                auto finish=std::min(end,cursor+static_cast<std::size_t>(capacity));
+                if(finish<end) {
+                    auto space=finish;while(space>cursor&&characters[space]!=' '&&characters[space]!='\t')--space;
+                    if(space>cursor)finish=space;
+                }
+                lines.emplace_back(characters.begin()+static_cast<std::ptrdiff_t>(cursor),characters.begin()+static_cast<std::ptrdiff_t>(finish));
+                while(!lines.back().empty()&&(lines.back().back()==' '||lines.back().back()=='\r'))lines.back().pop_back();
+                cursor=finish;while(cursor<end&&(characters[cursor]==' '||characters[cursor]=='\t'))++cursor;
+            }
+            if(end==characters.size())break;
+            start=end+1;
+        } while(start<=characters.size());
+    } else {
+        if (capacity && characters.size() > static_cast<std::size_t>(capacity)) {
+            characters.resize(static_cast<std::size_t>(capacity));
+            if (capacity >= 3) {
+                characters[characters.size() - 3] = '.';
+                characters[characters.size() - 2] = '.';
+                characters[characters.size() - 1] = '.';
+            }
+        }
+        lines.push_back(std::move(characters));
+    }
+
+    return lines;
+}
+
 std::uint8_t blend(std::uint8_t before, std::uint8_t after, unsigned alpha) {
     return static_cast<std::uint8_t>((static_cast<unsigned>(after) * alpha +
         static_cast<unsigned>(before) * (255U - alpha) + 127U) / 255U);
 }
 }
 
+TextOverlayExtent measure_text_overlay(std::string_view utf8,std::uint8_t language,
+                                      int font_size_px,int wrap_width) {
+    if(language<1||language>20||utf8.size()>32768||font_size_px<1||font_size_px>256||
+       wrap_width<0||wrap_width>8192)
+        throw std::invalid_argument("bitmap text measurement outside supported bounds");
+    if(utf8.empty())return {};
+    const int scale=std::max(1,font_size_px/7);
+    const int advance=6*scale;
+    const int capacity=wrap_width/advance;
+    if(wrap_width&&!capacity)
+        throw std::invalid_argument("bitmap text overlay has no room for a glyph");
+    std::size_t missing=0;
+    const auto lines=layout_lines(utf8,capacity,wrap_width!=0,missing);
+    int width=0;
+    for(const auto& line:lines)width=std::max(width,static_cast<int>(line.size())*advance);
+    return {width,static_cast<int>(lines.size())*8*scale};
+}
+
 TextOverlayResult draw_text_overlay(odh::RasterFrame& frame, std::string_view utf8,
                                     std::uint8_t language, TextOverlayStyle style) {
-    if (language < 1 || language > 20 || utf8.empty() || utf8.size() > 4096 ||
+    if (language < 1 || language > 20 || utf8.empty() || utf8.size() > 32768 ||
         frame.width == 0 || frame.height == 0 ||
         frame.pixels.size() != static_cast<std::size_t>(frame.width) * frame.height ||
         frame.width > 8192 || frame.height > 8192 || style.x < 0 || style.y < 0 ||
         style.x > 8192 || style.y > 8192 || style.width <= 0 || style.width > 8192 ||
         style.height <= 0 || style.height > 8192 || style.font_size_px < 1 ||
         style.font_size_px > 256 || style.padding < 0 || style.padding > 4096 ||
-        style.padding >= style.width / 2 || style.padding >= style.height / 2)
+        style.padding*2 >= style.width || style.padding*2 >= style.height ||
+        (style.pixel_scroll_y&&(*style.pixel_scroll_y<0||*style.pixel_scroll_y>1048576)))
         throw std::invalid_argument("bitmap text overlay input outside supported bounds");
 
     TextOverlayResult result;
-    std::vector<char> characters;
-    characters.reserve(utf8.size());
-    if (!decode_utf8(utf8, characters, result.missing_glyphs))
-        throw std::invalid_argument("bitmap text overlay input is not valid UTF-8");
-
-    const int scale = std::max(1, std::min(style.font_size_px / 7,
-        (style.height - style.padding * 2) / 7));
+    const int scale = style.pixel_scroll_y?std::max(1,style.font_size_px/7):
+        std::max(1,std::min(style.font_size_px/7,(style.height-style.padding*2)/7));
     const int advance = 6 * scale;
     const int capacity = (style.width - style.padding * 2) / advance;
     if (capacity <= 0) throw std::invalid_argument("bitmap text overlay has no room for a glyph");
-    if (characters.size() > static_cast<std::size_t>(capacity)) {
-        characters.resize(static_cast<std::size_t>(capacity));
-        if (capacity >= 3) {
-            characters[characters.size() - 3] = '.';
-            characters[characters.size() - 2] = '.';
-            characters[characters.size() - 1] = '.';
+    const auto lines=layout_lines(utf8,capacity,style.wrap_lines,result.missing_glyphs);
+    if(style.wrap_lines){
+        const auto page_lines=std::max<std::size_t>(1,static_cast<std::size_t>((style.height-style.padding*2)/(8*scale)));
+        result.line_count=lines.size();result.max_first_line=lines.size()>page_lines?lines.size()-page_lines:0;
+        result.first_line=std::min(style.first_line,result.max_first_line);
+        result.visible_lines=std::min(page_lines,lines.size()-result.first_line);
+        result.has_more=result.first_line+result.visible_lines<lines.size();
+        if(style.pixel_scroll_y){
+            result.first_line=std::min(lines.size()-1,std::size_t(*style.pixel_scroll_y/(8*scale)));
+            result.visible_lines=std::min(lines.size()-result.first_line,
+                std::size_t((style.height-style.padding*2+8*scale-1)/(8*scale)+1));
+            result.has_more=result.first_line+result.visible_lines<lines.size();
         }
     }
 
-    const int x0 = style.x + style.padding;
-    const int y0 = style.y + (style.height - 7 * scale) / 2;
+    const int y0 = style.wrap_lines?style.y+style.padding-
+        (style.pixel_scroll_y?*style.pixel_scroll_y-int(result.first_line)*8*scale:0):style.y+(style.height-7*scale)/2;
     const int x_end = std::min<int>(static_cast<int>(frame.width), style.x + style.width);
     const int y_end = std::min<int>(static_cast<int>(frame.height), style.y + style.height);
     const int x_begin = std::max(0, style.x);
@@ -159,17 +221,29 @@ TextOverlayResult draw_text_overlay(odh::RasterFrame& frame, std::string_view ut
         }
     }
 
-    for (std::size_t index = 0; index < characters.size(); ++index) {
-        const auto pattern = glyph(characters[index]);
-        if (characters[index] != ' ') ++result.glyphs;
+    // A pixel viewport clips glyphs to the padded text area, independently
+    // of the background rectangle. Partial first/last lines must never paint
+    // into padding; legacy line-page drawing retains its existing clip.
+    const int glyph_x_begin=style.pixel_scroll_y?std::max(0,style.x+style.padding):x_begin;
+    const int glyph_y_begin=style.pixel_scroll_y?std::max(0,style.y+style.padding):y_begin;
+    const int glyph_x_end=style.pixel_scroll_y?std::min<int>(frame.width,style.x+style.width-style.padding):x_end;
+    const int glyph_y_end=style.pixel_scroll_y?std::min<int>(frame.height,style.y+style.height-style.padding):y_end;
+    for(std::size_t line=0;line<result.visible_lines;++line) {
+      const auto& text=lines[result.first_line+line];
+      const auto text_width=text.empty()?0:static_cast<int>(text.size())*advance-scale;
+      const int x0=style.centered?style.x+(style.width-text_width)/2:
+          style.right_aligned?style.x+style.width-style.padding-text_width:style.x+style.padding;
+      for (std::size_t index = 0; index < text.size(); ++index) {
+        const auto pattern = glyph(text[index]);
+        if (text[index] != ' ') ++result.glyphs;
         for (int row = 0; row < 7; ++row) {
             for (int column = 0; column < 5; ++column) {
                 if ((pattern[static_cast<std::size_t>(row)] &
                      (0x10U >> static_cast<unsigned>(column))) == 0) continue;
                 for (int dy = 0; dy < scale; ++dy) for (int dx = 0; dx < scale; ++dx) {
                     const int x = x0 + static_cast<int>(index) * advance + static_cast<int>(column) * scale + dx;
-                    const int y = y0 + row * scale + dy;
-                    if (x < x_begin || x >= x_end || y < y_begin || y >= y_end) continue;
+                    const int y = y0 + static_cast<int>(line)*8*scale + row * scale + dy;
+                    if (x < glyph_x_begin || x >= glyph_x_end || y < glyph_y_begin || y >= glyph_y_end) continue;
                     auto& pixel = frame.pixels[static_cast<std::size_t>(y) * frame.width + static_cast<std::size_t>(x)];
                     const auto before = pixel;
                     pixel[0] = blend(pixel[0], style.foreground[0], style.foreground[3]);
@@ -180,6 +254,7 @@ TextOverlayResult draw_text_overlay(odh::RasterFrame& frame, std::string_view ut
                 }
             }
         }
+    }
     }
     return result;
 }

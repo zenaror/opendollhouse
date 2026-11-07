@@ -3,16 +3,20 @@
 #include "json.hpp"
 #include <iostream>
 #include <string>
-int main(int argc,char** argv){if(argc!=4 && argc!=6){std::cerr<<"Usage: odh-strings FAR ENTRY CHUNK_ID [LANGUAGE INDEX]\n"
+int main(int argc,char** argv){
+    const bool labels=argc>1&&std::string(argv[1])=="--ttas";
+    if(labels){--argc;++argv;}
+    const std::string kind=labels?"TTAs":"STR#";
+    if(argc!=4 && argc!=6){std::cerr<<"Usage: odh-strings [--ttas] FAR ENTRY CHUNK_ID [LANGUAGE INDEX]\n"
         <<"       odh-strings --iff FILE CHUNK_ID [LANGUAGE INDEX]\n";return 2;}
     try{const bool standalone=std::string(argv[1])=="--iff";
         const auto id=selector(argv[3]);std::optional<std::uint16_t> lang,index;
         if(argc==6){lang=selector(argv[4]);index=selector(argv[5]);if(*lang>255)throw odh::FormatError("language outside byte range");}
         std::optional<odh::StringTable> table;
         const auto read=[&](const auto& view){odh::iff_chunks(view,[&](const odh::Chunk& c){
-            if(c.type!="STR#"||c.id!=id)return;if(table)throw odh::FormatError("ambiguous STR# chunk");table=odh::read_strings(c.payload);});};
+            if(c.type!=kind||c.id!=id)return;if(table)throw odh::FormatError("ambiguous "+kind+" chunk");table=odh::read_strings(c.payload);});};
         if(standalone)with_iff_file(argv[2],read);else with_far_entry(argv[1],argv[2],read);
-        if(!table)throw odh::FormatError("STR# chunk not found");const auto* selected=lang?odh::string_in_language(*table,static_cast<std::uint8_t>(*lang),*index):nullptr;
+        if(!table)throw odh::FormatError(kind+" chunk not found");const auto* selected=lang?odh::string_in_language(*table,static_cast<std::uint8_t>(*lang),*index):nullptr;
         if(lang && !selected)throw odh::FormatError("language/index not found");
         std::cout<<"{\"evidence\":\"decoded_fields_only\",\"format\":";
         if(table->format)std::cout<<*table->format;else std::cout<<"null";

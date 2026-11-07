@@ -18,8 +18,13 @@ struct PropertyGroupValue {
 // Non-mutating inspection of comparison-sample00432249's group value rule.
 // The caller must establish that the supplied validated group is COMPLETE for
 // the current World; this API cannot discover omitted runtime group members.
-// Reads live ObjectData41 and every member's ObjectData15, not original saved
+// Reads root ObjectData41 through World.GetValue (including the owned shared
+// InitialPrice resolver), and root ObjectData15; a multipart root
+// additionally consumes every member's ObjectData15. Never original saved
 // banks. Identity checks do not replace resource/group provenance validation.
+// master_guid is an OPTIONAL homogeneous-summary assertion, not a requirement
+// for multiple members. When present it must match every member's live master;
+// when absent, independent masters and nonmultitile members are permitted.
 // This is neither an asset/refund calculation nor permission to sell a group.
 PropertyGroupValue inspect_property_group_value(const World&, const SavedMultitileGroup&,
     bool complete_group, std::size_t member_limit = 4096);

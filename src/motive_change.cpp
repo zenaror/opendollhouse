@@ -1,4 +1,5 @@
 #include "odh/motive_change.hpp"
+#include "odh/ts1_variable.hpp"
 
 #include <cstdint>
 
@@ -26,12 +27,14 @@ std::int16_t read_i16(const std::array<std::uint8_t,8>& bytes,std::size_t offset
 }
 
 PrimitiveOutcome ts1_motive_change(World& world,const VmMemory& memory,
-                                  const VmFrame& frame,const Instruction& instruction) {
+                                  const VmFrame& frame,const Instruction& instruction,
+                                  const Ts1Temps& temps) {
     if(instruction.opcode!=29)return unsupported("Set Motive Change helper received another opcode");
 
-    const auto* actor=world.find(frame.context.caller);
+    const auto* actor=world.frame_entity(frame,VmEntityRole::caller,true);
     if(!actor||actor->kind!=EntityKind::avatar)
         return unsupported("Set Motive Change caller is not an avatar");
+    const auto actor_generation=actor->generation;
     const auto delta_owner=instruction.operands[0];
     const auto max_owner=instruction.operands[1];
     const auto motive=instruction.operands[2];
@@ -48,12 +51,13 @@ PrimitiveOutcome ts1_motive_change(World& world,const VmMemory& memory,
     }
     if((flags&~(clear_all|once))!=0)return unsupported("Set Motive Change has unknown flag bits");
     if(motive>15)return unsupported("Set Motive Change motive index is outside the 16-word bank");
-    if(!memory.read)return unsupported("Set Motive Change variable reader is unavailable");
 
-    const auto delta=memory.read(frame,static_cast<std::uint8_t>(delta_owner),delta_data);
-    const auto maximum=memory.read(frame,static_cast<std::uint8_t>(max_owner),max_data);
+    const auto delta=read_ts1_variable(world,memory,frame,temps,delta_owner,delta_data);
+    const auto maximum=read_ts1_variable(world,memory,frame,temps,max_owner,max_data);
     if(!delta||!maximum)return unsupported("Set Motive Change input variable is unavailable");
 
+    actor=world.frame_entity(frame,VmEntityRole::caller,true);
+    if(!actor||actor->generation!=actor_generation)return unsupported("Set Motive Change Caller reference changed during input reads");
     if(static_cast<std::size_t>(motive)>=actor->motives.size())
         return unsupported("Set Motive Change caller has no matching motive bank");
 
@@ -83,8 +87,8 @@ PrimitiveOutcome ts1_motive_change(World& world,const VmMemory& memory,
 
 VmPrimitive ts1_motive_change_primitive(World& world,VmMemory memory) {
     return [&world,memory=std::move(memory)](const VmFrame& frame,const Instruction& instruction,
-        const std::array<std::int16_t,20>&,const VmDispatch&) {
-        return ts1_motive_change(world,memory,frame,instruction);
+        const Ts1Temps& temps,const VmDispatch&) {
+        return ts1_motive_change(world,memory,frame,instruction,temps);
     };
 }
 

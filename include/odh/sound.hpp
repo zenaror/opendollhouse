@@ -37,6 +37,11 @@ struct SoundRequest {
 };
 using SoundResolver = std::function<std::optional<SoundEvent>(const VmFrame&, std::uint16_t)>;
 using SoundSink = std::function<bool(const SoundRequest&)>;
+using SoundStopSink = std::function<void(WorldEntityReference)>;
+// FreeSO7e76 VMStopAllSounds: flags exactly1 selects StackObject; every
+// other byte selects Caller. The live dispatch's bound generation survives
+// ID reuse/retained dead bodies. Missing audio and known nil have no threads.
+VmPrimitive stop_all_sounds_primitive(const World&, SoundStopSink = {});
 struct PlaybackEvent;
 // Optional presentation adapter for the first exact "sound" time-property key.
 // Validates the emitting actor incarnation before capturing 29 avatar variables;
@@ -69,6 +74,10 @@ private:
 };
 // World must outlive the primitive. The resolver supplies explicit code-owner
 // resource lookup. Submission is nonblocking; acceptance does not prove playback.
+// Flags&2 selects StackObject, otherwise Caller, through World's exact bound
+// frame generation (including retained old bodies); unbound frames retain the
+// legacy numeric lookup. Bound nil never aliases a same-ID live replacement.
+// An unavailable nonnil bound body is unsupported, not a missing resource.
 // Source variables are captured before resolver/backend callbacks. An absent
 // snapshot leaves existing nonblocking submission behavior unchanged; it does
 // not establish a usable HIT source. HIT/sample resolution, active sound

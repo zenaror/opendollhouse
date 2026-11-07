@@ -4,7 +4,8 @@
 
 namespace odh {
 struct PropertyArchitecturePrices {
-    // Caller-certified RAW house resource-ID domain, not remapped renderer IDs.
+    // Caller-certified SAME resource-ID domain as the supplied architecture.
+    // Raw house aliases and prepared/catalog IDs require different providers.
     // A complete provider map certifies that absent floor/wallpaper IDs cost0.
     std::map<std::uint16_t,std::int32_t> structural, floors, wallpaper;
     bool floor_lookup_complete=false, wallpaper_lookup_complete=false;

@@ -75,11 +75,17 @@ void motion_range(std::uint32_t active,std::int32_t start,std::uint32_t frames,s
     if(start<0||static_cast<std::uint64_t>(start)+frames>count)throw FormatError("pose motion sample range outside CFP");
 }
 }
-SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animation,const CfpPlanes* cfp,double requested,
+static SkeletonPose sample_pose_impl(const Skeleton& skeleton,const std::vector<PoseClipSample>& clips,double requested,
     const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp) {
     if(!std::isfinite(requested)||requested<std::numeric_limits<std::int32_t>::min()||requested>std::numeric_limits<std::int32_t>::max())
         throw FormatError("pose requested frame outside finite signed range");
-    if(bool(animation)!=bool(cfp))throw FormatError("pose animation and CFP must be supplied together");
+    if(clips.size()>3)throw FormatError("pose primary collection exceeds three clips");
+    for(const auto& clip:clips){
+        if(!clip.animation||!clip.cfp)throw FormatError("pose animation and CFP must be supplied together");
+        if(!std::isfinite(clip.frame)||clip.frame<std::numeric_limits<std::int32_t>::min()||
+           clip.frame>std::numeric_limits<std::int32_t>::max()||!std::isfinite(clip.weight)||clip.weight<0||clip.weight>1)
+            throw FormatError("pose collection frame/weight outside finite supported range");
+    }
     if(bool(carry_animation)!=bool(carry_cfp))throw FormatError("pose carry animation and CFP must be supplied together");
     if(skeleton.bones.empty()||skeleton.bones.size()>max_bones)throw FormatError("pose skeleton bone budget exceeded");
     std::size_t text=0;
@@ -104,11 +110,12 @@ SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animati
         pose.bones.push_back({bone.name,parent,translation(bone.translation_bits),rotation(bone.rotation_bits),{}, {}});
     }
     if(roots!=1)throw FormatError("pose skeleton requires one NULL root");
-    const auto apply_clip=[&](const AnimationHeader* animation,const CfpPlanes* cfp,bool carry){
+    const auto apply_clip=[&](const AnimationHeader* animation,const CfpPlanes* cfp,bool carry,
+        double clip_requested,float weight,bool primary){
         if(!animation)return;
         if(animation->motions.size()>max_motions||3ULL*animation->translations+4ULL*animation->rotations>max_samples)
             throw FormatError("pose animation budget exceeded");
-        budget_text(animation->name);if(!carry)pose.animation=animation->name;
+        budget_text(animation->name);if(primary)pose.animation=animation->name;
         for(std::size_t p=0;p<cfp->bits.size();++p){
             if(cfp->bits[p].size()!=(p<3?animation->translations:animation->rotations))throw FormatError("pose CFP plane size differs from animation");
             for(const auto bits:cfp->bits[p])real(bits);
@@ -122,14 +129,18 @@ SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animati
         }
         std::uint32_t frame=0;float fraction=0;
         if(!carry){
-            if(requested<0){pose.completed=true;pose.frame=0;pose.fraction=0;}
-            else {const auto whole=static_cast<std::uint32_t>(std::floor(requested));
-                pose.frame=std::min(whole,frames);pose.fraction=static_cast<float>(requested-std::floor(requested));
-                pose.completed=whole>frames||static_cast<std::uint64_t>(pose.frame)+1>frames;
-                if(whole>frames)pose.fraction=0;
+            bool completed=false;
+            if(clip_requested<0)completed=true;
+            else {const auto whole=static_cast<std::uint32_t>(std::floor(clip_requested));
+                frame=std::min(whole,frames);fraction=static_cast<float>(clip_requested-std::floor(clip_requested));
+                completed=whole>frames||static_cast<std::uint64_t>(frame)+1>frames;
+                if(whole>frames)fraction=0;
             }
-            frame=pose.frame;fraction=pose.fraction;
+            if(primary){pose.completed=completed;pose.frame=frame;pose.fraction=fraction;}
         }
+        // A zero contribution still validates its immutable resources above,
+        // but never writes NaN from the source's leading zero prefix (0/0).
+        if(weight==0)return;
         for(const auto& motion:animation->motions){
             const auto it=indices.find(motion.bone);
             if(it==indices.end()){budget_text(motion.bone);pose.missing_motion_bones.push_back(motion.bone);continue;}
@@ -141,16 +152,26 @@ SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animati
                 const auto start=static_cast<std::size_t>(motion.first_translation);
                 auto a=translation(*cfp,start+current);const auto b=translation(*cfp,start+next);
                 if(fraction!=0)for(std::size_t j=0;j<a.size();++j)a[j]=a[j]+(b[j]-a[j])*fraction;
+                finite(a);
+                if(weight!=1)for(std::size_t j=0;j<a.size();++j)
+                    a[j]=bone.translation[j]+(a[j]-bone.translation[j])*weight;
                 finite(a);bone.translation=a;
             }
             if(motion.has_rotation){
                 const auto start=static_cast<std::size_t>(motion.first_rotation);
-                bone.rotation=slerp(rotation(*cfp,start+current),rotation(*cfp,start+next),fraction);
+                const auto value=slerp(rotation(*cfp,start+current),rotation(*cfp,start+next),fraction);
+                bone.rotation=weight==1?value:slerp(bone.rotation,value,weight);
             }
         }
     };
-    apply_clip(animation,cfp,false);
-    apply_clip(carry_animation,carry_cfp,true);
+    float total_weight=0;
+    for(std::size_t i=0;i<clips.size();++i){
+        const auto& clip=clips[i];total_weight+=clip.weight;
+        if(!std::isfinite(total_weight))throw FormatError("pose collection weight overflow");
+        const auto weight=clip.weight==0?0.0f:clip.weight/total_weight;
+        apply_clip(clip.animation,clip.cfp,false,clip.frame,weight,i==0);
+    }
+    apply_clip(carry_animation,carry_cfp,true,0,1.0f,false);
     // Walk parent chains iteratively so file order and deep trees cannot cause
     // stack recursion. Every chain must reach the unique root without a cycle.
     std::vector<std::uint8_t> state(pose.bones.size(),0);std::vector<std::size_t> path;path.reserve(pose.bones.size());
@@ -170,4 +191,16 @@ SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animati
     }
     return pose;
 }
+SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animation,const CfpPlanes* cfp,double frame,
+    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp){
+    if(bool(animation)!=bool(cfp))throw FormatError("pose animation and CFP must be supplied together");
+    std::vector<PoseClipSample> clips;
+    if(animation)clips.push_back({animation,cfp,frame,1.0f});
+    return sample_pose_impl(skeleton,clips,frame,carry_animation,carry_cfp);
+}
+SkeletonPose sample_pose_collection(const Skeleton& skeleton,const std::vector<PoseClipSample>& clips,
+    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp){
+    return sample_pose_impl(skeleton,clips,clips.empty()?0:clips.front().frame,carry_animation,carry_cfp);
+}
+
 }

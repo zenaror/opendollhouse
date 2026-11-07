@@ -34,6 +34,7 @@ struct ObjectConstructionProfile {
 // types are retained for routing/rendering and are not allocated in this bank.
 // Callers must resolve the SLOT resource belonging to this definition.
 ObjectConstructionProfile object_construction_profile(
-    const ObjectDefinition&, const SlotTable&, const ObjectConstructionLimits& = {});
+    const ObjectDefinition&, const SlotTable&, const ObjectConstructionLimits& = {},
+    bool selected_subpart = false);
 
 } // namespace odh

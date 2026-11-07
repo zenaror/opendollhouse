@@ -112,6 +112,71 @@ int main() {
                 restored_object.stack()[1].context.callee==207&&
                 restored_object.temps()==object_plan.temp_registers,
                 "saved object thread defaults unannotated frames to Simitone Normal and remains dormant");
+        {
+            constexpr odh::CodeOwner host_owner=0x80000050U;
+            auto source=object_plan;source.frames.resize(1);
+            const auto original=source.frames.front();
+            auto restored_locals=original.locals;
+            restored_locals.resize(4,0); // Existing VM metadata requires max(4 arguments,2 locals).
+            auto instructions=std::vector<odh::Instruction>(10,odh::Instruction{100,254,255,{}});
+            instructions[9]={99,254,255,{}};
+            unsigned calls=0,mappings=0;
+            odh::Vm remapped({}, {}, {},
+                [&](const odh::VmFrame& frame,const odh::Instruction& instruction,const odh::Ts1Temps& temps,const auto&){
+                    require(instruction.opcode==99 && frame.pc==9 &&
+                        frame.context.code_owner==host_owner && frame.context.caller==207 &&
+                        frame.context.callee==207 && frame.context.stack_object==12 &&
+                        frame.arguments==original.arguments && frame.locals==restored_locals && temps==source.temp_registers,
+                        "remapped saved object executes the exact retained instruction and frame under host bank");
+                    ++calls;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+                },odh::RoutineOwners{{host_owner,{{odh::routine_key(4096),
+                    odh::Bhav{0x8002,std::move(instructions),{},odh::Bhav::Metadata{0,4,2,0}}}}}});
+            const odh::SavedThreadCodeOwnerMapper mapping=[&](std::uint32_t guid){
+                require(guid==original.code_owner_guid,"mapper receives source resource GUID, not entity ID");
+                ++mappings;return host_owner;};
+            odh::restore_simitone_saved_thread_plan(remapped,source,mapping);
+            require(remapped.status()==odh::VmStatus::dormant && remapped.stack().size()==1 &&
+                remapped.stack()[0].context.code_owner==host_owner && remapped.stack()[0].pc==9 &&
+                remapped.stack()[0].arguments==original.arguments && remapped.stack()[0].locals==restored_locals &&
+                remapped.temps()==source.temp_registers && mappings==1,
+                "host owner mapping preserves dormant saved frame data and temps");
+            require(remapped.activate_dormant_state() && remapped.run(1)==odh::VmStatus::returned_true && calls==1,
+                "mapped owner resolves installed host code and runs after explicit activation");
+            require(source.frames[0].code_owner_guid==0x12345678 && source.frames[0].code_owner_objt_type==1 &&
+                source.frames[0].saved_primitive_state==777 && source.frames[0].instruction_pointer==9 &&
+                source.frames[0].arguments==original.arguments && source.frames[0].locals==original.locals &&
+                source.frames[0].return_state==original.return_state && source.frames[0].action_tree==original.action_tree,
+                "import and execution never rewrite source GUID/context/primitive/return provenance");
+            auto duplicate_owner=source;duplicate_owner.frames.push_back(duplicate_owner.frames.front());
+            odh::Vm repeated({}, {}, {}, {},odh::RoutineOwners{{host_owner,{{odh::routine_key(4096),
+                odh::Bhav{0x8002,std::vector<odh::Instruction>(10,odh::Instruction{2,254,255,{}}),{},
+                    odh::Bhav::Metadata{0,4,2,0}}}}}});
+            mappings=0;odh::restore_simitone_saved_thread_plan(repeated,duplicate_owner,mapping);
+            require(mappings==1 && repeated.stack()[0].context.code_owner==host_owner &&
+                repeated.stack()[1].context.code_owner==host_owner,"one source resource GUID maps consistently across frames");
+            odh::Vm untouched(odh::RoutineSet{});
+            const auto unchanged=[&]{require(untouched.status()==odh::VmStatus::ready && untouched.stack().empty() &&
+                untouched.run_generation()==0 && untouched.steps()==0 && !untouched.pending() &&
+                untouched.temps()==odh::Ts1Temps{},"mapping rejection precedes any VM restore/publication");};
+            bool rejected=false;
+            try{odh::restore_simitone_saved_thread_plan(untouched,source,odh::SavedThreadCodeOwnerMapper{});}
+            catch(const odh::FormatError&){rejected=true;}
+            require(rejected,"absent host owner resolver rejected");unchanged();
+            rejected=false;unsigned resolved=0;
+            try{odh::restore_simitone_saved_thread_plan(untouched,object_plan,[&](std::uint32_t guid){
+                ++resolved;return guid==0x12345678?host_owner:odh::CodeOwner{0};});}
+            catch(const odh::FormatError&){rejected=true;}
+            require(rejected && resolved==2,"unmapped later frame rejects whole import rather than partially restoring first frame");unchanged();
+            auto zero_guid=source;zero_guid.frames[0].code_owner_guid=0;resolved=0;rejected=false;
+            try{odh::restore_simitone_saved_thread_plan(untouched,zero_guid,[&](std::uint32_t){++resolved;return host_owner;});}
+            catch(const odh::FormatError&){rejected=true;}
+            require(rejected && resolved==0,"zero source GUID rejects before resolver or VM mutation");unchanged();
+            auto invalid_return=source;invalid_return.frames[0].return_state=odh::SimitoneSavedReturnState::retry;
+            rejected=false;
+            try{odh::restore_simitone_saved_thread_plan(untouched,invalid_return,mapping);}
+            catch(const odh::FormatError&){rejected=true;}
+            require(rejected,"mapped import retains unsupported return-state guard");unchanged();
+        }
         auto special_plan=normal_plan;
         special_plan.frames[1].return_state=odh::SimitoneSavedReturnState::retry;
         bool special_state_rejected=false;

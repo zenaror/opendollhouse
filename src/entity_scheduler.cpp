@@ -48,6 +48,7 @@ bool EntityVmScheduler::restore_snapshot(const EntityVmSchedulerSnapshot& state)
     instructions_last_tick_=state.instructions_last_tick;
     faulted_=state.faulted;
     fresh_=false;
+    budget_yield_count_=0;first_budget_yield_.reset();
     return true;
 }
 
@@ -102,15 +103,19 @@ bool EntityVmScheduler::remove(std::int16_t entity) {
     }
     fresh_=false;
     entities_.erase(found);
+    pending_interrupts_.erase(std::remove(pending_interrupts_.begin(),pending_interrupts_.end(),entity),pending_interrupts_.end());
+    same_tick_ready_.erase(std::remove(same_tick_ready_.begin(),same_tick_ready_.end(),entity),same_tick_ready_.end());
     if(entities_.empty())budget_cursor_.reset();
     return true;
 }
 
 bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
-                             std::uint64_t per_entity_budget,const Trace& trace) {
+                             std::uint64_t per_entity_budget,const Trace& trace,
+                             const FaultRecovery& recover,const EntityTick& entity_tick,ControllerOrder controller_order) {
     if(faulted_)return false;
     fresh_=false;
     if(ticking_||!instruction_budget||!per_entity_budget||
+       (controller_order!=ControllerOrder::all_before_dispatch && controller_order!=ControllerOrder::per_entity)||
        now>std::numeric_limits<std::uint32_t>::max()||
        (!last_tick_&&now!=1)||(last_tick_&&(now<=*last_tick_||now-*last_tick_!=1))) {
         diagnostic_="scheduler tick, budget, or reentry outside profile";
@@ -126,15 +131,30 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
     if(order.empty()) {last_tick_=now;diagnostic_.clear();return true;}
 
     const auto fail=[&](const std::string& why){faulted_=true;diagnostic_=why;return false;};
+    struct EntityScope {
+        std::optional<std::int16_t>& current;
+        EntityScope(std::optional<std::int16_t>& value,std::int16_t id):current(value){current=id;}
+        ~EntityScope(){current.reset();}
+    };
+    // Tick validation above guarantees a new boundary, including after a
+    // restored checkpoint. Never release a primitive's next-tick stop within
+    // the same run slice or initial unnumbered dispatch.
     for(const auto id:order) {
+        auto& vm=*entities_.at(id).vm;
+        if(vm.status()==VmStatus::next_tick && !vm.resume_next_tick())
+            return fail("entity next-tick continuation could not resume for "+std::to_string(id));
+    }
+    if(controller_order==ControllerOrder::all_before_dispatch)for(const auto id:order) {
+        EntityScope scope(current_entity_,id);
         auto& entity=entities_.at(id);
         if(entity.before&&!entity.before(now))return fail("entity pre-tick controller rejected tick for "+std::to_string(id));
+        process_pending_interrupts();
     }
     process_pending_interrupts();
     std::vector<std::int16_t> runnable;
     for(const auto id:order) {
         const auto status=entities_.at(id).vm->status();
-        if(status==VmStatus::running||status==VmStatus::budget_exhausted)
+        if(controller_order==ControllerOrder::per_entity || status==VmStatus::running||status==VmStatus::budget_exhausted)
             runnable.push_back(id);
     }
     std::size_t start=0;
@@ -154,7 +174,16 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
     auto remaining=instruction_budget;
     std::size_t funded_remaining=grants;
     for(const auto id:order) {
+        EntityScope scope(current_entity_,id);
         auto& entity=entities_.at(id);
+        if(controller_order==ControllerOrder::per_entity && entity.before && !entity.before(now))
+            return fail("entity pre-tick controller rejected tick for "+std::to_string(id));
+        // Routing/controllers may notify another thread without executing a VM
+        // instruction. Publish that interrupt at this safe point, while the
+        // source entity identity still determines same-tick eligibility.
+        process_pending_interrupts();
+        bool ran_vm=false;
+        bool after_observed=false;
         const bool has_grant=std::binary_search(funded.begin(),funded.end(),id);
         const auto allocation_slots=funded_remaining;
         if(has_grant) --funded_remaining;
@@ -173,26 +202,59 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
             }
             if(!slice) {
                 if(entity.after&&!entity.after())return fail("entity post-run controller rejected tick for "+std::to_string(id));
+                process_pending_interrupts();
+                if(entity_tick&&!entity_tick(id,now,false))return fail("entity lifecycle rejected tick for "+std::to_string(id));
+                process_pending_interrupts();
                 continue;
             }
-            const auto before_steps=entity.vm->steps();
             const std::function<void(const VmTrace&)> entity_trace=trace?
                 std::function<void(const VmTrace&)>{[&](const VmTrace& item){trace(id,item);}}:
                 std::function<void(const VmTrace&)>{};
-            current_entity_=id;
-            struct CurrentGuard {std::optional<std::int16_t>& current;~CurrentGuard(){current.reset();}} current_guard{current_entity_};
-            const auto result=entity.vm->run(slice,entity_trace);
+            ran_vm=true;
+            auto slice_remaining=slice;
+            while(slice_remaining){
+            after_observed=false;
+            const auto before_steps=entity.vm->steps();
+            const auto result=entity.vm->run(slice_remaining,entity_trace);
+            if(result==VmStatus::budget_exhausted){
+                const auto after_run=entity.vm->steps();
+                if(budget_yield_count_!=std::numeric_limits<std::uint64_t>::max())++budget_yield_count_;
+                if(!first_budget_yield_)first_budget_yield_=EntityVmSchedulerBudgetYield{
+                    id,now,slice_remaining,after_run>=before_steps?after_run-before_steps:0};
+            }
             process_pending_interrupts();
             const auto after_steps=entity.vm->steps();
             if(after_steps<before_steps)return fail("entity VM run generation changed during scheduler tick");
             const auto consumed=after_steps-before_steps;
-            if(consumed>slice||consumed>remaining)return fail("entity VM exceeded scheduler instruction budget");
+            if(consumed>slice_remaining||consumed>remaining)return fail("entity VM exceeded scheduler instruction budget");
             instructions_last_tick_+=consumed;remaining-=consumed;
-            if(entity.vm->status()==VmStatus::fault)
-                return fail("entity VM fault for "+std::to_string(id)+": "+entity.vm->diagnostic());
-            (void)result;
+            slice_remaining-=consumed;
+            if(entity.vm->status()==VmStatus::fault) {
+                const auto fault=entity.vm->diagnostic();
+                if(!recover || !recover(id,*entity.vm,now) || entity.vm->status()==VmStatus::fault) {
+                    std::string location;
+                    if(!entity.vm->stack().empty()) {
+                        const auto& frame=entity.vm->stack().back();
+                        location=" routine="+std::to_string(frame.key.id)+" pc="+std::to_string(frame.pc)+
+                            " owner="+std::to_string(frame.context.code_owner);
+                    }
+                    return fail("entity VM fault for "+std::to_string(id)+location+": "+fault);
+                }
+            }
+            if(result==VmStatus::yielded&&entity.vm->immediate_return()){
+                if(entity.after&&!entity.after())return fail("entity immediate-return controller rejected tick for "+std::to_string(id));
+                after_observed=true;
+                process_pending_interrupts();
+                const auto resumed=entity.vm->status();
+                if(consumed&&slice_remaining&&(resumed==VmStatus::running||resumed==VmStatus::budget_exhausted))continue;
+            }
+            break;
+            }
         }
-        if(entity.after&&!entity.after())return fail("entity post-run controller rejected tick for "+std::to_string(id));
+        if(!after_observed&&entity.after&&!entity.after())return fail("entity post-run controller rejected tick for "+std::to_string(id));
+        process_pending_interrupts();
+        if(entity_tick&&!entity_tick(id,now,ran_vm))return fail("entity lifecycle rejected tick for "+std::to_string(id));
+        process_pending_interrupts();
     }
     process_pending_interrupts();
     last_tick_=now;

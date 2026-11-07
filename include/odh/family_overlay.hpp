@@ -2,6 +2,7 @@
 
 #include "odh/family.hpp"
 #include "odh/neighborhood.hpp"
+#include "odh/type_attributes.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -52,12 +53,23 @@ struct FamilyOverlayCreation {
     std::vector<NeighborRecord> members; // Ordered exactly as the FAMI roster.
 };
 
+// Exact final state of a household with an operation history. A terminal
+// removal retains the immutable identity and complete history, but cannot be
+// replayed over a different checkpoint, occupancy period or finances.
+struct FamilyOverlayRemovalState {
+    std::uint64_t occupancy_epoch = 0;
+    std::int32_t budget = 0;
+    std::int32_t value_in_arch = 0;
+    std::optional<std::array<std::uint8_t, 32>> checkpoint_sha256;
+};
+
 // Logical removal of an unhoused player-created family. Its creation record
 // remains in the overlay to reserve IDs and GUIDs; private character files are
 // retained so this operation never deletes unrelated or commercial files.
 struct FamilyOverlayArchive {
     std::uint16_t family_chunk_id = 0;
     std::array<std::uint8_t, 32> family_identity{};
+    std::optional<FamilyOverlayRemovalState> final_state; // v9 after any history.
 };
 
 struct FamilyOverlayDeletedMember {
@@ -72,6 +84,7 @@ struct FamilyOverlayDeletion {
     std::uint16_t family_chunk_id = 0;
     std::array<std::uint8_t, 32> family_identity{};
     std::vector<FamilyOverlayDeletedMember> members;
+    std::optional<FamilyOverlayRemovalState> final_state; // v9 after any history.
 };
 
 struct FamilyCreationMember {
@@ -81,13 +94,50 @@ struct FamilyCreationMember {
     std::vector<std::int16_t> person_data;
 };
 
+// Display-only metadata. Identity remains tied to the immutable source/creation
+// snapshot; changing a name must never invalidate occupancy/checkpoint leases.
+struct FamilyOverlayName {
+    std::uint16_t family_chunk_id = 0;
+    std::array<std::uint8_t, 32> family_identity{};
+    std::string family_name; // 1..256 legacy-encoded bytes, like creation names.
+    std::uint8_t language = 0; // Required TS1 encoding code 1..20, independent of UI.
+};
+
+// Neighborhood-wide shared state, committed with the family checkpoint in
+// one private overlay CAS. Revision changes only when canonical bank bytes do.
+struct NeighborhoodTypeAttributes {
+    std::uint64_t revision=1;
+    TypeAttributesSnapshot state;
+};
+
 struct FamilyOverlay {
     std::array<std::uint8_t, 32> neighborhood_identity{};
     std::vector<FamilyOverlayAssignment> assignments;
     std::vector<FamilyOverlayCreation> creations{}; // Replayed before assignments.
     std::vector<FamilyOverlayArchive> archives{}; // Applied after assignments.
     std::vector<FamilyOverlayDeletion> deletions{}; // Source families, applied last.
+    std::vector<FamilyOverlayName> names{}; // One current override per stable family ID.
+    std::optional<NeighborhoodTypeAttributes> type_attributes;
 };
+
+enum class NeighborhoodTypeAttributesSource { immutable_seed,session_snapshot,private_overlay };
+struct NeighborhoodTypeAttributesSelection {
+    TypeAttributesSnapshot state;
+    std::uint64_t private_revision=0;
+    NeighborhoodTypeAttributesSource source=NeighborhoodTypeAttributesSource::immutable_seed;
+    bool superseded_session_state=false;
+};
+// An older house archive must never roll back the shared neighborhood bank.
+// Legacy snapshot bootstrap is allowed only while no private authority exists.
+NeighborhoodTypeAttributesSelection select_neighborhood_type_attributes(
+    const std::array<std::uint8_t,32>& neighborhood_identity,
+    const TypeAttributesSnapshot& immutable_seed,
+    const std::optional<TypeAttributesSnapshot>& saved,const FamilyOverlay* current);
+// Pure plan; host must CAS the complete expected overlay, never merge a stale
+// simulation's bank into a concurrently advanced neighborhood head.
+FamilyOverlay plan_neighborhood_type_attributes_overlay(
+    const std::array<std::uint8_t,32>& neighborhood_identity,
+    const FamilyOverlay* current,const TypeAttributesSnapshot& replacement);
 
 // Epoch counts occupancy periods, including legacy move-ins. A retained ticket
 // is a full-resume candidate only when its house and epoch match current occupancy;
@@ -112,18 +162,30 @@ struct FamilyOverlayReplay {
 FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>&,
     const std::array<std::uint8_t, 32>& neighborhood_identity, const FamilyOverlay&);
 
+// Explicit first managed checkpoint for a family occupying its ORIGINAL
+// commercial house. No relocation, purchase/refund or new occupancy period.
+// The caller supplies the actual validated live budget and published digest.
+// Existing selected-family operation history/managed state cannot be adopted.
+// Uses the existing v6 checkpoint wire profile; other histories retain bytes.
+FamilyOverlay plan_family_original_adoption_overlay(const std::vector<FamilyEntry>&,
+    const std::array<std::uint8_t,32>&,const FamilyOverlay*,
+    std::uint16_t family_chunk_id,std::uint16_t original_house,
+    std::int32_t live_budget,const std::array<std::uint8_t,32>& session_sha256,
+    std::optional<std::int32_t> property_value = std::nullopt);
+
 FamilyOverlay plan_family_managed_move_in_overlay(const std::vector<FamilyEntry>&,
     const std::array<std::uint8_t, 32>&, const FamilyOverlay*,
     std::uint16_t family_chunk_id, std::uint16_t house_number, std::int32_t purchase_price);
 FamilyOverlay plan_family_managed_move_out_overlay(const std::vector<FamilyEntry>&,
     const std::array<std::uint8_t, 32>&, const FamilyOverlay*, std::uint16_t family_chunk_id);
-// The checkpoint retains ValueInArch. Its digest names an immutable session
-// archive; the host must validate and durably publish that archive before CAS.
+// A checkpoint retains ValueInArch unless its owner supplies a current property
+// quote. Its digest names an immutable session; validate/publish before CAS.
 FamilyOverlay plan_family_checkpoint_overlay(const std::vector<FamilyEntry>&,
     const std::array<std::uint8_t, 32>&, const FamilyOverlay*,
     std::uint16_t family_chunk_id, std::uint16_t expected_house,
     std::uint64_t expected_epoch, std::int32_t budget_after,
-    const std::array<std::uint8_t, 32>& session_sha256);
+    const std::array<std::uint8_t, 32>& session_sha256,
+    std::optional<std::int32_t> property_value = std::nullopt);
 
 // Identity covers the FAMI chunk ID, family number, original house, ordered
 // member GUIDs, and original budget. It does not identify the whole IFF file.
@@ -154,7 +216,7 @@ FamilyOverlay plan_family_move_out_overlay(
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id);
 
-// Bounded tagged codec: managed chronological operations use v6; legacy
+// Bounded tagged codec: terminal removal after history uses v9; shared type attributes use v8; name overrides use v7; managed chronological operations use v6; legacy
 // assignment-only overlays retain v2 and metadata uses v3-v5. v1 remains readable. The
 // caller supplies SHA-256 of the exact source Neighborhood.iff so stale player
 // data can fail closed.
@@ -186,12 +248,20 @@ FamilyOverlay plan_family_archive_overlay(
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id);
 
-// Logically deletes an unhoused source family with no move history, hiding its
+// Logically deletes an unhoused source family, retaining any operation history and hiding its
 // FAMI/NBRS members and relationship links while preserving the source files.
 FamilyOverlay plan_family_delete_overlay(
     const std::vector<FamilyEntry>& source, const Nbrs& neighbors,
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id);
+
+// Renames an existing visible household without changing its members, money,
+// occupancy history or private characters. Replaces only its current name.
+FamilyOverlay plan_family_name_overlay(
+    const std::vector<FamilyEntry>& source,
+    const std::array<std::uint8_t, 32>& neighborhood_identity,
+    const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id,
+    const std::string& family_name, std::uint8_t language);
 
 // Builds the observed Simitone CreateFamily/AddNeighbor sidecar from ordered
 // CAS members. IDs are allocated against the current neighborhood snapshots;
@@ -201,6 +271,12 @@ FamilyOverlayCreation make_simitone_family_creation(
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, const std::string& family_name,
     const std::vector<FamilyCreationMember>& members, std::int32_t initial_budget = 20000);
+
+// Stable retired identities, including members of archived created families.
+// Validates retained creation/deletion metadata and rejects ambiguous retired
+// GUIDs or neighbor IDs. Hosts use this for restore admission and saved/live
+// relationship cleanup; active families are still authenticated by replay.
+std::vector<FamilyOverlayDeletedMember> retired_family_members(const FamilyOverlay&);
 
 // Owned copy preserves the original header, serialized order, placeholders,
 // fields and unknown tail extent, then appends the created records. Unknown

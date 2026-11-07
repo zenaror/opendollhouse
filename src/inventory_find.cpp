@@ -20,7 +20,7 @@ VmPrimitive inventory_find_primitive(const Ngbh& source,const World& world,
         auto guid=std::uint32_t{i.operands[4]}|(std::uint32_t{i.operands[5]}<<8)|
             (std::uint32_t{i.operands[6]}<<16)|(std::uint32_t{i.operands[7]}<<24);
         if(guid==0){
-            const auto* stack=world.find(frame.context.stack_object);
+            const auto* stack=world.frame_entity(frame,VmEntityRole::stack_object);
             if(!stack||!stack->definition)
                 return {PrimitiveDisposition::unsupported,"inventory StackObject GUID unavailable"};
             guid=stack->definition->guid;

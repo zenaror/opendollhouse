@@ -55,48 +55,69 @@ bool Ts1Clock::tick(bool running) {
     }
     state_=next;return true;
 }
+namespace {
+std::int16_t source_short(std::int32_t value) {
+    const auto bits=static_cast<std::uint16_t>(static_cast<std::uint32_t>(value)&65535U);
+    return static_cast<std::int16_t>(bits<=32767U?static_cast<std::int32_t>(bits):static_cast<std::int32_t>(bits)-65536);
+}
+std::int16_t default_motive_setter(std::int16_t old,std::int16_t value){
+    return std::max(std::int16_t{-100},std::min(value,std::max(old,std::int16_t{100})));
+}
+}
 bool Ts1MotiveDecay::restore(const Ts1MotiveSnapshot& s) {
-    if(s.last_two_minute_bucket>=30) return false;
-    // Reference negative carry may normalize to exactly 1000.
-    for(auto f:s.fractions) if(f<0 || f>1000) return false;
+    // Source LastMinute begins at0 and is assigned only Clock.Minutes/2.
+    // Fractions are serialized signed shorts, including unprocessed carry.
+    if(s.last_two_minute_bucket>=30)return false;
     state_=s;return true;
 }
 Ts1MotiveResult Ts1MotiveDecay::update(unsigned hour,unsigned minute,const Ts1MotiveInputs& in) {
-    Ts1MotiveResult out;out.needs=in.needs;out.sleep_state=in.sleep_state;out.room_score=in.room_score;
-    if(hour>=24 || minute>=60 || !in.active_personality || !in.outgoing_personality ||
-       *in.active_personality<0 || *in.active_personality>1000 || *in.outgoing_personality<0 ||
-       *in.outgoing_personality>1000 || in.room_score<-100 || in.room_score>100 ||
-       in.sleep_state<-1 || in.sleep_state>1) return out;
-    for(auto v:in.needs) if(v<-100 || v>100) return out;
-    if(in.hidden || minute/2==state_.last_two_minute_bucket) {out.status=Ts1MotiveStatus::unchanged;return out;}
+    Ts1MotiveResult out;out.needs=in.needs;out.sleep_state=in.sleep_state;out.room_score=in.room_score;out.mood=in.mood;
+    if(hour>=24||minute>=60)return out;
+    if(in.hidden||minute/2==state_.last_two_minute_bucket){out.status=Ts1MotiveStatus::unchanged;return out;}
+    // Source reads personality lazily, only for the corresponding unskipped
+    // motive. Preflight unavailable capabilities before any native-state change.
+    if((!in.active_changes[static_cast<std::size_t>(Ts1Need::comfort)]&&!in.active_personality)||
+       (!in.active_changes[static_cast<std::size_t>(Ts1Need::social)]&&!in.outgoing_personality))return out;
     state_.last_two_minute_bucket=static_cast<std::uint8_t>(minute/2);
     const bool sleeping=in.sleep_state!=0;
-    int mood=in.room_score;
+    std::int32_t mood=in.room_score;
     for(std::size_t i=0;i<ts1_need_count;++i) {
-        if(in.active_changes[i] && i!=static_cast<unsigned>(Ts1Need::energy)) continue;
-        int motive=out.needs[i];
-        // Hunger is read again after its own update earlier in this loop.
-        const int hunger_rate=2*(100+out.needs[0]);
-        int fraction=0;
+        if(in.active_changes[i]&&i!=static_cast<unsigned>(Ts1Need::energy))continue;
+        auto motive=out.needs[i];
+        // The actual stored Hunger is read afresh after its own source setter.
+        const std::int32_t hunger_rate=2*(100+static_cast<std::int32_t>(out.needs[0]));
+        std::int32_t fraction=0;
         switch(static_cast<Ts1Need>(i)) {
         case Ts1Need::hunger:fraction=hunger_rate;break;
         case Ts1Need::comfort:fraction=*in.active_personality>666?400:(*in.active_personality<666?600:500);break;
         case Ts1Need::hygiene:fraction=sleeping?80:170;break;
         case Ts1Need::bladder:fraction=(sleeping?150:300)+hunger_rate*300/1000;break;
         case Ts1Need::energy:
-            if(sleeping && hour==7 && motive>=80) out.sleep_state=0;
+            if(sleeping&&hour==7&&motive>=80){out.sleep_state=0;out.sleep_state_written=true;}
+            // sleeping is captured before the wake write; this rereads the
+            // changed SleepState only for the exact-1 Energy branch.
             fraction=sleeping?(out.sleep_state==-1?-1286:(hour>=7?10:0)):375;
             break;
         case Ts1Need::fun:fraction=sleeping?0:250;break;
-        case Ts1Need::social:fraction=55;break; // trunc(0.000125f*1000) == 0
+        case Ts1Need::social:fraction=55;break; // trunc(0.000125f*1000)==0; the source still reads outgoing.
         }
-        int carry=state_.fractions[i]+fraction;
-        if(carry>=1000) {motive-=carry/1000;carry%=1000;motive=std::max(motive,-100);}
-        if(carry<0) {const int increase=1-carry/1000;motive+=increase;carry+=increase*1000;}
-        out.needs[i]=static_cast<std::int16_t>(std::clamp(motive,-100,100));
-        state_.fractions[i]=static_cast<std::int16_t>(carry);
-        mood+=motive;
+        auto carry=source_short(static_cast<std::int32_t>(state_.fractions[i])+source_short(fraction));
+        if(carry>=1000){
+            motive=source_short(static_cast<std::int32_t>(motive)-source_short(carry/1000));
+            carry=static_cast<std::int16_t>(carry%1000);
+            if(motive<-100)motive=-100;
+            out.needs[i]=default_motive_setter(in.needs[i],motive);out.needs_written[i]=true;
+        }
+        if(carry<0){
+            const auto increase=source_short(1-carry/1000);
+            motive=source_short(static_cast<std::int32_t>(motive)+increase);
+            carry=source_short(static_cast<std::int32_t>(carry)+source_short(static_cast<std::int32_t>(increase)*1000));
+            out.needs[i]=default_motive_setter(in.needs[i],motive);out.needs_written[i]=true;
+        }
+        state_.fractions[i]=carry;
+        mood+=motive; // Source uses the local short, not the clamped stored result.
     }
-    out.mood=static_cast<std::int16_t>(mood/8);out.status=Ts1MotiveStatus::updated;return out;
+    out.mood=default_motive_setter(in.mood,source_short(mood/8));out.mood_written=true;
+    out.status=Ts1MotiveStatus::updated;return out;
 }
 }

@@ -12,6 +12,11 @@ DefinitionIndex::DefinitionIndex(const std::vector<DefinitionCandidate>& source,
     for(const auto& candidate:source)definitions_[candidate.definition.guid].push_back(candidate);
     candidates_=source.size();
 }
+std::vector<DefinitionCandidate> DefinitionIndex::snapshot_candidates() const {
+    std::vector<DefinitionCandidate> result;result.reserve(candidates_);
+    for(const auto& row:definitions_)result.insert(result.end(),row.second.begin(),row.second.end());
+    return result;
+}
 const std::vector<DefinitionCandidate>* DefinitionIndex::candidates(std::uint32_t guid) const{
     const auto found=definitions_.find(guid);return found==definitions_.end()?nullptr:&found->second;
 }

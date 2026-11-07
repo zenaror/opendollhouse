@@ -1,3 +1,5 @@
+#include "odh/avatar_containment.hpp"
+#include "odh/avatar_person_data.hpp"
 #include "odh/saved_world.hpp"
 #include <algorithm>
 #include <limits>
@@ -198,13 +200,14 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
             const auto parent=r.tail.multitile->parent_id; reference(parent);
             const auto leader=parent?parent:id;
             const auto& lead=*records.at(leader);
-            check(lead.tail.multitile && !lead.tail.multitile->parent_id &&
-                lead.definition.master_id==r.definition.master_id && masters.at(leader)==masters.at(id),
+            check(lead.tail.multitile && (!lead.tail.multitile->parent_id ||
+                lead.tail.multitile->parent_id==leader),
                 "saved world invalid multitile leader/group");
-            const auto* a=definitions.unique(r.saved.guid);const auto* z=definitions.unique(lead.saved.guid);
-            check(a->source==z->source && a->asset==z->asset,"saved world multitile group crosses resources");
+            // TS1 groups by the saved parent identity, not by uniform OBJD.
+            // All member definitions/masters were authenticated independently.
             auto [it,inserted]=groups.emplace(leader,SavedMultitileGroup{leader,masters.at(id),{}});
-            (void)inserted; it->second.members.push_back(id);
+            if(!inserted&&it->second.master_guid!=masters.at(id))it->second.master_guid.reset();
+            it->second.members.push_back(id);
         }
     }
     for(const auto& r:source) {
@@ -236,11 +239,12 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
     const std::vector<std::int16_t> empty;
     std::vector<SavedObjectRelationships> relationships;
     relationships.reserve(source.size());
-    for(const auto& r:source) {
+    for(auto& r:source) {
         const auto id=static_cast<std::int16_t>(r.saved.object_id);const auto& p=r.saved.prefix;
         check(result->world->create_saved_entity(id,r.tail.person?EntityKind::avatar:EntityKind::object,r.saved.guid,
-            p.attributes,r.tail.person?r.tail.person->person_data:empty,r.tail.person?motives.at(id):empty,
-            p.object_data,p.extras,r.common.slots.size(),masters.at(id)),"saved world runtime bank budget/validation rejected");
+            p.attributes,r.tail.person?imported_ts1_person_data(r.tail.person->person_data):empty,r.tail.person?motives.at(id):empty,
+            p.object_data,p.extras,r.tail.person?imported_ts1_avatar_slots(r.common.slots.size()):r.common.slots.size(),masters.at(id)),"saved world runtime bank budget/validation rejected");
+        r.imported_generation=result->world->find(id)->generation;
         // Scope 21 is the StackObject's OBJD fields. Keep its Type field (word 9)
         // available to BHAVs such as the Legacy UrnStone EP5 check.
         check(result->world->declare_definition_word(id,9,r.definition.object_type),
@@ -251,7 +255,10 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
             check(result->world->declare_definition_word(id,56,signed_word),
                   "saved world runtime definition level offset rejected");
         }
-        if(p.x!=-16 || p.y!=-16)
+        if(p.x==-16 && p.y==-16)
+            check(result->world->set_native_out_of_world_level({id,r.imported_generation},static_cast<std::int16_t>(p.level)),
+                  "saved world native out-of-world level rejected");
+        else
             check(result->world->set_position(id,{p.x,p.y,static_cast<std::int16_t>(p.level),static_cast<std::uint8_t>(p.object_data[1])}),
                   "saved world runtime position rejected");
         SavedObjectRelationships rel{id,{}};
@@ -260,6 +267,16 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
     }
     for(const auto& item:inbound)
         check(result->world->attach(item.second.first,item.second.second,item.first),"saved world runtime containment rejected");
+    // Native vector entry zero is serialized separately from physical slots.
+    // Preserve its actual child and generation without inventing containment.
+    for(const auto& row:source)if(row.common.linked_slot){
+        const auto* parent=result->world->find(static_cast<std::int16_t>(row.saved.object_id));
+        const auto child_id=row.common.linked_slot->object_id;
+        const auto* child=child_id?result->world->find(child_id):nullptr;
+        check(result->world->publish_native_slot0({parent->id,parent->generation},
+            child?WorldEntityReference{child->id,child->generation}:WorldEntityReference{}),
+            "saved world native slot-zero backing rejected");
+    }
     check(result->relationships->import_object_relationships(*result->world,relationships),"saved world relationship import rejected");
     result->records=std::move(source);
     return result;
@@ -268,12 +285,21 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
 bool saved_world_has_multitile_member(const SavedWorld& saved,std::int16_t entity_id,
                                       std::uint32_t master_guid) noexcept {
     if(entity_id<=0||master_guid==0)return false;
+    const auto original_member=[&](std::int16_t id){
+        const auto* entity=saved.world?saved.world->find(id):nullptr;
+        if(!entity||!entity->definition)return false;
+        const auto record=std::find_if(saved.records.begin(),saved.records.end(),[&](const auto& row){return row.saved.object_id==id;});
+        return record!=saved.records.end()&&record->imported_generation==entity->generation&&
+            record->saved.guid==entity->definition->guid;
+    };
     for(const auto& group:saved.multitile_groups) {
-        if(group.master_guid!=master_guid||group.members.size()<2||
+        if(group.members.size()<2||
            std::find(group.members.begin(),group.members.end(),entity_id)==group.members.end()||
            std::find(group.members.begin(),group.members.end(),group.leader)==group.members.end())continue;
         const auto* leader=saved.world?saved.world->find(group.leader):nullptr;
-        if(leader&&leader->definition&&leader->definition->master_guid==master_guid)return true;
+        const auto* member=saved.world?saved.world->find(entity_id):nullptr;
+        if(leader&&member&&original_member(group.leader)&&original_member(entity_id)&&
+            member->definition&&member->definition->master_guid==master_guid)return true;
     }
     return false;
 }

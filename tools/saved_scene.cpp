@@ -217,9 +217,8 @@ int main(int argc,char** argv){try{
         image=odh::rasterize(camera.width,camera.height,terrain_geometry->triangles,{white},ground_options);
     }
     std::optional<SavedFloorResult> floor_result;
-    if(floors_path){SavedFloorRenderer renderer(*floors_path,catalog);floor_result=renderer.render(architecture->architecture,camera,true,0,selected_level);
-        if(terrain_geometry){image=odh::merge_raster(image,floor_result->image);floor_result->image=odh::RasterFrame{};}
-        else image=std::move(floor_result->image);
+    if(floors_path){SavedFloorRenderer renderer(*floors_path,catalog);floor_result=renderer.render(architecture->architecture,camera,true,0,selected_level,false,{},terrain_geometry?&image:nullptr);
+        image=std::move(floor_result->image);
     }
     std::optional<SavedWallRenderResult> wall_result;
     if(walls_path){
@@ -252,11 +251,12 @@ int main(int argc,char** argv){try{
           <<(architecture?json_bytes("FreeSO_byte1_times10_bilinear_BaseAlt0_bounded_group_average"):"null")
           <<",\"floor_materials\":[";
     if(floor_result)for(std::size_t n=0;n<floor_result->materials.size();++n){if(n)report<<',';const auto& m=floor_result->materials[n];
-        report<<"{\"pattern\":"<<m.pattern<<",\"sprite_id\":"<<m.sprite_id<<",\"palette_id\":"<<m.palette_id<<",\"width\":"<<m.width<<",\"height\":"<<m.height<<",\"source\":"<<json_bytes(m.source)<<",\"asset\":"<<json_bytes(m.asset)<<'}';}
+        report<<"{\"pattern\":"<<m.pattern<<",\"sprite_id\":"<<m.sprite_id<<",\"frame\":"<<unsigned(m.frame)<<",\"palette_id\":"<<m.palette_id<<",\"width\":"<<m.width<<",\"height\":"<<m.height<<",\"source\":"<<json_bytes(m.source)<<",\"asset\":"<<json_bytes(m.asset)<<'}';}
     report<<"],\"floor_draws\":[";
     if(floor_result)for(std::size_t n=0;n<floor_result->draws.size();++n){if(n)report<<',';const auto& d=floor_result->draws[n];
         report<<"{\"x\":"<<d.x<<",\"y\":"<<d.y<<",\"level\":"<<unsigned(d.level)<<",\"pattern\":"<<d.pattern
-              <<",\"half\":"<<unsigned(d.half)<<",\"altitude\":";odh_tools::saved_bank(report,d.altitude);report<<'}';}
+              <<",\"half\":"<<unsigned(d.half)<<",\"altitude\":";odh_tools::saved_bank(report,d.altitude);
+        if(d.surface_sprite){report<<",\"surface_sprite\":"<<d.surface_sprite<<",\"corner_sprites\":";odh_tools::saved_bank(report,d.corner_sprites);}report<<'}';}
     report<<"],\"floor_triangles\":"<<(floor_result?floor_result->triangles:0)
           <<",\"floor_texture_bytes\":"<<(floor_result?floor_result->texture_bytes:0)
           <<",\"floor_geometry_texture_pixel_visits\":"<<(floor_result?floor_result->geometry_texture_pixel_visits:0);

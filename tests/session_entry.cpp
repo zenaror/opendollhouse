@@ -115,12 +115,19 @@ void test_created_family_disk_reload() {
     odh::Nbrs source_neighbors{0,62,{},0};
     const auto neighborhood=iff({iff_chunk("FAMI",201,fami),
         iff_chunk("NBRS",1,odh::encode_nbrs(source_neighbors))});
-    write_bytes(root/"LotLocations.iff",iff({iff_chunk("STR#",1,locations)}));
+    auto destination_locations=locations;
+    const std::string destination_row="23,10,20";
+    destination_locations.resize(5);
+    destination_locations.insert(destination_locations.end(),destination_row.begin(),destination_row.end());
+    destination_locations.push_back(0);destination_locations.push_back(0);
+    write_bytes(root/"LotLocations.iff",iff({iff_chunk("STR#",1,locations),
+        iff_chunk("STR#",2,destination_locations)}));
     const auto neighborhood_path=root/"Neighborhood.iff";
     write_bytes(neighborhood_path,neighborhood);
     std::vector<std::uint8_t> simi(12+32*2+34+6*4,0);
     simi[4]=0x33;simi[8]='I';simi[9]='M';simi[10]='I';simi[11]='S';
     write_bytes(root/"Houses/House07.iff",iff({iff_chunk("SIMI",1,simi)}));
+    write_bytes(root/"Houses/House23.iff",iff({iff_chunk("SIMI",1,simi)}));
 
     constexpr std::uint32_t created_guid=0x0badcafe;
     odh::Family vacant{};vacant.family_number=900;vacant.budget=20000;
@@ -174,6 +181,12 @@ void test_created_family_disk_reload() {
             loaded.members[0].character_source=="PlayerData/Characters"&&
             loaded.members[0].character_asset=="PlayerCreated.iff",
             "store reload resolves created FAMI and NBRS through the explicit player character directory");
+    const auto visited=odh::load_visit_session_entry(root,1,7,2,23,{created_guid},
+        1,&overlay,root/"PlayerCharacters");
+    require(visited.house_number==23 && visited.family_chunk_id==202 &&
+        visited.members.front().character_source=="PlayerData/Characters" &&
+        visited.members.front().guid==created_guid,
+        "disk visit resolves origin private character even when destination has no resident family");
 }
 }
 
@@ -196,6 +209,23 @@ int main() {
                 entry.members[0].neighbor_id==11&&entry.members[0].character_asset=="User00004.iff"&&
                 entry.members[0].object_definition_id==128&&entry.members[1].guid==b&&
                 entry.members[1].neighbor_id==12,"family order and Sim resource identities resolved");
+
+        const odh::LotLocations destinations{{{23,20,30},{40,40,50}},0};
+        const auto visit = odh::resolve_visit_session_entry(entry,2,23,
+            "Houses/House23.iff",destinations,{b});
+        require(visit.house_number==23 && visit.neighborhood_mode==2 &&
+            visit.family_chunk_id==entry.family_chunk_id && visit.family_number==entry.family_number &&
+            visit.members.size()==1 && visit.members.front().guid==b &&
+            visit.members.front().neighbor_id==12 && entry.house_number==7 && entry.members.size()==2,
+            "visit uses originating traveler subset without changing permanent home or selecting destination residents");
+        rejects([&]{odh::resolve_visit_session_entry(entry,2,23,"House23.iff",destinations,{a,a});},
+            "duplicate traveler cannot inflate the visiting household");
+        rejects([&]{odh::resolve_visit_session_entry(entry,2,23,"House23.iff",destinations,{0xdeadbeef});},
+            "destination family cannot substitute for the originating household");
+        rejects([&]{odh::resolve_visit_session_entry(entry,2,24,"House24.iff",destinations,{a});},
+            "unlisted destination cannot be prepared for travel");
+        rejects([&]{odh::resolve_visit_session_entry(entry,1,7,"House07.iff",locations,{a});},
+            "return to permanent home cannot use fresh destination preparation");
 
         odh::Family vacant_family{};
         vacant_family.house_number=0; vacant_family.family_number=900;

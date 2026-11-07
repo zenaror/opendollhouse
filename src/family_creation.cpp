@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <set>
+#include <sstream>
 
 namespace odh {
 
@@ -25,7 +26,33 @@ FamilyOverlayCreation make_simitone_family_creation(
             throw FormatError("cannot create family in ambiguous FAMI snapshot");
         max_family_number=std::max(max_family_number,family.family.family_number);
     }
-    if(effective_families.empty()||max_family_number==std::numeric_limits<std::int32_t>::max())
+    // Removing a household hides it from the current view, but its historical
+    // identifiers still belong to that household. Never allocate from only the
+    // visible snapshot: old saves and references can retain these identities.
+    std::set<std::uint32_t> reserved_guids;
+    const auto reserve_family=[&](const FamilyEntry& family){
+        family_ids.insert(family.chunk_id);
+        max_family_number=std::max(max_family_number,family.family.family_number);
+        reserved_guids.insert(family.family.member_guids.begin(),family.family.member_guids.end());
+    };
+    for(const auto& family:source_families)reserve_family(family);
+    if(current_overlay){
+        for(const auto& creation:current_overlay->creations){
+            // apply_family_overlay above has already authenticated and bounded
+            // this creation payload, including its exact Simitone FAMI profile.
+            std::string raw(creation.fami_payload.begin(),creation.fami_payload.end());
+            std::istringstream stream(raw);View view(stream,raw.size());
+            reserve_family({creation.family_chunk_id,read_fami(view,FamiLimits{88,8})});
+            for(const auto& member:creation.members)reserved_guids.insert(member.guid);
+        }
+        for(const auto& assignment:current_overlay->assignments)family_ids.insert(assignment.family_chunk_id);
+        for(const auto& archive:current_overlay->archives)family_ids.insert(archive.family_chunk_id);
+        for(const auto& deletion:current_overlay->deletions){
+            family_ids.insert(deletion.family_chunk_id);
+            for(const auto& member:deletion.members)reserved_guids.insert(member.guid);
+        }
+    }
+    if(family_ids.empty()||max_family_number==std::numeric_limits<std::int32_t>::max())
         throw FormatError("cannot allocate the next family number");
     std::uint32_t chunk_id=0;
     while(chunk_id<=std::numeric_limits<std::uint16_t>::max()&&
@@ -40,6 +67,19 @@ FamilyOverlayCreation make_simitone_family_creation(
         if(!entry.record||entry.record->neighbor_id<=0)continue;
         if(!neighbor_ids.insert(entry.record->neighbor_id).second)
             throw FormatError("cannot create family in ambiguous neighbor snapshot");
+    }
+    // Reserve immutable and removed neighbors as well as the visible ones.
+    for(const auto& entry:source_neighbors.entries)if(entry.record){
+        if(entry.record->neighbor_id>0)neighbor_ids.insert(entry.record->neighbor_id);
+        reserved_guids.insert(entry.record->guid);
+    }
+    if(current_overlay){
+        for(const auto& creation:current_overlay->creations)for(const auto& member:creation.members){
+            neighbor_ids.insert(member.neighbor_id);reserved_guids.insert(member.guid);
+        }
+        for(const auto& deletion:current_overlay->deletions)for(const auto& member:deletion.members){
+            neighbor_ids.insert(member.neighbor_id);reserved_guids.insert(member.guid);
+        }
     }
     std::vector<std::int16_t> allocated_ids;
     std::int32_t candidate_id=1;
@@ -65,7 +105,8 @@ FamilyOverlayCreation make_simitone_family_creation(
         static_cast<std::int32_t>(chunk_id):static_cast<std::int32_t>(chunk_id)-65536);
     for(std::size_t i=0;i<members.size();++i) {
         const auto& input=members[i];
-        if(input.guid==0||!member_guids.insert(input.guid).second||input.person_data.size()!=88)
+        if(input.guid==0||reserved_guids.count(input.guid)||
+           !member_guids.insert(input.guid).second||input.person_data.size()!=88)
             throw FormatError("CAS member GUID or 88-word person data is invalid");
         family.member_guids.push_back(input.guid);
         auto data=std::vector<std::int16_t>(256,0);

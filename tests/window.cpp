@@ -55,6 +55,44 @@ int main(int argc,char** argv){try{
        !odh_host::append_window_text_utf8(bounded,"b") ||
        odh_host::append_window_text_utf8(bounded,"c") || bounded.text_input_utf8.size()!=4096)
         throw std::runtime_error("UTF-8 commit budget differs");
+    {
+        odh_host::WindowInput gesture;
+        using Kind=odh_host::WindowPointerKind;
+        odh_host::append_window_pointer_event(gesture,{Kind::press,10,20,true,false});
+        odh_host::append_window_pointer_event(gesture,{Kind::motion,30,40,true,true});
+        odh_host::append_window_pointer_event(gesture,{Kind::release,50,60,false,true});
+        if(gesture.pointer_events.size()!=3||gesture.pointer_events[0].kind!=Kind::press||
+           gesture.pointer_events[1].x!=30||!gesture.pointer_events[1].shift||
+           gesture.pointer_events[2].kind!=Kind::release||!gesture.pointer_events[2].control)
+            throw std::runtime_error("a gesture drained in one poll lost event order or modifiers");
+        for(unsigned n=0;n<254;++n)odh_host::append_window_pointer_event(gesture,{Kind::motion,0,0,false,false});
+        if(!gesture.pointer_cancelled||!gesture.pointer_overflow||!gesture.pointer_events.empty())
+            throw std::runtime_error("overlong pointer gesture was partially retained");
+        odh_host::append_window_pointer_event(gesture,{Kind::release,1,1,false,false});
+        if(!gesture.pointer_events.empty())throw std::runtime_error("overflow accepted a later partial gesture");
+    }
+    {
+        odh_host::WindowInput scroll;scroll.catalog_wheel_steps=1;
+        if(!odh_host::window_catalog_scroll_only(scroll))throw std::runtime_error("plain query wheel rejected");
+        scroll.pointer_events.push_back({odh_host::WindowPointerKind::motion,3,4,false,false});
+        if(!odh_host::window_catalog_scroll_only(scroll))throw std::runtime_error("query wheel plus motion rejected");
+        for(const auto kind:{odh_host::WindowPointerKind::press,odh_host::WindowPointerKind::release}){
+            auto mixed=scroll;mixed.pointer_events.push_back({kind,3,4,false,false});
+            if(odh_host::window_catalog_scroll_only(mixed))throw std::runtime_error("query scroll swallowed a gesture transition");
+        }
+        auto mixed=scroll;mixed.sell_object=true;
+        if(odh_host::window_catalog_scroll_only(mixed))throw std::runtime_error("query scroll swallowed Delete");
+        mixed=scroll;mixed.camera_steps[0]=1;
+        if(odh_host::window_catalog_scroll_only(mixed))throw std::runtime_error("query scroll swallowed camera step");
+        mixed=scroll;mixed.right_press_origin=std::array<int,2>{3,4};
+        if(odh_host::window_catalog_scroll_only(mixed))throw std::runtime_error("query scroll swallowed right drag");
+        mixed=scroll;mixed.zoom=1;
+        if(odh_host::window_catalog_scroll_only(mixed))throw std::runtime_error("query scroll swallowed explicit zoom");
+        mixed=scroll;mixed.build_mode=true;
+        if(odh_host::window_catalog_scroll_only(mixed))throw std::runtime_error("query scroll swallowed mode switch");
+        scroll.catalog_wheel_steps=0;scroll.catalog_page_steps=1;
+        if(!odh_host::window_catalog_scroll_only(scroll))throw std::runtime_error("plain query page rejected");
+    }
     if(argc==2&&std::string(argv[1])=="--input-only"){
         std::cout<<"Window input: quit diagnostics and bounded printable UTF-8 commits passed without X11.\n";return 0;
     }
@@ -104,8 +142,36 @@ int main(int argc,char** argv){try{
     }
     XFree(property);
     auto key=[&](KeySym sym,int type=KeyPress,unsigned state=0){XEvent event{};event.xkey.type=type;event.xkey.display=sender.get();event.xkey.window=window.native_id();event.xkey.root=DefaultRootWindow(sender.get());event.xkey.same_screen=True;event.xkey.state=state;event.xkey.keycode=XKeysymToKeycode(sender.get(),sym);if(!event.xkey.keycode||!XSendEvent(sender.get(),window.native_id(),False,type==KeyPress?KeyPressMask:KeyReleaseMask,&event))throw std::runtime_error("own-window key injection failed");XSync(sender.get(),False);window.readback();};
+    // Changes a DISPLAY-wide keymap, so run only with explicit opt-in on an
+    // isolated test server. Restore it even if an assertion fails.
+    if(const auto* isolated=std::getenv("ODH_TEST_ISOLATED_KEYMAP");isolated&&std::string(isolated)=="1"){
+        const auto code=XKeysymToKeycode(sender.get(),XK_F12);
+        int columns=0;
+        KeySym* saved=XGetKeyboardMapping(sender.get(),code,1,&columns);
+        if(!code||!saved||columns<1)throw std::runtime_error("test keymap unavailable");
+        struct RestoreMapping{Display* display;KeyCode code;int columns;KeySym* saved;
+            ~RestoreMapping(){XChangeKeyboardMapping(display,code,columns,saved,1);XSync(display,False);XFree(saved);}
+        } restore{sender.get(),code,columns,saved};
+        std::vector<KeySym> changed(static_cast<std::size_t>(columns),NoSymbol);
+        changed[0]=XK_iacute;
+        XChangeKeyboardMapping(sender.get(),code,columns,changed.data(),1);XSync(sender.get(),False);
+        (void)window.poll(); // Must process the display-level MappingNotify.
+        const auto send_code=[&](int type){XEvent event{};event.xkey.type=type;
+            event.xkey.display=sender.get();event.xkey.window=window.native_id();
+            event.xkey.root=DefaultRootWindow(sender.get());event.xkey.same_screen=True;event.xkey.keycode=code;
+            if(!XSendEvent(sender.get(),window.native_id(),False,type==KeyPress?KeyPressMask:KeyReleaseMask,&event))
+                throw std::runtime_error("test mapped key injection failed");
+            XSync(sender.get(),False);
+        };
+        send_code(KeyPress);const auto mapped=window.poll();
+        send_code(KeyRelease);(void)window.poll();
+        if(mapped.text_input_utf8!=u8"í"||mapped.action||mapped.confirm)
+            throw std::runtime_error("changed keymap did not commit the exact accented character");
+    }
     key(XK_space);auto input=window.poll();if(!input.action||input.quit||input.pause||input.primary_click)throw std::runtime_error("Space mapping failed");
     key(XK_Tab);input=window.poll();if(input.interaction_selection_delta!=1||input.action)throw std::runtime_error("Tab interaction selection mapping failed");
+    key(XK_Prior);input=window.poll();if(input.dialog_scroll_delta!=-1||input.catalog_page_steps!=-1||input.catalog_wheel_steps||input.zoom||input.confirm||input.action)throw std::runtime_error("PageUp modal/catalog scroll mapping failed");
+    key(XK_Next);input=window.poll();if(input.dialog_scroll_delta!=1||input.catalog_page_steps!=1||input.catalog_wheel_steps||input.zoom||input.confirm||input.action)throw std::runtime_error("PageDown modal/catalog scroll mapping failed");
     key(XK_Tab,KeyPress,ShiftMask);input=window.poll();if(input.interaction_selection_delta!=-1||input.action)throw std::runtime_error("Shift+Tab interaction selection mapping failed");
     key(XK_space);if(window.poll().action)throw std::runtime_error("held action repeated");key(XK_space,KeyRelease);window.poll();key(XK_space);if(!window.poll().action)throw std::runtime_error("released action not rearmed");
     key(XK_BackSpace);input=window.poll();if(!input.interrupt||!input.text_backspace||!input.text_input_utf8.empty()||input.action||input.quit)throw std::runtime_error("Backspace interrupt/text mapping failed");
@@ -123,6 +189,55 @@ int main(int argc,char** argv){try{
     key(XK_p);input=window.poll();if(!input.pause||input.action)throw std::runtime_error("pause mapping failed");
     key(XK_p);if(window.poll().pause)throw std::runtime_error("held pause repeated");
     key(XK_Left);key(XK_Up);input=window.poll();if(input.rotation!=-1||input.zoom!=1)throw std::runtime_error("camera mapping failed");
+    // TS1GameScreen D1/D2/D3 select actual VM multipliers 1/3/10.
+    // Digits remain committed text for CAS/name dialogs; consumers choose
+    // whether the simultaneous speed request is appropriate on their screen.
+    const std::array<std::pair<KeySym,std::uint8_t>,3> speed_keys{{{XK_1,1},{XK_2,3},{XK_3,10}}};
+    for(const auto& speed:speed_keys){
+        key(speed.first);input=window.poll();
+        if(input.simulation_speed!=speed.second||input.pause||input.action||input.confirm||
+           input.text_input_utf8!=std::string(1,static_cast<char>(speed.first)))
+            throw std::runtime_error("speed key request/text channel differs");
+        key(speed.first);if(window.poll().simulation_speed)throw std::runtime_error("held speed key repeated request");
+        key(speed.first,KeyRelease);(void)window.poll();
+        key(speed.first);if(window.poll().simulation_speed!=speed.second)throw std::runtime_error("released speed key not rearmed");
+        key(speed.first,KeyRelease);(void)window.poll();
+    }
+    // Mode requests are edges, not held actions. All modes use the same
+    // input channel; the active screen owns permission and modal decisions.
+    struct ModeKey {KeySym key;bool odh_host::WindowInput::*field;};
+    const ModeKey mode_keys[]{{XK_F1,&odh_host::WindowInput::live_mode},
+        {XK_F2,&odh_host::WindowInput::buy_mode},{XK_F3,&odh_host::WindowInput::build_mode},
+        {XK_F5,&odh_host::WindowInput::options_mode}};
+    for(const auto& mode:mode_keys){
+        key(mode.key);input=window.poll();
+        unsigned requests=0;for(const auto& other:mode_keys)requests+=input.*other.field;
+        if(!(input.*mode.field)||requests!=1||input.action||input.confirm||input.primary_click||
+           !input.text_input_utf8.empty())throw std::runtime_error("mode shortcut produced the wrong request or fabricated interaction");
+        key(mode.key);input=window.poll();
+        for(const auto& other:mode_keys)if(input.*other.field)
+            throw std::runtime_error("held mode shortcut repeated");
+        key(mode.key,KeyRelease);window.poll();key(mode.key);
+        if(!(window.poll().*mode.field))throw std::runtime_error("released mode shortcut did not rearm");
+        key(mode.key,KeyRelease);window.poll();
+    }
+    // A focus transition must release the key even if its physical release
+    // occurred in another window, so returning cannot leave F1 stuck.
+    key(XK_F1);if(!window.poll().live_mode)throw std::runtime_error("initial F1 request missing");
+    key(XK_2);if(window.poll().simulation_speed!=3)throw std::runtime_error("initial speed request missing");
+    for(const int type:{FocusOut,FocusIn}){
+        XEvent event{};event.xfocus.type=type;event.xfocus.display=sender.get();
+        event.xfocus.window=window.native_id();event.xfocus.mode=NotifyNormal;event.xfocus.detail=NotifyNonlinear;
+        if(!XSendEvent(sender.get(),window.native_id(),False,FocusChangeMask,&event))
+            throw std::runtime_error("own-window mode focus injection failed");
+        XSync(sender.get(),False);window.readback();input=window.poll();
+        if(input.live_mode||input.buy_mode||input.build_mode||input.options_mode||input.simulation_speed)
+            throw std::runtime_error("focus transition fabricated a mode or speed request");
+    }
+    key(XK_F1);if(!window.poll().live_mode)throw std::runtime_error("F1 did not rearm after focus loss");
+    key(XK_F1,KeyRelease);window.poll();
+    key(XK_2);if(window.poll().simulation_speed!=3)throw std::runtime_error("speed did not rearm after focus loss");
+    key(XK_2,KeyRelease);window.poll();
     key(XK_a);input=window.poll();if(input.action||input.pause||input.quit||input.rotation||input.zoom||input.text_input_utf8!="a")throw std::runtime_error("printable A input differs");
     key(XK_a,KeyRelease);window.poll();key(XK_a,KeyPress,ShiftMask);
     if(window.poll().text_input_utf8!="A")throw std::runtime_error("Shift printable input differs");
@@ -139,6 +254,8 @@ int main(int argc,char** argv){try{
     click(Button1,17,23);input=window.poll();if(!input.action||!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{17,23})throw std::runtime_error("click coordinates lost");
     if(window.poll().primary_click)throw std::runtime_error("click repeated without event");
     click(Button3,1,2);input=window.poll();if(input.action||input.primary_click)throw std::runtime_error("non-primary click mapped");
+    click(Button4,1,2);input=window.poll();if(input.dialog_scroll_delta!=-1||input.catalog_wheel_steps!=-1||input.catalog_page_steps||input.action||input.primary_click||input.zoom)throw std::runtime_error("wheel-up modal/catalog scroll mapping failed");
+    click(Button5,1,2);input=window.poll();if(input.dialog_scroll_delta!=1||input.catalog_wheel_steps!=1||input.catalog_page_steps||input.action||input.primary_click||input.zoom)throw std::runtime_error("wheel-down modal/catalog scroll mapping failed");
     click(Button1,-2,98);input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{-2,98})throw std::runtime_error("outside click coordinates clamped");
     click(Button1,2,3);click(Button1,127,95);input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{127,95})throw std::runtime_error("last drained primary click not retained");
     key(XK_Escape);input=window.poll();
@@ -161,11 +278,20 @@ int main(int argc,char** argv){try{
         XSync(sender.get(),False);(void)closing.readback();input=closing.poll();
         if(!input.quit||input.quit_reason!=WindowQuitReason::window_manager_close||closing.quit_reason()!=input.quit_reason)
             throw std::runtime_error("window manager close reason mapping failed");
+        if(!closing.acknowledge_window_close_request()||closing.poll().quit)
+            throw std::runtime_error("cancelled close request must leave own window usable");
+        if(!XSendEvent(sender.get(),closing.native_id(),False,NoEventMask,&event))
+            throw std::runtime_error("repeated close request injection failed");
+        XSync(sender.get(),False);input=closing.poll();
+        if(!input.quit||input.quit_reason!=WindowQuitReason::window_manager_close)
+            throw std::runtime_error("a later close request must remain observable");
         // Real destruction can follow a close request; retain the first cause.
         XDestroyWindow(sender.get(),closing.native_id());XSync(sender.get(),False);
         input=closing.poll();
         if(!input.quit||input.quit_reason!=WindowQuitReason::window_manager_close)
             throw std::runtime_error("destruction overwrote window manager close reason");
+        if(closing.acknowledge_window_close_request())
+            throw std::runtime_error("destroyed window must not acknowledge an already terminal request");
     }
     {
         odh_host::LinuxWindow destroyed(16,16,"OpenDollhouse own-window destruction diagnostic test");

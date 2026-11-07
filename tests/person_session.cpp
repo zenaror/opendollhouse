@@ -1,6 +1,7 @@
 #include "person_session.hpp"
 #include "odh/entity_scheduler.hpp"
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -13,6 +14,7 @@ odh::Bhav routine(std::initializer_list<odh::Instruction> instructions){
 }
 int main(){try{
     using odh_host::PersonSessionPolicy;
+    using odh_host::PersonWorkBudgetPolicy;
     using odh_host::PersonDiagnostic;
     using odh_host::PersonDiagnosticRetention;
     const PersonSessionPolicy probe{false,false,256},bounded_window{true,true,3},window{true,false,256};
@@ -28,14 +30,55 @@ int main(){try{
             !window.limit_reached(4096,10000)&&!window.limit_reached(6200,1000000)&&
             window.limit_reached(std::numeric_limits<std::uint32_t>::max(),0),
             "default window has only the existing uint32 controller clock horizon");
-    require(window.tick_budget(999999,std::numeric_limits<std::size_t>::max())==640000,
-            "aggregate work is bounded and cannot overflow for oversized entity counts");
+    const auto largest_count=std::numeric_limits<std::size_t>::max();
+    const auto maximum_work=std::numeric_limits<std::uint64_t>::max();
+    const auto largest_funded=maximum_work/PersonSessionPolicy::instructions;
+    require(window.tick_budget(999999,largest_count)==
+                (largest_count>largest_funded?maximum_work:
+                    PersonSessionPolicy::instructions*static_cast<std::uint64_t>(largest_count)),
+            "aggregate work saturates without overflow for the host entity-count width");
+    require(window.tick_budget(0,0)==0&&window.tick_budget(0,1)==10000&&
+            window.tick_budget(0,64)==640000&&window.tick_budget(0,65)==650000,
+            "zero and counts around the former64-entity cap retain exact per-entity funding");
+    if constexpr(sizeof(std::size_t)>=sizeof(std::uint64_t)){
+        require(window.tick_budget(0,static_cast<std::size_t>(largest_funded))==
+                    largest_funded*PersonSessionPolicy::instructions&&
+                window.tick_budget(0,static_cast<std::size_t>(largest_funded+1))==maximum_work,
+                "aggregate multiplication is exact through its last safe count and saturates above it");
+    }
     const PersonSessionPolicy window_with_probe_override{true,true,3,50000};
     require(window_with_probe_override.entity_budget(0)==PersonSessionPolicy::instructions&&
             window_with_probe_override.tick_budget(0,2)==20000&&
             !window_with_probe_override.instruction_limit_reached(50000),
             "windowed per-tick grants ignore the finite-probe override");
     std::cout<<"PASS finite probe, explicit ticks, continuous window, aggregate bound\n";
+
+    const PersonSessionPolicy integrated_headless{false,true,3,10000,PersonWorkBudgetPolicy::per_tick_gameplay};
+    const PersonSessionPolicy bounded_game_window{true,true,3,10000,PersonWorkBudgetPolicy::per_tick_gameplay};
+    const PersonSessionPolicy explicit_total_probe{false,true,3,50000,PersonWorkBudgetPolicy::total_probe};
+    const PersonSessionPolicy displayed_total_probe{true,true,3,50000,PersonWorkBudgetPolicy::total_probe};
+    require(integrated_headless.renews_work_budget()&&integrated_headless.tick_limit()==3&&
+            integrated_headless.entity_budget(1000000)==PersonSessionPolicy::instructions&&
+            integrated_headless.tick_budget(1000000,293)==2930000&&
+            !integrated_headless.limit_reached(2,1000000)&&integrated_headless.limit_reached(3,1000000),
+            "integrated headless gameplay renews work while retaining its explicit finite tick horizon");
+    for(const auto used:{0ULL,9999ULL,10000ULL,1000000ULL}){
+        require(integrated_headless.entity_budget(used)==bounded_game_window.entity_budget(used)&&
+                integrated_headless.tick_budget(used,293)==bounded_game_window.tick_budget(used,293)&&
+                integrated_headless.instruction_limit_reached(used)==bounded_game_window.instruction_limit_reached(used),
+                "matching gameplay work does not depend on whether images are displayed");
+    }
+    require(!probe.renews_work_budget()&&window.renews_work_budget()&&
+            !explicit_total_probe.renews_work_budget()&&!displayed_total_probe.renews_work_budget()&&
+            explicit_total_probe.entity_budget(49999)==1&&displayed_total_probe.entity_budget(49999)==1&&
+            explicit_total_probe.tick_budget(50000,293)==0&&displayed_total_probe.tick_budget(50000,293)==0&&
+            explicit_total_probe.limit_reached(1,50000)&&displayed_total_probe.limit_reached(1,50000),
+            "explicit diagnostic work policy overrides presentation and preserves its total cap");
+    const PersonSessionPolicy continuous_total_probe{true,false,3,50000,PersonWorkBudgetPolicy::total_probe};
+    require(continuous_total_probe.tick_limit()==std::numeric_limits<std::uint32_t>::max()&&
+            continuous_total_probe.limit_reached(1,50000),
+            "tick horizon and work cap are independent policy choices");
+    std::cout<<"PASS gameplay work independent of presentation; explicit diagnostic override\n";
 
     // Two real VMs run beyond both historical limits without wall-clock pacing.
     // Each wait completes on the next tick; the same run generation is retained.
@@ -82,6 +125,90 @@ int main(){try{
                 busy_scheduler.instructions_last_tick()==20000,"each entity receives exactly one bounded tick grant");
     }
     std::cout<<"PASS bounded CPU slices renew independently per entity and tick\n";
+
+    // A finite integrated run must perform the same true-cycle work as the
+    // displayed run, including when cumulative instructions exceed probe caps.
+    odh::Vm headless_one({{root(),busy}}),headless_two({{root(),busy}});
+    headless_one.start(root());headless_two.start(root());
+    odh::EntityVmScheduler headless_scheduler(2);
+    require(headless_scheduler.add(1,headless_one)&&headless_scheduler.add(2,headless_two),
+            "integrated headless busy VMs registered");
+    for(std::uint64_t tick=1;tick<=3;++tick){
+        const auto used=headless_one.steps()+headless_two.steps();
+        require(!integrated_headless.limit_reached(tick-1,used)&&
+                headless_scheduler.tick(tick,integrated_headless.tick_budget(used,2),
+                    integrated_headless.entity_budget(used)),
+                "finite integrated gameplay renews actual VM work without a display");
+        require(headless_one.steps()==tick*10000&&headless_two.steps()==tick*10000&&
+                headless_scheduler.instructions_last_tick()==20000,
+                "undisplayed true cycles receive the same bounded grants as displayed cycles");
+    }
+    require(headless_one.steps()==busy_one.steps()&&headless_two.steps()==busy_two.steps()&&
+            headless_one.status()==busy_one.status()&&headless_two.status()==busy_two.status()&&
+            integrated_headless.limit_reached(3,headless_one.steps()+headless_two.steps()),
+            "finite undisplayed and displayed runs match VM state and retain the finite stopping condition");
+    std::cout<<"PASS equal gameplay work for actual finite undisplayed VMs\n";
+
+    // Real VMs expose the large-lot funding error: one ordinary action needs
+    // 1000 instructions before waiting; every other object waits after one.
+    // The old aggregate640k gave the first of744 runnable VMs only861, even
+    // though the actual total work is1743. No busy loop or raised VM cap is
+    // needed to reproduce that false budget interruption.
+    const auto large_lot=[&](std::size_t count,bool legacy_cap,
+                             const PersonSessionPolicy& policy){
+        std::vector<std::uint64_t> calls(count);
+        std::vector<std::unique_ptr<odh::Vm>> entities;entities.reserve(count);
+        odh::EntityVmScheduler city(count);
+        const auto action=routine({{33,0,255,{}}});
+        const auto ordinary=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+                                const odh::Ts1Temps&,const odh::VmDispatch&){
+            if(instruction.opcode!=33)return odh::PrimitiveOutcome{};
+            const auto index=static_cast<std::size_t>(frame.context.caller-1);
+            const auto limit=index==0?1000u:1u;
+            return odh::PrimitiveOutcome{++calls.at(index)<limit?
+                odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::wait,{}};
+        };
+        for(std::size_t n=0;n<count;++n){
+            auto vm=std::make_unique<odh::Vm>(odh::RoutineSet{{root(),action}},
+                odh::VmMemory{},odh::VmLimits{},ordinary);
+            const auto id=static_cast<std::int16_t>(n+1);
+            require(vm->start(root(),{id,id,id,0})==odh::VmStatus::running,
+                    "large-lot ordinary VM starts");
+            require(city.add(id,*vm),"large-lot VM registered");entities.push_back(std::move(vm));
+        }
+        const auto grant=legacy_cap?std::uint64_t{640000}:policy.tick_budget(0,city.size());
+        require(city.tick(1,grant,policy.entity_budget(0),{},{},{},
+                    odh::EntityVmScheduler::ControllerOrder::per_entity),
+                "large-lot real scheduler tick executes");
+        if(legacy_cap){
+            const auto first=city.first_budget_yield();
+            require(count==744&&city.budget_yield_count()==1&&first&&first->entity==1&&
+                    first->granted==861&&first->used==861&&calls[0]==861&&
+                    entities[0]->status()==odh::VmStatus::budget_exhausted&&
+                    city.instructions_last_tick()==861+count-1,
+                    "legacy64-slice cap spuriously truncates the first ordinary action with ample unused funding");
+        }else{
+            require(city.budget_yield_count()==0&&calls[0]==1000&&
+                    city.instructions_last_tick()==1000+count-1,
+                    "all ordinary large-lot actions finish their tick without a fabricated budget yield");
+            for(std::size_t n=0;n<count;++n)
+                require(entities[n]->status()==odh::VmStatus::waiting&&
+                        calls[n]==(n==0?1000u:1u)&&
+                        entities[n]->steps()<=PersonSessionPolicy::instructions,
+                        "actual per-entity execution remains bounded by the unchanged10k safety slice");
+        }
+    };
+    large_lot(744,true,integrated_headless);
+    for(const auto count:{1u,64u,65u,293u,744u}){
+        large_lot(count,false,integrated_headless);
+        large_lot(count,false,bounded_game_window);
+    }
+    for(const auto count:{0u,64u,65u,744u})
+        require(explicit_total_probe.tick_budget(0,count)==50000&&
+                explicit_total_probe.tick_budget(49999,count)==1&&
+                explicit_total_probe.tick_budget(50000,count)==0,
+                "large entity counts do not expand the explicit diagnostic total budget");
+    std::cout<<"PASS old744-VM starvation reproduced; funded1/64/65/293/744 gameplay matrix; total probes unchanged\n";
 
     for(std::size_t n=0;n<static_cast<std::size_t>(PersonDiagnostic::count);++n){
         PersonDiagnosticRetention category;

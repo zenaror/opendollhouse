@@ -24,12 +24,17 @@ float coordinate(std::uint32_t bits) {
     return n/16.0f;
 }
 }
+std::array<float,3> free_graphics_position(EntityKind kind,const EntityPosition& position) {
+    if((kind!=EntityKind::object&&kind!=EntityKind::avatar)||position.level<=0||position.direction>7)
+        throw FormatError("free graphics position has invalid entity kind, level or direction");
+    return free_position(kind,position);
+}
 GraphicsEntity graphics_entity(const World& world,std::int16_t id,GraphicsSlotResolver resolver) {
     const auto* child=world.find(id);
     if(!child)throw FormatError("graphics entity does not exist");
     validate(*child);
     GraphicsEntity result{child->id,child->generation,child->kind,
-                          free_position(child->kind,*child->position),child->position->direction,0};
+                          free_graphics_position(child->kind,*child->position),child->position->direction,0};
     if(!child->attachment)return result;
     const auto attachment=*child->attachment;
     const auto child_position=*child->position;

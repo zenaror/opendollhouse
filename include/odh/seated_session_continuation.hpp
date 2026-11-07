@@ -26,6 +26,10 @@ std::array<std::uint8_t,32> session_loaded_bank_fingerprint(const RoutineSet&);
 // its Playback wait must match the current VM pending opcode 44 completely.
 void validate_seated_session_continuation(const SessionBundle&);
 void validate_seated_session_continuation(const SessionBundle&, const SessionSeatedContinuation&);
+// Generic execution already preserves the actual VM/queues/route ancestry and
+// installed banks. Validate current physical posture without asserting a
+// completed player Sit or requiring its legacy sidecar. Value-only, no calls.
+void validate_generic_session_posture(const SessionBundle&);
 // Validates profile selection, ordering and complete seated actor coverage.
 void validate_seated_session_continuations(const SessionBundle&);
 const SessionSeatedContinuation* find_seated_session_continuation(const SessionBundle&, std::int16_t);

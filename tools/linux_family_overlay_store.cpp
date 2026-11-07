@@ -71,10 +71,10 @@ std::string identity_hex(const std::array<std::uint8_t, 32>& identity) {
 }
 
 std::filesystem::path linux_family_overlay_path(
-        const std::array<std::uint8_t, 32>& neighborhood_identity) {
+        const std::array<std::uint8_t, 32>& neighborhood_identity, LinuxNeighborhoodStorage storage) {
     const auto config = linux_user_config_path();
     if (config.empty()) throw std::runtime_error("HOME and XDG_CONFIG_HOME are unset");
-    return config.parent_path() / "player-state" /
+    return storage.qualify(config.parent_path() / "player-state") /
         ("neighborhood-" + identity_hex(neighborhood_identity) + ".odhp");
 }
 
@@ -127,9 +127,10 @@ std::optional<odh::FamilyOverlay> read_linux_family_overlay(
 }
 
 std::optional<odh::FamilyOverlay> read_linux_family_overlay_for_neighborhood(
-        const std::filesystem::path& neighborhood_iff) {
+        const std::filesystem::path& neighborhood_iff, LinuxNeighborhoodStorage storage) {
+    storage.verify_neighborhood_source(neighborhood_iff);
     const auto identity = linux_neighborhood_identity(neighborhood_iff);
-    auto overlay = read_linux_family_overlay(linux_family_overlay_path(identity));
+    auto overlay = read_linux_family_overlay(linux_family_overlay_path(identity,storage));
     if (overlay && overlay->neighborhood_identity != identity)
         throw odh::FormatError("saved family overlay identity does not match Neighborhood.iff");
     return overlay;

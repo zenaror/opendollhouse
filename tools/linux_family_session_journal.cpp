@@ -38,7 +38,18 @@ bool same_identity(const odh::SessionHouseholdMember& a, const odh::SessionHouse
 // Refuse links without changing permissions of an existing user directory.
 // Flush the parent after mkdir so the archive's durable namespace survives too.
 void ensure_directory(const std::filesystem::path& path) {
-    if (::mkdir(path.c_str(), 0700) != 0 && errno != EEXIST)
+    int created=::mkdir(path.c_str(),0700);
+    if(created!=0&&errno==ENOENT){
+        // Original adoption may be the profile's FIRST player-state write.
+        // A move-in used to create these parents before the first checkpoint.
+        // Create only missing parents, retaining the same no-follow directory
+        // verification and durability checks at every level we create.
+        const auto parent=path.parent_path();
+        if(parent.empty()||parent==path)throw std::runtime_error("family session archive has no existing parent");
+        ensure_directory(parent);
+        created=::mkdir(path.c_str(),0700);
+    }
+    if(created!=0&&errno!=EEXIST)
         throw std::runtime_error("cannot create family session archive directory");
     const int fd = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) throw std::runtime_error("family session archive path is not a real directory");
@@ -54,10 +65,17 @@ void ensure_directory(const std::filesystem::path& path) {
 
 FamilySessionJournal::FamilySessionJournal(std::vector<odh::FamilyEntry> source,
         std::array<std::uint8_t, 32> identity, std::optional<odh::FamilyOverlay> expected,
-        std::uint16_t house, std::uint16_t family_id, std::optional<odh::FamilyOverlay> pending_move_in)
+        std::uint16_t house, std::uint16_t family_id, std::optional<odh::FamilyOverlay> pending_move_in,
+        LinuxNeighborhoodStorage storage)
+    :FamilySessionJournal(std::move(source),identity,std::move(expected),house,family_id,
+        std::move(pending_move_in),true,storage) {}
+FamilySessionJournal::FamilySessionJournal(std::vector<odh::FamilyEntry> source,
+        std::array<std::uint8_t,32> identity,std::optional<odh::FamilyOverlay> expected,
+        std::uint16_t house,std::uint16_t family_id,std::optional<odh::FamilyOverlay> pending_move_in,bool verify_disk,
+        LinuxNeighborhoodStorage storage)
     : source_(std::move(source)), identity_(identity), expected_(std::move(expected)),
       pending_move_in_(std::move(pending_move_in)),
-      overlay_path_(linux_family_overlay_path(identity)) {
+      overlay_path_(linux_family_overlay_path(identity,storage)) {
     if (pending_move_in_) {
         const auto old_count = expected_ ? expected_->assignments.size() : 0;
         if (pending_move_in_->assignments.size() != old_count + 1)
@@ -81,7 +99,50 @@ FamilySessionJournal::FamilySessionJournal(std::vector<odh::FamilyEntry> source,
     member_guids_ = family->family.member_guids;
     std::sort(member_guids_.begin(), member_guids_.end());
     archive_directory_ = overlay_path_.parent_path() / "sessions" / hex(identity_);
-    verify_current();
+    if(verify_disk)verify_current();
+}
+FamilySessionJournal FamilySessionJournal::adopt_original_session(std::vector<odh::FamilyEntry> source,
+        std::array<std::uint8_t,32> identity,std::optional<odh::FamilyOverlay> expected,
+        std::uint16_t house,std::uint16_t family_id,odh::SessionBundle capture,
+        const std::function<void(const odh::SessionBundle&,const std::vector<std::uint8_t>&)>& validate_reopen, LinuxNeighborhoodStorage storage,std::optional<std::int32_t> property_value) {
+    if(property_value&&*property_value<0)throw odh::FormatError("original adoption property value is negative");
+    if(!validate_reopen||!capture.host.family_budget)
+        throw odh::FormatError("original adoption requires actual capture and native restore validation");
+    // Obtain the existing source occupancy, not a guessed new epoch. Planning
+    // and lease assignment below use only replayed immutable source facts.
+    const auto baseline=expected?*expected:odh::FamilyOverlay{identity,{}};
+    const auto replay=odh::replay_family_overlay(source,identity,baseline);
+    const auto current=std::find_if(replay.states.begin(),replay.states.end(),
+        [&](const auto& state){return state.family_chunk_id==family_id;});
+    if(current==replay.states.end())throw odh::FormatError("original adoption family is absent");
+    const odh::SessionFamilyLease lease{identity,current->family_identity,current->occupancy_epoch,family_id};
+    if(capture.family_lease&&!same(*capture.family_lease,lease))
+        throw odh::FormatError("original adoption capture has another occupancy lease");
+    capture.family_lease=lease;
+    const auto encoded=odh::encode_session_bundle(capture);
+    (void)odh::decode_session_bundle(encoded); // Full canonical native validation.
+    const auto digest=odh::sha256(encoded.data(),encoded.size());
+    auto adopted=odh::plan_family_original_adoption_overlay(source,identity,
+        expected?&*expected:nullptr,family_id,house,*capture.host.family_budget,digest,property_value);
+    if(expected&&expected->type_attributes&&!capture.type_attributes)
+        throw odh::FormatError("original adoption cannot omit the current shared neighborhood type attributes");
+    if(capture.type_attributes)
+        adopted=odh::plan_neighborhood_type_attributes_overlay(identity,&adopted,*capture.type_attributes);
+    (void)odh::encode_family_overlay(adopted); // Budget/type validation before any archive publication.
+    FamilySessionJournal journal(std::move(source),identity,adopted,house,family_id,std::nullopt,false,storage);
+    journal.validate_bundle(capture);
+    validate_reopen(capture,encoded);
+    // The complete validated archive and its real digest are ready before any
+    // filesystem mutation. A stale external head never becomes our authority.
+    journal.expected_=std::move(expected);
+    journal.verify_current();
+    ensure_directory(journal.archive_directory_.parent_path());
+    ensure_directory(journal.archive_directory_);
+    const auto path=publish_session_archive_immutable(journal.archive_directory_,odh::decode_session_archive(encoded));
+    if(path!=*journal.checkpoint_path())
+        throw odh::FormatError("original adoption archive path differs from its exact digest");
+    journal.commit_overlay(adopted);
+    return journal;
 }
 odh::SessionFamilyLease FamilySessionJournal::lease() const {
     return {identity_, state_.family_identity, state_.occupancy_epoch, state_.family_chunk_id};
@@ -183,7 +244,9 @@ void FamilySessionJournal::validate_restore(const std::vector<std::uint8_t>& enc
     if (*bundle.host.family_budget != state_.budget)
         throw odh::FormatError("session archive budget differs from the committed checkpoint");
 }
-std::filesystem::path FamilySessionJournal::publish(odh::SessionBundle bundle) {
+std::filesystem::path FamilySessionJournal::publish(odh::SessionBundle bundle,
+        std::optional<std::int32_t> property_value) {
+    if(property_value&&*property_value<0)throw odh::FormatError("checkpoint property value is negative");
     durability_uncertain_ = false;
     verify_current();
     if (pending_move_in_)
@@ -199,15 +262,22 @@ std::filesystem::path FamilySessionJournal::publish(odh::SessionBundle bundle) {
         throw odh::FormatError("first destination checkpoint differs from the applied carry roster");
     const auto encoded = odh::encode_session_bundle(bundle);
     const auto digest = odh::sha256(encoded.data(), encoded.size());
+    const bool unchanged = checkpoint_path() && state_.checkpoint_sha256 == digest &&
+        state_.budget == *bundle.host.family_budget&&
+        (!property_value||state_.value_in_arch==*property_value);
+    auto replacement = unchanged ? *expected_ : odh::plan_family_checkpoint_overlay(source_, identity_, &*expected_,
+        state_.family_chunk_id, state_.house_number, state_.occupancy_epoch, *bundle.host.family_budget, digest,property_value);
+    if(expected_->type_attributes&&!bundle.type_attributes)
+        throw odh::FormatError("checkpoint cannot omit the current shared neighborhood type attributes");
+    if(bundle.type_attributes)
+        replacement=odh::plan_neighborhood_type_attributes_overlay(identity_,&replacement,*bundle.type_attributes);
+    (void)odh::encode_family_overlay(replacement); // Fail before I/O if combined checkpoint/bank cannot fit.
     ensure_directory(archive_directory_.parent_path());
     ensure_directory(archive_directory_);
     const auto path = publish_session_archive_immutable(archive_directory_, odh::decode_session_archive(encoded));
-    const bool unchanged = checkpoint_path() && state_.checkpoint_sha256 == digest &&
-        state_.budget == *bundle.host.family_budget;
-    const auto replacement = unchanged ? *expected_ : odh::plan_family_checkpoint_overlay(source_, identity_, &*expected_,
-        state_.family_chunk_id, state_.house_number, state_.occupancy_epoch, *bundle.host.family_budget, digest);
     commit_overlay(replacement);
     state_.budget = *bundle.host.family_budget;
+    if(property_value)state_.value_in_arch=*property_value;
     state_.checkpoint_sha256 = digest;
     state_.checkpoint_house = state_.house_number;
     state_.checkpoint_epoch = state_.occupancy_epoch;

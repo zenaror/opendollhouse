@@ -42,6 +42,22 @@ std::unique_ptr<Fixture> restore(const Fixture& source){
         result->queue.bind(result->vm)&&result->queue.restore_snapshot(codec(source.queue.snapshot())),"restore player VM and native queue");
     result->queue.set_queue_skipped_handler([](const auto&){return true;});return result;
 }
+void immediate_player_request(){
+    Fixture source;const auto uid=source.enqueue(4097,2,4);
+    odh::UserInteractionTracker tracker;
+    require(tracker.observe(source.queue.snapshot())&&tracker.current(1,uid)&&
+        tracker.current(1,uid)->state==odh::UserInteractionState::pending,
+        "immediate player request keeps ordinary tracking identity");
+    auto wrong=source.queue.snapshot();wrong.actions[0].call.return_mode=odh::VmCallReturnMode::interaction_next_tick;
+    require(!tracker.observe(wrong),"immediate request rejects mismatched call mode without changing records");
+    require(source.queue.try_run_immediate({})&&tracker.observe(source.queue.snapshot())&&
+        tracker.current(1,uid)->state==odh::UserInteractionState::active,
+        "immediate request becomes active on its original native identity");
+    require(source.vm.run(8)==odh::VmStatus::yielded&&source.queue.observe()&&
+        tracker.observe(source.queue.snapshot())&&tracker.current(1,uid)->result==true&&
+        tracker.current(1,uid)->state==odh::UserInteractionState::completed_true,
+        "immediate return completes the player request while preserving parent execution");
+}
 void queued_and_reopened(){
     Fixture source;const auto first=source.enqueue(),second=source.enqueue(4098,3);
     odh::UserInteractionTracker tracker;
@@ -210,6 +226,6 @@ void bounds_and_reordering(){
     odh::UserInteractionTracker none(2,0);require(none.observe(source.queue.snapshot())&&none.records().empty(),"reopen never fabricates unknown terminal history from the last completion event");
 }
 }
-int main(){try{queued_and_reopened();nested_child_is_not_user_completion();cancellation_and_unknown_disappearance();generations_and_actor_isolation();terminal_transition_retention();bounds_and_reordering();
+int main(){try{immediate_player_request();queued_and_reopened();nested_child_is_not_user_completion();cancellation_and_unknown_disappearance();generations_and_actor_isolation();terminal_transition_retention();bounds_and_reordering();
     std::cout<<"user_interaction_tracker: "<<checks<<" checks passed (synthetic native execution/snapshot evidence)\n";
 }catch(const std::exception& error){std::cerr<<"user_interaction_tracker: "<<error.what()<<'\n';return 1;}}

@@ -1,13 +1,17 @@
 #pragma once
 
 #include "odh/raster.hpp"
+#include "odh/cursor.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace odh_host {
+using WindowCursorHandle=std::uint32_t;
 
 enum class WindowQuitReason { none, escape_key, window_manager_close, window_destroyed };
 
@@ -27,11 +31,18 @@ constexpr WindowQuitReason record_window_quit_reason(
     return current == WindowQuitReason::none ? incoming : current;
 }
 
+enum class WindowPointerKind { press, motion, release };
+struct WindowPointerEvent {
+    WindowPointerKind kind=WindowPointerKind::motion;
+    std::int32_t x=0,y=0;
+    bool shift=false,control=false;
+};
 struct WindowInput {
     bool quit = false, action = false, confirm = false, pause = false, interrupt = false, stand = false;
     bool neighborhood = false, save = false, move_out = false, redraw = false;
     bool create_family = false;
     int rotation = 0, zoom = 0, interaction_selection_delta = 0;
+    int dialog_scroll_delta = 0; // PageUp/PageDown or mouse wheel; modal presentation only.
     // Last Button1 press drained by this poll, in drawable pixels. Keyboard
     // action does not fabricate a pointer position; coordinates may be outside.
     std::optional<std::array<std::int32_t,2>> primary_click;
@@ -40,7 +51,48 @@ struct WindowInput {
     // Text consumers should handle these separately from gameplay bindings.
     std::string text_input_utf8;
     bool text_backspace = false;
+    // Presentation only: Home/End select the supported high/low wall views.
+    std::optional<bool> walls_down;
+    std::optional<std::array<std::int32_t,2>> pointer_motion;
+    // Local client coordinates. A held right button retains its press origin;
+    // leaving the window or losing focus releases camera input.
+    std::optional<std::array<std::int32_t,2>> pointer_position,right_press_origin;
+    std::array<int,2> camera_steps{};
+    bool primary_held=false;
+    bool live_mode=false,buy_mode=false,sell_object=false;
+    int object_rotation=0;
+    bool build_mode=false,pointer_cancelled=false,pointer_overflow=false;
+    bool options_mode=false;
+    // Actual tick multiplier; text screens may ignore the request while still
+    // consuming the printable digit from text_input_utf8.
+    std::optional<std::uint8_t> simulation_speed;
+    std::vector<WindowPointerEvent> pointer_events;
+    // Separate presentation requests: wheel requires a popup hit; page keys
+    // address an open popup. Modal consumers retain their existing channel.
+    int catalog_wheel_steps=0,catalog_page_steps=0;
 };
+// Coalesced commands and pointer transitions keep their normal consumer. A
+// query may intercept only scrolling plus harmless pointer motion/redraw.
+inline bool window_catalog_scroll_only(const WindowInput& input) noexcept {
+    return (input.catalog_wheel_steps||input.catalog_page_steps)&&
+        !input.primary_click&&!input.primary_held&&!input.right_press_origin&&!input.quit&&
+        !input.action&&!input.confirm&&!input.pause&&!input.save&&!input.neighborhood&&!input.move_out&&
+        !input.stand&&!input.interrupt&&!input.sell_object&&!input.live_mode&&!input.buy_mode&&
+        !input.build_mode&&!input.options_mode&&!input.create_family&&!input.rotation&&!input.zoom&&
+        !input.object_rotation&&!input.walls_down&&!input.simulation_speed&&
+        !input.camera_steps[0]&&!input.camera_steps[1]&&!input.pointer_cancelled&&!input.pointer_overflow&&
+        input.text_input_utf8.empty()&&!input.text_backspace&&
+        std::none_of(input.pointer_events.begin(),input.pointer_events.end(),[](const auto& event){
+            return event.kind!=WindowPointerKind::motion;
+        });
+}
+// A full gesture can arrive within one poll. Keep press/move/release order;
+// overflow cancels the whole gesture rather than publishing a truncated drag.
+inline void append_window_pointer_event(WindowInput& input,WindowPointerEvent event){
+    if(input.pointer_overflow)return;
+    if(input.pointer_events.size()>=256){input.pointer_events.clear();input.pointer_overflow=true;input.pointer_cancelled=true;return;}
+    input.pointer_events.push_back(event);
+}
 
 // X11 letter key symbols share their ASCII values; no Xlib types are exposed.
 constexpr bool window_create_family_shortcut(unsigned long key, bool held) noexcept {
@@ -74,10 +126,23 @@ public:
     // before XIM filtering there, while CAS text fields keep normal input.
     WindowInput poll(bool allow_create_family_shortcut = false);
     WindowQuitReason quit_reason() const noexcept;
+    // Native destruction is independent of which quit request arrived first.
+    bool alive() const noexcept;
     // A nested screen can consume Escape to cancel and return to its parent;
     // window-manager close and window destruction remain sticky.
     void clear_escape_quit_reason() noexcept;
+    // Consume an alive window's close request before a cancellable prompt.
+    // Destruction is terminal and is never acknowledged as a request.
+    bool acknowledge_window_close_request() noexcept;
     void set_title(const std::string& title);
+    // Handles are private IDs in this window's registry, never native XIDs.
+    // Malformed geometry/arrays/hotspots throw before native requests. Valid
+    // inversion, partial alpha, nonmonochrome colors, server-size limits or
+    // an exhausted128-entry registry return none without approximating them.
+    std::optional<WindowCursorHandle> create_cursor(const odh::CursorImage&);
+    // None restores the inherited platform cursor. Re-selecting the current
+    // handle does no native work. Invalid local handles throw before requests.
+    void use_cursor(std::optional<WindowCursorHandle>);
     // Read only this backend's drawable, synchronizing pending drawing first.
     std::vector<std::array<std::uint8_t,4>> readback() const;
     unsigned long native_id() const;

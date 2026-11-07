@@ -192,6 +192,8 @@ int main() {
     const VmFrame ep5_frame{routine_key(4096), 0, {10, 10, 20, 0}, {}, {}};
     require(ep5_world.write(ep5_frame, 0, 0, 44) && ep5_world.write(ep5_frame, 1, 0, 77),
             "generic EP5 caller and stack-object attributes");
+    std::vector<EntryPoint> caller_ep5(27);caller_ep5[5].action=4108;
+    require(ep5_world.define_type(10,0x1000000a)&&ep5_world.define_entry_points(10,caller_ep5),"bind actual private EP5 caller definition/table");
     const auto ep5_snapshot = ep5_world.snapshot();
     const auto ep5_before = encode_world_snapshot(ep5_snapshot);
     Instruction caller_attribute_test{};
@@ -226,6 +228,8 @@ int main() {
             "generic UrnStone caller and avatar fixture");
     const VmFrame urn_frame{routine_key(4105),0,{11,11,16,1},{},{}};
     require(urn_world.write(urn_frame,0,1,30),"set UrnStone caller Attribute[1]");
+    auto urn_ep5=caller_ep5;urn_ep5[5].action=4105;
+    require(urn_world.define_type(11,0x1000000b)&&urn_world.define_entry_points(11,urn_ep5),"bind actual UrnStone EP5 definition/table");
     const auto urn_snapshot=urn_world.snapshot();
     const auto urn_before=encode_world_snapshot(urn_snapshot);
     const RoutineSet urn_owner{{routine_key(4105), urnstone_bhav()}};
@@ -267,7 +271,7 @@ int main() {
         4000, 10, 20, {}, 8);
     require(generic.state == ReadOnlyBhavState::unsupported &&
             generic.reason == ReadOnlyBhavReason::invalid_resources,
-            "generic EP5 rejects non-private root owners");
+            "generic EP5 rejects a root that mismatches the Caller entry point");
     generic = evaluate_read_only_entry_point5_bhav(ep5_snapshot, {}, ep5_owner,
         4108, 10, 20, 2, 8);
     require(generic.state == ReadOnlyBhavState::unsupported &&
@@ -276,6 +280,81 @@ int main() {
     require(encode_world_snapshot(ep5_snapshot) == ep5_before &&
             encode_world_snapshot(ep5_world.snapshot()) == ep5_before,
             "all generic EP5 variants leave the live World unchanged");
+
+    // Root ownership is a three-scope contract, independently of the numeric
+    // private owner label used by the disposable VM. The selected Caller EP5
+    // must name this exact root; a same-number routine in another bank is not
+    // an implicit resource fallback.
+    const auto with_ep5=[&](std::uint16_t action){auto snapshot=ep5_snapshot;
+        for(auto& entity:snapshot.entities)if(entity.id==10)entity.entry_points->at(5).action=action;
+        return snapshot;};
+    Instruction type_only{32,0xfe,0xff,{0x56,0x6b,0x71,0x43,0,0,10,0}};
+    const Bhav type_bhav{0x8002,{type_only},{},Bhav::Metadata{0,4,0,0}};
+    auto semiglobal_snapshot=with_ep5(8206);
+    const auto semi_before=encode_world_snapshot(semiglobal_snapshot);
+    RoutineSet semiglobal_owner{{routine_key(8206),type_bhav}};
+    for(const auto ghost:std::vector<std::optional<std::int16_t>>{std::nullopt,0,1}){
+        const auto answer=evaluate_read_only_entry_point5_bhav(semiglobal_snapshot,{},semiglobal_owner,8206,10,20,ghost,16);
+        require(answer.state==ReadOnlyBhavState::evaluated_true&&answer.steps==(ghost?1U:2U),
+            "semiglobal-rooted8206 TestObjectType executes with exact Caller EP5 and isolated ghost variants");
+    }
+    auto negative=semiglobal_snapshot;
+    for(auto& entity:negative.entities)if(entity.id==20)entity.definition->guid=other_guid;
+    require(evaluate_read_only_entry_point5_bhav(negative,{},semiglobal_owner,8206,10,20,{},16).state==ReadOnlyBhavState::evaluated_false,
+        "semiglobal TestObjectType false is a known answer rather than unsupported");
+    auto missing_link=evaluate_read_only_entry_point5_bhav(semiglobal_snapshot,{}, {},8206,10,20,{},16);
+    require(missing_link.state==ReadOnlyBhavState::unsupported&&missing_link.reason==ReadOnlyBhavReason::invalid_resources&&missing_link.steps==0,
+        "missing linked bank/root is rejected before any execution");
+    require(evaluate_read_only_entry_point5_bhav(ep5_snapshot,{},semiglobal_owner,8206,10,20,{},16).state==ReadOnlyBhavState::unsupported,
+        "a supplied linked bank cannot override another Caller EP5 action");
+    auto no_table=semiglobal_snapshot;
+    for(auto& entity:no_table.entities)if(entity.id==10)entity.entry_points.reset();
+    require(evaluate_read_only_entry_point5_bhav(no_table,{},semiglobal_owner,8206,10,20,{},16).state==ReadOnlyBhavState::unsupported,
+        "missing Caller entry-point table stays unknown");
+    // Semi -> private -> semi calls retain the same exact resource owner.
+    const auto call=[](std::uint16_t action){return Bhav{0x8002,{{action,0xfe,0xff,{}}},{},Bhav::Metadata{0,4,0,0}};};
+    RoutineSet linked_chain{{routine_key(8206),call(4109)},{routine_key(4109),call(8210)},{routine_key(8210),type_bhav}};
+    require(evaluate_read_only_entry_point5_bhav(semiglobal_snapshot,{},linked_chain,8206,10,20,{},16).state==ReadOnlyBhavState::evaluated_true,
+        "semiglobal EP5 can call its exact private and semiglobal helpers");
+    const RoutineSet private_linked{{routine_key(4108),call(8206)},{routine_key(8206),type_bhav}};
+    require(evaluate_read_only_entry_point5_bhav(ep5_snapshot,{},private_linked,4108,10,20,{},16).state==ReadOnlyBhavState::evaluated_true,
+        "private-rooted EP5 retains its explicit linked semiglobal calls");
+    linked_chain.erase(routine_key(8210));
+    require(evaluate_read_only_entry_point5_bhav(semiglobal_snapshot,{},linked_chain,8206,10,20,{},16).state==ReadOnlyBhavState::unsupported,
+        "missing nested linked helper cannot fall back to another owner");
+    // Global EP5 roots are valid in VMEntity.GetRoutineWithOwner. Their root
+    // belongs exclusively to the host's selected explicit Global bank.
+    const auto global_snapshot=with_ep5(300);
+    const RoutineSet global_root{{routine_key(300),type_bhav}};
+    require(evaluate_read_only_entry_point5_bhav(global_snapshot,global_root,{},300,10,20,{},16).state==ReadOnlyBhavState::evaluated_true,
+        "exact global EP5 root executes from the selected Global bank");
+    const RoutineSet global_chain{{routine_key(300),call(4109)}};
+    const RoutineSet global_descendants{{routine_key(4109),call(8210)},{routine_key(8210),type_bhav}};
+    require(evaluate_read_only_entry_point5_bhav(global_snapshot,global_chain,global_descendants,300,10,20,{},16).state==ReadOnlyBhavState::evaluated_true,
+        "global-rooted EP5 keeps the exact Caller's private/linked descendant owner");
+    require(evaluate_read_only_entry_point5_bhav(global_snapshot,{},global_root,300,10,20,{},16).state==ReadOnlyBhavState::unsupported,
+        "global EP5 root cannot be supplied in a private/linked owner bank");
+    require(evaluate_read_only_entry_point5_bhav(with_ep5(255),{}, {},255,10,20,{},16).state==ReadOnlyBhavState::unsupported&&
+        evaluate_read_only_entry_point5_bhav(with_ep5(0),{}, {},0,10,20,{},16).state==ReadOnlyBhavState::unsupported,
+        "entry action0..255 is not an executable source BHAV");
+    // Unknown ghost remains a real uncertainty when the linked tree reads it.
+    RoutineSet ghost_owner{{routine_key(8206),ghost_bhav}};
+    require(evaluate_read_only_entry_point5_bhav(semiglobal_snapshot,{},ghost_owner,8206,10,20,1,16).state==ReadOnlyBhavState::evaluated_true&&
+        evaluate_read_only_entry_point5_bhav(semiglobal_snapshot,{},ghost_owner,8206,10,20,0,16).state==ReadOnlyBhavState::evaluated_false&&
+        evaluate_read_only_entry_point5_bhav(semiglobal_snapshot,{},ghost_owner,8206,10,20,{},16).state==ReadOnlyBhavState::unsupported,
+        "semiglobal ghost arguments are isolated and disagreeing results stay unsupported");
+    Instruction increment_temp{2,1,0xff,{0,0,1,0,0,3,8,7}}; // PlusEquals=3; operator0 is GreaterThan.
+    Instruction temp_one{2,0xfe,0xff,{0,0,1,0,0,2,8,7}};
+    RoutineSet isolated{{routine_key(8206),{0x8002,{increment_temp,temp_one},{},Bhav::Metadata{0,4,0,0}}}};
+    const auto isolated_result=evaluate_read_only_entry_point5_bhav(semiglobal_snapshot,{},isolated,8206,10,20,{},16);
+    if(isolated_result.state!=ReadOnlyBhavState::evaluated_true||isolated_result.steps!=4)
+        std::cerr<<"isolated ghost Temp EP5 state="<<static_cast<int>(isolated_result.state)
+            <<" reason="<<static_cast<int>(isolated_result.reason)<<" steps="<<isolated_result.steps
+            <<" diagnostic="<<isolated_result.diagnostic<<'\n';
+    require(isolated_result.state==ReadOnlyBhavState::evaluated_true&&isolated_result.steps==4,
+        "normal and ghost evaluations each begin with a fresh disposable Temp bank");
+    require(encode_world_snapshot(semiglobal_snapshot)==semi_before&&encode_world_snapshot(ep5_world.snapshot())==ep5_before,
+        "three-scope EP5 evaluation never mutates input or live World");
 
     // Reproduce the real DiningTables.iff#4122 -> Global.iff#355 path. Global
     // 355 searches the avatar list with SetToNext(Person), then compares each
@@ -287,6 +366,8 @@ int main() {
             dining_world.create(20, EntityKind::avatar, {2, 66}) &&
             dining_world.set_person_data(20, 65, 0),
             "DiningTables caller and live avatar fixture");
+    auto dining_ep5=caller_ep5;dining_ep5[5].action=4122;
+    require(dining_world.define_type(10,0x2000000a)&&dining_world.define_entry_points(10,dining_ep5),"bind actual DiningTables EP5 definition/table");
     const auto dining_snapshot = dining_world.snapshot();
     const auto dining_before = encode_world_snapshot(dining_snapshot);
     const auto dining_root = dining_table_bhav();
@@ -324,6 +405,7 @@ int main() {
     require(no_person_world.create(10, EntityKind::object, {2}) &&
             no_person_world.create(20, EntityKind::object, {2}),
             "non-avatar StackObject fixture");
+    require(no_person_world.define_type(10,0x2000000a)&&no_person_world.define_entry_points(10,dining_ep5),"bind non-avatar query caller EP5 definition/table");
     dining_run = evaluate_read_only_entry_point5_bhav(no_person_world.snapshot(),
         dining_globals, dining_owner, 4122, 10, 20, {}, 16);
     require(dining_run.state == ReadOnlyBhavState::evaluated_false,

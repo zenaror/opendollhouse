@@ -10,10 +10,10 @@ PropertyGroupValue inspect_property_group_value(const World& world,const SavedMu
     if(group.members.size()>4096 || group.members.size()>member_limit)return unresolved(R::member_budget);
     if(group.members.empty())return unresolved(R::empty_group);
     if(group.leader<=0)return unresolved(R::invalid_id);
-    if((group.master_guid && !*group.master_guid) || (!group.master_guid && group.members.size()!=1))
+    if(group.master_guid && !*group.master_guid)
         return unresolved(R::identity_mismatch);
     std::set<std::int16_t> members;
-    bool leader_found=false,repair=false;
+    bool leader_found=false,leader_multitile=false,repair=false;
     std::optional<std::int16_t> current_value;
     for(const auto id:group.members) {
         if(id<=0)return unresolved(R::invalid_id);
@@ -21,18 +21,29 @@ PropertyGroupValue inspect_property_group_value(const World& world,const SavedMu
         const auto* entity=world.find(id);
         if(!entity)return unresolved(R::missing_entity);
         if(!entity->definition || !entity->definition->guid)return unresolved(R::missing_identity);
-        if(entity->definition->master_guid!=group.master_guid)return unresolved(R::identity_mismatch);
-        const auto repair_word=entity->object_words.find(15);
-        if(repair_word==entity->object_words.end())return unresolved(R::missing_repair_state);
-        repair=repair || repair_word->second!=0;
+        if(entity->definition->master_guid&&!*entity->definition->master_guid)return unresolved(R::identity_mismatch);
+        if(group.master_guid&&entity->definition->master_guid!=group.master_guid)return unresolved(R::identity_mismatch);
         if(id==group.leader) {
-            leader_found=true;
-            const auto value_word=entity->object_words.find(41);
-            if(value_word==entity->object_words.end())return unresolved(R::missing_current_value);
-            current_value=value_word->second;
+            leader_found=true;leader_multitile=entity->definition->master_guid.has_value();
+            VmFrame address;address.context={id,id,id,0};
+            if(!world.bind_context_live(address.context))return unresolved(R::missing_entity);
+            current_value=world.read(address,3,41);
+            if(!current_value)return unresolved(R::missing_current_value);
         }
     }
     if(!leader_found)return unresolved(R::leader_absent);
+    // Source00432249 only follows the repair chain when ROOT's own definition
+    // is multitile. A non-MT root reads its own RepairState15/Value41 only;
+    // independently authenticated foreign members still belong to the complete
+    // partition but their repair words are not inputs to this source branch.
+    for(const auto id:group.members){
+        if(!leader_multitile&&id!=group.leader)continue;
+        VmFrame address;address.context={id,id,id,0};
+        if(!world.bind_context_live(address.context))return unresolved(R::missing_entity);
+        const auto repair_word=world.read(address,3,15);
+        if(!repair_word)return unresolved(R::missing_repair_state);
+        repair=repair||*repair_word!=0;
+    }
     // C++ signed integer division truncates toward zero, including odd negatives.
     const auto value=static_cast<std::int16_t>(repair?static_cast<int>(*current_value)/2:*current_value);
     return {PropertyValueStatus::resolved,R::none,current_value,value,repair};

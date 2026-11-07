@@ -2,6 +2,25 @@
 
 namespace odh {
 
+std::vector<std::int16_t> read_object_definition_words(const View& payload) {
+    const auto definition=read_object_definition(payload);
+    const auto limit=definition.version==136 ? 80U : 95U;
+    const auto count=static_cast<std::size_t>(
+        payload.size()/2<limit ? payload.size()/2 : limit);
+    const auto signed_word=[](std::uint32_t raw) {
+        return static_cast<std::int16_t>(raw<=32767 ? static_cast<std::int32_t>(raw)
+            : static_cast<std::int32_t>(raw)-65536);
+    };
+    std::vector<std::int16_t> words;
+    words.reserve(count);
+    // Match the source's modulo65535 (not a low-word mask).
+    words.push_back(signed_word(definition.version%0xffffU));
+    words.push_back(signed_word(definition.version>>16));
+    for(std::size_t index=2;index<count;++index)
+        words.push_back(signed_word(payload.le16(index*2)));
+    return words;
+}
+
 ObjectDefinition read_object_definition(const View& payload) {
     const auto version = payload.le32(0);
     // Both profiles share this prefix in OBJD.cs at pinned FreeSO revision
@@ -16,11 +35,17 @@ ObjectDefinition read_object_definition(const View& payload) {
                     : static_cast<std::int32_t>(sub) - 65536);
     const auto master = prefix.le16(20);
     ObjectDefinition result{version, prefix.le32(28), prefix.le16(18), master, signed_sub,
-            master != 0, extent, payload.size() - extent, prefix.le16(14), {}, {}, {}, {}, {}, {}};
+            master != 0, extent, payload.size() - extent, prefix.le16(14), {}, {}, {}, {}, {}, {}, {}};
     if (payload.size() >= 42) {
         result.slot_table_id = payload.le16(40);
         result.header_extent = 42;
         result.remaining_bytes = payload.size() - result.header_extent;
+    }
+    constexpr std::uint64_t global_extent=86;
+    if(payload.size()>=global_extent){
+        result.global_flag=payload.le16(84);
+        result.header_extent=global_extent;
+        result.remaining_bytes=payload.size()-global_extent;
     }
     // Simitone's v136/v138 profiles share the first 80 OBJD fields. The
     // VMOBJDVariable index includes the two 16-bit version words; LevelOffset
@@ -55,6 +80,13 @@ ObjectDefinition read_object_definition(const View& payload) {
         result.footprint_mask=payload.le16(154);
         result.header_extent=collision_extent;
         result.remaining_bytes=payload.size()-collision_extent;
+    }
+    if(version==136&&payload.size()>=160)result.type_attribute_guid=0;
+    if(version==138&&payload.size()>=188){
+        const auto raw=payload.le32(184);
+        result.type_attribute_guid=raw?raw:result.guid;
+        result.header_extent=188;
+        result.remaining_bytes=payload.size()-188;
     }
     return result;
 }

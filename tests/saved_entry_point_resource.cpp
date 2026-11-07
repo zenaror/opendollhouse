@@ -32,6 +32,17 @@ void write_far(const std::filesystem::path& path,const std::string& name,const s
     put(bytes,index+4,asset.size(),4);put(bytes,index+8,asset.size(),4);put(bytes,index+12,16,4);
     put(bytes,index+16,name.size(),4);bytes+=name;write(path,bytes);
 }
+void write_far_entries(const std::filesystem::path& path,const std::vector<std::pair<std::string,std::string>>& entries){
+    std::string bytes="FAR!byAZ";bytes.resize(16,'\0');put(bytes,8,1,4);
+    std::vector<std::uint32_t> offsets;
+    for(const auto& e:entries){offsets.push_back(static_cast<std::uint32_t>(bytes.size()));bytes+=e.second;}
+    put(bytes,12,static_cast<std::uint32_t>(bytes.size()),4);
+    const auto append=[&](std::uint32_t value){const auto at=bytes.size();bytes.resize(at+4,'\0');put(bytes,at,value,4);};
+    append(static_cast<std::uint32_t>(entries.size()));
+    for(std::size_t n=0;n<entries.size();++n){append(entries[n].second.size());append(entries[n].second.size());
+        append(offsets[n]);append(entries[n].first.size());bytes+=entries[n].first;}
+    write(path,bytes);
+}
 std::string objd(std::uint16_t uses_table){
     std::string bytes(162,'\0');put(bytes,0,138,4);put(bytes,28,0x12345678,4);put(bytes,44,uses_table,2);
     put(bytes,10,4097,2); // generated EP1 / Main
@@ -217,8 +228,58 @@ int main(){try{
     catch(const odh::FormatError&){portal_semiglobal_unsupported=true;}
     check(portal_semiglobal_unsupported,"semiglobal call dependency is rejected without its explicit bank");
     const auto bank_path=path.parent_path()/(path.stem().string()+"-global.far");
+    const auto named_chunk=[&](unsigned id,const std::string& label,unsigned opcode){
+        auto value=chunk("BHAV",id,portal_bhav(opcode));value.replace(12,label.size(),label);return value;
+    };
+    const std::string constants{char(1),char(0),char(42),char(0)};
+    const auto mixed_asset=iff(chunk("BHAV",8192,portal_bhav(2))+chunk("BCON",8192,constants));
+    write_far(bank_path,"CarGlobals.iff",mixed_asset);
+    const auto mixed=load_saved_semiglobal_code_bank(bank_path.string(),"carglobals.iff");
+    check(mixed.name=="CarGlobals"&&mixed.entry=="CarGlobals.iff"&&mixed.routines.count(odh::routine_key(8192))&&
+        saved_semiglobal_name_equal(mixed.name,"carglobals"),"logical case-insensitive link retains physical semiglobal provenance");
+    check(load_saved_tuning_tables(bank_path.string(),mixed.entry).at(8192).constants.at(0)==42,
+        "tuning reads the same resolved physical semiglobal as code");
+    check(resolve_saved_semiglobal_entry(bank_path.string(),"CARGLOBALS.IFF")=="CarGlobals.iff",
+        "logical extension matching is case-insensitive");
+    bool exact_still_exact=false;try{with_far_entry(bank_path.string(),"carglobals.iff",[](const auto&){});}
+    catch(const FarEntryNotFound&){exact_still_exact=true;}
+    check(exact_still_exact,"ordinary archive reads remain exact");
+    for(const auto& bad:std::vector<std::string>{"missing.iff","../CarGlobals.iff","a/CarGlobals.iff","a\\CarGlobals.iff",
+            "a:CarGlobals.iff","Car.Globals.iff",std::string("Car\0Globals.iff",14),std::string(257,'a')+".iff"}){
+        bool rejected=false;try{(void)resolve_saved_semiglobal_entry(bank_path.string(),bad);}
+        catch(const odh::FormatError&){rejected=true;}check(rejected,"missing, nested and invalid logical links are rejected");
+    }
+    write_far(bank_path,"CarGlobals.IFF",mixed_asset);
+    const auto upper_extension=load_saved_semiglobal_code_bank(bank_path.string(),"carglobals.iff");
+    check(upper_extension.name=="CarGlobals"&&upper_extension.entry=="CarGlobals.IFF"&&
+        upper_extension.routines.count(odh::routine_key(8192))&&
+        load_saved_tuning_tables(bank_path.string(),upper_extension.entry).at(8192).constants.at(0)==42,
+        "physical uppercase extension preserves exact code/tuning/provenance");
+    write_far_entries(bank_path,{{"CarGlobals.iff",mixed_asset},{"carglobals.iff",mixed_asset}});
+    bool ambiguous=false;try{(void)load_saved_semiglobal_code_bank(bank_path.string(),"CarGlobals.iff");}
+    catch(const odh::FormatError&){ambiguous=true;}
+    check(ambiguous,"case aliases are ambiguous even when one exact spelling exists");
+    write_far_entries(bank_path,{{"CarGlobals.iff",mixed_asset},{"CarGlobals.iff",mixed_asset}});
+    ambiguous=false;try{(void)resolve_saved_semiglobal_entry(bank_path.string(),"carglobals.iff");}
+    catch(const odh::FormatError&){ambiguous=true;}check(ambiguous,"duplicate exact semiglobal entries are rejected");
+    write_far(bank_path,"folder/CarGlobals.iff",mixed_asset);
+    bool nested=false;try{(void)resolve_saved_semiglobal_entry(bank_path.string(),"CarGlobals.iff");}
+    catch(const FarEntryNotFound&){nested=true;}check(nested,"matching does not discard archive directories");
+    std::vector<std::pair<std::string,std::string>> oversized(4097,{"unused.iff",{}});
+    write_far_entries(bank_path,oversized);bool bounded=false;
+    try{(void)resolve_saved_semiglobal_entry(bank_path.string(),"CarGlobals.iff");}
+    catch(const odh::FormatError&){bounded=true;}check(bounded,"semiglobal index scan obeys its entry budget");
+    write_far(bank_path,"DoorGlobals.iff",iff(named_chunk(8192,"first",301)+named_chunk(8192,"last",15)+named_chunk(400,"first",2)));
+    const auto repeated_bank=load_saved_semiglobal_code_bank(bank_path.string(),"DoorGlobals.iff");
+    check(repeated_bank.routines.size()==1&&repeated_bank.routines.at(odh::routine_key(8192)).instructions[0].opcode==15&&
+        repeated_bank.named_routines.at("first")==8192&&repeated_bank.named_routines.at("last")==8192,
+        "linked resource preserves first-name lookup over last numeric-ID payload independently of labels");
+    write_far(bank_path,"DoorGlobals.iff",iff(named_chunk(400,"outside-range",2)));
+    const auto named_only=load_saved_semiglobal_code_bank(bank_path.string(),"DoorGlobals.iff");
+    check(named_only.routines.empty()&&named_only.named_routines.at("outside-range")==400,
+        "known semiglobal artifact may contain only explicit named entries outside its numeric scope");
     const auto bank_asset=iff(chunk("BHAV",8192,portal_bhav(301)));
-    write_far(bank_path,"DoorGlobals.iff",bank_asset);
+    write_far(bank_path,"DoorGlobals.IFF",bank_asset);
     const auto bank=load_saved_semiglobal_code_bank(bank_path.string(),"DoorGlobals.iff");
     const auto globals_path=path.parent_path()/(path.stem().string()+"-shared.far");
     const auto global_asset=iff(chunk("BHAV",301,portal_bhav(302))+chunk("BHAV",302,portal_bhav(2)));
@@ -265,6 +326,10 @@ int main(){try{
     try{(void)saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,12,37,0x8000003bU,&wrong_bank);}
     catch(const odh::FormatError&){mismatched_portal_bank=true;}
     check(mismatched_portal_bank,"portal semiglobal binding rejects a different explicit resource");
+    auto wrong_stem=bank;wrong_stem.name="doorglobals";bool physical_stem_rejected=false;
+    try{(void)saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,12,37,0x8000003bU,&wrong_stem);}
+    catch(const odh::FormatError&){physical_stem_rejected=true;}
+    check(physical_stem_rejected,"logical case-insensitivity does not permit a mismatched physical provenance stem");
     const auto chair_path=path.parent_path()/(path.stem().string()+"-chair.iff");
     odh::DefinitionCandidate chair_candidate{chair_path.string(),"",7,candidate.definition};
     const std::string sofa_glob=std::string(1,static_cast<char>(11))+"SofaGlobals";
@@ -273,7 +338,7 @@ int main(){try{
     const auto sofa_bank_path=path.parent_path()/(path.stem().string()+"-sofa-global.far");
     const auto sofa_bank_asset=iff(chunk("BHAV",8215,portal_bhav(8260))+
         chunk("BHAV",8260,portal_bhav(8259))+chunk("BHAV",8259,portal_bhav(301)));
-    write_far(sofa_bank_path,"SofaGlobals.iff",sofa_bank_asset);
+    write_far(sofa_bank_path,"SofaGlobals.IFF",sofa_bank_asset);
     const auto sofa_bank=load_saved_semiglobal_code_bank(sofa_bank_path.string(),"SofaGlobals.iff");
     const auto sofa_global=load_saved_global_code_bank(globals_path.string(),"Global.iff");
     odh::World chair_world;

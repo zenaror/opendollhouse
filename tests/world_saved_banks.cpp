@@ -24,9 +24,77 @@ void require(bool value,const char* message) {
 odh::VmFrame frame(std::int16_t id=1) {
     return {odh::routine_key(4096),0,{id,id,id},{},{}};
 }
+void native_physical_budget_and_allocation(){
+    using namespace odh;
+    const auto setup=[](World& w,bool attached,bool siblings){
+        require(w.create(2,EntityKind::object,{0,0,2})&&w.create(3,EntityKind::object,{0,0,2})&&w.create(1,EntityKind::object),"native budget fixture allocation");
+        for(std::int16_t id:{1,2,3})require(w.declare_object_word(id,1,0)&&w.set_position(id,{24+16*id,40,1,0}),"native budget fixture pose");
+        if(attached)require(w.attach(2,0,1),"actual legacy attachment before native backing known");
+        require(w.publish_native_slot0({1,w.find(1)->generation},{}),"source-proven native backing with unknown raw fields");
+        if(siblings){require(w.create(4,EntityKind::object)&&w.declare_object_word(4,1,0)&&w.set_position(4,{40,40,1,0})&&
+            w.attach(2,1,4)&&w.publish_native_slot0({4,w.find(4)->generation},{}),"second native sibling with missing physical scalar nodes");}
+    };
+    {
+        World exact({4,9,2});setup(exact,false,false);
+        require(exact.word_count()==7&&exact.attach(2,0,1)&&exact.word_count()==9&&
+            exact.find(1)->object_words.size()==3&&exact.find(1)->object_words.at(14)==1&&exact.find(1)->object_words.at(26)==2,
+            "fixed14/26 allocate above bank_words when aggregate World budget permits");
+    }
+    for(int mode=0;mode<4;++mode){World limited({4,mode==0?8U:9U,2});setup(limited,mode==2,false);
+        if(mode)require(limited.set_room_resolver([](const auto&)->std::optional<std::uint16_t>{return 1;}),"actual room word publication owner");
+        const auto words=limited.word_count();const auto revision=limited.spatial_revision();bool ok=false;
+        if(mode==0)ok=limited.attach(2,0,1);
+        if(mode==1)ok=limited.place_in_slot(2,0,1);
+        if(mode==2)ok=limited.move_to_slot(3,1,1);
+        if(mode==3)ok=bool(limited.prepare_move_to_slot(2,0,1));
+        require(!ok&&limited.word_count()==words&&limited.spatial_revision()==revision&&
+            !limited.find(1)->object_words.count(14)&&!limited.find(1)->object_words.count(26)&&!limited.find(1)->object_words.count(29)&&
+            limited.find(2)->slots[0]==(mode==2?1:0),"combined room/native budgets reject before any physical or scalar effects");
+    }
+    for(int operation=0;operation<8;++operation){bool reached_success=false;
+        for(int cut=0;cut<80&&!reached_success;++cut){World w;setup(w,operation>=2,operation>=6);const auto before=w.snapshot();bool ok=false,threw=false;
+            allocation_countdown=cut;
+            try{
+                if(operation==0)ok=w.attach(2,0,1);
+                if(operation==1)ok=w.place_in_slot(2,0,1);
+                if(operation==2)ok=w.move_to_slot(3,1,1);
+                if(operation==3){auto plan=w.prepare_move_to_slot(3,1,1);ok=plan&&w.commit_move_to_slot(*plan);}
+                if(operation==4)ok=w.place_on_floor(1,{40,56,1,0});
+                if(operation==5)ok=w.place_out_of_world(1,0);
+                if(operation==6)ok=w.remove(2);
+                if(operation==7)ok=w.remove_retaining_body({2,w.find(2)->generation});
+            }catch(const std::bad_alloc&){threw=true;}
+            allocation_countdown=-1;
+            if(threw||!ok){const auto after=w.snapshot();require(after.word_count==before.word_count&&after.spatial_revision==before.spatial_revision&&
+                after.entities.size()==before.entities.size()&&after.retained_entities.size()==before.retained_entities.size(),"allocation failure preserves whole physical transaction and accounting");
+                for(std::size_t i=0;i<before.entities.size();++i){const auto&a=before.entities[i];const auto&b=after.entities[i];
+                    require(a.id==b.id&&a.slots==b.slots&&a.object_words==b.object_words&&a.position==b.position&&a.attachment.has_value()==b.attachment.has_value()&&
+                        (!a.attachment||(a.attachment->container==b.attachment->container&&a.attachment->slot==b.attachment->slot)),"allocation failure preserves every sibling, raw bank and parent link");}}
+            else reached_success=true;
+        }require(reached_success,"bounded allocation matrix reaches successful operation");
+    }
+    {
+        World w;setup(w,true,false);auto plan=w.prepare_move_to_slot(3,1,1);require(bool(plan),"prepared missing native fields have allocated nodes");
+        allocation_countdown=0;const bool committed=w.commit_move_to_slot(*plan);const auto untouched=allocation_countdown;allocation_countdown=-1;
+        require(committed&&untouched==0&&w.find(1)->object_words.at(14)==2&&w.find(1)->object_words.at(26)==3,
+            "prepared noexcept commit publishes missing native scalar nodes without allocation");
+    }
+    // Retired-slot failure is measured inside the retained parent's legitimate
+    // callback: earlier parent retirement is real and is never called rollback.
+    for(int cut=0;cut<4;++cut){World w;setup(w,true,false);const WorldEntityReference parent{2,w.find(2)->generation},child{1,w.find(1)->generation};bool drop=false;
+        const bool completed=w.remove_retaining_contents(parent,[&](const auto& token){const auto words=w.word_count();allocation_countdown=cut;
+            try{drop=w.detach_retained_slot(token,0,child);}catch(const std::bad_alloc&){}allocation_countdown=-1;
+            if(!drop)require(w.word_count()==words&&w.find(1)->attachment&&w.find(1)->attachment->container==2&&
+                !w.find(1)->object_words.count(14)&&!w.find(1)->object_words.count(26)&&w.retired_slot(token,0)==std::optional<WorldEntityReference>{child},
+                "retired child allocation fails before released membership, raw fields or physical detach");return drop;});
+        require(completed==drop,"retired-drop result reports actual completed effects");
+    }
+}
+
 }
 int main() {
     try {
+        native_physical_budget_and_allocation();
         std::vector<std::int16_t> attributes{7,-8,9},person{11,-12},motives{-32768,32767};
         std::array<std::int16_t,68> object_data{};
         std::array<std::int16_t,5> extras{-5,6,-7,8,-9};
@@ -60,7 +128,8 @@ int main() {
                 e->saved_object_banks->object_data==original && e->object_words.at(0)==-30,
                 "runtime writes preserve original snapshot and retain normal setter semantics");
         require(w.read(frame(),3,2)==0 && w.read(frame(),3,3)==-1 && w.read(frame(),3,11)==1 &&
-                w.read(frame(),3,67)==1 && w.read(frame(),3,1)==7,
+                w.read(frame(),3,67)==3 && w.read(frame(),3,1)==7 && e->slots.size()==1 &&
+                w.read(frame(),20,1)==0 && w.read(frame(),20,2)==0,
                 "derived fields preserve uncontained baseline and ordinary direction");
         require(w.set_position(1,{16,16,1,7}) &&
                     std::abs(e->radian_direction-7.0f*0.7853981633974483f)<0.00001f &&

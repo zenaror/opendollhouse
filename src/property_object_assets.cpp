@@ -47,7 +47,6 @@ PropertyObjectAssets inspect_property_object_assets(const World& world,const Def
     if(seen!=live)return fail(R::incomplete_inventory);
     std::map<std::int16_t,const DefinitionCandidate*> definitions;
     for(const auto& group:partition) {
-        const DefinitionCandidate* provenance=nullptr;
         for(const auto id:group.members) {
             const auto* entity=world.find(id);
             if(!entity || !entity->definition || !entity->definition->guid)return fail(R::missing_identity);
@@ -56,19 +55,20 @@ PropertyObjectAssets inspect_property_object_assets(const World& world,const Def
             if(!own)return fail(index.candidates(guid)?R::ambiguous_definition:R::missing_identity);
             const auto& d=own->definition;
             if(d.is_multitile!=(d.master_id!=0))return fail(R::invalid_definition);
-            if(entity->definition->master_guid!=group.master_guid)return fail(R::identity_mismatch);
             const auto type=entity->definition_words.find(9);
             if(type!=entity->definition_words.end() && static_cast<std::uint16_t>(type->second)!=d.object_type)
                 return fail(R::definition_type_mismatch);
             if(d.is_multitile) {
                 const auto* master=index.unique_master(*own);
                 if(!master)return fail(R::missing_master);
-                if(!master->definition.is_multitile)return fail(R::invalid_definition);
-                if(group.master_guid!=master->definition.guid)return fail(R::identity_mismatch);
-            } else if(group.master_guid || group.members.size()!=1)return fail(R::identity_mismatch);
-            if(provenance && (provenance->source!=own->source || provenance->asset!=own->asset ||
-                provenance->definition.master_id!=d.master_id))return fail(R::identity_mismatch);
-            provenance=own;definitions.emplace(id,own);
+                if(!master->definition.is_multitile||!master->definition.guid)return fail(R::invalid_definition);
+                if(entity->definition->master_guid!=master->definition.guid||
+                   (group.master_guid&&*group.master_guid!=master->definition.guid))return fail(R::identity_mismatch);
+            } else if(entity->definition->master_guid||group.master_guid)return fail(R::identity_mismatch);
+            // Runtime chains can contain independently authored definitions.
+            // Authenticate every own GUID/master in its own resource context,
+            // without imposing one shared asset or MasterID on the chain.
+            definitions.emplace(id,own);
         }
     }
     std::int32_t primary=0,architecture=0;

@@ -1,10 +1,30 @@
 #pragma once
 
 #include "odh/world_attempt_walk.hpp"
+#include "odh/rect_router.hpp"
 #include "saved_architecture_resources.hpp"
 #include "saved_wall_appearance.hpp"
 #include <set>
 #include <vector>
+
+// Complete architectural input only. This never enumerates entity flags or
+// executes EP5; production walking adds the live ordered entity checks later.
+struct RuntimeAttemptWalkArchitecture {
+    bool complete=false;
+    odh::GeometricRoomMap rooms;
+    odh::RoomObstacleCandidateSet room_obstacles;
+    odh::WallObstacleCandidateSet wall_obstacles;
+    std::vector<odh::RectRouteObstacle> architectural_and_bounds;
+    std::size_t architectural_count=0;
+    bool portal_inventory_complete=false;
+    std::size_t portal_openings=0;
+    std::vector<odh::RoomPortalEdge> portal_edges;
+    std::set<std::int16_t> stair_lower_portal_ids,stair_upper_portal_ids;
+};
+RuntimeAttemptWalkArchitecture build_runtime_attempt_walk_architecture(
+    const odh::SavedWorld&,const odh::World&,const odh::DefinitionIndex&,
+    const SavedArchitectureResource&,const odh::PreparedArchitecture&,
+    std::uint16_t room,std::uint8_t level);
 
 struct RuntimeAttemptWalkProbe {
     odh::AttemptWalkObstacleSnapshot snapshot;

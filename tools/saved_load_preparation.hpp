@@ -133,7 +133,7 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
                 try {
                     SavedSemiglobalResources loaded;
                     loaded.code=load_saved_semiglobal_code_bank(global_archive,name+".iff");
-                    loaded.tuning=load_saved_tuning_tables(global_archive,name+".iff");
+                    loaded.tuning=load_saved_tuning_tables(global_archive,loaded.code.entry);
                     semiglobal=semiglobals.emplace(name,std::move(loaded)).first;
                 } catch (const std::exception& error) {
                     throw odh::FormatError("Load action " + std::to_string(action) + " for object " +

@@ -23,6 +23,9 @@ bool in_bank(std::int16_t index, std::size_t size) {
 }
 std::optional<std::int16_t> read(const VmFrame& frame, const std::array<std::int16_t,20>& temps,
                                const VmMemory& memory, std::uint8_t scope, std::int16_t index) {
+    const auto resolved=resolve_ts1_variable_address(scope,index,frame,temps);
+    if(!resolved)return {};
+    scope=resolved->scope;index=resolved->index;
     switch (scope) {
     case 7: return index;
     case 8: return in_bank(index, temps.size()) ? std::optional<std::int16_t>{temps[static_cast<std::size_t>(index)]} : std::nullopt;
@@ -49,21 +52,21 @@ VmPrimitive random_primitive(RandomState& state, VmMemory memory, RandomObserver
         const auto destination_scope = static_cast<std::uint8_t>(destination_scope_word);
         const auto range_scope = static_cast<std::uint8_t>(range_scope_word);
         const auto destination_data = signed_word(word(instruction, 0));
-        const auto destination_address=resolve_person_data_address(destination_scope,destination_data,temps);
-        if(!destination_address)return reject("Random Number indirect destination temp index outside bank");
         const auto range_data = signed_word(word(instruction, 4));
         const auto range_value = read(frame, temps, memory, range_scope, range_data);
         if (!range_value) return reject("Random Number range is unavailable or outside its bank");
-        switch (destination_scope) {
+        const auto destination_address=resolve_ts1_variable_address(destination_scope,destination_data,frame,temps);
+        if(!destination_address)return reject("Random Number indirect destination temp index outside bank");
+        switch (destination_address->scope) {
         case 7: case 10: return reject("Random Number destination has no supported output");
         case 8:
-            if (!in_bank(destination_data, temps.size())) return reject("Random Number temp destination outside bank");
+            if (!in_bank(destination_address->index, temps.size())) return reject("Random Number temp destination outside bank");
             break;
         case 9:
-            if (!in_bank(destination_data, frame.arguments.size())) return reject("Random Number argument destination outside bank");
+            if (!in_bank(destination_address->index, frame.arguments.size())) return reject("Random Number argument destination outside bank");
             break;
         case 25:
-            if (!in_bank(destination_data, frame.locals.size())) return reject("Random Number local destination outside bank");
+            if (!in_bank(destination_address->index, frame.locals.size())) return reject("Random Number local destination outside bank");
             break;
         default:
             if (!memory.write) return reject("Random Number external destination is unbound");
@@ -73,10 +76,10 @@ VmPrimitive random_primitive(RandomState& state, VmMemory memory, RandomObserver
         const auto range = static_cast<std::uint16_t>(*range_value);
         const auto result = signed_word(static_cast<std::uint16_t>(candidate.next(range)));
         PrimitiveOutcome outcome{PrimitiveDisposition::goto_true, {}};
-        switch (destination_scope) {
-        case 8: outcome.temp_write = VmTempWrite{static_cast<std::size_t>(destination_data), result}; break;
-        case 9: outcome.write = VmFrameWrite{VmFrameBank::arguments, static_cast<std::size_t>(destination_data), result}; break;
-        case 25: outcome.write = VmFrameWrite{VmFrameBank::locals, static_cast<std::size_t>(destination_data), result}; break;
+        switch (destination_address->scope) {
+        case 8: outcome.temp_write = VmTempWrite{static_cast<std::size_t>(destination_address->index), result}; break;
+        case 9: outcome.write = VmFrameWrite{VmFrameBank::arguments, static_cast<std::size_t>(destination_address->index), result}; break;
+        case 25: outcome.write = VmFrameWrite{VmFrameBank::locals, static_cast<std::size_t>(destination_address->index), result}; break;
         default:
             if (!memory.write(frame, destination_address->scope, destination_address->index, result))
                 return reject("Random Number external destination rejected write");

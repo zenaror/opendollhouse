@@ -1,5 +1,6 @@
 #include "linux_family_overlay_store.hpp"
 #include "linux_private_family.hpp"
+#include "linux_text_codec.hpp"
 
 #include "odh/character_catalog.hpp"
 #include "odh/family.hpp"
@@ -51,6 +52,23 @@ int main(){try{
     const auto neighborhood_path=root/"game/UserData/Neighborhood.iff";const auto overlay_path=root/"player/overlay.odhp";
     std::filesystem::create_directories(installed);write(installed/"Existing.iff",character(0x11112222,false));
     const auto original_neighborhood=neighborhood();write(neighborhood_path,original_neighborhood);
+    const auto source_identity=odh_host::linux_neighborhood_identity(neighborhood_path);
+    const auto absent_overlay_path=root/"player/stale-first-name.odhp";
+    auto stale_identity=source_identity;stale_identity[0]^=1;
+    bool stale_first_rejected=false;
+    try{(void)odh_host::rename_linux_private_family(neighborhood_path,absent_overlay_path,
+        stale_identity,std::nullopt,7,"Stale first rename",14);}
+    catch(const odh::FormatError&){stale_first_rejected=true;}
+    need(stale_first_rejected&&!std::filesystem::exists(absent_overlay_path),
+        "stale source identity published a first-rename sidecar without an existing overlay");
+    {std::ifstream in(neighborhood_path,std::ios::binary);std::vector<std::uint8_t> after(original_neighborhood.size());
+        in.read(reinterpret_cast<char*>(after.data()),static_cast<std::streamsize>(after.size()));
+        need(after==original_neighborhood,"rejected first rename altered source neighborhood");}
+    {const auto original_character=character(0x11112222,false);std::ifstream in(installed/"Existing.iff",std::ios::binary);
+        std::vector<std::uint8_t> after(original_character.size());
+        in.read(reinterpret_cast<char*>(after.data()),static_cast<std::streamsize>(after.size()));
+        need(after==original_character&&!std::filesystem::exists(private_dir),
+            "rejected first rename altered original or private character storage");}
     std::vector<odh_host::LinuxPrivateFamilyMemberDraft> drafts(1);drafts[0].name_utf8="Olá";drafts[0].biography_utf8="Bio";drafts[0].language=14;drafts[0].body_strings={{1,"body"},{2,"head"}};drafts[0].person_data=std::vector<std::int16_t>(88,0);drafts[0].person_data[2]=500;
     const auto template_bytes=character(0x7FD96B54,true);std::uint32_t next_guid=0x22334455;
     const auto family=odh_host::create_linux_private_family(template_bytes,installed,private_dir,neighborhood_path,overlay_path,"Família",drafts,20000,[&]{return next_guid++;});
@@ -74,5 +92,50 @@ int main(){try{
     need(rejected,"repeated GUID exhaustion did not fail the family transaction");
     const auto after_rollback=odh::read_character_catalog(private_dir);need(after_rollback.size()==1,"failed family left an orphan private character");
     const auto unchanged=odh_host::read_linux_family_overlay(overlay_path);need(unchanged&&odh::encode_family_overlay(*unchanged)==odh::encode_family_overlay(*saved),"failed family changed the saved overlay");
+    const auto renamed=odh_host::rename_linux_private_family(neighborhood_path,overlay_path,source_identity,saved,
+        family.family_chunk_id,"Nova Família",14);
+    need(renamed.names.size()==1&&renamed.names[0].family_name==std::string("Nova Fam\xedlia",12),
+        "rename was not persisted in selected legacy language");
+    auto before_name=renamed;before_name.names.clear();
+    need(odh::encode_family_overlay(before_name)==odh::encode_family_overlay(*saved),
+        "rename rewrote historical creation or neighbor metadata");
+    const auto reopened=odh_host::read_linux_family_overlay(overlay_path);
+    need(reopened&&odh::encode_family_overlay(*reopened)==odh::encode_family_overlay(renamed),
+        "rename did not survive reopening the private sidecar");
+    const std::uint8_t new_ui_language=15;
+    need(reopened->names[0].language==14&&new_ui_language!=reopened->names[0].language&&
+        odh_host::legacy_text_to_utf8(reopened->names[0].family_name,reopened->names[0].language)=="Nova Família",
+        "changing UI language changed a persisted Portuguese household name");
+    rejected=false;
+    try{(void)odh_host::rename_linux_private_family(neighborhood_path,overlay_path,source_identity,saved,
+        family.family_chunk_id,"Stale editor",14);}catch(const std::runtime_error&){rejected=true;}
+    need(rejected&&odh::encode_family_overlay(*odh_host::read_linux_family_overlay(overlay_path))==odh::encode_family_overlay(renamed),
+        "stale editor overwrote a newer private household name");
+    rejected=false;
+    try{(void)odh_host::rename_linux_private_family(neighborhood_path,overlay_path,source_identity,reopened,
+        family.family_chunk_id,"猫",14);}catch(const std::invalid_argument&){rejected=true;}
+    need(rejected&&odh::encode_family_overlay(*odh_host::read_linux_family_overlay(overlay_path))==odh::encode_family_overlay(renamed),
+        "unrepresentable rename changed player state");
+    // CP932 accepts these Unicode aliases but decodes them to different
+    // characters. A successful iconv call alone is not lossless name storage.
+    for(const auto& aliased : {std::string("Yen ¥"), std::string("Wave 〜")}) {
+        rejected=false;
+        try{(void)odh_host::rename_linux_private_family(neighborhood_path,overlay_path,source_identity,reopened,
+            family.family_chunk_id,aliased,15);}catch(const std::invalid_argument&){rejected=true;}
+        need(rejected&&odh::encode_family_overlay(*odh_host::read_linux_family_overlay(overlay_path))==odh::encode_family_overlay(renamed),
+            "legacy alias silently changed the requested household name or player state");
+    }
+    const auto source_named=odh_host::rename_linux_private_family(neighborhood_path,overlay_path,source_identity,reopened,7,"猫",15);
+    const auto mixed_reopened=odh_host::read_linux_family_overlay(overlay_path);
+    need(source_named.names.size()==2&&mixed_reopened&&mixed_reopened->names[0].language==14&&
+        mixed_reopened->names[1].language==15&&
+        odh_host::legacy_text_to_utf8(mixed_reopened->names[0].family_name,mixed_reopened->names[0].language)=="Nova Família"&&
+        odh_host::legacy_text_to_utf8(mixed_reopened->names[1].family_name,mixed_reopened->names[1].language)=="猫",
+        "mixed-language installed and created household names lost encoding provenance");
+    {std::ifstream in(neighborhood_path,std::ios::binary);std::vector<std::uint8_t> after(original_neighborhood.size());
+        in.read(reinterpret_cast<char*>(after.data()),static_cast<std::streamsize>(after.size()));
+        need(after==original_neighborhood,"rename altered commercial source neighborhood");}
+    need(std::filesystem::file_size(family.members[0].path)==before&&odh::read_character_catalog(private_dir).size()==1,
+        "rename rewrote or recreated private characters");
     std::cout<<"linux private family transaction checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

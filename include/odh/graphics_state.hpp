@@ -15,6 +15,10 @@ struct GraphicsEntity {
 };
 using GraphicsSlotResolver=std::function<const SlotTable*(const Entity&)>;
 
+// Pure visual anchor for an uncontained entity; terrain is added by the lot.
+// Shared with placement previews so their sprite matches the committed object.
+std::array<float,3> free_graphics_position(EntityKind,const EntityPosition&);
+
 // Limited FreeSO 4c6b3e8f5835b228723caea3c9f683c62f244f73 reference profile:
 // free objects use (x/16-.5,y/16-.5), free avatars use (x/16,y/16),
 // and both use (level-1)*2.95 for Z. Positioned scale-one avatars may occupy

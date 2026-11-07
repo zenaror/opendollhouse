@@ -48,7 +48,13 @@ public:
     const std::optional<SessionSimulationState>& simulation() const {return bundle_.simulation;}
     const std::optional<std::int32_t>& family_budget() const {return bundle_.host.family_budget;}
     const SessionHostState& host() const { return bundle_.host; }
+    const std::optional<SessionObjectTradeLedger>& object_trade() const { return bundle_.object_trade; }
+    const std::optional<RuntimeGlobalsSnapshot>& runtime_globals() const { return bundle_.runtime_globals; }
+    const BalloonHeadlineSnapshot& headlines() const { return bundle_.headlines; }
     const std::optional<SessionUiState>& ui_state() const { return bundle_.ui_state; }
+    const std::optional<DialogState>& dialog() const { return bundle_.dialog; }
+    const std::optional<Ts1TravelState>& travel() const { return bundle_.travel; }
+    const std::optional<NeighborInventorySnapshot>& neighbor_inventory() const { return bundle_.neighbor_inventory; }
     const std::vector<SessionObjectThread>& object_threads() const { return bundle_.object_threads; }
     const std::vector<SessionDynamicActionOwner>& dynamic_action_owners() const {
         return bundle_.runtime_entities.front().dynamic_action_owners;
@@ -56,6 +62,10 @@ public:
     const LocalRouteSnapshot* local_route(std::int16_t id) const {
         const auto& runtime=bundle_.runtime_entities.front();
         return runtime.id==id&&runtime.route?&*runtime.route:nullptr;
+    }
+    const RouteStackSnapshot* route_stack(std::int16_t id) const {
+        const auto& runtime=bundle_.runtime_entities.front();
+        return runtime.id==id&&runtime.route_stack?&*runtime.route_stack:nullptr;
     }
     const std::optional<SessionSeatedContinuation>& seated_continuation() const {return bundle_.seated_continuation;}
     void install_seated_continuation_owners(Vm&, const DefinitionCandidate&,

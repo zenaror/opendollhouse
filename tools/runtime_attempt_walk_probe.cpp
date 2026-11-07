@@ -13,26 +13,42 @@ namespace {
 constexpr std::uint16_t stair_portal_action = 4105;
 }
 
-RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
-    const odh::SavedWorld& saved, const odh::World& world,
-    const odh::DefinitionIndex& definitions,
-    const SavedArchitectureResource& architecture,
-    const odh::PreparedArchitecture& prepared,
-    std::uint16_t room, std::uint8_t level, std::int16_t actor_id,
-    bool avatar_consideration_complete,
-    const std::vector<std::int16_t>& avatars_to_consider,
-    const odh::AttemptWalkEntryPoint5Resolver& resolve_entry_point5,
-    std::optional<odh::EntityPosition> actor_position_override) {
-    RuntimeAttemptWalkProbe result;
+RuntimeAttemptWalkArchitecture build_runtime_attempt_walk_architecture(
+    const odh::SavedWorld& saved,const odh::World& world,
+    const odh::DefinitionIndex& definitions,const SavedArchitectureResource& architecture,
+    const odh::PreparedArchitecture& prepared,std::uint16_t room,std::uint8_t level) {
+    RuntimeAttemptWalkArchitecture result;
     if (!prepared.floor_identity_unambiguous() || level > 1 || room == 0)
         return result;
 
     try {
-        const auto rooms = odh::generate_prepared_room_map(prepared);
-        if (room >= rooms.rooms.size()) return result;
+        result.rooms = odh::generate_prepared_room_map(prepared);
+        const auto& rooms=result.rooms;
+        if (room >= rooms.rooms.size() || rooms.rooms[room].id!=room ||
+            rooms.rooms[room].level!=level || !rooms.rooms[room].bounds.width ||
+            !rooms.rooms[room].bounds.height) return result;
 
-        const auto wall_appearance = saved_wall_appearance(
+        auto wall_appearance = saved_wall_appearance(
             saved, definitions, architecture.architecture, true);
+        std::set<std::int16_t> known_architectural;
+        for(auto& input:wall_appearance.inputs){
+            if((input.flags2&0xc000U)==0)continue;
+            const auto* live=world.find(input.id);
+            const odh::VmFrame context{odh::routine_key(4096),0,{input.id,input.id,input.id,0},{},{}};
+            const auto flags=world.read(context,3,40),placement=world.read(context,3,13);
+            if(!live||!live->definition||live->generation!=input.generation||live->kind!=input.kind||
+               live->definition->guid!=input.guid||bool(live->position)!=bool(input.position)||
+               (live->position&&!(*live->position==*input.position))||
+               bool(live->attachment)!=input.contained||!flags||!placement||
+               (static_cast<std::uint16_t>(*flags)&0xc000U)!=(input.flags2&0xc000U))return result;
+            known_architectural.insert(input.id);
+            input.flags2=static_cast<std::uint16_t>(*flags);
+            input.placement=static_cast<std::uint16_t>(*placement);
+        }
+        // Same verified live placement inputs as the native SLOT wall verifier:
+        // door routines may change word13 while their transform remains fixed.
+        wall_appearance.appearance=odh::derive_wall_appearance_restore_order(
+            architecture.architecture,wall_appearance.inputs);
         std::map<std::int16_t, const odh::WallAppearanceInput*> inputs;
         std::set<std::int16_t> door_leaders;
         for (const auto& input : wall_appearance.inputs) {
@@ -52,14 +68,14 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
         auto cursor = std::int16_t{0};
         while (const auto next = world.next_entity(cursor)) {
             cursor = *next;
-            if (inputs.find(cursor) != inputs.end()) continue;
             const auto* entity = world.find(cursor);
             if (!entity) return result;
             if (entity->kind != odh::EntityKind::object || !entity->position || entity->attachment)
                 continue;
             const odh::VmFrame frame{odh::routine_key(4096), 0, {cursor, cursor, cursor, 0}, {}, {}};
             const auto flags = world.read(frame, 3, 40);
-            if (!flags || (static_cast<std::uint16_t>(*flags) & 0xc000U)) return result;
+            if (!flags || ((static_cast<std::uint16_t>(*flags) & 0xc000U) &&
+                !known_architectural.count(cursor))) return result;
         }
 
         std::map<std::int16_t, const odh::SavedWorldEntity*> records;
@@ -87,7 +103,7 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
         // Stair groups are identified from the saved multi-tile membership and
         // the resolved asset metadata. Other multi-tile objects are left alone.
         for (const auto& group : saved.multitile_groups) {
-            if (group.members.empty() || !group.master_guid ||
+            if (group.members.empty() ||
                 std::count(group.members.begin(), group.members.end(), group.leader) != 1) return result;
             bool stair_group = false;
             for (const auto part_id : group.members) {
@@ -98,6 +114,7 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
                 stair_group = stair_group || candidate->asset == "stair.iff";
             }
             if (!stair_group) continue;
+            if (!group.master_guid) return result;
 
             unsigned lower_count = 0, upper_count = 0;
             std::optional<std::int16_t> lower_id, upper_id;
@@ -150,6 +167,13 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
                 const auto* entity = world.find(member);
                 if (input == inputs.end() || record == records.end() || !entity)
                     return result;
+                const auto& original=*input->second;
+                if(entity->generation!=original.generation||entity->kind!=original.kind||
+                   !entity->definition||entity->definition->guid!=original.guid||
+                   entity->definition->guid!=record->second->definition.guid||
+                   bool(entity->position)!=bool(original.position)||
+                   (entity->position&&!(*entity->position==*original.position))||
+                   bool(entity->attachment)!=original.contained)return result;
                 const auto portal = portal_for(*record->second);
                 portal_members.push_back({member, leader,
                     (input->second->flags2 & 0x8000U) != 0,
@@ -171,15 +195,62 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
         if (edges.status != odh::WallEdgeBuildStatus::ready) return result;
         const auto wall_obstacles = odh::generate_wall_obstacle_candidates(
             architecture.architecture, level, edges.edges);
-        result.room_obstacle_rectangles = room_obstacles.rectangles.size();
-        result.wall_obstacle_rectangles = wall_obstacles.rectangles.size();
-        result.architecture_complete = room_obstacles.complete && wall_obstacles.complete;
-        if (!result.architecture_complete || !result.portal_inventory_complete) return result;
+        if (!room_obstacles.complete || !wall_obstacles.complete || !result.portal_inventory_complete) return result;
         // Publish only after every stair group and the complete portal inventory
         // have passed; duplicate IDs across groups reject the snapshot above.
         result.stair_lower_portal_ids = std::move(validated_stair_lower_ids);
         result.stair_upper_portal_ids = std::move(validated_stair_upper_ids);
 
+        result.room_obstacles=room_obstacles;
+        result.wall_obstacles=wall_obstacles;
+        for(const auto& r:wall_obstacles.rectangles)
+            result.architectural_and_bounds.push_back({r.x1,r.y1,r.x2,r.y2});
+        for(const auto& r:room_obstacles.rectangles)
+            result.architectural_and_bounds.push_back({r.x1,r.y1,r.x2,r.y2});
+        result.architectural_count=result.architectural_and_bounds.size();
+        if(result.architectural_count>16380 ||
+           !odh::rough_balance_obstacle_prefix(result.architectural_and_bounds,result.architectural_count))return {};
+        const auto& b=rooms.rooms[room].bounds;
+        // generate_prepared_room_map bounds are within the <=64-tile profile.
+        const auto left=(static_cast<std::int32_t>(b.x)-1)*16;
+        const auto top=(static_cast<std::int32_t>(b.y)-1)*16;
+        const auto right=left+(static_cast<std::int32_t>(b.width)+2)*16;
+        const auto bottom=top+(static_cast<std::int32_t>(b.height)+2)*16;
+        result.architectural_and_bounds.push_back({left-16,top-16,right+16,top});
+        result.architectural_and_bounds.push_back({left-16,bottom,right+16,bottom+16});
+        result.architectural_and_bounds.push_back({left-16,top-16,left,bottom+16});
+        result.architectural_and_bounds.push_back({right,top-16,right+16,bottom+16});
+        result.complete=true;
+        return result;
+    }catch(const std::exception&){return {};}
+}
+
+RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
+    const odh::SavedWorld& saved, const odh::World& world,
+    const odh::DefinitionIndex& definitions,
+    const SavedArchitectureResource& architecture,
+    const odh::PreparedArchitecture& prepared,
+    std::uint16_t room, std::uint8_t level, std::int16_t actor_id,
+    bool avatar_consideration_complete,
+    const std::vector<std::int16_t>& avatars_to_consider,
+    const odh::AttemptWalkEntryPoint5Resolver& resolve_entry_point5,
+    std::optional<odh::EntityPosition> actor_position_override) {
+    RuntimeAttemptWalkProbe result;
+    const auto architecture_input=build_runtime_attempt_walk_architecture(
+        saved,world,definitions,architecture,prepared,room,level);
+    result.architecture_complete=architecture_input.complete;
+    result.portal_inventory_complete=architecture_input.portal_inventory_complete;
+    result.portal_openings=architecture_input.portal_openings;
+    result.portal_edges=architecture_input.portal_edges;
+    result.room_obstacle_rectangles=architecture_input.room_obstacles.rectangles.size();
+    result.wall_obstacle_rectangles=architecture_input.wall_obstacles.rectangles.size();
+    result.stair_lower_portal_ids=architecture_input.stair_lower_portal_ids;
+    result.stair_upper_portal_ids=architecture_input.stair_upper_portal_ids;
+    if(!architecture_input.complete)return result;
+    const auto& rooms=architecture_input.rooms;
+    const auto& room_obstacles=architecture_input.room_obstacles;
+    const auto& wall_obstacles=architecture_input.wall_obstacles;
+    try {
         const odh::RuntimeRoomResolver room_for = [&rooms](const odh::EntityPosition& position) {
             return odh::geometric_room_at_runtime(rooms, position.x, position.y, position.level);
         };
@@ -218,21 +289,14 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
                 std::adjacent_find(ids.begin(), ids.end(), std::greater_equal<>()) == ids.end();
         }
         if (result.snapshot.state == odh::AttemptWalkObstacleState::ready) {
-            std::vector<odh::RectRouteObstacle> architecture_order;
-            architecture_order.reserve(result.roughbalanced_architecture_rectangles);
-            for (std::size_t i = 0; i < result.roughbalanced_architecture_rectangles; ++i) {
-                const auto& obstacle = result.snapshot.obstacles[i];
-                architecture_order.push_back({obstacle.x1, obstacle.y1, obstacle.x2, obstacle.y2});
-            }
-            if (!odh::rough_balance_obstacle_prefix(architecture_order,
-                    result.roughbalanced_architecture_rectangles)) {
-                result.snapshot = {};
-                result.snapshot.reason = odh::AttemptWalkObstacleReason::obstacle_set_mismatch;
-            } else {
-                for (std::size_t i = 0; i < result.roughbalanced_architecture_rectangles; ++i) {
-                    result.snapshot.obstacles[i] = {
-                        architecture_order[i].x1, architecture_order[i].y1,
-                        architecture_order[i].x2, architecture_order[i].y2};
+            if(result.snapshot.obstacles.size()<architecture_input.architectural_and_bounds.size()){
+                result.snapshot={};result.snapshot.reason=odh::AttemptWalkObstacleReason::obstacle_set_mismatch;
+            }else{
+                // Reuse the architecture-only source prefix. No EP5 runs in
+                // its construction, and entity obstacles remain in live order.
+                for(std::size_t i=0;i<architecture_input.architectural_and_bounds.size();++i){
+                    const auto& r=architecture_input.architectural_and_bounds[i];
+                    result.snapshot.obstacles[i]={r.x1,r.y1,r.x2,r.y2};
                 }
             }
         }

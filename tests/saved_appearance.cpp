@@ -7,12 +7,12 @@
 #include <sstream>
 namespace {
 int checks=0;
-void check(bool ok){++checks;if(!ok)throw std::runtime_error("saved appearance assertion failed");}
+void check(bool ok,const char* why="saved appearance assertion failed"){++checks;if(!ok)throw std::runtime_error(why);}
 template<class F> void rejects(F f){bool caught=false;try{f();}catch(const odh::FormatError&){caught=true;}check(caught);}
 void word(std::string& b,std::uint32_t n){for(int i=0;i<4;++i)b.push_back(static_cast<char>((n>>(i*8))&255));}
 void scalar(std::string& b,float n){std::uint32_t bits;std::memcpy(&bits,&n,4);word(b,bits);}
 void text(std::string& b,const std::string& s){b.push_back(static_cast<char>(s.size()));b+=s;}
-std::string rig(){std::string b;word(b,1);text(b,"adult");b.push_back(1);b.push_back(0);text(b,"ROOT");text(b,"NULL");word(b,0);
+std::string rig(const std::string& name="adult"){std::string b;word(b,1);text(b,name);b.push_back(1);b.push_back(0);text(b,"ROOT");text(b,"NULL");word(b,0);
  for(float n:{0.f,0.f,0.f,0.f,0.f,0.f,1.f})scalar(b,n);for(auto n:{1U,1U,0U})word(b,n);scalar(b,0);scalar(b,0);word(b,0);word(b,0);return b;}
 std::string loose_mesh(){return
  "xskin-loose\nloose-texture\n1\nROOT\n1\n0 1 2\n1\n0 0 3 0 0\n"
@@ -72,6 +72,134 @@ int main(int argc,char** argv){try{
  check(loose_renderer.vertices()==24&&loose_renderer.triangles()==8&&loose_renderer.texture_bytes()==32);
  odh::WorldProjection loose_camera;loose_camera.width=160;loose_camera.height=160;
  check(loose_renderer.render(SceneState{},loose_camera).image.shaded_samples>0);
+ // Gameplay selects the actual human rig from BodySTR[0]. Age is independent
+ // simulation data; a child profile must never borrow the configured adult rig.
+ {
+  const auto humans_far=dir.path/"human-rigs.far";
+  const std::vector<Entry> human_rigs{{"legacy-explicit.bcf",rig()},
+      {"adult-skeleton.cmx.bcf",rig("adult")},{"child-skeleton.cmx.bcf",rig("child")}};
+  far(humans_far,human_rigs);
+  SavedAppearanceResources humans(humans_far.string(),t.string(),"legacy-explicit.bcf","adult",skins.string());
+  auto adult=loose_body;adult.avatar_type="adult";adult.age=3;
+  auto child=loose_body;child.avatar_type="child";child.age=35;
+  const auto adult_source=adult,child_source=child;
+  const auto first_adult=humans.resolve_human_body(adult);
+  const auto selected_child=humans.resolve_human_body(child);
+  const auto second_adult=humans.resolve_human_body(adult);
+  check(first_adult.animation_far==humans_far.string()&&first_adult.skeleton_entry=="adult-skeleton.cmx.bcf"&&
+      first_adult.skeleton_name=="adult"&&selected_child.animation_far==humans_far.string()&&
+      selected_child.skeleton_entry=="child-skeleton.cmx.bcf"&&selected_child.skeleton_name=="child",
+      "human BodySTR type selects its exact adult/child rig despite contradictory age");
+  check(second_adult.skeleton_entry==first_adult.skeleton_entry&&second_adult.skeleton_name==first_adult.skeleton_name&&
+      second_adult.parts.size()==first_adult.parts.size()&&selected_child.parts.size()==first_adult.parts.size(),
+      "adult-child-adult resolution does not leak the preceding profile into the shared catalog");
+  SceneRenderer adult_renderer(first_adult),child_renderer(selected_child);
+  check(adult_renderer.vertices()==24&&child_renderer.vertices()==24&&
+      adult_renderer.render(SceneState{},loose_camera).image.shaded_samples>0&&
+      child_renderer.render(SceneState{},loose_camera).image.shaded_samples>0,
+      "both selected human rigs are valid renderable synthetic resources");
+  check(adult.age==adult_source.age&&child.age==child_source.age,
+      "visual human resolution preserves original BodySTR age values");
+  for(const auto age:std::vector<std::optional<std::int16_t>>{std::nullopt,0,9,35,100}){
+   adult.age=age;child.age=age;
+   check(humans.resolve_human_body(adult).skeleton_name=="adult"&&
+       humans.resolve_human_body(child).skeleton_name=="child");
+  }
+  const auto explicit_child=humans.resolve_body(child),explicit_adult=humans.resolve_body(adult);
+  check(explicit_child.skeleton_entry=="legacy-explicit.bcf"&&explicit_child.skeleton_name=="adult"&&
+      explicit_adult.skeleton_entry=="legacy-explicit.bcf"&&explicit_adult.skeleton_name=="adult",
+      "legacy resolve_body retains the explicitly configured rig after both gameplay profiles");
+  SavedAppearanceResources explicit_child_rig(humans_far.string(),t.string(),"child-skeleton.cmx.bcf","child",skins.string());
+  check(explicit_child_rig.resolve_human_body(adult).skeleton_name=="adult"&&
+      explicit_child_rig.resolve_body(adult).skeleton_name=="child"&&
+      explicit_child_rig.resolve_human_body(child).skeleton_name=="child",
+      "gameplay rig selection also leaves an explicitly configured child tool rig unchanged");
+  check(adult_source.avatar_type=="adult"&&child_source.avatar_type=="child"&&adult.avatar_type==adult_source.avatar_type&&
+      child.avatar_type==child_source.avatar_type&&adult.body==adult_source.body&&child.body==child_source.body&&
+      adult.head==adult_source.head&&child.head==child_source.head&&adult.hands==adult_source.hands&&child.hands==child_source.hands);
+  for(const auto& type:std::vector<std::string>{"","dog","cat","unrecognized",std::string("child\0junk",10)}){
+   auto invalid=child;invalid.avatar_type=type;rejects([&]{humans.resolve_human_body(invalid);});
+  }
+  check(humans.resolve_human_body(adult).skeleton_name=="adult"&&
+      humans.resolve_body(child).skeleton_entry=="legacy-explicit.bcf");
+  const auto missing_far=dir.path/"human-missing-child.far";
+  far(missing_far,{{"legacy-explicit.bcf",rig()},{"adult-skeleton.cmx.bcf",rig()}});
+  SavedAppearanceResources missing(missing_far.string(),t.string(),"legacy-explicit.bcf","adult",skins.string());
+  check(missing.resolve_human_body(adult).skeleton_name=="adult");
+  rejects([&]{missing.resolve_human_body(child);});
+  check(missing.resolve_body(child).skeleton_entry=="legacy-explicit.bcf"&&
+      missing.resolve_human_body(adult).skeleton_entry=="adult-skeleton.cmx.bcf");
+  const auto ambiguous_far=dir.path/"human-ambiguous-child.far";
+  auto duplicate_rigs=human_rigs;duplicate_rigs.push_back({"CHILD-SKELETON.CMX.BCF",rig("child")});
+  far(ambiguous_far,duplicate_rigs);
+  SavedAppearanceResources ambiguous_human(ambiguous_far.string(),t.string(),"legacy-explicit.bcf","adult",skins.string());
+  rejects([&]{ambiguous_human.resolve_human_body(child);});
+  check(ambiguous_human.resolve_human_body(adult).skeleton_entry=="adult-skeleton.cmx.bcf"&&
+      ambiguous_human.resolve_body(child).skeleton_entry=="legacy-explicit.bcf");
+ }
+ // Expansion FAR names use Windows directory prefixes, while BCF bindings
+ // reference global basenames. Resolve every component with exact provenance.
+ const auto expansion=dir.path/"expansion.far",assets=dir.path/"skin-assets.far",override_far=dir.path/"skin-override.far";
+ far(expansion,{{"Skins\\Outfit.cmx.bcf",appearance("ExpansionBody",{"xskin-loose"})}});
+ far(assets,{{"Skins\\XSKIN-LOOSE.SKN",loose_mesh()},{"Skins\\loose-texture.bmp",loose_bitmap()}});
+ const std::vector<std::string> all_fars{a.string(),expansion.string(),assets.string()};
+ SavedAppearanceResources expanded(a.string(),t.string(),"rig.bcf","adult",skins.string(),all_fars);
+ auto expansion_body=loose_body;expansion_body.body=expansion_body.head="expansionbody";
+ for(auto& hand:expansion_body.hands)hand="EXPANSIONBODY";
+ const auto expansion_scene=expanded.resolve_body(expansion_body);
+ check(expansion_scene.parts.size()==8&&expansion_scene.parts.front().appearance_entry=="Skins\\Outfit.cmx.bcf"&&
+       expansion_scene.parts.front().appearance_far==expansion.string()&&
+       expansion_scene.parts.front().mesh_far==assets.string()&&
+       expansion_scene.parts.front().texture_far==assets.string()&&
+       expansion_scene.parts.front().bmf_entry=="Skins\\XSKIN-LOOSE.SKN");
+ SceneRenderer expansion_renderer(expansion_scene);
+ check(expansion_renderer.vertices()==24&&expansion_renderer.render(SceneState{},loose_camera).image.shaded_samples>0);
+ // Loose CMX can consume globally selected FAR meshes/textures. FAR BMPs
+ // precede same-named loose images, as TS1Provider.BuildDictionary specifies.
+ const auto mixed_scene=expanded.resolve_body(loose_body);
+ check(mixed_scene.parts.front().loose_skin_assets&&mixed_scene.parts.front().appearance_far.empty()&&
+       mixed_scene.parts.front().mesh_far==assets.string()&&mixed_scene.parts.front().texture_far==assets.string());
+ SceneRenderer mixed_renderer(mixed_scene);check(mixed_renderer.render(SceneState{},loose_camera).image.shaded_samples>0);
+ far(override_far,{{"Later/LOOSE-TEXTURE.BMP",loose_bitmap()}});
+ auto with_override=all_fars;with_override.push_back(override_far.string());
+ SavedAppearanceResources overrides(a.string(),t.string(),"rig.bcf","adult",skins.string(),with_override);
+ check(overrides.resolve_body(expansion_body).parts.front().texture_far==override_far.string()&&
+       overrides.resolve_body(expansion_body).parts.front().texture_entry=="Later/LOOSE-TEXTURE.BMP");
+ // Compiled BMF is preferred to SKN across sources, not only siblings.
+ const auto compiled=dir.path/"compiled-mesh.far";
+ far(compiled,{{"Elsewhere/xskin-loose.bmf",mesh("xskin-loose","loose-texture")}});
+ with_override.push_back(compiled.string());
+ SavedAppearanceResources compiled_preferred(a.string(),t.string(),"rig.bcf","adult",skins.string(),with_override);
+ check(compiled_preferred.resolve_body(expansion_body).parts.front().mesh_far==compiled.string()&&
+       compiled_preferred.resolve_body(expansion_body).parts.front().bmf_entry=="Elsewhere/xskin-loose.bmf");
+ const auto extra_skins=dir.path/"extra-skins";std::filesystem::create_directory(extra_skins);
+ save(extra_skins/"custom.cmx","version 300\n0\n1\ncustom-extra\n1\n0\n1\nROOT\nxskin-loose\n0\n0\n0\n");
+ SavedAppearanceResources extra_loose(a.string(),t.string(),"rig.bcf","adult",skins.string(),all_fars,{extra_skins.string()});
+ auto custom_body=loose_body;custom_body.body=custom_body.head="custom-extra";for(auto& hand:custom_body.hands)hand="custom-extra";
+ const auto custom_scene=extra_loose.resolve_body(custom_body);
+ check(custom_scene.parts.front().appearance_entry==(extra_skins/"custom.cmx").string()&&custom_scene.parts.front().mesh_far==assets.string());
+ SceneRenderer custom_renderer(custom_scene);check(custom_renderer.render(SceneState{},loose_camera).image.shaded_samples>0);
+ rejects([&]{SavedAppearanceResources too_many(a.string(),t.string(),"rig.bcf","adult",{},std::vector<std::string>(129,a.string()));});
+ // A damaged unrelated BCF is a source-catalog diagnostic, not permission
+ // to substitute a model when that damaged/missing appearance is requested.
+ const auto damaged=dir.path/"unrelated-damaged.far";
+ far(damaged,{{"Skins/broken.bcf","bad"},{"Skins/good.cmx.bcf",appearance("GoodStillDraws",{"xskin-loose"})}});
+ auto damaged_sources=all_fars;damaged_sources.push_back(damaged.string());
+ SavedAppearanceResources isolated(a.string(),t.string(),"rig.bcf","adult",skins.string(),damaged_sources);
+ auto good_body=loose_body;good_body.body=good_body.head="GoodStillDraws";for(auto& hand:good_body.hands)hand="GoodStillDraws";
+ SceneRenderer good_renderer(isolated.resolve_body(good_body));
+ check(good_renderer.render(SceneState{},loose_camera).image.shaded_samples>0&&
+       isolated.diagnostics().malformed_resources==1&&isolated.diagnostics().resource_errors.size()==1&&
+       isolated.diagnostics().resource_errors.front().find("broken.bcf")!=std::string::npos);
+ auto bad_body=good_body;bad_body.body="BrokenMissingBody";rejects([&]{isolated.resolve_body(bad_body);});
+ // Legacy explicit-archive construction retains its strict parser contract.
+ const auto damaged_base=dir.path/"damaged-base.far";
+ far(damaged_base,{{"rig.bcf",rig()},{"broken.bcf","bad"}});
+ rejects([&]{SavedAppearanceResources strict(damaged_base.string(),t.string(),"rig.bcf","adult");});
+ const auto excessive=dir.path/"too-many-archive-entries.far";std::vector<Entry> excessive_entries;
+ for(unsigned i=0;i<8193;++i)excessive_entries.push_back({std::to_string(i)+".bcf","bad"});
+ far(excessive,excessive_entries);auto excessive_sources=all_fars;excessive_sources.push_back(excessive.string());
+ rejects([&]{SavedAppearanceResources strict_budget(a.string(),t.string(),"rig.bcf","adult",skins.string(),excessive_sources);});
  SavedAppearanceResources resources(a.string(),t.string(),"rig.bcf","adult");odh::ObjmPersonState p{};p.body.bytes="BODY";p.body_texture.bytes="BODY=skinmed";p.head.bytes="head";p.head_texture.bytes="HEAD-HEAD=override";p.left_hand.bytes=p.right_hand.bytes="hand";p.left_hand_texture.bytes=p.right_hand_texture.bytes="HAND=override";
  auto result=resources.resolve(p);check(result.scene.parts.size()==6);check(result.scene.parts[0].appearance_entry=="unexpected-host.bcf");check(result.scene.parts[0].texture_entry=="unmatched.bmp"&&result.scene.parts[1].texture_entry=="skinlgt.bmp"&&result.scene.parts[2].texture_entry=="skinmed.bmp");check(!result.current&&!result.base&&!result.base_executed);
  SavedAppearanceResources moved(std::move(resources));rejects([&]{resources.resolve(p);});
@@ -95,6 +223,18 @@ int main(int argc,char** argv){try{
  p.accessories={malformed_accessory};rejects([&]{no_match.resolve(p);});
  p.accessories={toothbrush};p.accessory_count=2;rejects([&]{no_match.resolve(p);});
  p.accessories.clear();p.accessory_count=0;
+ // Runtime content misses are source visual no-ops, while saved imports and
+ // selected malformed resources retain strict diagnostics.
+ {auto runtime=no_match.resolve(p).scene;const auto before=runtime.parts.size();
+  no_match.append_accessories(runtime,{".apr","not-installed.apr"});check(runtime.parts.size()==before);
+  no_match.append_accessories(runtime,{"suit-toothbrush.apr"});check(runtime.parts.size()==before+1);
+  rejects([&]{no_match.append_accessories(runtime,{"suit-toothbrush"});});
+  auto missing_saved=p;missing_saved.accessory_count=1;missing_saved.accessories={toothbrush};
+  missing_saved.accessories[0].name.bytes="not-installed.apr";rejects([&]{no_match.resolve(missing_saved);});
+  auto broken_entries=entries;broken_entries.push_back({"broken-accessory.bcf",appearance("broken-accessory",{"missing-accessory-mesh"})});
+  const auto broken_file=dir.path/"runtime-broken.far";far(broken_file,broken_entries);
+  SavedAppearanceResources broken(broken_file.string(),t.string(),"rig.bcf","adult");
+  rejects([&]{broken.append_accessories(runtime,{"broken-accessory.apr"});});}
  p.body.bytes="notthere";rejects([&]{no_match.resolve(p);});p.body.bytes="body";
  // BodySTR variants replace only the visual hand source; saved raw fields and
  // current/base animation evidence survive the opt-in resolution unchanged.
@@ -123,7 +263,8 @@ int main(int argc,char** argv){try{
  gestures.append_accessories(live_scene,{"suit-toothbrush.apr"});
  check(live_scene.parts.size()==11&&live_scene.parts.back().appearance_name=="suit-toothbrush"&&
        live_scene.parts.back().bmf_entry=="toothbrush.bmf");
- rejects([&]{gestures.append_accessories(live_scene,{"unknown-accessory.apr"});});
+ gestures.append_accessories(live_scene,{"unknown-accessory.apr"});
+ check(live_scene.parts.size()==11&&live_scene.parts.back().appearance_name=="suit-toothbrush");
  rejects([&]{gestures.append_accessories(live_scene,std::vector<std::string>(17,"suit-toothbrush.apr"));});
  check(direct.animation_far==a.string()&&direct.textures_far==t.string()&&direct.skeleton_entry=="rig.bcf"&&direct.skeleton_name=="adult");
  check(direct.object_far.empty()&&direct.object_entry.empty()&&direct.object_id==0);
@@ -158,6 +299,7 @@ int main(int argc,char** argv){try{
  SavedAppearanceResources bounded(a.string(),t.string(),"rig.bcf","adult");rejects([&]{bounded.resolve_gestures(p,body);});rejects([&]{bounded.resolve_body(constructed);});
  far(a,entries);p.left_hand.bytes=p.right_hand.bytes="hand";p.animation.bytes=p.base_animation.bytes="";
  entries.push_back({"duplicate.bcf",appearance("BODY",{"mesh0"})});far(a,entries);SavedAppearanceResources ambiguous(a.string(),t.string(),"rig.bcf","adult");rejects([&]{ambiguous.resolve(p);});rejects([&]{ambiguous.resolve_body(constructed);});
+ {SceneConfig runtime;rejects([&]{ambiguous.append_accessories(runtime,{"BODY.apr"});});}
  entries.pop_back();far(a,entries);const auto duplicate_textures=dir.path/"duplicate-textures.far";
  far(duplicate_textures,{{"unmatched.bmp",""},{"skinlgt.bmp",""},{"override.bmp",""},{"OVERRIDE.bmp",""},{"skinmed.bmp",""},{"x.bmp",""}});
  SavedAppearanceResources ambiguous_texture(a.string(),duplicate_textures.string(),"rig.bcf","adult");rejects([&]{ambiguous_texture.resolve_body(constructed);});

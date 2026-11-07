@@ -122,6 +122,33 @@ void vm_outputs() {
     alias.start(odh::routine_key(4096)); alias.temps()[0] = 1;
     alias.run(1); require(rng.seed() == UINT64_C(0x4004000802801), "VM restart does not reseed supplied state");
 }
+void indirect_scopes() {
+    odh::VmFrame frame{odh::routine_key(4096),0,{}, {2}, {0,0,17}};
+    odh::Ts1Temps temps{};temps[0]=2;
+    for(const auto scope:{17,22,40,41}) {
+        odh::RandomState rng(1);
+        std::int16_t external=17;
+        const auto canonical=scope==17?15:1;
+        odh::VmMemory memory;
+        memory.read=[&](const auto&,auto bank,auto index)->std::optional<std::int16_t>{
+            if(bank==canonical&&index==2)return external;
+            return {};
+        };
+        memory.write=[&](const auto&,auto bank,auto index,auto value){
+            if(bank!=canonical||index!=2)return false;
+            external=value;return true;
+        };
+        auto handler=odh::random_primitive(rng,memory);
+        auto output=handler(frame,instruction(8,19,static_cast<std::uint16_t>(scope),0),temps,{});
+        require(output.temp_write&&output.temp_write->value>=0&&output.temp_write->value<17,
+            "Random range uses shared frame/Temp indirection");
+        rng.reset(1);
+        output=handler(frame,instruction(static_cast<std::uint16_t>(scope),0,7,17),temps,{});
+        require(output.disposition==odh::PrimitiveDisposition::goto_true&&temps[0]==2&&
+            (scope==40?(output.write&&output.write->bank==odh::VmFrameBank::locals&&output.write->index==2):external>=0&&external<17),
+            "Random output normalizes LocalByTemp before local/external dispatch");
+    }
+}
 void scopes_and_owners() {
     odh::RandomState rng(1);
     std::int16_t external = -1;
@@ -170,7 +197,7 @@ void scopes_and_owners() {
 }
 int main() {
     try {
-        generator(); rejection(); vm_outputs(); scopes_and_owners();
+        generator(); indirect_scopes(); rejection(); vm_outputs(); scopes_and_owners();
         std::cout << checks << " checks passed\n";
     } catch (const std::exception& error) {std::cerr << error.what() << '\n'; return 1;}
 }

@@ -9,8 +9,8 @@ parcial. Ainda não há uma versão completa jogável publicada.
 | Casa | Alimentação, sono, conversa, banheiro, banho e serviços em cenários registrados. | Sessão residencial completa e estável com o mesmo conjunto de código. |
 | Escola e carreira | Retorno de escola/trabalho, promoção, salário e bônus observados. | Ampliar carreiras, horários e progressão. |
 | Salvamento | Partidas delimitadas salvam e reabrem preservando o estado. | Continuidade também após viagens, edição e gestão de famílias. |
-| Famílias e lotes | Navegação e operações de gestão, compra e construção parcialmente implementadas. | Criar, mudar, editar, sair e voltar no mesmo percurso, incluindo móveis complexos. |
-| Expansões | Catálogos/destinos e partes da viagem; chegada, atividade e retorno parciais já observados. | Viagem familiar completa e regras próprias das sete expansões. Nenhuma expansão aceita como completa. |
+| Famílias e lotes | Percurso sem janela: criar adulto e criança com §20.000, comprar casa e sofá, editar piso, sair e reentrar preservando o arquivo salvo inteiro e o saldo de §9.345. Avisos iniciais originais também percorridos. | Segunda mudança, renomear, excluir e cancelamentos; conferir o mesmo conjunto pelas telas do jogo. |
+| Expansões | Táxi e escolha do Centro pelos dados do jogo, reabertura no destino e atividade com aumento de Diversão observados. Há também provas parciais anteriores de retorno. | Concluir o percurso atual com retorno preservado e acompanhantes; cobrir as regras próprias das sete expansões. Nenhuma expansão aceita como completa. |
 | Personagens e animais | Peças compartilhadas de aparência e comportamento. | Animais, bebês e demais ciclos ainda sem cobertura completa. |
 | Interface e áudio | Implementação nativa e reconstrução parcial da interface original. | Todas as telas, acabamento, animação, iluminação e áudio. |
 | Idiomas e conteúdo personalizado | Leitura de textos e partes do suporte a conteúdo clássico. | Conferência representativa dentro dos percursos completos e uso/salvamento de conteúdo personalizado. |
@@ -19,7 +19,7 @@ parcial. Ainda não há uma versão completa jogável publicada.
 Os resultados acima vêm de cenários e revisões diferentes. Não são uma prova de
 que todos os recursos já funcionam juntos na revisão atual.
 
-As próximas entregas são **viajar ao Centro e voltar** e **criar uma família e
-continuar no lote editado**. Veja os critérios no [plano](native-port-plan.md).
+As próximas entregas são **viajar ao Centro e voltar** e **completar mudanças e
+gestão de família após continuar no lote editado**. Veja os critérios no [plano](native-port-plan.md).
 Atualizar esta página quando mudar uma entrega ou limitação relevante, sem
 transformá-la em diário de tentativas. Não medir conclusão por arquivos ou testes.

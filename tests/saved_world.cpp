@@ -37,6 +37,7 @@ std::vector<odh::SavedWorldEntity> fixture() {
     auto a=record(1,101),b=record(2,102),c=record(3,103),d=record(4,104);
     a.common.slot_count=3;a.common.linked_slot=odh::ObjmSavedSlot{91,4};
     a.common.slots={{17,0},{18,2}};
+    d.saved.prefix.object_data[14]=0;d.saved.prefix.object_data[26]=1;
     b.saved.prefix.object_data[2]=1;b.saved.prefix.object_data[3]=1;
     b.serialized_object_type=2;b.tail.person.emplace();b.tail.person->person_data.resize(80,-22);
     b.saved.prefix.object_data[8]=8;b.saved.prefix.object_data[42]=2307;
@@ -88,6 +89,15 @@ int main() {
         auto restored=odh::make_saved_world(source,index);
         require(restored && restored->world->next_entity(0)==1 && restored->world->next_entity(3)==4,
                 "all original IDs restored including source order mismatch");
+        require(restored->world->native_slot0({1,restored->world->find(1)->generation})==
+                odh::WorldEntityReference{4,restored->world->find(4)->generation}&&
+                !restored->world->find(4)->attachment,
+                "serialized linked entry restores exact native backing without physical containment");
+        for(const auto& record:restored->records){
+            const auto* original=restored->world->find(static_cast<std::int16_t>(record.saved.object_id));
+            require(original&&original->generation==record.imported_generation,
+                    "ObjM row retains its original assigned lifetime");
+        }
         {
             auto placeholder_source=fixture();
             auto& placeholder=placeholder_source[2];
@@ -122,7 +132,11 @@ int main() {
                      "missing UnknownInt rejected outside exact Placeholder identity");
         }
         const auto& w=*restored->world;const auto* avatar=w.find(2);
-        require(avatar && avatar->kind==odh::EntityKind::avatar && avatar->person_data==std::vector<std::int16_t>(80,-22),"saved avatar bank restored exactly");
+        require(avatar && avatar->kind==odh::EntityKind::avatar && avatar->person_data.size()==88&&std::all_of(avatar->person_data.begin(),avatar->person_data.begin()+80,[](auto value){return value==-22;})&&
+            std::all_of(avatar->person_data.begin()+80,avatar->person_data.end(),[](auto value){return value==0;}),"saved avatar prefix retained and eight TS1 expansion words initialized from NBRS defaults");
+        require(avatar->slots.size()==3&&w.read(frame(2),3,67)==3&&w.read(frame(2),16,2)==0&&
+            restored->records[1].common.slots.size()==fixture()[1].common.slots.size(),
+            "new avatar import materializes source hand/head/pelvis but preserves raw decoded records");
         require(avatar->motives[0]==100 && avatar->motives[1]==130 && avatar->motives[2]==-16384,"motives imported without setter clamp");
         require(avatar->attachment && avatar->attachment->container==1 && avatar->attachment->slot==1 && !avatar->attachment->positioned,
                 "runtime attachment uses subsequent slot pair and remains unpositioned");
@@ -138,6 +152,40 @@ int main() {
                     "missing OBJD offset is not synthesized during import");
         }
         require(!w.find(4)->position && w.find(4)->definition->master_guid==105,"out of world retained and master resolved by resource");
+        {
+            auto linked=fixture();linked[1].tail.multitile->parent_id=2;
+            auto self_index=odh::DefinitionIndex(candidates(linked));
+            auto self=odh::make_saved_world(linked,self_index);
+            require(self->multitile_groups.size()==1&&self->multitile_groups[0].leader==2&&
+                self->multitile_groups[0].members==std::vector<std::int16_t>({2,4,3}),
+                "source self-parent leader retains exact members");
+            linked[0].definition=definition(104,13,1);
+            auto defs=candidates(linked);defs.push_back({"other","linked.iff",100,definition(106,13,-1)});
+            for(auto& item:defs)if(item.definition.guid==104){item.source="other";item.asset="linked.iff";}
+            odh::DefinitionIndex mixed_index(defs);
+            auto mixed=odh::make_saved_world(linked,mixed_index);
+            require(mixed->multitile_groups.size()==1&&!mixed->multitile_groups[0].master_guid&&
+                mixed->world->find(3)->definition->master_guid==105&&mixed->world->find(4)->definition->master_guid==106,
+                "heterogeneous saved source group retains each real canonical master without fake common GUID");
+            require(odh::saved_world_has_multitile_member(*mixed,3,105)&&
+                odh::saved_world_has_multitile_member(*mixed,4,106)&&
+                !odh::saved_world_has_multitile_member(*mixed,4,105),
+                "group membership query authenticates requested member master across resource boundaries");
+            const auto old_generation=mixed->world->find(4)->generation;
+            require(mixed->world->publish_native_slot0({1,mixed->world->find(1)->generation},{})&&
+                mixed->world->declare_object_word(4,14,-1)&&mixed->world->declare_object_word(4,26,0),
+                "explicit native unlink before member ID reuse");
+            require(mixed->world->remove(4)&&mixed->world->create_saved_entity(4,odh::EntityKind::object,104,{}, {}, {}, {}, {},0,106)&&
+                mixed->world->find(4)->generation!=old_generation,
+                "reuse a removed member numeric ID with the same canonical type");
+            require(!odh::saved_world_has_multitile_member(*mixed,4,106),
+                "reused member cannot borrow stale imported membership");
+            auto leader_reused=odh::make_saved_world(linked,mixed_index);
+            require(leader_reused->world->remove(2)&&leader_reused->world->create_saved_entity(2,odh::EntityKind::avatar,102,{}, std::vector<std::int16_t>(80),std::vector<std::int16_t>(16), {}, {},0,105),
+                "replace source leader with new body of same type");
+            require(!odh::saved_world_has_multitile_member(*leader_reused,4,106),
+                "reused leader cannot authenticate original group membership");
+        }
         require(w.find(1)->slots==std::vector<std::int16_t>({0,2}),"linked slot not confused with runtime slot zero");
         require(w.read(frame(2),3,2)==1 && w.read(frame(2),3,3)==1 && w.read(frame(2),3,11)==2 && w.read(frame(1),3,67)==2,
                 "derived getters follow validated containment and actual bank sizes");
@@ -221,6 +269,7 @@ int main() {
         reject_change([](auto& v){v[2].common.slot_count=2;},"slot count mismatch rejected");
         reject_change([](auto& v){v[2].common.slots[0].object_id=2;},"duplicate occupied child rejected");
         reject_change([](auto& v){v[2].common.linked_slot->object_id=90;},"dangling linked slot rejected");
+        reject_change([](auto& v){v[0].saved.prefix.object_data[26]=3;},"native linked slot must reciprocate raw parent");
         reject_change([](auto& v){v[1].saved.prefix.object_data[3]=0;},"containment reciprocity rejected");
         reject_change([](auto& v){v[2].common.slots[1].object_id=0;},"orphan container rejected");
         reject_change([](auto& v){v[0].tail.multitile->parent_id=1;},"nonmultitile parent rejected");

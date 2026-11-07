@@ -1,9 +1,11 @@
 #pragma once
 
 #include "odh/family_overlay.hpp"
+#include "linux_user_config.hpp"
 #include "odh/session_bundle.hpp"
 #include "odh/household_transfer.hpp"
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -18,7 +20,20 @@ public:
         std::array<std::uint8_t, 32> neighborhood_identity,
         std::optional<odh::FamilyOverlay> expected,
         std::uint16_t house_number, std::uint16_t family_chunk_id,
-        std::optional<odh::FamilyOverlay> pending_move_in = std::nullopt);
+        std::optional<odh::FamilyOverlay> pending_move_in = std::nullopt, LinuxNeighborhoodStorage storage = {});
+    // Adopt a currently running original commercial household without moving
+    // it, charging a price, or touching its source files. Validates the full
+    // native capture/roster and invokes the real host restore validator BEFORE
+    // archive I/O. Publishes immutable bytes before the overlay CAS. A stale
+    // expected overlay can leave an unreferenced archive, never a new head.
+    // The callback must perform actual same-house native restore preparation;
+    // it must not publish, write the live simulation, or substitute a boolean.
+    static FamilySessionJournal adopt_original_session(std::vector<odh::FamilyEntry> source,
+        std::array<std::uint8_t,32> neighborhood_identity,
+        std::optional<odh::FamilyOverlay> expected,std::uint16_t house_number,
+        std::uint16_t family_chunk_id,odh::SessionBundle capture,
+        const std::function<void(const odh::SessionBundle&,const std::vector<std::uint8_t>&)>& validate_reopen, LinuxNeighborhoodStorage storage = {},
+        std::optional<std::int32_t> property_value = std::nullopt);
     odh::SessionFamilyLease lease() const;
     bool pending_purchase() const { return pending_move_in_.has_value(); }
     const std::optional<odh::FamilyOverlay>& expected_overlay() const { return expected_; }
@@ -41,8 +56,17 @@ public:
     void commit_move_in();
     void verify_current() const;
     void validate_restore(const std::vector<std::uint8_t>& encoded) const;
-    std::filesystem::path publish(odh::SessionBundle bundle);
+    // Any captured TATT bank joins the checkpoint-head update in the same
+    // whole-overlay CAS. A stale publisher cannot overwrite another family's
+    // newer shared state. No separate neighborhood state file/head is used.
+    // Optional current property quote replaces only ValueInArch in the same
+    // occupancy/head CAS. It never adds cash; absence preserves legacy cache.
+    std::filesystem::path publish(odh::SessionBundle bundle,
+        std::optional<std::int32_t> property_value = std::nullopt);
 private:
+    FamilySessionJournal(std::vector<odh::FamilyEntry>,std::array<std::uint8_t,32>,
+        std::optional<odh::FamilyOverlay>,std::uint16_t,std::uint16_t,
+        std::optional<odh::FamilyOverlay>,bool verify_disk, LinuxNeighborhoodStorage storage);
     void validate_bundle(const odh::SessionBundle&) const;
     bool carry_accepted() const;
     void commit_overlay(const odh::FamilyOverlay&);

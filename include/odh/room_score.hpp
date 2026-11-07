@@ -22,6 +22,10 @@ struct RoomScoreUpdate {
     bool updated = false; // Room 0 is a valid no-op in the Simitone service.
 };
 
+// Shared source arithmetic: float division, unchecked signed16 conversion,
+// then INT baseline subtraction and clamp. This does not filter contributors.
+std::int16_t source_room_score(std::int32_t total_impact,std::uint64_t area,bool outside) noexcept;
+
 // Reproduces Simitone VMContext.RefreshRoomScore for a resolved geometric map.
 // Returns absence when map/entity placement data cannot support a reliable
 // calculation; callers must fail closed instead of substituting zero.

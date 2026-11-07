@@ -123,6 +123,79 @@ void indirect_and_effects() {
         require(readonly.run(1)==odh::VmStatus::returned_false,"pinned read-only setter returns false");
     }
 }
+void frame_indirections() {
+    // Exercise all four scopes in BOTH directions through actual Expressions.
+    // Frame selector addresses stay distinct from their selected bank indices.
+    for(const auto scope:{17,22,40,41}) {
+        std::int16_t external=37;
+        const auto canonical=static_cast<std::uint8_t>(scope==17?15:1);
+        odh::VmMemory memory;
+        memory.read=[&](const auto&,auto bank,auto index)->std::optional<std::int16_t>{
+            if(bank==canonical&&index==2)return external;
+            return {};
+        };
+        memory.write=[&](const auto&,auto bank,auto index,auto value){
+            if(bank!=canonical||index!=2)return false;
+            external=value;return true;
+        };
+        const auto code=program({expr(5,2,37,25,7,1),
+            expr(5,19,0,8,static_cast<unsigned>(scope),2),
+            expr(5,0,-123,static_cast<unsigned>(scope),7,3),
+            expr(5,18,2,8,25)});
+        odh::Vm vm(code,memory);vm.start(key(),{}, {2});vm.temps()[0]=2;
+        require(vm.run(1)==odh::VmStatus::budget_exhausted,"initialize local bank");
+        require(vm.run(1)==odh::VmStatus::budget_exhausted&&vm.temps()[19]==37,
+            "indirect read selects motive, parameter attribute, local or temp attribute");
+        require(vm.run(1)==odh::VmStatus::budget_exhausted&&vm.temps()[0]==2,
+            "indirect write leaves Temp selector unchanged");
+        require(vm.run(1)==odh::VmStatus::returned_true&&
+            (scope==40?vm.temps()[18]:external)==-123,
+            "indirect write reaches canonical frame or external bank");
+        for(const int bad:{-1,20}) {
+            for(const bool write:{false,true}) {
+                odh::Vm invalid(program({write?expr(5,bad,7,static_cast<unsigned>(scope)):
+                    expr(5,19,bad,8,static_cast<unsigned>(scope))}),memory);
+                invalid.start(key(),{}, {2});
+                require(invalid.run(1)==odh::VmStatus::fault,"indirect selector bounds fault");
+            }
+        }
+        for(const int selected:{-1,32767}) {
+            for(const bool write:{false,true}) {
+                odh::Vm invalid(program({write?expr(5,0,7,static_cast<unsigned>(scope)):
+                    expr(5,19,0,8,static_cast<unsigned>(scope))}),memory);
+                invalid.start(key(),{}, {static_cast<std::int16_t>(selected)});
+                invalid.temps()[0]=static_cast<std::int16_t>(selected);
+                require(invalid.run(1)==odh::VmStatus::fault,"selected bank bounds never alias negatives");
+            }
+        }
+    }
+    // Real nested frame parameter selection: parent args are not child args.
+    auto nested=program({{4097,254,255,{2,0,0,0,0,0,0,0}}});
+    nested.emplace(odh::routine_key(4097),odh::Bhav{0x8002,{expr(5,19,0,8,22)}, {},
+        odh::Bhav::Metadata{0,4,4,0}});
+    odh::VmMemory memory;
+    memory.read=[](const odh::VmFrame& frame,auto scope,auto index)->std::optional<std::int16_t>{
+        if(frame.key.id==4097&&scope==1&&index==2)return 91;
+        return {};
+    };
+    odh::Vm child(nested,memory);child.start(key(),{}, {3});
+    require(child.run(3)==odh::VmStatus::returned_true&&child.temps()[19]==91,
+        "nested call resolves attribute from child parameter bank");
+    // A setter must resolve again after the getter changes a selector.
+    bool written=false;
+    memory.write=[&](const auto&,auto scope,auto index,auto value){
+        written=scope==15&&index==2&&value==11;return written;
+    };
+    odh::Vm* executing=nullptr;
+    memory.read=[&](const auto&,auto scope,auto index)->std::optional<std::int16_t>{
+        if(scope!=15||index!=1)return {};
+        executing->temps()[0]=2;return 10;
+    };
+    odh::Vm actual(program({expr(3,0,1,17)}),memory);executing=&actual;
+    actual.start(key());actual.temps()[0]=1;
+    require(actual.run(1)==odh::VmStatus::returned_true&&written,
+        "RMW write resolves fresh selector instead of caching read address");
+}
 void lazy_levels() {
     std::string calls;
     odh::VmMemory memory;
@@ -163,7 +236,7 @@ void snapshot_continuation() {
 }
 }
 int main() {
-    try {operators();wide_registers();indirect_and_effects();lazy_levels();snapshot_continuation();
+    try {operators();wide_registers();indirect_and_effects();frame_indirections();lazy_levels();snapshot_continuation();
         std::cout<<checks<<" native VM expression checks passed\n";
     } catch (const std::exception& error) {std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}
 }

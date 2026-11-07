@@ -4,6 +4,26 @@
 #include <utility>
 
 namespace odh {
+VmPrimitive stop_all_sounds_primitive(const World& world,SoundStopSink stop) {
+    return [&world,stop=std::move(stop)](const VmFrame& frame,const Instruction& instruction,
+        const Ts1Temps&,const VmDispatch& dispatch)->PrimitiveOutcome {
+        if(instruction.opcode!=48)return {};
+        if(!dispatch.origin||!dispatch.origin->matches_active_query(frame,instruction,dispatch))
+            return {PrimitiveDisposition::unsupported,"StopAllSounds requires its actual VM dispatch"};
+        const auto role=instruction.operands[0]==1?VmEntityRole::stack_object:VmEntityRole::caller;
+        const auto reference=vm_context_reference(frame.context,role);
+        const auto* entity=world.frame_entity(frame,role);
+        if(!entity) {
+            if(frame.context.entity_references_bound&&reference.generation)
+                return {PrimitiveDisposition::unsupported,"StopAllSounds bound source body is unavailable"};
+            return {PrimitiveDisposition::goto_true,{}};
+        }
+        const WorldEntityReference owner{entity->id,entity->generation};
+        try{if(stop)stop(owner);}
+        catch(const std::exception& error){return {PrimitiveDisposition::unsupported,std::string("StopAllSounds backend: ")+error.what()};}
+        return {PrimitiveDisposition::goto_true,{}};
+    };
+}
 std::optional<SoundSourceVariables> sound_source_variables(const Entity& entity, std::size_t field_limit) {
     SoundSourceVariables result{SoundVariableProfile::simitone_avatar,entity.generation,{}};
     if(entity.kind==EntityKind::avatar) {
@@ -100,7 +120,14 @@ VmPrimitive sound_primitive(World& world, SoundResolver resolve, SoundSink sink,
             flags,i.operands[5],(flags&2) ? frame.context.stack_object : frame.context.caller,
             {},!(flags&8),!(flags&4),bool(flags&1),{}};
         std::string status;
-        const auto owner=world.find(request.source);
+        const auto role=(flags&2)?VmEntityRole::stack_object:VmEntityRole::caller;
+        const auto reference=vm_context_reference(frame.context,role);
+        const auto* owner=world.frame_entity(frame,role);
+        if(!owner&&frame.context.entity_references_bound&&reference.generation){
+            status="unavailable_owner_reference";
+            if(observed)observed(request,status);
+            return {PrimitiveDisposition::unsupported,"PlaySound bound source body is unavailable"};
+        }
         if(!owner) status="missing_owner";
         else {
             request.source_variables=sound_source_variables(*owner);

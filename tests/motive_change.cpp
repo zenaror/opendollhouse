@@ -79,9 +79,47 @@ int main() {
         result=odh::ts1_motive_change(world,memory_with(1,100),frame(),instruction(16,2));
         require(result.disposition==odh::PrimitiveDisposition::unsupported&&world.find(1)->motives[6]==93,
                 "motive index outside the bank fails without changing state");
-        result=odh::ts1_motive_change(world,{},frame(),instruction(6,2));
+        result=odh::ts1_motive_change(world,{},frame(),instruction(6,2,20,21));
         require(result.disposition==odh::PrimitiveDisposition::unsupported&&world.find(1)->motives[6]==93,
                 "missing input variables fail without changing state");
+
+        // TVs.iff BHAV4157 pc5 reads its cap from the executing Thread's
+        // Temp0, not from the entity memory backend. Exercise the primitive
+        // callback so dropping its supplied registers cannot go unnoticed.
+        odh::World television;
+        add_actor(television);
+        require(television.tick_motive_changes(),"open TV motive controller gate");
+        odh::VmMemory tuning;
+        tuning.read=[](const odh::VmFrame&,std::uint8_t scope,std::int16_t index)
+            ->std::optional<std::int16_t>{if(scope==26&&index==132)return 1800;return {};};
+        auto tv=odh::ts1_motive_change_primitive(television,tuning);
+        odh::Ts1Temps registers{};registers[0]=75;
+        const odh::Instruction tv_instruction{29,0,0,{26,8,15,0,132,0,0,0}};
+        result=tv(frame(),tv_instruction,registers,{});
+        auto tv_state=television.snapshot();
+        require(result.disposition==odh::PrimitiveDisposition::goto_true&&
+                tv_state.entities[0].motive_changes[15].per_hour_change==1800&&
+                tv_state.entities[0].motive_changes[15].maximum==75,
+                "real TV operand reads tuning rate and executing Thread Temp0 cap");
+
+        auto variables=frame();variables.arguments={3};variables.locals={4};
+        registers[1]=0;
+        const auto apply_variable=[&](std::uint8_t scope,std::int16_t index){
+            auto op=instruction(6,2,index,100);op.operands[0]=scope;op.operands[1]=7;
+            require(television.set_motive(1,6,0),"reset variable-sourced comfort");
+            return tv(variables,op,registers,{});
+        };
+        for(const auto scope:{std::uint8_t{7},std::uint8_t{8},std::uint8_t{9},std::uint8_t{11},std::uint8_t{25},std::uint8_t{40}}){
+            const auto index=static_cast<std::int16_t>(scope==7?5:(scope==11||scope==40)?1:0);
+            result=apply_variable(scope,index);
+            const auto expected=scope==7?5:(scope==8||scope==11)?75:scope==9?3:4;
+            require(result.disposition==odh::PrimitiveDisposition::goto_true&&
+                    television.find(1)->motives[6]==expected,
+                    "motive operands share literal, Thread, argument and local selectors");
+        }
+        result=apply_variable(8,20);
+        require(result.disposition==odh::PrimitiveDisposition::unsupported&&television.find(1)->motives[6]==0,
+                "invalid Thread selector fails without changing motives");
 
         require(world.set_motive(1,6,100),"set comfort at ordinary cap");
         result=odh::ts1_motive_change(world,memory_with(5,90),frame(),instruction(6,2));

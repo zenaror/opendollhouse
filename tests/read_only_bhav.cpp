@@ -1,6 +1,7 @@
 #include "odh/read_only_bhav.hpp"
 #include "odh/world_snapshot_codec.hpp"
 #include <iostream>
+#include <algorithm>
 
 namespace {
 int checks = 0;
@@ -48,6 +49,16 @@ int main() {
                     "input snapshot and live original remain byte-exact");
             return result;
         };
+        {
+            const auto entry=odh::named_routine_key(0,false);
+            odh::RoutineOwners named{{55,{{entry,routine({expression(7,0,0)})}}}};
+            auto result=run({},named,entry,context,1);
+            require(result.state==State::evaluated_true,"read-only admission accepts an authenticated physical named entry without remapping ID0 to global code");
+            named.at(55).at(entry)=routine({expression(4,78,999,5)});
+            result=run({},named,entry,context,1);
+            require(result.state==State::unsupported&&result.reason==Reason::vm_fault,
+                "named syntax support never authorizes writes to read-only World state");
+        }
         const auto no = routine({expression(7, 0, 1)});
         odh::RoutineSet default_bank{{key(256), routine({call(8192)})},
             {key(4096), no}, {key(4097), no}, {key(8192), no}};
@@ -109,6 +120,20 @@ int main() {
         bank[key(4096)] = routine({expression(8, 0, 77, 5, 1), expression(8, 0, 77)});
         require(run(bank, {}, key(4096), {1, 1, 2, 0}, 2).state == State::evaluated_true,
                 "VM-local writes remain usable");
+        const std::array<std::uint8_t,19> compatibility_modes{0,3,7,8,9,12,13,16,22,23,25,34,35,36,37,38,39,40,41};
+        for(unsigned mode=0;mode<256;++mode) {
+            // Generic12 leaves Temp0 intact; Generic13 does not abort this VM.
+            // All operands after the selector are ignored by this finite profile.
+            const odh::Instruction generic{1,2,255,{static_cast<std::uint8_t>(mode),255,128,42,7,99,1,200}};
+            bank[key(4096)]=routine({expression(8,0,1234,5,1),generic,expression(8,0,1234)});
+            const auto compatible=std::find(compatibility_modes.begin(),compatibility_modes.end(),mode)!=compatibility_modes.end();
+            const auto evaluated=run(bank,{},key(4096),{1,1,2,0},3);
+            if(mode==14)require(evaluated.state==State::unsupported&&evaluated.reason==Reason::vm_fault,
+                "stateful radio setter cannot masquerade as no-effect in read-only discovery");
+            require(compatible?(evaluated.state==State::evaluated_true&&evaluated.steps==3):
+                (evaluated.state==State::unsupported&&evaluated.reason==Reason::vm_fault),
+                "read-only GenericTS1 finite modes preserve Temp0/World and continue; all services and unknown selectors remain unsupported");
+        }
         bank[key(4096)] = routine({expression(9, 0, -222)});
         require(run(bank, {}, key(4096), {1, 1, 2, 0}, 1, {-222}).state == State::evaluated_true,
                 "explicit root arguments are supplied");

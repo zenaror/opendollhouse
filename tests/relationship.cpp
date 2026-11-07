@@ -1,5 +1,6 @@
 #include "odh/relationship.hpp"
 #include <iostream>
+#include <algorithm>
 #include <cstdlib>
 #include <new>
 
@@ -57,6 +58,12 @@ void semantics() {
         require(records.back().context.code_owner==99 && records.back().mode==mode && records.back().diff_multiplier==1,"observer context and multiplier");
     }
     require(state.source_count()==4&&state.pair_count()==5&&state.value_count()==310,"import counts include preserved tails");
+    const auto selected_pairs=state.neighbor_pairs(44);
+    require(std::any_of(selected_pairs.begin(),selected_pairs.end(),[](const auto& pair){
+        return pair.target==70000&&pair.values.size()==300&&pair.values[299]==-1;
+    }),"selected-neighbor UI query preserves raw targets and tails without copying other matrices");
+    require(state.neighbor_pairs(32700).empty()&&state.source_count()==4&&state.pair_count()==5&&state.value_count()==310,
+        "querying an absent neighbor never creates a relationship source or zero pair");
     require(state.value(44,70000,299)==-1&&!state.value(44,4464,299),"preserve raw int32 keys and unaddressable tails");
     for (const auto& pair : {std::pair<unsigned,std::int16_t>{2,-1},{3,0},{4,-1},{5,-32768},{6,-1}})
         require(state.value(11,12,pair.first)==pair.second,"defined signed low16 conversion");
@@ -98,6 +105,13 @@ void variables_and_atomicity() {
         if (pair.first==8)t[1]=91;
         require(yes(dispatch(p,instruction(0,1,0,pair.first,i),frame(),t))&&state.value(11,12,0)==pair.second,"VM input banks and stack ignores index");
     }
+    t[0]=1;
+    require(yes(dispatch(p,instruction(0,1,0,40,0),frame(),t))&&state.value(11,12,0)==91,
+        "relationship input resolves LocalByTemp through the active frame");
+    const auto indirect_output=dispatch(p,instruction(0,0,0,40,0),frame(),t);
+    require(yes(indirect_output)&&indirect_output.write&&
+        indirect_output.write->bank==odh::VmFrameBank::locals&&indirect_output.write->index==1&&
+        indirect_output.write->value==91,"relationship LocalByTemp output remains a staged frame write");
     require(yes(dispatch(p,instruction(0,1,0,30,3),frame(),t))&&state.value(11,12,0)==11,"indirect my person data input");
     require(yes(dispatch(p,instruction(0,1,0,31,3),frame(),t))&&state.value(11,12,0)==12,"indirect stack person data input");
     auto o=dispatch(p,instruction(0,0,0,9,1));require(yes(o)&&o.write&&o.write->bank==odh::VmFrameBank::arguments&&o.write->index==1,"argument output staged");
@@ -173,6 +187,78 @@ void objects_and_limits() {
     require(yes(dispatch(fp,instruction(0,1,0,7,2)))&&full.value(11,12,0)==2,"existing value write permitted at exact budgets");
     require(unsupported(dispatch(fp,instruction(0,0,2)))&&full.value_count()==2&&full.value(11,12,1)==2,"existing pair growth budget atomic");
 }
+void source_delete_and_body_gc(){
+    odh::World world;require(world.create(1,odh::EntityKind::object)&&world.create(2,odh::EntityKind::object)&&
+        world.create(3,odh::EntityKind::object),"create actual source relationship identities");
+    const auto first=world.find(1)->generation,second=world.find(2)->generation,third=world.find(3)->generation;
+    odh::RelationshipSnapshot saved;saved.limits={16,32,64};
+    saved.sources={{odh::RelationshipMatrix::object,1,first,{{1,{8}},{2,{7}}}},
+        {odh::RelationshipMatrix::object,2,second,{{1,{9}},{3,{13}}}}};
+    saved.pair_count=4;saved.value_count=4;
+    odh::RelationshipState state;require(state.restore_snapshot(saved),"restore generation-owned outgoing maps");
+    const auto lookup=[](const odh::RelationshipSnapshot& snapshot,int id,std::uint64_t generation,int target)->std::optional<std::int16_t>{
+        for(const auto& source:snapshot.sources)if(source.matrix==odh::RelationshipMatrix::object&&source.id==id&&source.generation==generation)
+            for(const auto& pair:source.pairs)if(pair.target==target&&!pair.values.empty())return pair.values.front();
+        return {};
+    };
+    require(world.mark_dead({1,first})&&world.find(1)&&world.reference_is_dead({1,first})&&
+        state.remove_inbound_object_references(world,1,first)&&world.remove_retaining_body({1,first}),
+        "end-frame Dead is visible before dictionary removal and source inbound cleanup");
+    auto after=state.snapshot();require(!lookup(after,1,first,1)&&!lookup(after,2,second,1)&&lookup(after,1,first,2)==std::optional<std::int16_t>{7},
+        "Delete removes self-target inbound but preserves the dead body's outgoing map to other objects");
+    require(world.create(1,odh::EntityKind::object)&&world.mark_dead({2,second})&&
+        state.remove_inbound_object_references(world,2,second)&&world.remove_retaining_body({2,second})&&world.create(2,odh::EntityKind::object),
+        "delete another body after the first numeric ID was reused");
+    after=state.snapshot();require(lookup(after,1,first,2)==std::optional<std::int16_t>{7}&&lookup(after,2,second,3)==std::optional<std::int16_t>{13},
+        "inbound cleanup consults exact indexed generations and never clears another retained source");
+    after.sources.push_back({odh::RelationshipMatrix::object,3,third,{{2,{44}}}});++after.pair_count;++after.value_count;
+    odh::RelationshipState fresh;require(fresh.restore_snapshot(after),"create new inbound relation to the replacement numeric ID");
+    std::vector<odh::WorldEntityReference> collected;
+    require(world.collect_retained_bodies({{1,first}},&collected)&&collected==std::vector<odh::WorldEntityReference>{{2,second}}&&
+        fresh.forget_object_source(2,second),"body GC reports and forgets only the collected old source");
+    const auto final=fresh.snapshot();require(!lookup(final,2,second,3)&&lookup(final,3,third,2)==std::optional<std::int16_t>{44}&&
+        lookup(final,1,first,2)==std::optional<std::int16_t>{7},"GC never repeats numeric inbound cleanup against a replacement");
+}
+void retire_object_identity() {
+    odh::RelationshipSnapshot saved;
+    saved.limits={16,32,64};
+    saved.sources={
+        {odh::RelationshipMatrix::neighbor,11,0,{{101,{7}}}},
+        {odh::RelationshipMatrix::object,101,1,{{201,{10,11}},{102,{}}}},
+        {odh::RelationshipMatrix::object,101,2,{{202,{20}}}},
+        {odh::RelationshipMatrix::object,202,1,{{101,{30,31}},{102,{40}}}},
+        {odh::RelationshipMatrix::object,203,1,{{101,{}}}}
+    };
+    saved.pair_count=7;saved.value_count=7;
+    odh::RelationshipState state;
+    require(state.restore_snapshot(saved),"restore mixed relationship generations for retirement");
+    require(!state.retire_object_identity(0,1)&&!state.retire_object_identity(101,0),
+        "invalid retirement identities reject");
+    require(state.source_count()==5&&state.pair_count()==7&&state.value_count()==7,
+        "invalid retirement leaves all counts unchanged");
+    require(state.retire_object_identity(101,1),"retire exact object relationship identity");
+    const auto after=state.snapshot();
+    require(state.source_count()==4&&state.pair_count()==3&&state.value_count()==3,
+        "retirement reclaims source and inbound pair/value budgets including empty pairs");
+    require(state.value(11,101,0)==7,"neighbor matrix remains unchanged");
+    require(after.sources.size()==4&&after.sources[1].id==101&&after.sources[1].generation==2&&
+        after.sources[1].pairs.size()==1&&after.sources[1].pairs[0].target==202,
+        "obsolete other-generation source remains intact");
+    require(after.sources[2].id==202&&after.sources[2].pairs.size()==1&&
+        after.sources[2].pairs[0].target==102&&after.sources[2].pairs[0].values==std::vector<std::int16_t>{40},
+        "unrelated outgoing pair survives while inbound retired target is removed");
+    require(after.sources[3].id==203&&after.sources[3].pairs.empty(),
+        "empty inbound pair is removed but its unrelated source remains");
+    const auto repeated=state.retire_object_identity(101,1);
+    const auto repeated_snapshot=state.snapshot();
+    require(repeated&&repeated_snapshot.sources.size()==after.sources.size()&&
+        repeated_snapshot.pair_count==after.pair_count&&repeated_snapshot.value_count==after.value_count&&
+        state.pair_count()==3&&state.value_count()==3,"repeated retirement is idempotent");
+    odh::RelationshipState restored;
+    require(restored.restore_snapshot(after)&&restored.snapshot().pair_count==3&&
+        restored.snapshot().value_count==3&&restored.source_count()==4,
+        "post-retirement snapshot restores with consistent counts");
+}
 void actual_vm() {
     odh::NeighborContext n(catalog({entry(11,{{1,12,{55}}}),entry(12)}));
     odh::RelationshipState state(n);odh::World w;avatar(w,101,11);
@@ -187,8 +273,34 @@ void actual_vm() {
     odh::Vm vm({{key,routine}},{},{},state.primitive(w));
     require(vm.start(key,{101,202,12,0},{0,92})==odh::VmStatus::running&&vm.run(1)==odh::VmStatus::returned_true&&state.value(11,12,0)==92,"actual legacy VM mutation");
 }
+void retire_neighbor_identity() {
+    using M=odh::RelationshipMatrix;
+    odh::RelationshipSnapshot snapshot;
+    snapshot.sources={{M::neighbor,41,0,{{42,{60,70}},{43,{90}}}},
+        {M::neighbor,42,0,{{41,{10,20}},{43,{30}}}},
+        {M::object,41,1,{{41,{50}}}}};
+    snapshot.pair_count=5;snapshot.value_count=7;
+    odh::RelationshipState state;
+    require(state.restore_snapshot(snapshot),"restore saved neighbor and object relations");
+    require(!state.retire_neighbor_identity(0)&&!state.retire_neighbor_identity(-1),
+        "invalid retired neighbor IDs reject");
+    require(state.retire_neighbor_identity(41),"retire deleted neighbor");
+    const auto cleaned=state.snapshot();
+    require(cleaned.sources.size()==2&&cleaned.pair_count==2&&cleaned.value_count==2,
+        "retirement counts remove outgoing and inbound neighbor values");
+    require(!state.value(41,42,0)&&!state.value(42,41,0)&&state.value(42,43,0)==30,
+        "deleted Sim references removed while unrelated relationship progress survives");
+    const auto object=std::find_if(cleaned.sources.begin(),cleaned.sources.end(),[](const auto& src){return src.matrix==M::object;});
+    require(object!=cleaned.sources.end()&&object->pairs.size()==1&&object->pairs[0].target==41&&object->pairs[0].values[0]==50,
+        "numeric object identity does not become a deleted neighbor identity");
+    require(state.retire_neighbor_identity(41)&&state.pair_count()==2&&state.value_count()==2,
+        "neighbor retirement is idempotent");
+    odh::RelationshipState reopened;
+    require(reopened.restore_snapshot(cleaned)&&reopened.value(42,43,0)==30,
+        "cleaned snapshot reopens with surviving progress");
+}
 }
 int main() {
-    try {semantics();variables_and_atomicity();objects_and_limits();actual_vm();std::cout<<"relationship: "<<checks<<" checks passed\n";return 0;}
+    try {source_delete_and_body_gc();semantics();variables_and_atomicity();objects_and_limits();retire_object_identity();retire_neighbor_identity();actual_vm();std::cout<<"relationship: "<<checks<<" checks passed\n";return 0;}
     catch (const std::exception& e) {std::cerr<<"relationship: "<<e.what()<<'\n';return 1;}
 }

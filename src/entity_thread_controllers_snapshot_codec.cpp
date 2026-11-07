@@ -7,7 +7,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 5;
+constexpr std::uint16_t codec_version = 14;
 constexpr std::uint16_t legacy_codec_version = 1;
 constexpr std::size_t minimum_size = 84;
 constexpr std::size_t minimum_action_size_v1 = 34;
@@ -119,55 +119,73 @@ private:
 };
 
 bool valid_key(RoutineKey key) {
-    return key.scope <= RoutineScope::semiglobal && key.scope == routine_key(key.id).scope;
+    return routine_key_valid(key);
 }
 void write_key(Writer& writer, RoutineKey key) {
     if (!valid_key(key)) throw FormatError("invalid queued interaction routine key");
     writer.u8(static_cast<std::uint8_t>(key.scope));
     writer.u16(key.id);
 }
-RoutineKey read_key(Reader& reader) {
+RoutineKey read_key(Reader& reader,std::uint16_t version) {
     const auto scope = reader.u8();
     const auto id = reader.u16();
-    if (scope > static_cast<std::uint8_t>(RoutineScope::semiglobal))
+    if (scope > static_cast<std::uint8_t>(version>=13?RoutineScope::named_semiglobal:RoutineScope::semiglobal))
         throw FormatError("invalid queued interaction routine scope");
     const RoutineKey key{static_cast<RoutineScope>(scope), id};
     if (!valid_key(key)) throw FormatError("queued interaction routine key does not match its ID");
     return key;
 }
-void write_context(Writer& writer, const VmContext& context) {
+bool valid_context_references(const VmContext& value){
+    if(!value.entity_references_bound)return !value.caller_generation&&!value.callee_generation&&!value.stack_object_generation;
+    return (value.caller>0||!value.caller_generation)&&(value.callee>0||!value.callee_generation)&&
+        (value.stack_object>0||!value.stack_object_generation);
+}
+void write_context(Writer& writer, const VmContext& context,std::uint16_t version) {
+    if(!valid_context_references(context))throw FormatError("invalid queued entity reference tags");
     writer.i16(context.caller);
     writer.i16(context.callee);
     writer.i16(context.stack_object);
     writer.u32(context.code_owner);
+    if(version>=12){writer.boolean(context.entity_references_bound);writer.u64(context.caller_generation);
+        writer.u64(context.callee_generation);writer.u64(context.stack_object_generation);}
 }
-VmContext read_context(Reader& reader) {
-    return {reader.i16(), reader.i16(), reader.i16(), reader.u32()};
+VmContext read_context(Reader& reader,std::uint16_t version) {
+    VmContext value{reader.i16(), reader.i16(), reader.i16(), reader.u32()};
+    if(version>=12){value.entity_references_bound=reader.boolean();value.caller_generation=reader.u64();
+        value.callee_generation=reader.u64();value.stack_object_generation=reader.u64();}
+    if(!valid_context_references(value))throw FormatError("invalid queued entity reference tags");
+    return value;
 }
-void write_call(Writer& writer, const VmCall& call) {
+void write_call(Writer& writer, const VmCall& call,std::uint16_t version) {
+    if(call.exact_arguments&&version<10)throw FormatError("queued interaction exact extent requires controller codec10");
     write_key(writer, call.key);
-    write_context(writer, call.context);
+    write_context(writer, call.context,version);
     writer.count(call.arguments.size());
     for (const auto value : call.arguments) writer.i16(value);
-    if (call.return_mode > VmCallReturnMode::external_frame_next_tick)
+    if (call.return_mode > (version>=7?VmCallReturnMode::immediate:VmCallReturnMode::external_frame_next_tick))
         throw FormatError("invalid queued interaction return mode");
     writer.u8(static_cast<std::uint8_t>(call.return_mode));
+    if(version>=10)writer.boolean(call.exact_arguments);
+    if(version>=12){writer.boolean(call.action_tree_override.has_value());if(call.action_tree_override)writer.boolean(*call.action_tree_override);}
 }
-VmCall read_call(Reader& reader, const EntityThreadControllersSnapshotCodecLimits& limits) {
+VmCall read_call(Reader& reader, const EntityThreadControllersSnapshotCodecLimits& limits,
+                 std::uint16_t version) {
     VmCall call;
-    call.key = read_key(reader);
-    call.context = read_context(reader);
+    call.key = read_key(reader,version);
+    call.context = read_context(reader,version);
     const auto count = reader.count(limits.max_call_arguments, 2);
     call.arguments.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) call.arguments.push_back(reader.i16());
     const auto mode = reader.u8();
-    if (mode > static_cast<std::uint8_t>(VmCallReturnMode::external_frame_next_tick))
+    if (mode > static_cast<std::uint8_t>(version>=7?VmCallReturnMode::immediate:VmCallReturnMode::external_frame_next_tick))
         throw FormatError("invalid queued interaction return mode");
     call.return_mode = static_cast<VmCallReturnMode>(mode);
+    if(version>=10)call.exact_arguments=reader.boolean();
+    if(version>=12&&reader.boolean())call.action_tree_override=reader.boolean();
     return call;
 }
 
-void write_sleep(Writer& writer, const SleepSnapshot& state) {
+void write_sleep(Writer& writer, const SleepSnapshot& state,std::uint16_t version) {
     writer.boolean(state.actor.has_value());
     if (state.actor) {
         writer.i16(state.actor->id);
@@ -180,6 +198,10 @@ void write_sleep(Writer& writer, const SleepSnapshot& state) {
         writer.u64(state.job->idle_start);
         writer.u64(state.job->deadline);
         writer.u64(static_cast<std::uint64_t>(state.job->argument));
+        if(version>=6) {
+            writer.boolean(state.job->next_evaluation.has_value());
+            if(state.job->next_evaluation)writer.u64(*state.job->next_evaluation);
+        }
     }
     writer.boolean(state.last_tick.has_value());
     if (state.last_tick) writer.u64(*state.last_tick);
@@ -188,11 +210,12 @@ void write_sleep(Writer& writer, const SleepSnapshot& state) {
     writer.boolean(state.notify_resume);
     writer.string(state.diagnostic);
 }
-SleepSnapshot read_sleep(Reader& reader, const EntityThreadControllersSnapshotCodecLimits& limits) {
+SleepSnapshot read_sleep(Reader& reader, const EntityThreadControllersSnapshotCodecLimits& limits,std::uint16_t version) {
     SleepSnapshot state;
     if (reader.boolean()) state.actor = SleepActorSnapshot{reader.i16(), reader.u64(), reader.u64()};
     if (reader.boolean()) state.job = SleepJobSnapshot{reader.u64(), reader.u64(), reader.u64(),
                                                        reader.size(32767)};
+    if(state.job && version>=6 && reader.boolean())state.job->next_evaluation=reader.u64();
     if (reader.boolean()) state.last_tick = reader.u64();
     state.clock = reader.u64();
     state.interrupted = reader.boolean();
@@ -201,7 +224,7 @@ SleepSnapshot read_sleep(Reader& reader, const EntityThreadControllersSnapshotCo
     return state;
 }
 
-void write_interactions(Writer& writer, const InteractionQueueSnapshot& state) {
+void write_interactions(Writer& writer, const InteractionQueueSnapshot& state,std::uint16_t version) {
     writer.i16(state.actor_id);
     writer.u64(static_cast<std::uint64_t>(state.capacity));
     writer.u64(state.actor_generation);
@@ -217,7 +240,7 @@ void write_interactions(Writer& writer, const InteractionQueueSnapshot& state) {
     for (const auto& action : state.actions) {
         writer.u64(action.uid);
         writer.u64(action.target_generation);
-        write_call(writer, action.call);
+        write_call(writer, action.call,version);
         writer.u16(action.queue_uid);
         writer.i16(action.priority);
         if(action.mode>InteractionQueueMode::idle)
@@ -228,6 +251,25 @@ void write_interactions(Writer& writer, const InteractionQueueSnapshot& state) {
         writer.boolean(action.check.has_value());
         if(action.check)write_key(writer,*action.check);
         writer.boolean(action.check_permissions);
+        if(version>=8){
+            writer.boolean(action.icon_owner.has_value());
+            if(action.icon_owner){writer.i16(action.icon_owner->id);writer.u64(action.icon_owner->generation);}
+        }
+        if(version>=9){
+            writer.boolean(action.interaction_number.has_value());
+            if(action.interaction_number)writer.u32(static_cast<std::uint32_t>(*action.interaction_number));
+        }
+        if(version>=10)writer.u8(static_cast<std::uint8_t>(action.argument_mode));
+        if(version>=11)writer.u8(static_cast<std::uint8_t>(action.check_context));
+        if(version>=14){
+            writer.boolean(action.label.has_value());
+            if(action.label){
+                const auto& origin=action.label->origin;
+                writer.u8(static_cast<std::uint8_t>(origin.kind));writer.u8(origin.language);
+                writer.u16(origin.table);writer.u32(origin.index);
+                writer.string(origin.resource);writer.string(origin.asset);writer.string(action.label->text);
+            }
+        }
     }
     writer.boolean(state.active.has_value());
     if (state.active) { writer.u64(state.active->uid); writer.u64(state.active->ticket); }
@@ -262,13 +304,13 @@ InteractionQueueSnapshot read_interactions(Reader& reader,
     if (reader.boolean()) state.last_tick = reader.u64();
     if (reader.boolean()) state.resume_tick = reader.u64();
     const auto count = reader.count(limits.max_queue_actions,
-        version>=4?minimum_action_size_v4:version>=3?minimum_action_size_v3:
+        version>=11?minimum_action_size_v4+5:version>=10?minimum_action_size_v4+4:version>=9?minimum_action_size_v4+2:version>=8?minimum_action_size_v4+1:version>=4?minimum_action_size_v4:version>=3?minimum_action_size_v3:
             version>=2?minimum_action_size_v2:minimum_action_size_v1);
     state.actions.resize(count);
     for (auto& action : state.actions) {
         action.uid = reader.u64();
         action.target_generation = reader.u64();
-        action.call = read_call(reader, limits);
+        action.call = read_call(reader, limits,version);
         if(version>=2){
             action.queue_uid=reader.u16();
             action.priority=reader.i16();
@@ -279,8 +321,27 @@ InteractionQueueSnapshot read_interactions(Reader& reader,
             action.flags=reader.u32();
             action.notify_idle=reader.boolean();
         }
-        if(version>=3&&reader.boolean())action.check=read_key(reader);
+        if(version>=3&&reader.boolean())action.check=read_key(reader,version);
         if(version>=4)action.check_permissions=reader.boolean();
+        if(version>=8&&reader.boolean())action.icon_owner=InteractionIconOwnerSnapshot{reader.i16(),reader.u64()};
+        if(version>=9&&reader.boolean()){
+            const auto bits=reader.u32();action.interaction_number=static_cast<std::int32_t>(
+                bits<=INT32_MAX?static_cast<std::int64_t>(bits):static_cast<std::int64_t>(bits)-4294967296LL);
+        }
+        if(version>=10){const auto mode=reader.u8();
+            if(mode>static_cast<std::uint8_t>(InteractionArgumentMode::source_explicit))throw FormatError("invalid queued source argument mode");
+            action.argument_mode=static_cast<InteractionArgumentMode>(mode);}
+        if(version>=11){const auto context=reader.u8();
+            if(context>static_cast<std::uint8_t>(InteractionCheckContext::autonomous))throw FormatError("invalid interaction eligibility context");
+            action.check_context=static_cast<InteractionCheckContext>(context);}
+        if(version>=14&&reader.boolean()){
+            InteractionLabel label;
+            label.origin.kind=static_cast<InteractionLabelKind>(reader.u8());label.origin.language=reader.u8();
+            label.origin.table=reader.u16();label.origin.index=reader.u32();
+            label.origin.resource=reader.string(4096);label.origin.asset=reader.string(4096);label.text=reader.string(2048);
+            if(!valid_interaction_label(label))throw FormatError("invalid saved interaction label");
+            action.label=std::move(label);
+        }
     }
     if (reader.boolean()) state.active = InteractionActiveSnapshot{reader.u64(), reader.u64()};
     if(version>=5){
@@ -317,6 +378,10 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
         sleep.job->idle_start > sleep.clock || sleep.job->deadline <= sleep.clock ||
         sleep.job->deadline > maximum_clock || sleep.job->argument > 32767))
         throw FormatError("invalid sleep job state");
+    if(sleep.job && sleep.job->next_evaluation &&
+       (*sleep.job->next_evaluation<=sleep.clock || *sleep.job->next_evaluation>=sleep.job->deadline ||
+        *sleep.job->next_evaluation!=sleep.job->idle_start+1))
+        throw FormatError("invalid sleep scheduled evaluation");
     if (sleep.notify_resume && !sleep.actor)
         throw FormatError("sleep resume state without an actor");
 
@@ -326,13 +391,31 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
         interactions.clock > maximum_clock || interactions.idle_start > interactions.clock ||
         (interactions.last_tick ? *interactions.last_tick != interactions.clock : interactions.clock != 0))
         throw FormatError("interaction queue exceeds limits or has inconsistent clock");
+    if(snapshot.schedule_idle_start&&(*snapshot.schedule_idle_start>maximum_clock||
+       *snapshot.schedule_idle_start>sleep.clock||*snapshot.schedule_idle_start>interactions.clock||
+       sleep.clock!=interactions.clock))
+        throw FormatError("shared ScheduleIdleStart exceeds or disagrees with controller clocks");
     std::set<std::uint64_t> action_uids;
     for (const auto& action : interactions.actions) {
+        if(!valid_context_references(action.call.context)||(action.call.action_tree_override&&!*action.call.action_tree_override)||
+           (action.call.context.entity_references_bound&&(action.call.context.caller_generation!=interactions.actor_generation||
+            action.call.context.callee_generation!=action.target_generation||action.call.context.stack_object_generation!=action.target_generation)))
+            throw FormatError("queued action has invalid body references or ActionTree intent");
+        if((action.label&&!valid_interaction_label(*action.label))||action.check_context>InteractionCheckContext::autonomous||
+           (action.check_context==InteractionCheckContext::autonomous&&
+            (action.argument_mode!=InteractionArgumentMode::source_explicit||!action.check_permissions||action.call.arguments.size()!=4))||
+           action.argument_mode>InteractionArgumentMode::source_explicit||
+           action.call.exact_arguments!=(action.argument_mode!=InteractionArgumentMode::legacy_metadata)||
+           (action.argument_mode==InteractionArgumentMode::source_null&&
+            (action.call.arguments.size()!=4||std::any_of(action.call.arguments.begin(),action.call.arguments.end(),[](auto value){return value!=0;})))||
+           (action.icon_owner&&(action.icon_owner->id<=0||!action.icon_owner->generation)))
+            throw FormatError("invalid interaction source argument extent or weak icon identity");
         if (!action.uid || !action_uids.insert(action.uid).second || action.uid > interactions.sequence ||
             !valid_key(action.call.key) || action.call.arguments.size() > limits.max_call_arguments ||
             action.call.context.caller != interactions.actor_id ||
             action.call.context.stack_object != action.call.context.callee ||
-            action.call.return_mode != VmCallReturnMode::interaction_next_tick ||
+            action.call.return_mode != ((action.flags&4U)?VmCallReturnMode::immediate:
+                                                        VmCallReturnMode::interaction_next_tick) ||
             action.mode > InteractionQueueMode::idle ||
             (action.check&&!valid_key(*action.check)))
             throw FormatError("invalid queued interaction action");
@@ -372,6 +455,37 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
         (interactions.active&&interactions.completion->ticket<=interactions.active->ticket)))
         throw FormatError("invalid interaction resume boundary");
 }
+bool has_v7_state(const EntityThreadControllersSnapshot& snapshot) {
+    return snapshot.schedule_idle_start.has_value()||
+        std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),[](const auto& action){
+            return action.call.return_mode==VmCallReturnMode::immediate||(action.flags&4U)!=0;
+        });
+}
+bool has_v13_state(const EntityThreadControllersSnapshot& snapshot){
+    return std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),[](const auto& action){
+        return action.call.key.scope>RoutineScope::semiglobal||(action.check&&action.check->scope>RoutineScope::semiglobal);
+    });
+}
+bool has_v12_state(const EntityThreadControllersSnapshot& snapshot) {
+    return std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),
+        [](const auto& action){return action.call.context.entity_references_bound||action.call.action_tree_override.has_value();});
+}
+bool has_v11_state(const EntityThreadControllersSnapshot& snapshot) {
+    return std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),
+        [](const auto& action){return action.check_context!=InteractionCheckContext::default_zero;});
+}
+bool has_v10_state(const EntityThreadControllersSnapshot& snapshot) {
+    return std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),
+        [](const auto& action){return action.argument_mode!=InteractionArgumentMode::legacy_metadata;});
+}
+bool has_v9_state(const EntityThreadControllersSnapshot& snapshot) {
+    return std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),
+        [](const auto& action){return action.interaction_number.has_value();});
+}
+bool has_v8_state(const EntityThreadControllersSnapshot& snapshot) {
+    return std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),
+        [](const auto& action){return action.icon_owner.has_value();});
+}
 }
 
 std::vector<std::uint8_t> encode_entity_thread_controllers_snapshot(
@@ -381,10 +495,18 @@ std::vector<std::uint8_t> encode_entity_thread_controllers_snapshot(
         throw FormatError("controller snapshot byte limit is too small");
     validate(snapshot, limits);
     Writer writer(limits.max_bytes);
-    writer.u16(codec_version);
-    write_sleep(writer, snapshot.sleep);
-    write_interactions(writer, snapshot.interactions);
+    const bool labels=std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),
+        [](const auto& action){return action.label.has_value();});
+    const auto version=static_cast<std::uint16_t>(labels?14:has_v13_state(snapshot)?13:has_v12_state(snapshot)?12:has_v11_state(snapshot)?11:has_v10_state(snapshot)?10:has_v9_state(snapshot)?9:has_v8_state(snapshot)?8:has_v7_state(snapshot)?7:
+        snapshot.sleep.job&&snapshot.sleep.job->next_evaluation?6:5);
+    writer.u16(version);
+    write_sleep(writer, snapshot.sleep,version);
+    write_interactions(writer, snapshot.interactions,version);
     writer.boolean(snapshot.thread_interrupt);
+    if(version>=7) {
+        writer.boolean(snapshot.schedule_idle_start.has_value());
+        if(snapshot.schedule_idle_start)writer.u64(*snapshot.schedule_idle_start);
+    }
     return writer.take();
 }
 
@@ -399,11 +521,22 @@ EntityThreadControllersSnapshot decode_entity_thread_controllers_snapshot(
     if(version<legacy_codec_version||version>codec_version)
         throw FormatError("unsupported controller snapshot version");
     EntityThreadControllersSnapshot snapshot;
-    snapshot.sleep = read_sleep(reader, limits);
+    snapshot.sleep = read_sleep(reader, limits,version);
     snapshot.interactions = read_interactions(reader, limits,version);
     snapshot.thread_interrupt = reader.boolean();
+    if(version>=7&&reader.boolean())snapshot.schedule_idle_start=reader.u64();
     if (!reader.done()) throw FormatError("controller snapshot has unclaimed bytes");
     validate(snapshot, limits);
+    if(version==14&&std::none_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),
+        [](const auto& action){return action.label.has_value();}))throw FormatError("noncanonical controller snapshot v14 label extension");
+    if(version==13&&!has_v13_state(snapshot))throw FormatError("noncanonical controller snapshot v13 named-key extension");
+    if(version==12&&!has_v12_state(snapshot))throw FormatError("noncanonical controller snapshot v12 reference extension");
+    if(version==11&&!has_v11_state(snapshot))throw FormatError("noncanonical controller snapshot v11 eligibility extension");
+    if(version==10&&!has_v10_state(snapshot))throw FormatError("noncanonical controller snapshot v10 extension");
+    if(version==9&&!has_v9_state(snapshot))throw FormatError("noncanonical controller snapshot v9 extension");
+    if(version==8&&!has_v8_state(snapshot))throw FormatError("noncanonical controller snapshot v8 extension");
+    if(version==7&&!has_v7_state(snapshot))
+        throw FormatError("noncanonical controller snapshot v7 extension");
     return snapshot;
 }
 

@@ -32,10 +32,13 @@ ReadOnlyEntryPoint5Result evaluate_read_only_entry_point5(
 
 const char* read_only_entry_point5_state_name(ReadOnlyEntryPoint5State) noexcept;
 
-// Runs a private EP5 action with Simitone's documented frame identities and
-// four arguments (stack object ID, ghost flag, 0, 0) in the bounded read-only
-// BHAV sandbox. `owner_routines` must be the exact private/linked-semiglobal
-// closure for that action; globals belong in `default_routines`. If ghost is
+// Runs the Caller's exact EP5 action (>255) with Simitone's frame identities
+// and four arguments (stack object ID, ghost flag, 0, 0) in a bounded read-only
+// sandbox. The host authenticates resources: global roots belong exclusively
+// to `default_routines` (selected Global bank), private/semiglobal roots to
+// `owner_routines` (exact private/linked GLOB bank). That owner also supplies
+// private/semiglobal descendants of a global root. Caller.entry_points[5]
+// must name the requested root, present in its own scope bank. If ghost is
 // unknown, both possible values are tested and only an identical result is
 // accepted. This is diagnostic evidence, not a placement commit.
 ReadOnlyBhavResult evaluate_read_only_entry_point5_bhav(

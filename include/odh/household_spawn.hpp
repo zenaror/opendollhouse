@@ -12,6 +12,19 @@
 
 namespace odh {
 
+// Shared native avatar base-constructor word profile. No family/neighbor,
+// appearance, startup, placement or activation effects. Avatar must exist.
+// Private-candidate caller discards state if an allocation/budget check fails.
+// CurrentValue41 is a group property: supply only an authenticated catalog
+// initial value. Omitted means unknown, including old restored World banks.
+void initialize_avatar_constructor_words(World&,std::int16_t avatar_id,
+    std::optional<std::int16_t> authenticated_initial_value={});
+// Pinned TS1ObjectProvider catalog predicate + VMContext constructor price,
+// evaluated from the avatar's complete, versioned OBJD VM word bank. Returns
+// known zero for a proven noncatalog avatar, not for absent/truncated input.
+std::optional<std::int16_t> avatar_constructor_initial_value(
+    const std::vector<std::int16_t>& definition_words);
+
 // Candidate order used by the TS1 mailbox-based family arrival search.
 // Positions are in sixteenth-tile units. Callers must still apply lot
 // placement and collision rules before using a candidate.
@@ -87,6 +100,22 @@ struct HouseholdVerificationResult {
 // Processes missing members in the order supplied by household. The mailbox
 // position is captured once for the search; callers must not move it from an
 // attempt callback during this operation.
+// In-place VerifyFamily for an unpublished bootstrap AFTER original lot Load
+// and class recovery. Uses actual World constructors and exact generations;
+// never restores/publishes a snapshot and never dispatches Main. Host callbacks
+// own Init, real placement, and scheduler admission in that order. On any
+// failure, effects may already exist: discard the ENTIRE private bootstrap.
+// This is not a transaction for an already published gameplay World.
+struct HouseholdActivationResult {
+    std::map<std::uint32_t,std::int16_t> runtime_ids;
+    std::vector<VerifiedHouseholdMember> new_members;
+};
+HouseholdActivationResult verify_household_members_in_place(
+    World&,const std::vector<HouseholdSpawnRequest>&,std::uint16_t family_chunk_id,
+    const HouseholdAvatarPreparer&,std::optional<EntityPosition> mailbox,
+    std::uint16_t lot_width,std::uint16_t lot_height,
+    const HouseholdPositionAttempt&,const HouseholdMemberActivation&);
+
 HouseholdVerificationResult verify_household_members(
     const WorldSnapshot& source,
     const std::vector<HouseholdSpawnRequest>& household,

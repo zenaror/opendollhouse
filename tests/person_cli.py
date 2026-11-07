@@ -27,9 +27,26 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   archive(action,'Chair.iff',[('OBJD',128,objd(0x22222222)),('BHAV',4096,routine(action_rows or [expr(0,22,255)]))]+bcons(action_bcons))
  args=[binary,'--avatar',str(avatar),'Person.iff','128','--semiglobal',str(semi),'FixturePerson.iff','--global',str(glob),'Global.iff']
  action_args=['--action',str(action),'Chair.iff','128','4096']
- def run(extra=()):
-  env=os.environ.copy();env['XDG_STATE_HOME']=str(root/'xdg-state')
-  return subprocess.run(args+list(extra),capture_output=True,text=True,env=env)
+ def unsupported_read(data,scope,index):
+  # Keep the exact failed address and verify every provenance field against
+  # the actual faulting frame; newer diagnostics append this source context.
+  if not data.get('stack'):return False
+  frame=data['stack'][-1]
+  expected=f"unsupported read scope {scope} index {index} (caller={frame['caller']} callee={frame['callee']} stack_object={frame['stack_object']} owner={frame['owner']} routine={frame['routine']} pc={frame['pc']})"
+  return data.get('diagnostic')==expected
+ def run(extra=(),command=None):
+  env=os.environ.copy()
+  for variable,name in [('XDG_DATA_HOME','xdg-data'),('XDG_CONFIG_HOME','xdg-config'),
+                        ('XDG_STATE_HOME','xdg-state'),('XDG_CACHE_HOME','xdg-cache')]:
+   directory=root/name;directory.mkdir(exist_ok=True);env[variable]=str(directory)
+  env.pop('DISPLAY',None);env.pop('WAYLAND_DISPLAY',None)
+  return subprocess.run((args if command is None else command)+list(extra),capture_output=True,text=True,env=env)
+ setup()
+ for response in [['--headless-dialog-response','3',''],['--headless-dialog-response','0','x'*4097],['--headless-dialog-response','0','']*33]:
+  r=run(response);assert r.returncode==2 and not r.stdout and 'dialog response' in r.stderr
+ r=run(['--headless-dialog-response','0','']);assert r.returncode==2 and not r.stdout and '--headless-dialog-response' in r.stderr
+ r=run(['--headless-main','--ticks','2','--headless-dialog-ok','--headless-dialog-response','0',''])
+ assert r.returncode==2 and not r.stdout and 'mutually exclusive' in r.stderr
  setup();r=run(['--headless-window-stand-tick','0'])
  assert r.returncode==2 and not r.stdout and 'Stand tick' in r.stderr
  setup();r=run(['--headless-window-stand-tick','2'])
@@ -73,6 +90,26 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'headless interaction target/tick' in r.stderr
  setup();r=run(['--headless-main','--headless-interaction','10','2','--ticks','1'])
  assert r.returncode==2 and not r.stdout and 'headless-interaction' in r.stderr
+ # Explicit menu rows share the resident sequence parser and its limits.
+ setup();r=run(['--headless-resident-interaction-row','105','112','65536','1'])
+ assert r.returncode==2 and not r.stdout and 'selector outside uint16 range' in r.stderr
+ setup();r=run(['--headless-resident-interaction-row','0','112','0','1'])
+ assert r.returncode==2 and not r.stdout and 'actor/target/tick' in r.stderr
+ setup();r=run(['--headless-resident-interaction-row','105','112','0','0'])
+ assert r.returncode==2 and not r.stdout and 'actor/target/tick' in r.stderr
+ setup();r=run(['--headless-main','--headless-resident-interaction-row','105','112','0','1'])
+ assert r.returncode==2 and not r.stdout and 'integrated whole-household' in r.stderr
+ setup();r=run(['--headless-main','--headless-resident-interaction','105','112','1',
+                '--headless-resident-interaction-row','137','107','0','1'])
+ assert r.returncode==2 and not r.stdout and 'integrated whole-household' in r.stderr
+ setup();r=run(['--headless-main','--headless-resident-interaction','105','112','2',
+                '--headless-resident-interaction-row','137','107','0','1'])
+ assert r.returncode==2 and not r.stdout and 'backward in time' in r.stderr
+ setup();r=run(['--headless-main']+['--headless-resident-interaction-row','105','112','0','1']*33)
+ assert r.returncode==2 and not r.stdout and '32 requests' in r.stderr
+ setup();r=run(['--headless-main','--headless-interaction','112','1',
+                '--headless-resident-interaction-row','137','107','0','2'])
+ assert r.returncode==2 and not r.stdout and 'cannot mix' in r.stderr
  setup();r=run(['--headless-stand','10','1'])
  assert r.returncode==2 and not r.stdout and 'headless-stand' in r.stderr
  setup();r=run(['--headless-main','--headless-stand','10','2'])
@@ -161,12 +198,14 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==0 and d['status']=='returned_true' and d['steps']==1
  assert d['trace'][0]['opcode']==7 and d['trace'][0]['operands']==[1,0,0,0,255,255,255,255]
  setup(main=[call(7,args=bytes([1,0,1,0,255,255,255,255]))]);r=run();d=json.loads(r.stdout)
- assert r.returncode==3 and d['status']=='fault' and 'Refresh type needs a positioned target and resolved room resources' in d['diagnostic']
- # Sleep consumes the same state between two random primitive calls.
+ assert r.returncode==3 and d['status']=='fault' and 'Refresh lighting requires real deferred lighting state' in d['diagnostic'],(r.returncode,d.get('status'),d.get('diagnostic'))
+ # Sleep consumes the same state between two random primitive calls. Source
+ # RunEveryFrame is true for avatars: ScheduleTickIn clamps each delay to one
+ # tick, so Args0=2 decrements at ticks0/1/2 and completes at tick2.
  first,_=next_random(1,100);cycled,_=next_random(first,1);last,value=next_random(cycled,100)
  setup(main=[call(256,args=[2,0,0,0,0,0,0,0])],global_rows=[random_row(0,8,100), (0,2,255,bytes(8)),random_row(0,8,100,t=3),check_temp(0,value)])
  r=run();d=json.loads(r.stdout)
- assert r.returncode==0 and d['ticks']==3 and d['rng_cycle_requests']==1 and d['rng_seed_final']==last
+ assert r.returncode==0 and d['ticks']==2 and d['rng_cycle_requests']==1 and d['rng_seed_final']==last,dict(returncode=r.returncode,ticks=d.get('ticks'),status=d.get('status'),steps=d.get('steps'),rng_cycles=d.get('rng_cycle_requests'),rng_final=d.get('rng_seed_final'),expected_rng_final=last,diagnostic=d.get('diagnostic'),stderr=r.stderr)
  assert [v['seed_before'] for v in d['random_reads']]==[1,cycled] and [v['seed_after'] for v in d['random_reads']]==[first,last]
  for destination,scope,maximum,range_scope in [(20,8,100,7),(0,7,100,7),(0,10,100,7),(0,8,20,8),(0,8,0,256),(0,256,100,7)]:
   setup(main=[random_row(destination,scope,maximum,range_scope,t=254)]);r=run();d=json.loads(r.stdout)
@@ -243,9 +282,9 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert 'BCON only' in d['tuning_profile']
  # Existing semiglobal with missing table must not use the private cache.
  setup(main=[tuned(0,0x2000)],private_bcons=[(8192,[99])]);r=run();d=json.loads(r.stdout)
- assert r.returncode==3 and d['diagnostic']=='unsupported read scope 26 index 8192' and d['tuning_reads']==[]
+ assert r.returncode==3 and unsupported_read(d,26,8192) and d['tuning_reads']==[]
  setup(main=[tuned(0,0x4001)],global_bcons=[(256,[0])]);r=run();d=json.loads(r.stdout)
- assert r.returncode==3 and d['diagnostic']=='unsupported read scope 26 index 16385' and d['tuning_reads']==[]
+ assert r.returncode==3 and unsupported_read(d,26,16385) and d['tuning_reads']==[]
  setup(private_bcons=[(4096,[1]),(4096,[2])]);r=run()
  assert r.returncode==2 and not r.stdout and 'ambiguous BCON' in r.stderr
  setup();r=run(action_args+['--ticks','0']);d=json.loads(r.stdout)
@@ -253,10 +292,11 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  setup(global_rows=[(17,1,253,[0,0,0,0,0,0,0,0]),expr(3,1)])
  r=run(action_args);d=json.loads(r.stdout)
  assert r.returncode==3 and d['action_incomplete'] and d['completion'] is None and d['queue_size']==1 and d['actor_state']['flags']==320
- # Proper clock cadence with a real Sleep controller, not synthetic true completion.
+ # The same avatar cadence applies without the surrounding Random primitives;
+ # natural Sleep completion still cycles RNG exactly once at tick2.
  setup(main=[call(256,args=[2,0,0,0,0,0,0,0])],global_rows=[(0,254,255,bytes(8))])
  r=run();d=json.loads(r.stdout)
- assert r.returncode==0 and d['ticks']==3 and d['steps']==2 and d['rng_cycle_requests']==1 and 'xorshift64star' in d['rng_backend']
+ assert r.returncode==0 and d['ticks']==2 and d['steps']==2 and d['rng_cycle_requests']==1 and 'xorshift64star' in d['rng_backend'],dict(returncode=r.returncode,ticks=d.get('ticks'),status=d.get('status'),steps=d.get('steps'),rng_cycles=d.get('rng_cycle_requests'),rng_final=d.get('rng_seed_final'),diagnostic=d.get('diagnostic'),stderr=r.stderr)
  assert d['rng_seed_initial']==1 and d['rng_seed_final']==33554433 and d['random_reads']==[]
  r=run(['--ticks','1']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['tick_budget_exhausted'] and d['ticks']==1 and d['status']=='waiting' and d['completion'] is None
@@ -265,9 +305,11 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  r=run();d=json.loads(r.stdout)
  assert r.returncode==0 and not r.stderr and d['status']=='returned_true' and d['steps']==1 and d['stack_depth']==0
  assert d['diagnostic']==''
+ # Opcode240 is unassigned in the selected TS1 registration and native host.
+ # AnimateSim44 is implemented, so it is not an unknown-opcode fixture.
  # Unknown primitive remains a coherent runtime failure, with owner/PC/provenance.
- setup(global_rows=[(44,254,255,bytes(8))]);r=run();d=json.loads(r.stdout)
- assert r.returncode==3 and d['status']=='fault' and d['diagnostic']=='unsupported primitive 44'
+ setup(global_rows=[(240,254,255,bytes(8))]);r=run();d=json.loads(r.stdout)
+ assert r.returncode==3 and d['status']=='fault' and d['diagnostic']=='unsupported primitive 240'
  assert d['stack'][-1]['owner']==1 and d['stack'][-1]['routine']==256 and d['stack'][-1]['caller']==1
  setup(main=[expr(0,1,0)]);r=run();d=json.loads(r.stdout)
  assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==10000 and len(d['trace'])==10000
@@ -275,12 +317,16 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert not d['diagnostics_truncated'] and all(value==0 for value in d['diagnostics_dropped'].values())
  for index in [1,25,26,29,41,62]:
   setup(main=[(2,254,255,[index,0,0,0,0,2,3,7])]);r=run();d=json.loads(r.stdout)
-  if index==29:
-   assert r.returncode==0 and d['status'] in ('returned_true','returned_false') and d['steps']==1
+  if index in (26,29):
+   # ParentId26 aliases the actual ContainerId (zero here); Room29 reads the
+   # source OUT_OF_WORLD sentinel -5, independent of an absent backing word.
+   assert r.returncode==0 and d['status']==('returned_true' if index==26 else 'returned_false') and d['steps']==1,(index,r.returncode,d.get('status'),d.get('diagnostic'))
   else:
-   assert r.returncode==3 and d['status']=='fault' and d['diagnostic']==f'unsupported read scope 3 index {index}'
+   assert r.returncode==3 and d['status']=='fault' and unsupported_read(d,3,index)
  setup();r=run(['--flags','65535','--age','27']+action_args);d=json.loads(r.stdout)
- assert r.returncode==0 and d['flags_initial']==65535 and d['actor_state']['flags']==-1 and d['actor_state']['age']==27
+ # Starting/leaving the offered interaction clears InteractionCanceled (bit7)
+ # in source VMThread; all other supplied bits and the explicit age survive.
+ assert r.returncode==0 and d['flags_initial']==65535 and d['actor_state']['flags']==-129 and d['actor_state']['age']==27,(r.returncode,d.get('diagnostic'),d.get('actor_state'))
  setup(main=[expr(0,1,0)]);r=run(['--ticks','1','--instruction-budget','12000']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==12000 and d['runtime_instruction_budget']==12000
  for extra in [['--ticks','4097'],['--age','32768'],['--flags','0','--flags','1'],['--routine','9999'],['--routine','256'],
@@ -315,10 +361,10 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   assert d['lot']['selected_id']==number and d['lot']['serialized_id']==99 and d['lot']['serialized_globals']==32
  setup(main=[read_lot,zone_call,(2,254,255,[0,0,0,0,0,2,8,7])]);r=run(['--lot',str(house),'1']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['diagnostic']=='lot zoning resource unavailable' and d['zoning_reads']==[]
- r=run();d=json.loads(r.stdout);assert r.returncode==3 and d['diagnostic']=='unsupported read scope 6 index 10'
+ r=run();d=json.loads(r.stdout);assert r.returncode==3 and unsupported_read(d,6,10)
  for index in [0,1,3,4,5,6,7,8,9,17,20,25,32,33]:
   setup(main=[(2,254,255,[0,0,index,0,0,5,8,6])]);r=run(lot_args());d=json.loads(r.stdout)
-  assert r.returncode==3 and d['diagnostic']==f'unsupported read scope 6 index {index}' and d['global_reads']==[]
+  assert r.returncode==3 and unsupported_read(d,6,index) and d['global_reads']==[]
  setup(main=[(2,254,255,[0,0,23,0,0,5,8,6])]);r=run(lot_args());d=json.loads(r.stdout)
  assert r.returncode==0 and d['global_reads']==[dict(index=23,value=56,source="lot_context")]
  for extra in [['--zoning',str(zone)],['--lot',str(house),'0'],['--lot',str(house),'32768'],lot_args()+['--lot',str(house),'2']]:
@@ -354,13 +400,13 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   setup(main=[(2,1,255,[0,0,11,0,0,5,10,7]),(2,254,255,[0,0,index,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
   assert r.returncode==0 and d['neighbor_reads']==[dict(neighbor=11,index=index,value=0,source=expected_source)]
  setup(main=[(2,1,255,[0,0,11,0,0,5,10,7]),(2,254,255,[0,0,88,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
- assert r.returncode==3 and d['diagnostic']=='unsupported read scope 32 index 88'
+ assert r.returncode==3 and unsupported_read(d,32,88)
  neighborhood_file([neighbor_record(11,mode=0)])
  setup(main=[(2,1,255,[0,0,11,0,0,5,10,7]),(2,254,255,[0,0,61,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
  assert r.returncode==0 and d['neighbor_reads'][0]['source']=='absent_person_data_reference_zero'
  neighborhood_file([]);setup(main=[(2,254,255,[0,0,61,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
  assert r.returncode==0 and d['neighbor_reads']==[dict(neighbor=1,index=61,value=0,source='missing_neighbor_reference_zero')]
- r=run();d=json.loads(r.stdout);assert r.returncode==3 and d['diagnostic']=='unsupported read scope 32 index 61'
+ r=run();d=json.loads(r.stdout);assert r.returncode==3 and unsupported_read(d,32,61)
  setup(main=[(31,254,255,[0,0,0,0,133,10,0,0])]);r=run();d=json.loads(r.stdout);assert r.returncode==3 and d['diagnostic']=='unsupported primitive 31'
  neighborhood_file([neighbor_record(11),neighbor_record(11)]);r=run(['--neighborhood',str(neighborhood)]);assert r.returncode==2 and 'ambiguous active neighbor ID' in r.stderr
  plain_iff(neighborhood,[]);r=run(['--neighborhood',str(neighborhood)]);assert r.returncode==2 and 'NBRS1 absent' in r.stderr
@@ -395,8 +441,8 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert d['actor_state']['person_data'][65]==1 and d['actor_state']['age']==17 and d['startup_stages'][1]['steps']==0
  startup_setup(init=[expr(0,1,255)],dynamic_id=0);r=run(['--initialize']);d=json.loads(r.stdout)
  assert r.returncode==0 and d['startup_stages'][0]['status']=='returned_false' and d['body_initialized']
- startup_setup(init=[(44,254,255,bytes(8))]);r=run(['--initialize']);d=json.loads(r.stdout)
- assert r.returncode==3 and d['host_failed'] and d['status']=='fault' and d['diagnostic']=='unsupported primitive 44' and not d['body_initialized']
+ startup_setup(init=[(240,254,255,bytes(8))]);r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['host_failed'] and d['status']=='fault' and d['diagnostic']=='unsupported primitive 240' and not d['body_initialized']
  assert len(d['startup_stages'])==1 and [v['phase'] for v in d['trace']]==['init'] and d['startup_steps']==0 and d['steps']==1
  startup_setup(init=[(2,1,255,[0,0,2,0,0,5,9,7]),(0,254,255,bytes(8))]);r=run(['--initialize']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['host_failed'] and d['status']=='waiting' and d['ticks']==0 and not d['body_initialized']
@@ -430,7 +476,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  # Materialize the synthetic FAR member, then use standalone IFF for the same pipeline.
  standalone=root/'Character.iff';raw=avatar.read_bytes();size=struct.unpack_from('<I',raw,12)[0]-16;standalone.write_bytes(raw[16:16+size])
  file_args=[binary,'--avatar-file',str(standalone),'128']+args[5:]
- r=subprocess.run(file_args+['--initialize','--neighborhood',str(neighborhood)],capture_output=True,text=True);d=json.loads(r.stdout)
+ r=run(['--initialize','--neighborhood',str(neighborhood)],command=file_args);d=json.loads(r.stdout)
  assert r.returncode==0 and d['avatar']['resource_kind']=='standalone_iff' and d['avatar']['file']==str(standalone) and d['avatar']['archive'] is None
  assert d['actor_state']['person_data']==bank and d['neighbor_inheritance']['neighbor_id']==48
  # No GUID match must leave the template bank alone, regardless of enumeration order.
@@ -535,12 +581,12 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  startup_setup(main=[global_to_temp(20,1),check_temp(0,255)])
  r=run(['--initialize']);d=json.loads(r.stdout);assert r.returncode==0 and d['global_bootstrap']['globals'][1]['current']==255
  r=run(lot_args());d=json.loads(r.stdout)
- assert r.returncode==3 and d['diagnostic']=='unsupported read scope 6 index 20' and d['global_bootstrap'] is None
+ assert r.returncode==3 and unsupported_read(d,6,20) and d['global_bootstrap'] is None
  # Undefined clock/entity globals still fail despite bootstrap and saved words.
  for index in [0,1,3,4,5,6,7,8,9,32,33]:
   startup_setup(main=[global_to_temp(index)])
   r=run(['--initialize']+lot_args());d=json.loads(r.stdout)
-  assert r.returncode==3 and d['diagnostic']==f'unsupported read scope 6 index {index}' and d['global_reads']==[]
+  assert r.returncode==3 and unsupported_read(d,6,index) and d['global_reads']==[]
  # SetToNext object type uses World, not the neighbor provider.
  def entity_row(guid=1,flags=132,scope=10,index=0,t=254,f=255):
   return (31,t,f,list(struct.pack('<IBBBB',guid,flags,scope,255,index)))
@@ -601,7 +647,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   chunk=('OBJf',129 if wrong_id else 128,objf_payload(objf_values() if pairs is None else pairs))
   chunks=[chunk]+([chunk] if duplicate else [])+[
    ('OBJD',128,definition),('GLOB',128,b'\x0dFixturePerson'),('STR#',200,strings(body_values)),
-   ('BHAV',4096,routine([(44,254,255,bytes(8))])),
+   ('BHAV',4096,routine([(240,254,255,bytes(8))])),
    ('BHAV',4097,routine([expr(0,1)])),('BHAV',4101,routine([expr(0,1)])),
    ('BHAV',4102,routine([select_actor,read_portal,check_temp(0,-1)]))]
   archive(avatar,'Person.iff',chunks)
@@ -619,13 +665,15 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  # Function table lookups do not synthesize missing indices or allow writes.
  startup_setup(main=[select_actor,(2,254,255,[0,0,33,0,0,5,8,35])])
  r=run(['--initialize']);d=json.loads(r.stdout)
- assert r.returncode==3 and d['diagnostic']=='unsupported read scope 35 index 33'
+ assert r.returncode==3 and unsupported_read(d,35,33)
  startup_setup(main=[select_actor,(2,254,255,[15,0,99,0,0,5,35,7])])
  r=run(['--initialize']);d=json.loads(r.stdout)
- assert r.returncode==3 and d['diagnostic']=='unsupported write scope 35 index 15' and d['entry_point_table']['entries'][15]['action']==0
+ # Source SetVariable explicitly returns false for read-only EntryPoint scope;
+ # the expression takes its false branch without changing the function table.
+ assert r.returncode==0 and d['status']=='returned_false' and d['diagnostic']=='' and d['entry_point_table']['entries'][15]['action']==0,(r.returncode,d.get('status'),d.get('diagnostic'))
  # Old short root probes keep the existing partial resource profile.
  setup(main=[(2,254,255,[0,0,15,0,0,5,8,35])]);r=run();d=json.loads(r.stdout)
- assert r.returncode==3 and d['entry_point_table'] is None and d['diagnostic']=='unsupported read scope 35 index 15'
+ assert r.returncode==3 and d['entry_point_table'] is None and unsupported_read(d,35,15)
  # Explicit activation uses FAMI's chunk ID selected by house, not FamilyNumber.
  def fami_payload(house_id=7,alternate=99,members=(1,)):
   return struct.pack('<II4s7i',0,7,b'IMAF',house_id,alternate,20000,1234,2,17,len(members))+struct.pack('<'+'I'*len(members),*members)

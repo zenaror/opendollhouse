@@ -170,10 +170,10 @@ ReadOnlyBhavResult evaluate_read_only_entry_point5_bhav(
     std::int16_t caller, std::int16_t stack_object,
     std::optional<std::int16_t> ghost, std::uint64_t instruction_budget,
     ReadOnlyBhavLimits limits) {
-    if (action < 4096 || action >= 8192 || caller <= 0 || stack_object <= 0 ||
-        (ghost && *ghost != 0 && *ghost != 1))
+    const auto root=routine_key(action);
+    if (action<=255||caller <= 0 || stack_object <= 0 || (ghost && *ghost != 0 && *ghost != 1))
         return {ReadOnlyBhavState::unsupported, ReadOnlyBhavReason::invalid_resources, 0,
-                "invalid private EP5 action or execution context"};
+                "invalid EP5 action or execution context"};
     const auto has_entity = [&](std::int16_t id) {
         return std::any_of(snapshot.entities.begin(), snapshot.entities.end(),
             [&](const Entity& entity) { return entity.id == id; });
@@ -181,6 +181,20 @@ ReadOnlyBhavResult evaluate_read_only_entry_point5_bhav(
     if (!has_entity(caller) || !has_entity(stack_object))
         return {ReadOnlyBhavState::unsupported, ReadOnlyBhavReason::invalid_snapshot, 0,
                 "EP5 caller or stack object is absent from the World snapshot"};
+
+    const auto selected=std::find_if(snapshot.entities.begin(),snapshot.entities.end(),
+        [&](const Entity& entity){return entity.id==caller;});
+    if(!selected->entry_points||selected->entry_points->size()<=5||selected->entry_points->at(5).action!=action)
+        return {ReadOnlyBhavState::unsupported,ReadOnlyBhavReason::invalid_resources,0,
+            "requested EP5 root does not match the exact Caller entry point"};
+    // VMEntity.ExecuteGenericEntryPoint567-584/GetRoutineWithOwner665-679
+    // at pinned FreeSO7e76 accepts all numeric BHAV scopes (>255). The loader
+    // authenticates the selected Global resource and private/GLOB owner bank;
+    // the root must be present in its own scope, never in a fallback bank.
+    const auto& root_bank=root.scope==RoutineScope::global?default_routines:owner_routines;
+    if(!root_bank.count(root))
+        return {ReadOnlyBhavState::unsupported,ReadOnlyBhavReason::invalid_resources,0,
+            "exact EP5 root is absent from its explicitly supplied scope bank"};
 
     // This disposable owner label is not an entity ID. Private/semiglobal
     // lookup stays separate from the World identities in VmContext.
@@ -190,7 +204,7 @@ ReadOnlyBhavResult evaluate_read_only_entry_point5_bhav(
         const VmContext context{caller, caller, stack_object, resource_owner};
         const std::vector<std::int16_t> arguments{stack_object, ghost_flag, 0, 0};
         return evaluate_read_only_bhav(snapshot, default_routines, owners,
-            routine_key(action), context, arguments, instruction_budget, limits);
+            root, context, arguments, instruction_budget, limits);
     };
     if (ghost) return run(*ghost);
 

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <map>
 #include <algorithm>
+#include <set>
 
 namespace {
 std::string fold(std::string s) {for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c+'a'-'A');return s;}
@@ -26,11 +27,16 @@ std::optional<std::string> texture_override(const std::string& raw) {
     if(result.find_first_of("=;,")!=std::string::npos)throw odh::FormatError("saved texture map multiple bindings unsupported");
     return result;
 }
+std::string basename(std::string name){
+    std::replace(name.begin(),name.end(),'\\','/');
+    const auto at=name.find_last_of('/');return fold(at==std::string::npos?name:name.substr(at+1));
+}
 struct Archive {
+    std::string path;
     std::ifstream stream;
     std::uint64_t size;
     std::vector<odh::FarEntry> entries;
-    explicit Archive(const std::string& path):stream(path,std::ios::binary),size(0) {
+    explicit Archive(const std::string& filename):path(filename),stream(filename,std::ios::binary),size(0) {
         bounded_name(path);if(!stream)throw odh::FormatError("saved appearance cannot open FAR");
         size=std::filesystem::file_size(path);odh::Limits lim;lim.far_entries=8192;lim.far_name_bytes=256*1024;
         entries=odh::far1_index(odh::View(stream,size),lim);
@@ -43,7 +49,7 @@ struct Archive {
     }
     odh::View view(const odh::FarEntry& e){return odh::View(stream,size).subview(e.offset,e.length);}
 };
-struct Named {std::string entry,name;};
+struct Named {std::string entry,name;Archive* archive=nullptr;};
 struct AppearanceResource {std::string appearance,texture_map;};
 AppearanceResource body_resource(const std::string& raw,const char* kind) {
     bounded_name(raw);
@@ -84,42 +90,127 @@ struct SavedAppearanceResources::Impl {
     std::map<std::string,std::vector<Named>> appearances,loose_appearance_names,clips;
     std::filesystem::path skins_root;
     std::map<std::string,std::vector<std::filesystem::path>> skin_files;
+    bool catalog_mode=false;
+    SavedAppearanceCatalogDiagnostics scan_diagnostics;
+    std::vector<std::unique_ptr<Archive>> extra_archives;
+    std::map<std::string,Named> files;
+    std::vector<std::string> file_order;
+    template<class Decode> auto decode(const Named& selected,Decode decoder){
+        if(selected.archive)return decoder(selected.archive->view(selected.archive->select(selected.entry)));
+        std::ifstream input(selected.entry,std::ios::binary);if(!input)throw odh::FormatError("saved appearance loose resource unavailable");
+        return decoder(odh::View(input,std::filesystem::file_size(selected.entry)));
+    }
     Impl(const std::string& a,const std::string& t,const std::string& se,const std::string& sn,
-         const std::string& skins):animations(a),textures(t) {
+         const std::string& skins,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots)
+         :animations(a),textures(t) {
         config.animation_far=a;config.textures_far=t;config.skeleton_entry=animations.select(se).name;config.skeleton_name=sn;bounded_name(sn);
-        std::uint64_t count=0,bytes=0;
-        auto add=[&](auto& index,const std::string& name,const std::string& entry){bounded_name(name);
-            if(++count>8192||(bytes+=name.size()+entry.size())>256*1024)throw odh::FormatError("saved appearance named resource budget exceeded");
-            index[fold(name)].push_back({entry,name});};
-        for(const auto& entry:animations.entries){const auto key=fold(entry.name);if(key.size()<4||key.substr(key.size()-4)!=".bcf")continue;
-            auto view=animations.view(entry);if(view.le32(0)!=0)continue;
-            if(view.le32(4)==0){auto decoded=odh::read_bcf_animations(view);if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing animation BCF bytes");
-                for(const auto& c:decoded.animations)add(clips,c.name,entry.name);
-            }else{auto decoded=odh::read_bcf_appearances(view);if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing appearance BCF bytes");
-                for(const auto& p:decoded.appearances)add(appearances,p.name,entry.name);}}
-        if(!skins.empty()){
-            std::error_code error;skins_root=std::filesystem::canonical(skins,error);
-            if(error||!std::filesystem::is_directory(skins_root))throw odh::FormatError("saved appearance skins directory is not accessible");
-            std::size_t files=0,path_bytes=0;
-            for(const auto& item:std::filesystem::recursive_directory_iterator(skins_root)){
-                if(!item.is_regular_file())continue;
-                const auto ext=fold(item.path().extension().string());
+        catalog_mode=!sources.empty()||!loose_roots.empty();
+        if(sources.size()>128||loose_roots.size()>16)throw odh::FormatError("saved appearance source count exceeds bound");
+        std::uint64_t count=0,bytes=0,file_count=0,file_bytes=0;
+        auto add=[&](auto& index,const std::string& name,const std::string& entry,Archive* archive=nullptr){bounded_name(name);
+            if(++count>8192||(bytes+=name.size()+entry.size())>(catalog_mode?4u*1024u*1024u:256u*1024u))
+                throw odh::FormatError("saved appearance named resource budget exceeded");
+            auto& selected=index[fold(name)];
+            // TS1Provider.BuildDictionary and TS1BCFProvider assign later
+            // filename/name entries. The caller supplies a stable source order.
+            if(catalog_mode)selected.clear();
+            selected.push_back({entry,name,archive});};
+        std::vector<Archive*> archives{&animations,&textures};
+        std::set<std::filesystem::path> admitted{std::filesystem::canonical(a),std::filesystem::canonical(t)};
+        for(const auto& source:sources){bounded_name(source);if(!admitted.insert(std::filesystem::canonical(source)).second)continue;
+            extra_archives.push_back(std::make_unique<Archive>(source));archives.push_back(extra_archives.back().get());}
+        for(auto* archive:archives)for(const auto& entry:archive->entries){
+            const auto key=basename(entry.name);
+            if(key.size()<4)continue;const auto ext=key.substr(key.size()-4);
+            if(ext!=".bcf"&&ext!=".cmx"&&ext!=".bmf"&&ext!=".bmp"&&ext!=".skn")continue;
+            if(++file_count>65536||(file_bytes+=entry.name.size()+key.size())>4u*1024u*1024u)
+                throw odh::FormatError("saved appearance FAR resource index budget exceeded");
+            if(!files.count(key))file_order.push_back(key);
+            files[key]={entry.name,key,archive};
+        }
+        auto scan_bcf=[&](Archive& archive,const odh::FarEntry& entry){
+            // Keep parser failures separate from index publication: a malformed
+            // optional outfit must not swallow FAR/I/O or aggregate budgets.
+            std::vector<std::string> parsed_names;bool animation=false;
+            try{
+                auto view=archive.view(entry);if(view.le32(0)!=0)return;
+                animation=view.le32(4)==0;
+                if(animation){
+                    // Playback owns the full animation catalog; this legacy
+                    // OBJM decoder retains its selected base-archive scope.
+                    if(&archive!=&animations)return;
+                    auto decoded=odh::read_bcf_animations(view);
+                    if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing animation BCF bytes");
+                    for(const auto& clip:decoded.animations)parsed_names.push_back(clip.name);
+                }else{
+                    auto decoded=odh::read_bcf_appearances(view);
+                    if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing appearance BCF bytes");
+                    for(const auto& appearance:decoded.appearances)parsed_names.push_back(appearance.name);
+                }
+            }catch(const odh::FormatError& error){
+                if(!catalog_mode||archive.stream.fail()||archive.stream.bad())throw;
+                ++scan_diagnostics.malformed_resources;
+                if(scan_diagnostics.resource_errors.size()<16){
+                    auto message=archive.path+" ["+entry.name+"]: "+error.what();
+                    if(message.size()>512)message.resize(512);
+                    scan_diagnostics.resource_errors.push_back(std::move(message));
+                }
+                return;
+            }
+            // Bounds and name validation remain fatal, outside parser recovery.
+            for(const auto& name:parsed_names){
+                if(animation)add(clips,name,entry.name,&archive);
+                else add(appearances,name,entry.name,&archive);
+            }
+        };
+        if(catalog_mode){for(const auto& key:file_order)if(key.size()>=4&&key.substr(key.size()-4)==".bcf"){
+            const auto& selected=files.at(key);scan_bcf(*selected.archive,selected.archive->select(selected.entry));}}
+        else for(const auto& entry:animations.entries){const auto key=fold(entry.name);
+            if(key.size()>=4&&key.substr(key.size()-4)==".bcf")scan_bcf(animations,entry);}
+        std::vector<std::string> roots;if(!skins.empty())roots.push_back(skins);
+        roots.insert(roots.end(),loose_roots.begin(),loose_roots.end());
+        std::size_t loose_files=0,path_bytes=0;std::set<std::filesystem::path> scanned;
+        std::vector<std::string> cmx_order;std::set<std::string> cmx_seen;
+        for(const auto& root:roots){bounded_name(root);std::error_code error;const auto canonical=std::filesystem::canonical(root,error);
+            if(error||!std::filesystem::is_directory(canonical))throw odh::FormatError("saved appearance skins directory is not accessible");
+            if(!scanned.insert(canonical).second)continue;
+            if(skins_root.empty())skins_root=canonical;
+            std::vector<std::filesystem::path> paths;
+            for(const auto& item:std::filesystem::recursive_directory_iterator(canonical)){
+                if(!item.is_regular_file())continue;const auto ext=fold(item.path().extension().string());
                 if(ext!=".cmx"&&ext!=".skn"&&ext!=".bmp")continue;
-                if(++files>65536||(path_bytes+=item.path().string().size())>4*1024*1024)
+                if(++loose_files>65536||(path_bytes+=item.path().string().size())>4u*1024u*1024u)
                     throw odh::FormatError("saved appearance loose skin index budget exceeded");
-                skin_files[fold(item.path().filename().string())].push_back(item.path());
+                paths.push_back(item.path());}
+            std::sort(paths.begin(),paths.end());
+            for(const auto& path:paths){const auto ext=fold(path.extension().string());
+                auto& group=skin_files[fold(path.filename().string())];if(catalog_mode)group.clear();group.push_back(path);
                 if(ext==".cmx"){
+                    if(catalog_mode){const auto key=basename(path.string());if(cmx_seen.insert(key).second)cmx_order.push_back(key);continue;}
                     odh::AppearanceCollection decoded;
-                    try{
-                        std::ifstream input(item.path(),std::ios::binary);
-                        const auto size=std::filesystem::file_size(item.path());
-                        decoded=odh::read_cmx_appearances(odh::View(input,size));
-                    }catch(const odh::FormatError&){continue; /* unrelated malformed CMX does not block other outfits */}
-                    for(const auto& appearance:decoded.appearances)
-                        add(loose_appearance_names,appearance.name,item.path().string());
+                    try{std::ifstream input(path,std::ios::binary);decoded=odh::read_cmx_appearances(odh::View(input,std::filesystem::file_size(path)));}
+                    catch(const odh::FormatError&){continue;}
+                    for(const auto& appearance:decoded.appearances)add(loose_appearance_names,appearance.name,path.string());
                 }
             }
         }
+        if(catalog_mode){
+            for(const auto& key:file_order)if(key.size()>=4&&key.substr(key.size()-4)==".cmx"&&cmx_seen.insert(key).second)
+                cmx_order.push_back(key);
+            for(const auto& key:cmx_order){const auto selected=file(animations,key);odh::AppearanceCollection decoded;
+                try{decoded=decode(selected,[](const auto& view){return odh::read_cmx_appearances(view);});}
+                catch(const odh::FormatError&){continue;}
+                for(const auto& appearance:decoded.appearances)add(appearances,appearance.name,selected.entry,selected.archive);
+            }
+        }
+    }
+    Named file(Archive& legacy,const std::string& name){
+        if(!catalog_mode)return {legacy.select(name).name,name,&legacy};
+        const auto found=files.find(basename(name));
+        if(found!=files.end())return found->second;
+        const auto loose=skin_files.find(basename(name));
+        if(loose!=skin_files.end()&&loose->second.size()==1)return {loose->second.front().string(),name,nullptr};
+        throw odh::FormatError("saved appearance resource missing: "+name);
     }
     template<class Index> const Named& named(const Index& index,const std::string& name) {
         auto found=index.find(fold(name));if(found==index.end())throw odh::FormatError("saved appearance named resource missing: "+name);
@@ -154,93 +245,56 @@ struct SavedAppearanceResources::Impl {
         if(mesh.remaining_bytes)throw odh::FormatError("saved appearance trailing SKN bytes");
         return mesh;
     }
+    Named mesh_file(const Named& host,const std::string& name){
+        if(!catalog_mode&& !host.archive)return {loose_file(host.entry,name+".skn").string(),name,nullptr};
+        if(catalog_mode){
+            // TS1BMFProvider prefers the compiled mesh to SKN across all sources.
+            if(files.count(basename(name+".bmf"))||skin_files.count(basename(name+".bmf")))return file(animations,name+".bmf");
+            return file(animations,name+".skn");
+        }
+        return file(animations,name+".bmf");
+    }
+    Named texture_file(const Named& host,const std::string& name){
+        if(!catalog_mode&&!host.archive)return {loose_file(host.entry,name+".bmp").string(),name,nullptr};
+        return file(textures,name+".bmp");
+    }
+    odh::Mesh mesh(const Named& resource){
+        return decode(resource,[&](const auto& view){auto result=basename(resource.entry).size()>=4&&
+            basename(resource.entry).substr(basename(resource.entry).size()-4)==".skn"?
+            odh::read_skn(view):odh::read_bmf(view);
+            if(result.remaining_bytes)throw odh::FormatError("saved appearance trailing mesh bytes");return result;});
+    }
     void part(SceneConfig& out,const std::string& name,const std::string& raw_texture,
               std::optional<SceneHandPart> hand={}) {
-        bounded_name(name);auto host=appearance_named(name);
-        if(fold(std::filesystem::path(host.entry).extension().string())==".cmx"){
-            const auto collection=loose_appearances(host.entry);const odh::Appearance* appearance=nullptr;
-            for(const auto& candidate:collection.appearances)if(fold(candidate.name)==fold(host.name)){
-                if(appearance)throw odh::FormatError("saved appearance CMX name is ambiguous: "+host.name);
-                appearance=&candidate;}
-            if(!appearance||appearance->bindings.empty()||appearance->bindings.size()>16)
-                throw odh::FormatError("saved appearance CMX binding count unsupported");
-            auto override=texture_override(raw_texture);std::vector<std::pair<std::string,std::string>> meshes;
-            std::vector<std::string> defaults;std::size_t replaced=0;
-            for(std::size_t i=0;i<appearance->bindings.size();++i){const auto& binding=appearance->bindings[i];
-                const auto mesh_path=loose_file(host.entry,binding.mesh_name+".skn").string();
-                auto mesh=loose_mesh(mesh_path);
-                if(fold(mesh.skin_name)!=fold(binding.mesh_name))throw odh::FormatError("saved appearance SKN skin differs from CMX binding");
-                const auto m=uniform(mesh.texture_name),o=override?uniform(*override):std::string{};
-                if(override&&(fold(mesh.texture_name)=="x"||(m.size()>=o.size()&&m.compare(m.size()-o.size(),o.size(),o)==0)))replaced=i;
-                meshes.emplace_back(mesh_path,mesh.texture_name);defaults.push_back(mesh.texture_name);}
-            for(std::size_t i=0;i<meshes.size();++i){const auto texture=override&&i==replaced?*override:defaults[i];bounded_name(texture);
-                if(out.parts.size()>=16)throw odh::FormatError("saved appearance cumulative part budget exceeded");
-                const auto texture_path=loose_file(host.entry,texture+".bmp").string();
-                out.parts.push_back({host.entry,host.name,meshes[i].first,texture_path,hand,true});}
-            return;
-        }
-        auto collection=odh::read_bcf_appearances(animations.view(animations.select(host.entry)));
-        const odh::Appearance* appearance=nullptr;for(const auto& p:collection.appearances)if(p.name==host.name)appearance=&p;
-        if(!appearance||appearance->bindings.empty()||appearance->bindings.size()>16)throw odh::FormatError("saved appearance binding count unsupported");
-        auto override=texture_override(raw_texture);std::vector<std::string> mesh_entries,defaults;
-        std::size_t replaced=0;
-        for(std::size_t i=0;i<appearance->bindings.size();++i){const auto& binding=appearance->bindings[i];auto mesh_entry=animations.select(binding.mesh_name+".bmf").name;
-            auto mesh=odh::read_bmf(animations.view(animations.select(mesh_entry)));if(fold(mesh.skin_name)!=fold(binding.mesh_name))throw odh::FormatError("saved appearance BMF skin mismatch");
-            const auto m=uniform(mesh.texture_name),o=override?uniform(*override):std::string{};
-            if(override&&(fold(mesh.texture_name)=="x"||(m.size()>=o.size()&&m.compare(m.size()-o.size(),o.size(),o)==0)))replaced=i;
-            mesh_entries.push_back(mesh_entry);defaults.push_back(mesh.texture_name);}
-        for(std::size_t i=0;i<mesh_entries.size();++i){auto texture=override&&i==replaced?*override:defaults[i];bounded_name(texture);
-            if(out.parts.size()>=16)throw odh::FormatError("saved appearance cumulative part budget exceeded");
-            out.parts.push_back({host.entry,host.name,mesh_entries[i],textures.select(texture+".bmp").name,hand});}
+        bounded_name(name);const auto host=appearance_named(name);
+        const auto filename=basename(host.entry);const bool cmx=filename.size()>=4&&filename.substr(filename.size()-4)==".cmx";
+        const auto collection=decode(host,[&](const auto& view){return cmx?odh::read_cmx_appearances(view):odh::read_bcf_appearances(view);});
+        const odh::Appearance* appearance=nullptr;
+        for(const auto& candidate:collection.appearances)if(fold(candidate.name)==fold(host.name)){
+            if(appearance)throw odh::FormatError("saved appearance selected name is ambiguous");appearance=&candidate;}
+        if(!appearance||appearance->bindings.empty()||appearance->bindings.size()>16)
+            throw odh::FormatError("saved appearance binding count unsupported");
+        const auto override=texture_override(raw_texture);std::vector<Named> meshes;
+        std::vector<std::string> defaults;std::size_t replaced=0;
+        for(std::size_t i=0;i<appearance->bindings.size();++i){const auto& binding=appearance->bindings[i];bounded_name(binding.mesh_name);
+            const auto selected=mesh_file(host,binding.mesh_name);const auto decoded=mesh(selected);
+            if(fold(decoded.skin_name)!=fold(binding.mesh_name))throw odh::FormatError("saved appearance mesh skin mismatch");
+            const auto m=uniform(decoded.texture_name),o=override?uniform(*override):std::string{};
+            if(override&&(fold(decoded.texture_name)=="x"||(m.size()>=o.size()&&m.compare(m.size()-o.size(),o.size(),o)==0)))replaced=i;
+            meshes.push_back(selected);defaults.push_back(decoded.texture_name);}
+        for(std::size_t i=0;i<meshes.size();++i){const auto texture_name=override&&i==replaced?*override:defaults[i];bounded_name(texture_name);
+            const auto texture=texture_file(host,texture_name);
+            if(out.parts.size()>=16)throw odh::FormatError("saved appearance cumulative 16-part limit exceeded");
+            out.parts.push_back({host.entry,host.name,meshes[i].entry,texture.entry,hand,cmx,
+                host.archive?host.archive->path:std::string{},meshes[i].archive?meshes[i].archive->path:std::string{},
+                texture.archive?texture.archive->path:std::string{},!meshes[i].archive,!texture.archive});}
     }
     void accessory(SceneConfig& out,const odh::ObjmSavedAccessory& accessory) {
-        bounded_name(accessory.name.bytes);
-        // The OBJM reader documents Binding as usually blank, and the TS1
-        // activator restores only each accessory's Name. Do not guess what a
-        // non-empty binding means.
-        if(!accessory.binding.bytes.empty())
-            throw odh::FormatError("saved appearance accessory binding unsupported");
-        auto name=accessory.name.bytes;
-        constexpr std::string_view suffix=".apr";
+        bounded_name(accessory.name.bytes);if(!accessory.binding.bytes.empty())throw odh::FormatError("saved appearance accessory binding unsupported");
+        auto name=accessory.name.bytes;constexpr std::string_view suffix=".apr";
         if(name.size()<=suffix.size()||fold(name.substr(name.size()-suffix.size()))!=suffix)
             throw odh::FormatError("saved appearance accessory requires an .apr name");
-        name.resize(name.size()-suffix.size());
-        const auto host=appearance_named(name);
-        if(fold(std::filesystem::path(host.entry).extension().string())==".cmx"){
-            const auto collection=loose_appearances(host.entry);const odh::Appearance* selected=nullptr;
-            for(const auto& candidate:collection.appearances)if(fold(candidate.name)==fold(host.name)){
-                if(selected)throw odh::FormatError("saved appearance accessory CMX name is ambiguous");
-                selected=&candidate;}
-            if(!selected||selected->bindings.empty()||selected->bindings.size()>16)
-                throw odh::FormatError("saved appearance accessory CMX binding count unsupported");
-            for(const auto& binding:selected->bindings){
-                const auto mesh_path=loose_file(host.entry,binding.mesh_name+".skn").string();
-                auto mesh=loose_mesh(mesh_path);
-                if(fold(mesh.skin_name)!=fold(binding.mesh_name))throw odh::FormatError("saved appearance accessory SKN mismatch");
-                if(out.parts.size()>=16)throw odh::FormatError("saved appearance cumulative 16-part limit exceeded");
-                const auto texture=loose_file(host.entry,mesh.texture_name+".bmp").string();
-                out.parts.push_back({host.entry,host.name,mesh_path,texture,{},true});}
-            return;
-        }
-        auto collection=odh::read_bcf_appearances(animations.view(animations.select(host.entry)));
-        const odh::Appearance* selected=nullptr;
-        for(const auto& candidate:collection.appearances)if(fold(candidate.name)==fold(host.name)){
-            if(selected)throw odh::FormatError("saved appearance accessory name is ambiguous");
-            selected=&candidate;
-        }
-        if(!selected||selected->bindings.empty()||selected->bindings.size()>16)
-            throw odh::FormatError("saved appearance accessory binding count unsupported");
-        for(const auto& binding:selected->bindings){
-            bounded_name(binding.mesh_name);
-            const auto mesh_entry=animations.select(binding.mesh_name+".bmf").name;
-            const auto decoded=odh::read_bmf(animations.view(animations.select(mesh_entry)));
-            if(fold(decoded.skin_name)!=fold(binding.mesh_name))
-                throw odh::FormatError("saved appearance accessory BMF skin mismatch");
-            if(out.parts.size()>=16)
-                throw odh::FormatError("saved appearance cumulative 16-part limit exceeded");
-            const auto texture=textures.select(decoded.texture_name+".bmp").name;
-            out.parts.push_back({host.entry,host.name,mesh_entry,texture,{}});
-        }
+        name.resize(name.size()-suffix.size());part(out,name,{});
     }
     void hands(SceneConfig& out,const std::array<AppearanceResource,6>& variants) {
         for(std::size_t i=0;i<variants.size();++i) {
@@ -271,10 +325,15 @@ struct SavedAppearanceResources::Impl {
     }
 };
 SavedAppearanceResources::SavedAppearanceResources(const std::string& a,const std::string& t,const std::string& se,const std::string& sn,
-                                                   const std::string& skins):impl_(std::make_unique<Impl>(a,t,se,sn,skins)){}
+                                                   const std::string& skins,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots)
+    :impl_(std::make_unique<Impl>(a,t,se,sn,skins,sources,loose_roots)){}
 SavedAppearanceResources::~SavedAppearanceResources()=default;
 SavedAppearanceResources::SavedAppearanceResources(SavedAppearanceResources&&) noexcept=default;
 SavedAppearanceResources& SavedAppearanceResources::operator=(SavedAppearanceResources&&) noexcept=default;
+const SavedAppearanceCatalogDiagnostics& SavedAppearanceResources::diagnostics() const {
+    if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
+    return impl_->scan_diagnostics;
+}
 SavedAppearance SavedAppearanceResources::resolve(const odh::ObjmPersonState& person) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
     auto out=impl_->body_head_animation(person);
@@ -292,10 +351,29 @@ SceneConfig SavedAppearanceResources::resolve_body(const odh::AvatarBodyStrings&
     impl_->hands(out,variants);
     return out;
 }
+SceneConfig SavedAppearanceResources::resolve_human_body(const odh::AvatarBodyStrings& body) {
+    if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
+    if(body.avatar_type!="adult"&&body.avatar_type!="child")
+        throw odh::FormatError("human appearance requires adult or child BodySTR type");
+    const auto entry=impl_->animations.select(body.avatar_type+"-skeleton.cmx.bcf").name;
+    auto scene=resolve_body(body);
+    scene.skeleton_entry=entry;scene.skeleton_name=body.avatar_type;
+    return scene;
+}
 void SavedAppearanceResources::append_accessories(SceneConfig& scene,const std::vector<std::string>& names) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
     if(names.size()>16)throw odh::FormatError("runtime avatar accessory count exceeds 16-name limit");
     for(const auto& name:names){
+        bounded_name(name);
+        constexpr std::string_view suffix=".apr";
+        if(name.size()<suffix.size()||fold(name.substr(name.size()-suffix.size()))!=suffix)
+            throw odh::FormatError("runtime avatar accessory requires an .apr name");
+        const auto key=fold(name.substr(0,name.size()-suffix.size()));
+        // TS1 preserves BoundAppearances even when content.Get returns null.
+        // Only a proven index miss is a visual no-op; selected malformed or
+        // ambiguous resources still take the ordinary strict decoder path.
+        if(impl_->appearances.find(key)==impl_->appearances.end()&&
+           impl_->loose_appearance_names.find(key)==impl_->loose_appearance_names.end())continue;
         odh::ObjmSavedAccessory item{};item.name.bytes=name;
         impl_->accessory(scene,item);
     }

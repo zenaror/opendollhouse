@@ -34,6 +34,10 @@ struct StagedLoadEntryPointResult {
     std::size_t discarded_room_score_refreshes = 0;
     // Present only on success when the caller supplied an explicit seed.
     std::optional<std::uint64_t> random_seed;
+    // Architecture permission and notifications remain private until the whole
+    // candidate succeeds. GhostImage effects are discarded with their sandbox.
+    std::optional<bool> build_buy_enabled;
+    std::vector<bool> deferred_build_buy_events;
 };
 
 // Runs Load (EntryPoint 2) in the supplied entity order against a private World
@@ -53,6 +57,7 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     std::uint64_t instruction_budget, WorldLimits world_limits = {},
     VmMemory supplemental_memory = {}, VmPrimitive supplemental_primitive = {},
     SoundResolver sound_resolver = {}, const GeometricRoomMap* room_map = nullptr,
-    std::optional<std::uint64_t> random_seed = {});
+    std::optional<std::uint64_t> random_seed = {},
+    bool initial_build_buy_enabled = true);
 
 } // namespace odh

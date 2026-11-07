@@ -50,15 +50,15 @@ std::vector<PieMenuItem> make_pie_menu_model(const std::vector<PieMenuChoice>& c
         }
         // Actions with duplicate labels are intentionally separate choices.
         siblings->push_back(PieMenuItem{std::move(parts.back()), choice.interaction_row,
-            choice.label_language, {}});
+            choice.label_language, {}, choice.variant});
     }
     return result;
 }
 
 std::optional<PieMenuLayout> layout_pie_menu(std::uint32_t frame_width,
     std::uint32_t frame_height, std::array<std::int32_t, 2> anchor,
-    std::size_t item_count, bool has_parent) {
-    if (frame_width < 128 || frame_height < 120 || item_count == 0 ||
+    std::size_t item_count, bool has_parent,std::size_t selected) {
+    if (frame_width < 128 || frame_height < 120 || selected >= item_count ||
         frame_width > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()) ||
         frame_height > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
         return std::nullopt;
@@ -72,17 +72,27 @@ std::optional<PieMenuLayout> layout_pie_menu(std::uint32_t frame_width,
     const auto max_radial_width = (frame_w - 2 * radius - 8) / 2;
     const auto width = std::min<std::int32_t>({156, max_radial_width, frame_w / 3});
     if (width < 80) return std::nullopt;
+    const auto vertical_radius=std::min(radius,frame_h/2-button_height-4);
     const auto center_x = std::clamp(anchor[0], radius + width + 4,
         frame_w - radius - width - 4);
-    const auto center_y = std::clamp(anchor[1], radius + button_height + 4,
-        frame_h - radius - button_height - 4);
-
+    // Keep overflow rows whole. On a short display two diagonal choices would
+    // overlap their cardinal neighbors, so use only the four cardinal positions.
+    const int base_extent=vertical_radius+button_height+4;
+    const auto capacity=vertical_radius<43?std::size_t{4}:
+        8+static_cast<std::size_t>((frame_h-2*base_extent)/button_height);
     PieMenuLayout result;
+    result.page_size=capacity;
+    result.page_first=(selected/capacity)*capacity;
+    const auto visible=std::min(capacity,item_count-result.page_first);
+    const auto extra=visible>8?static_cast<int>(visible-8):0;
+    const int top=base_extent+((extra+1)/2)*button_height;
+    const int bottom=base_extent+(extra/2)*button_height;
+    const auto center_y=std::clamp(anchor[1],top,frame_h-bottom);
     result.center = {center_x, center_y};
-    result.items.reserve(item_count);
-    const auto direction_count = item_count > 4 ? std::size_t{8} :
-        item_count > 2 ? std::size_t{4} : std::size_t{2};
-    for (std::size_t i = 0; i < item_count; ++i) {
+    result.items.resize(item_count);
+    const auto direction_count = visible > 4 ? std::size_t{8} :
+        visible > 2 ? std::size_t{4} : std::size_t{2};
+    for (std::size_t i = 0; i < visible; ++i) {
         std::int32_t x = center_x - width / 2;
         std::int32_t y = center_y - button_height / 2;
         if (i < 8) {
@@ -90,7 +100,7 @@ std::optional<PieMenuLayout> layout_pie_menu(std::uint32_t frame_width,
             const auto angle = (static_cast<double>(i) / static_cast<double>(direction_count)) *
                 (2.0 * pi) - (pi / 2.0);
             const auto item_x = center_x + static_cast<std::int32_t>(std::lround(std::cos(angle) * radius));
-            const auto item_y = center_y + static_cast<std::int32_t>(std::lround(std::sin(angle) * radius));
+            const auto item_y = center_y + static_cast<std::int32_t>(std::lround(std::sin(angle) * vertical_radius));
             if (i == 0) {
                 x = center_x - width / 2;
                 y = item_y - button_height;
@@ -108,19 +118,31 @@ std::optional<PieMenuLayout> layout_pie_menu(std::uint32_t frame_width,
             const auto rows = static_cast<std::int32_t>(overflow / 2 + 1);
             x = center_x - width / 2;
             y = (overflow % 2 == 0)
-                ? center_y - radius - button_height * (rows + 1)
-                : center_y + radius + button_height * rows;
+                ? center_y - vertical_radius - button_height * (rows + 1)
+                : center_y + vertical_radius + button_height * rows;
         }
         x = std::clamp(x, 4, frame_w - width - 4);
         y = std::clamp(y, 4, frame_h - button_height - 4);
-        result.items.push_back({x, y, width, button_height});
+        result.items[result.page_first+i]={x, y, width, button_height};
+    }
+    const bool paged=item_count>capacity;
+    if(paged){
+        if(result.page_first)result.previous_page=PieMenuRect{center_x-56,center_y-12,24,24};
+        if(visible<item_count-result.page_first)
+            result.next_page=PieMenuRect{center_x+32,center_y-12,24,24};
     }
     if (has_parent) {
-        const auto back_width = std::min<std::int32_t>(112, frame_w - 8);
+        const auto back_width = paged?60:112;
         result.back_button = PieMenuRect{center_x - back_width / 2,
             center_y - button_height / 2, back_width, button_height};
     }
     return result;
+}
+
+std::optional<std::size_t> pie_menu_page_hit(const PieMenuLayout& layout,int x,int y) noexcept {
+    if(layout.previous_page&&layout.previous_page->contains(x,y))return layout.page_first-layout.page_size;
+    if(layout.next_page&&layout.next_page->contains(x,y))return layout.page_first+layout.page_size;
+    return {};
 }
 
 } // namespace odh

@@ -1,5 +1,6 @@
 #include "odh/family_overlay.hpp"
 #include <iostream>
+#include <limits>
 
 namespace {
 int checks = 0;
@@ -70,6 +71,29 @@ int main() {
         require(applied[1].family.budget == 14500 && cas.family.house_number == 0 &&
                 cas.family.budget == 20000, "applies to owned copy and preserves source data");
 
+        {
+            auto tailed_source = cas;
+            tailed_source.family.version = 9;
+            tailed_source.family.tail_bytes.assign(19, 0);
+            tailed_source.family.tail_bytes[16] = 0xa1;
+            tailed_source.family.tail_bytes[17] = 0xb2;
+            tailed_source.family.tail_bytes[18] = 0xc3;
+            tailed_source.family.remaining_bytes = tailed_source.family.tail_bytes.size();
+            tailed_source.family.original_v9_extension = odh::FamilyV9Extension{
+                0x87654321U, {-32768, -1, 0, 1, 321, 32767}};
+            const auto original_bytes = odh::encode_preserved_fami(tailed_source.family);
+            const auto move = odh::plan_family_move_in_overlay({resident, tailed_source},
+                source_id, nullptr, tailed_source.chunk_id, 7, 5000);
+            const auto replay = odh::apply_family_overlay({resident, tailed_source}, source_id, move);
+            auto expected = tailed_source.family; expected.house_number = 7; expected.budget -= 5000;
+            require(replay[1].family.remaining_bytes == 19 &&
+                    replay[1].family.tail_bytes == tailed_source.family.tail_bytes &&
+                    replay[1].family.original_v9_extension &&
+                    replay[1].family.original_v9_extension->spell_words == tailed_source.family.original_v9_extension->spell_words &&
+                    odh::encode_preserved_fami(replay[1].family) == odh::encode_preserved_fami(expected) &&
+                    odh::encode_preserved_fami(tailed_source.family) == original_bytes,
+                    "existing-family replay preserves spell state and unknown raw suffix while changing only occupancy and budget");
+        }
         const auto moved_out = odh::plan_family_move_out_overlay(
             {resident, cas}, source_id, nullptr, resident.chunk_id);
         const auto moved_out_effective = odh::apply_family_overlay(
@@ -238,6 +262,13 @@ int main() {
                 created_effective[2].display_name == "New family" &&
                 created_effective[2].family.member_guids == created_family.member_guids,
                 "free FAMI zero appends a named owned household without changing original order");
+        require(created_effective[2].family.remaining_bytes == 16 &&
+                created_effective[2].family.tail_bytes == std::vector<std::uint8_t>(16, 0) &&
+                created_effective[2].family.original_v9_extension &&
+                created_effective[2].family.original_v9_extension->extension_dword == 0 &&
+                created_effective[2].family.original_v9_extension->spell_words == std::array<std::int16_t, 6>{} &&
+                odh::encode_preserved_fami(created_effective[2].family) == creation.fami_payload,
+                "creation canonical validation retains the exact suffix and typed loaded state on its owned family");
         const auto appended = odh::apply_neighbor_overlay(neighbors, source_id, created_decoded);
         auto original_prefix = appended; original_prefix.entries.resize(neighbors.entries.size());
         require(odh::encode_nbrs(original_prefix) == neighbor_bytes && appended.entries.size() == 4 &&
@@ -277,7 +308,7 @@ int main() {
             {resident, cas}, source_id, &created, 0, 7, 5000);
         rejects([&] { (void)odh::plan_family_archive_overlay(
                     {resident, cas}, neighbors, source_id, &created_with_history, 0); },
-                "family with move history cannot be archived");
+                "currently housed family cannot be archived even with history");
         auto forged_archive = archived;
         forged_archive.archives[0].family_identity[0] ^= 1;
         rejects([&] { (void)odh::encode_family_overlay(forged_archive); },
@@ -334,7 +365,21 @@ int main() {
         rejects([&] { (void)odh::plan_family_delete_overlay(
                     {resident, cas, source_delete}, deletion_neighbors, source_id,
                     &moved_source, source_delete.chunk_id); },
-                "source family with move history cannot be deleted");
+                "currently housed source family cannot be deleted even with history");
+        {
+            auto combined = archived;
+            combined.deletions = deleted_overlay.deletions;
+            const auto retired = odh::retired_family_members(combined);
+            require(retired.size() == 4 && retired[0].guid == first.guid && retired[2].guid == delete_first.guid,
+                "retired helper combines archives and source deletions in deterministic order");
+            combined.deletions[0].members[0].guid = first.guid;
+            rejects([&] { (void)odh::retired_family_members(combined); },
+                "retired helper rejects GUID aliases between archive and source deletion");
+            combined = archived; combined.deletions = deleted_overlay.deletions;
+            combined.deletions[0].members[0].neighbor_id = first.neighbor_id;
+            rejects([&] { (void)odh::retired_family_members(combined); },
+                "retired helper rejects neighbor aliases between archive and source deletion");
+        }
         auto missing_delete_member = deletion_neighbors;
         missing_delete_member.entries.erase(missing_delete_member.entries.begin());
         rejects([&] { (void)odh::plan_family_delete_overlay(
@@ -564,13 +609,199 @@ int main() {
         rejects([&] { (void)odh::apply_family_overlay({resident, cas}, source_id, corrupt_managed); },
                 "stale checkpoint before-budget rejects");
         corrupt_managed = checkpointed;
-        corrupt_managed.assignments.back().state->value_in_arch_after = 5500;
+        corrupt_managed.assignments.back().state->value_in_arch_before = 5500;
         rejects([&] { (void)odh::apply_family_overlay({resident, cas}, source_id, corrupt_managed); },
-                "checkpoint cannot fabricate architecture refund");
+                "checkpoint property update cannot replace its exact before-state");
+        const auto quoted=odh::plan_family_checkpoint_overlay({resident,cas},source_id,&checkpointed,
+            0,7,1,12345,ticket,5500);
+        const auto quote_bytes=odh::encode_family_overlay(quoted);
+        const auto quote_replay=odh::replay_family_overlay({resident,cas},source_id,odh::decode_family_overlay(quote_bytes));
+        require(quote_bytes[4]==6&&quote_replay.states[2].value_in_arch==5500&&
+            quote_replay.states[2].budget==12345&&quote_replay.states[2].occupancy_epoch==1,
+            "current property quote uses existing v6 checkpoint fields without changing cash or occupancy");
+        const auto retained_quote=odh::plan_family_checkpoint_overlay({resident,cas},source_id,&quoted,
+            0,7,1,12345,ticket);
+        require(odh::replay_family_overlay({resident,cas},source_id,retained_quote).states[2].value_in_arch==5500,
+            "legacy checkpoint call retains the current quoted property cache");
+        const auto liquidated=odh::plan_family_managed_move_out_overlay({resident,cas},source_id,&retained_quote,0);
+        const auto liquidated_state=odh::replay_family_overlay({resident,cas},source_id,liquidated).states[2];
+        require(liquidated_state.house_number==0&&liquidated_state.budget==17845&&liquidated_state.value_in_arch==0,
+            "move-out adds the authenticated current property quote once and clears it");
+        rejects([&]{odh::plan_family_checkpoint_overlay({resident,cas},source_id,&checkpointed,
+            0,7,1,12345,ticket,-1);},"negative current property value rejects");
+        const auto overflowing_quote=odh::plan_family_checkpoint_overlay({resident,cas},source_id,&checkpointed,
+            0,7,1,12345,ticket,std::numeric_limits<std::int32_t>::max());
+        rejects([&]{odh::plan_family_managed_move_out_overlay({resident,cas},source_id,&overflowing_quote,0);},
+            "a valid property cache cannot bypass later total-assets overflow checks");
         const auto retained_source = odh::plan_family_managed_move_out_overlay(
             {resident, cas}, source_id, nullptr, resident.chunk_id);
         require(odh::replay_family_overlay({resident, cas}, source_id, retained_source).states[0].budget == 18000,
                 "managed source move-out retains verified source architecture refund");
+        // Terminal removal preserves chronological history and binds the
+        // exact final unhoused state instead of erasing occupancy evidence.
+        {
+            const auto vacated = odh::plan_family_managed_move_out_overlay(
+                {resident, cas}, source_id, &checkpointed, 0);
+            const auto terminal = odh::plan_family_archive_overlay(
+                {resident, cas}, neighbors, source_id, &vacated, 0);
+            const auto terminal_bytes = odh::encode_family_overlay(terminal);
+            const auto terminal_copy = odh::decode_family_overlay(terminal_bytes);
+            const auto final = odh::replay_family_overlay({resident, cas}, source_id, terminal_copy);
+            require(terminal_bytes[4] == 9 && terminal_copy.archives[0].final_state &&
+                terminal_copy.assignments.size() == vacated.assignments.size() &&
+                terminal_copy.creations.size() == 1 && final.families.size() == 2 && final.states.size() == 2 &&
+                odh::encode_family_overlay(terminal_copy) == terminal_bytes,
+                "played created family archives as v9 with full history and no active family/state");
+            require(terminal_copy.archives[0].family_identity == odh::family_overlay_identity(
+                odh::apply_family_overlay({resident, cas}, source_id, created)[2]) &&
+                terminal_copy.archives[0].final_state->checkpoint_sha256 == ticket &&
+                terminal_copy.archives[0].final_state->budget == 12345,
+                "terminal identity remains immutable while final money and checkpoint are bound");
+            auto linked = neighbors;
+            linked.entries[1].record->relationships.push_back({1, 100, {30, 40}});
+            linked.entries[1].record->relationships.push_back({1, 101, {50, 60}});
+            const auto retired = odh::retired_family_members(terminal_copy);
+            require(retired.size() == 2 && retired[0].guid == first.guid && retired[0].neighbor_id == 100 &&
+                retired[1].guid == second.guid && retired[1].neighbor_id == 101,
+                "retired helper exposes exact immutable created-member identities after played archive");
+            const auto cleaned = odh::apply_neighbor_overlay(linked, source_id, terminal_copy);
+            require(cleaned.entries.size() == 2 && cleaned.entries[1].record->relationships.size() == 1 &&
+                cleaned.entries[1].record->relationships[0].key == 19 &&
+                linked.entries[1].record->relationships.size() == 3,
+                "archive cleans links to all created members without modifying neighbor source");
+            const auto reused = odh::plan_family_managed_move_in_overlay(
+                {resident, cas}, source_id, &terminal_copy, cas.chunk_id, 7, 1000);
+            require(odh::replay_family_overlay({resident, cas}, source_id, reused).families[1].family.house_number == 7,
+                "another household may occupy the released house after terminal removal");
+            rejects([&] { (void)odh::plan_family_managed_move_in_overlay(
+                {resident, cas}, source_id, &terminal_copy, 0, 8, 0); },
+                "normal move-in cannot revive terminally archived family");
+            rejects([&] { (void)odh::plan_family_creation_overlay(
+                {resident, cas}, neighbors, source_id, &terminal_copy, creation); },
+                "terminal removal retains creation ID/GUID reservation");
+            auto corrupt = terminal_copy;
+            ++corrupt.archives[0].final_state->occupancy_epoch;
+            rejects([&] { (void)odh::replay_family_overlay({resident, cas}, source_id, corrupt); },
+                "terminal epoch cannot be forged or attached to a later occupancy");
+            corrupt = terminal_copy; ++corrupt.archives[0].final_state->budget;
+            rejects([&] { (void)odh::replay_family_overlay({resident, cas}, source_id, corrupt); },
+                "terminal money must match final history");
+            corrupt = terminal_copy; (*corrupt.archives[0].final_state->checkpoint_sha256)[0] ^= 1;
+            rejects([&] { (void)odh::replay_family_overlay({resident, cas}, source_id, corrupt); },
+                "terminal checkpoint cannot be replaced by another saved state");
+            corrupt = terminal_copy; corrupt.assignments = checkpointed.assignments;
+            rejects([&] { (void)odh::replay_family_overlay({resident, cas}, source_id, corrupt); },
+                "forged terminal removal cannot hide a currently occupied household");
+            corrupt = terminal_copy; corrupt.archives[0].final_state.reset();
+            rejects([&] { (void)odh::encode_family_overlay(corrupt); },
+                "history cannot be encoded as an older unbound archive tombstone");
+            corrupt = terminal_copy; corrupt.assignments.clear();
+            rejects([&] { (void)odh::encode_family_overlay(corrupt); },
+                "terminal record cannot silently lose retained history");
+            auto wrong_version = terminal_bytes; wrong_version[4] = 8;
+            rejects([&] { (void)odh::decode_family_overlay(wrong_version); },
+                "new terminal records reject old version headers instead of silently widening v8");
+            wrong_version = v4; wrong_version[4] = 9;
+            rejects([&] { (void)odh::decode_family_overlay(wrong_version); },
+                "v9 requires an actual terminal state record");
+            auto truncated = terminal_bytes; truncated.pop_back();
+            rejects([&] { (void)odh::decode_family_overlay(truncated); },
+                "truncated terminal state is rejected before field reads");
+            const auto named_terminal = odh::plan_family_name_overlay(
+                {resident, cas}, source_id, &vacated, 0, "Played name", 14);
+            const auto named_removed = odh::plan_family_archive_overlay(
+                {resident, cas}, neighbors, source_id, &named_terminal, 0);
+            require(odh::decode_family_overlay(odh::encode_family_overlay(named_removed)).names.size() == 1,
+                "v9 removal retains display names without changing immutable family identity");
+            odh::TypeAttributesSnapshot shared_seed; shared_seed.by_guid[55] = {1, 2};
+            const auto shared_terminal = odh::plan_neighborhood_type_attributes_overlay(
+                source_id, &terminal_copy, shared_seed);
+            const auto shared_copy = odh::decode_family_overlay(odh::encode_family_overlay(shared_terminal));
+            require(shared_copy.type_attributes && shared_copy.type_attributes->state.by_guid.at(55)[0] == 1 &&
+                shared_copy.archives[0].final_state.has_value(),
+                "v9 terminal history and shared neighborhood attributes coexist canonically");
+        }
+        {
+            const std::vector<odh::FamilyEntry> source{resident, cas, source_delete};
+            auto played = odh::plan_family_managed_move_in_overlay(
+                source, source_id, nullptr, source_delete.chunk_id, 9, 1000);
+            played = odh::plan_family_checkpoint_overlay(
+                source, source_id, &played, source_delete.chunk_id, 9, 1, 6000, ticket);
+            played = odh::plan_family_managed_move_out_overlay(
+                source, source_id, &played, source_delete.chunk_id);
+            const auto removed = odh::plan_family_delete_overlay(
+                source, deletion_neighbors, source_id, &played, source_delete.chunk_id);
+            const auto encoded = odh::encode_family_overlay(removed);
+            const auto decoded_removed = odh::decode_family_overlay(encoded);
+            const auto final = odh::replay_family_overlay(source, source_id, decoded_removed);
+            require(encoded[4] == 9 && odh::encode_family_overlay(decoded_removed) == encoded &&
+                final.families.size() == 2 && final.states.size() == 2 &&
+                decoded_removed.assignments.size() == 3 &&
+                decoded_removed.deletions[0].family_identity == odh::family_overlay_identity(source_delete) &&
+                decoded_removed.deletions[0].final_state->budget == 6000,
+                "played source family deletes after move-out with stable identity and complete history");
+            const auto retired = odh::retired_family_members(decoded_removed);
+            require(retired.size() == 2 && retired[0].guid == delete_first.guid && retired[0].neighbor_id == 20 &&
+                retired[1].guid == delete_second.guid && retired[1].neighbor_id == 21,
+                "retired helper exposes exact source-family identities after played deletion");
+            const auto cleaned = odh::apply_neighbor_overlay(deletion_neighbors, source_id, decoded_removed);
+            require(cleaned.entries.size() == 1 && cleaned.entries[0].record->relationships.size() == 1,
+                "played source deletion still removes only its exact NBRS roster and links");
+            auto stale = decoded_removed; ++stale.deletions[0].final_state->value_in_arch;
+            rejects([&] { (void)odh::replay_family_overlay(source, source_id, stale); },
+                "terminal source deletion cannot fabricate architecture value");
+            stale = decoded_removed; stale.deletions[0].family_identity[0] ^= 1;
+            rejects([&] { (void)odh::encode_family_overlay(stale); },
+                "terminal source identity must match retained history");
+            stale = decoded_removed; stale.deletions[0].members[0].guid ^= 1;
+            rejects([&] { (void)odh::replay_family_overlay(source, source_id, stale); },
+                "terminal source deletion cannot substitute another member roster");
+            auto malformed = encoded;
+            // Last record is tag9 and its final state's flag word is 36 bytes before EOF.
+            malformed[malformed.size() - 36] = 2;
+            rejects([&] { (void)odh::decode_family_overlay(malformed); },
+                "unknown terminal state flags reject");
+            rejects([&] { (void)odh::plan_family_checkpoint_overlay(
+                source, source_id, &decoded_removed, source_delete.chunk_id, 9, 1, 6000, ticket); },
+                "checkpoint planning cannot revive deleted source family");
+        }
+        const auto original_adoption=odh::plan_family_original_adoption_overlay(
+            {resident,cas},source_id,nullptr,resident.chunk_id,5,15555,ticket);
+        const auto original_replay=odh::replay_family_overlay({resident,cas},source_id,original_adoption);
+        require(original_adoption.assignments.size()==1&&original_adoption.assignments[0].action==odh::FamilyOverlayAction::checkpoint&&
+            original_adoption.assignments[0].purchase_price==0&&original_replay.states[0].managed&&
+            original_replay.states[0].occupancy_epoch==1&&original_replay.states[0].house_number==5&&
+            original_replay.states[0].budget==15555&&original_replay.states[0].value_in_arch==resident.family.value_in_arch&&
+            original_replay.families[0].family.member_guids==resident.family.member_guids,
+            "original adoption checkpoints live finances without relocation/refund/new epoch or roster changes");
+        const auto original_bytes=odh::encode_family_overlay(original_adoption);
+        require(original_bytes[4]==6&&odh::encode_family_overlay(odh::decode_family_overlay(original_bytes))==original_bytes,
+            "explicit original adoption reuses canonical v6 checkpoint without new wire form");
+        const auto quoted_adoption=odh::plan_family_original_adoption_overlay(
+            {resident,cas},source_id,nullptr,resident.chunk_id,5,15555,ticket,10653);
+        const auto quoted_adoption_bytes=odh::encode_family_overlay(quoted_adoption);
+        const auto quoted_original=odh::replay_family_overlay({resident,cas},source_id,
+            odh::decode_family_overlay(quoted_adoption_bytes)).states[0];
+        require(quoted_adoption.assignments.size()==1&&quoted_adoption_bytes[4]==6&&
+            quoted_original.value_in_arch==10653&&quoted_original.budget==15555&&
+            quoted_original.house_number==5&&quoted_original.occupancy_epoch==1,
+            "original adoption includes property quote in its single existing checkpoint without another publication");
+        rejects([&]{odh::plan_family_original_adoption_overlay({resident,cas},source_id,nullptr,
+            resident.chunk_id,5,15555,ticket,-1);},"original adoption rejects negative current property quote");
+        rejects([&]{odh::plan_family_original_adoption_overlay({resident,cas},source_id,nullptr,
+            resident.chunk_id,7,15555,ticket,10653);},"quoted original adoption cannot change source occupancy");
+        rejects([&]{(void)odh::plan_family_original_adoption_overlay({resident,cas},source_id,&original_adoption,resident.chunk_id,5,15555,ticket);},
+            "adoption cannot replace an existing managed/checkpoint history");
+        rejects([&]{(void)odh::plan_family_original_adoption_overlay({resident,cas},source_id,nullptr,resident.chunk_id,7,15555,ticket);},
+            "adoption cannot relabel another house as original occupancy");
+        rejects([&]{(void)odh::plan_family_original_adoption_overlay({resident,cas},source_id,nullptr,cas.chunk_id,7,15555,ticket);},
+            "unhoused source family needs real move-in, not adoption");
+        rejects([&]{(void)odh::plan_family_original_adoption_overlay({resident,cas},source_id,&overlay,cas.chunk_id,7,15555,ticket);},
+            "legacy moved-in family cannot impersonate original occupancy");
+        rejects([&]{(void)odh::plan_family_original_adoption_overlay({resident,cas},source_id,nullptr,resident.chunk_id,5,-1,ticket);},
+            "adoption cannot publish negative live funds");
+        rejects([&]{(void)odh::plan_family_original_adoption_overlay({resident,cas},source_id,nullptr,resident.chunk_id,5,15555,{});},
+            "adoption requires a real nonzero archive digest");
         auto adopted = odh::plan_family_checkpoint_overlay(
             {resident, cas}, source_id, &overlay, cas.chunk_id, 7, 1, 14000, ticket);
         const auto adopted_bytes = odh::encode_family_overlay(adopted);
@@ -593,6 +824,138 @@ int main() {
             rejects([&] { (void)odh::decode_family_overlay(prefix); }, "every truncated v6 prefix rejects");
         }
 
+        // Renaming is display metadata: checkpoint/occupancy authority retains
+        // the immutable original identity even after money and house changes.
+        const auto named = odh::plan_family_name_overlay({resident, cas}, source_id,
+            &checkpointed, cas.chunk_id, "New household", 14);
+        const auto named_bytes = odh::encode_family_overlay(named);
+        require(named_bytes[4] == 7 && odh::encode_family_overlay(odh::decode_family_overlay(named_bytes)) == named_bytes,
+            "v7 name metadata roundtrips canonically alongside managed history");
+        const auto named_replay = odh::replay_family_overlay({resident, cas}, source_id, named);
+        const auto unnamed_replay = odh::replay_family_overlay({resident, cas}, source_id, checkpointed);
+        require(named_replay.families[1].display_name == "New household" &&
+            named_replay.states[1].family_identity == unnamed_replay.states[1].family_identity &&
+            named_replay.states[1].budget == unnamed_replay.states[1].budget &&
+            named_replay.states[1].house_number == unnamed_replay.states[1].house_number &&
+            named_replay.states[1].occupancy_epoch == unnamed_replay.states[1].occupancy_epoch &&
+            named_replay.states[1].checkpoint_sha256 == unnamed_replay.states[1].checkpoint_sha256 &&
+            named_replay.families[1].family.member_guids == cas.family.member_guids,
+            "name does not change roster, balance, occupancy, checkpoint or identity");
+        const auto renamed_again = odh::plan_family_name_overlay({resident, cas}, source_id,
+            &named, cas.chunk_id, "Second name", 14);
+        require(renamed_again.names.size() == 1 && renamed_again.names[0].family_name == "Second name" &&
+            renamed_again.assignments.size() == checkpointed.assignments.size(),
+            "repeated edits replace one name while retaining operation history");
+        auto stripped_name = named; stripped_name.names.clear();
+        require(odh::encode_family_overlay(stripped_name) == odh::encode_family_overlay(checkpointed),
+            "all preexisting operation bytes retain the original codec absent name metadata");
+        for (const auto& bad_name : {std::string{}, std::string("   "), std::string(257, 'a'),
+                std::string("a\nb"), std::string("a\0b", 3)})
+            rejects([&] { (void)odh::plan_family_name_overlay({resident, cas}, source_id,
+                &named, cas.chunk_id, bad_name, 14); }, "invalid name rejects without mutation");
+        rejects([&] { (void)odh::plan_family_name_overlay({resident, cas}, source_id,
+            &named, 65000, "Missing", 14); }, "unknown household rename rejects");
+        auto bad_name_overlay = named; bad_name_overlay.names[0].family_identity[0] ^= 1;
+        rejects([&] { (void)odh::apply_family_overlay({resident, cas}, source_id, bad_name_overlay); },
+            "stale name identity rejects");
+        bad_name_overlay = named; bad_name_overlay.names.push_back(bad_name_overlay.names[0]);
+        rejects([&] { (void)odh::encode_family_overlay(bad_name_overlay); }, "duplicate name metadata rejects");
+        auto rename_townie = cas; rename_townie.family.family_number = -1;
+        rejects([&] { (void)odh::plan_family_name_overlay({resident, rename_townie}, source_id,
+            nullptr, rename_townie.chunk_id, "Townies", 14); }, "townie sentinel cannot be renamed as a household");
+        const auto created_named = odh::plan_family_name_overlay({resident, cas}, source_id, &created, 0, "Created renamed", 14);
+        const auto archived_named = odh::plan_family_archive_overlay({resident, cas}, neighbors,
+            source_id, &created_named, 0);
+        require(odh::apply_family_overlay({resident, cas}, source_id, archived_named).size() == 2 &&
+            archived_named.names.size() == 1 && archived_named.creations[0].family_name == "New family",
+            "archive after rename retains identity reservations and original creation evidence");
+        rejects([&] { (void)odh::plan_family_name_overlay({resident, cas}, source_id,
+            &archived_named, 0, "Resurrected", 14); }, "rename cannot resurrect archived households");
+        const auto source_named = odh::plan_family_name_overlay({resident, cas, source_delete}, source_id,
+            nullptr, source_delete.chunk_id, "Source renamed", 14);
+        const auto deleted_named = odh::plan_family_delete_overlay({resident, cas, source_delete},
+            deletion_neighbors, source_id, &source_named, source_delete.chunk_id);
+        require(odh::apply_family_overlay({resident, cas, source_delete}, source_id, deleted_named).size() == 2,
+            "eligible original household retains deletion protections after rename");
+        rejects([&] { (void)odh::plan_family_name_overlay({resident, cas, source_delete}, source_id,
+            &deleted_named, source_delete.chunk_id, "Resurrected", 14); }, "rename cannot resurrect deleted households");
+        const auto mixed_names = odh::plan_family_name_overlay({resident, cas}, source_id,
+            &named, resident.chunk_id, "Japanese encoded", 15);
+        const auto mixed_reopened = odh::decode_family_overlay(odh::encode_family_overlay(mixed_names));
+        require(mixed_reopened.names.size() == 2 && mixed_reopened.names[0].language == 14 &&
+            mixed_reopened.names[1].language == 15,
+            "mixed household name encoding provenance survives codec independently");
+        for (const auto invalid_language : {0, 21, 255}) {
+            rejects([&] { (void)odh::plan_family_name_overlay({resident, cas}, source_id,
+                &named, cas.chunk_id, "Bad encoding", static_cast<std::uint8_t>(invalid_language)); },
+                "invalid household name language codes reject");
+            auto bad_language = named_bytes;
+            // The final tag6 record stores its encoding immediately before
+            // the known display bytes, without dependence on prior history.
+            bad_language[bad_language.size() - std::string("New household").size() - 1] =
+                static_cast<std::uint8_t>(invalid_language);
+            rejects([&] { (void)odh::decode_family_overlay(bad_language); },
+                "wire-level invalid household name encoding rejects");
+        }
+        auto downgraded_name = named_bytes; downgraded_name[4] = 6;
+        rejects([&] { (void)odh::decode_family_overlay(downgraded_name); },
+            "name tag cannot be decoded under an older overlay version");
+        for (std::size_t n = 0; n < named_bytes.size(); ++n) {
+            auto prefix = named_bytes; prefix.resize(n);
+            rejects([&] { (void)odh::decode_family_overlay(prefix); }, "every truncated v7 prefix rejects");
+        }
+
+        {
+            const odh::TypeAttributesSnapshot seed{1,{{700,{-1,2}}}};
+            auto selected=odh::select_neighborhood_type_attributes(source_id,seed,std::nullopt,nullptr);
+            require(selected.source==odh::NeighborhoodTypeAttributesSource::immutable_seed&&selected.private_revision==0,
+                "initial neighborhood reads immutable TATT seed without publishing authority");
+            auto old=seed;old.by_guid[700][0]=33;
+            selected=odh::select_neighborhood_type_attributes(source_id,seed,old,&mixed_names);
+            require(selected.source==odh::NeighborhoodTypeAttributesSource::session_snapshot&&selected.state.by_guid.at(700)[0]==33,
+                "legacy session bootstrap remains available before private shared head exists");
+            auto shared=odh::plan_neighborhood_type_attributes_overlay(source_id,&mixed_names,seed);
+            auto wire=odh::encode_family_overlay(shared);const auto reopened=odh::decode_family_overlay(wire);
+            require(wire[4]==8&&reopened.type_attributes&&reopened.type_attributes->revision==1&&
+                reopened.names[0].language==14&&reopened.names[1].language==15&&
+                odh::encode_family_overlay(reopened)==wire,"v8 shares TATT while preserving all name encodings and exact roundtrip");
+            auto legacy_again=reopened;legacy_again.type_attributes.reset();
+            require(odh::encode_family_overlay(legacy_again)==odh::encode_family_overlay(mixed_names),
+                "v2-v7 bytes remain unchanged when the new shared-state field is absent");
+            shared=odh::plan_neighborhood_type_attributes_overlay(source_id,&shared,old);
+            require(shared.type_attributes->revision==2&&
+                odh::plan_neighborhood_type_attributes_overlay(source_id,&shared,old).type_attributes->revision==2,
+                "only changed canonical TATT bytes advance neighborhood revision");
+            selected=odh::select_neighborhood_type_attributes(source_id,seed,seed,&shared);
+            require(selected.source==odh::NeighborhoodTypeAttributesSource::private_overlay&&
+                selected.private_revision==2&&selected.superseded_session_state&&selected.state.by_guid.at(700)[0]==33,
+                "old house checkpoint cannot roll back a newer shared neighborhood bank");
+            auto wrong_identity=source_id;wrong_identity[0]^=1;
+            rejects([&]{odh::select_neighborhood_type_attributes(wrong_identity,seed,seed,&shared);},"shared bank selection rejects other neighborhood");
+            rejects([&]{odh::plan_neighborhood_type_attributes_overlay(wrong_identity,&shared,seed);},"shared bank publication rejects other neighborhood");
+            const auto renamed=odh::plan_family_name_overlay({resident,cas},source_id,&shared,cas.chunk_id,"Another name",14);
+            require(renamed.type_attributes->revision==2&&renamed.type_attributes->state.by_guid.at(700)[0]==33,
+                "family rename preserves neighborhood bank and revision");
+            auto overflowing=shared;overflowing.type_attributes->revision=UINT64_MAX;
+            rejects([&]{odh::plan_neighborhood_type_attributes_overlay(source_id,&overflowing,seed);},"changed shared bank cannot wrap revision");
+            require(odh::plan_neighborhood_type_attributes_overlay(source_id,&overflowing,old).type_attributes->revision==UINT64_MAX,
+                "unchanged shared bank needs no new revision even at the counter ceiling");
+            auto invalid=shared;invalid.type_attributes->revision=0;
+            rejects([&]{odh::encode_family_overlay(invalid);},"zero shared-state revision rejected");
+            auto downgrade=wire;downgrade[4]=7;
+            rejects([&]{odh::decode_family_overlay(downgrade);},"old v7 cannot silently ignore new shared TATT authority");
+            auto missing=odh::encode_family_overlay(mixed_names);missing[4]=8;
+            rejects([&]{odh::decode_family_overlay(missing);},"v8 without its shared-state record rejected");
+            for(std::size_t n=0;n<wire.size();++n){auto truncated=wire;truncated.resize(n);
+                rejects([&]{odh::decode_family_overlay(truncated);},"truncated v8 overlay rejected");}
+            const auto with_creation=odh::plan_neighborhood_type_attributes_overlay(source_id,&created_named,seed);
+            const auto with_archive=odh::plan_family_archive_overlay({resident,cas},neighbors,source_id,&with_creation,0);
+            require(with_archive.type_attributes->revision==1&&with_archive.type_attributes->state.by_guid.at(700)[0]==-1,
+                "archive cannot remove or reset shared neighborhood data");
+            const auto with_deletion=odh::plan_neighborhood_type_attributes_overlay(source_id,&source_named,seed);
+            const auto removed=odh::plan_family_delete_overlay({resident,cas,source_delete},deletion_neighbors,source_id,&with_deletion,source_delete.chunk_id);
+            require(removed.type_attributes->revision==1,"source family deletion retains shared bank");
+        }
         std::cout << "family_overlay: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -35,4 +35,11 @@ struct Spr2Frame {
 Spr2Frame read_spr2_frame(const View&, std::uint32_t frame_index,
                           const Palette&, SpriteLimits = {});
 
+// Both modes check the same offset table, frame header, palette key and
+// dimension limits as read_spr2_frame. Full also checks RLE and palette
+// indices without allocating pixel planes.
+enum class Spr2Inspection { geometry, full };
+Spr2Frame inspect_spr2_frame(const View&, std::uint32_t frame_index,
+                             const Palette&, SpriteLimits, Spr2Inspection);
+
 } // namespace odh

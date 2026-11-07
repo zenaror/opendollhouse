@@ -1,4 +1,5 @@
 #include "odh/neighbor_context.hpp"
+#include "odh/world.hpp"
 #include <iostream>
 
 namespace {
@@ -143,6 +144,11 @@ void primitive_targets() {
     const auto legacy = dispatch(context.primitive(),f,next(8,255,5),temps);
     require(legacy.stack_object_write && legacy.stack_object_write->value == 15 && !legacy.temp_write,
             "legacy flags force scope10/index0 despite invalid encoded target");
+    auto local_temps=temps;local_temps[0]=1;
+    const auto local_output=dispatch(context.primitive(),f,next(40,0),local_temps);
+    require(local_output.disposition==odh::PrimitiveDisposition::goto_true&&local_output.write&&
+        local_output.write->bank==odh::VmFrameBank::locals&&local_output.write->index==1&&local_output.write->value==15,
+        "neighbor LocalByTemp stages a frame write rather than an external scope25 write");
     for (unsigned scope : {8U,9U,25U,30U}) {
         const auto outcome = dispatch(context.primitive(),f,next(scope,255),temps);
         require(outcome.disposition == odh::PrimitiveDisposition::unsupported && no_output(outcome),
@@ -225,6 +231,55 @@ void actual_vm() {
     require(vm.run(1) == odh::VmStatus::returned_true && reads == 1 && vm.temps()[0] == -812,
             "subsequent actual Expression reads scope32 chosen person word");
 }
+void instance_ids() {
+    auto neighbor=entry(40);neighbor.record->guid=0xfc72c0c0;
+    auto alias=entry(41);alias.record->guid=neighbor.record->guid;
+    odh::NeighborContext context(catalog({neighbor,alias}));
+    odh::World world;
+    require(context.instance_id(world,40)==0&&context.instance_id(world,99)==0,
+        "scope24 instance query distinguishes existing neighbor without avatar and missing neighbor as zero");
+    require(world.create(8,odh::EntityKind::object,{})&&world.define_type(8,neighbor.record->guid)&&
+        context.instance_id(world,40)==0,"matching typed ordinary object cannot satisfy avatar query");
+    // Insert larger ID first to distinguish source ObjectID order from creation
+    // or World generation order, including duplicate GUID neighbor aliases.
+    require(world.create(20,odh::EntityKind::avatar,{})&&world.define_type(20,neighbor.record->guid)&&
+        world.create(10,odh::EntityKind::avatar,{})&&world.define_type(10,neighbor.record->guid)&&
+        context.instance_id(world,40)==10&&context.instance_id(world,41)==10,
+        "duplicate-GUID avatars return first ObjectID, independently of insertion and neighbor alias");
+    require(world.set_ui_ghost(10,true)&&context.instance_id(world,40)==20,
+        "UI ghost avatar is absent from source ObjectQueries registration");
+    require(world.set_ui_ghost(10,false)&&world.retire(10)&&context.instance_id(world,40)==20,
+        "removed avatar cannot remain an instance through a stale neighbor cache");
+    require(world.retire(20)&&context.instance_id(world,40)==0,
+        "last live matching avatar retirement returns zero immediately");
+    require(world.create(30,odh::EntityKind::avatar,{})&&world.define_type(30,neighbor.record->guid)&&
+        context.instance_id(world,40)==30,"new live instance is observed without rebuilding NeighborContext");
+    require(world.create(15,odh::EntityKind::avatar,{})&&!context.instance_id(world,40)&&
+        context.instance_id(world,99)==0,
+        "unknown earlier avatar GUID prevents guessing first match while missing NBRS still returns zero");
+    require(world.define_type(15,0x12345678)&&context.instance_id(world,40)==30,
+        "proven nonmatching earlier avatar allows exact later match");
+    require(world.create(31,odh::EntityKind::avatar,{})&&context.instance_id(world,40)==30,
+        "unknown avatar after first proven match cannot change source FirstOrDefault result");
+    odh::VmMemory memory;
+    memory.read=[&](const auto& frame,auto scope,auto index)->std::optional<std::int16_t>{
+        if(scope!=24||index!=0)return {};
+        return context.instance_id(world,frame.context.stack_object);
+    };
+    const auto key=odh::routine_key(4096);
+    const odh::Bhav read{0x8002,{{2,254,255,{0,0,0,0,0,5,8,24}}},{},odh::Bhav::Metadata{0,4,0,0}};
+    odh::Vm vm({{key,read}},memory);
+    vm.start(key,{101,202,40});
+    require(vm.run(10)==odh::VmStatus::returned_true&&vm.temps()[0]==30,
+        "actual VM Expression reads scope24 field0 with StackObject interpreted as NeighborID");
+    require(world.retire(30)&&world.retire(31),"remove known match and unknown later avatar for no-instance VM case");
+    vm.start(key,{101,202,40});
+    require(vm.run(10)==odh::VmStatus::returned_true&&vm.temps()[0]==0,
+        "actual VM sees zero for a valid neighbor lacking a live avatar");
+    require(world.create(12,odh::EntityKind::avatar,{}),"unknown avatar fixture");
+    vm.start(key,{101,202,40});
+    require(vm.run(10)==odh::VmStatus::fault,"unprovable GUID lookup remains unsupported instead of fabricating zero");
+}
 void invalid_profiles() {
     auto invalid = entry(11); invalid.marker = 2; rejects(catalog({invalid}));
     invalid = entry(11); invalid.marker = 0; rejects(catalog({invalid}));
@@ -258,7 +313,7 @@ void invalid_profiles() {
 }
 int main() {
     try {
-        ordering(); person_data(); primitive_targets(); false_results(); actual_vm(); invalid_profiles();
+        ordering(); person_data(); primitive_targets(); false_results(); actual_vm(); instance_ids(); invalid_profiles();
         auto a=entry(19),b=entry(11),c=entry(15);c.record->guid=0x12345678;
         odh::NeighborContext guids(catalog({a,b,{0,{}},c}));
         require(guids.id_for_guid(0xA0123456)==11,"GUID map last serialized wins rather than highest sorted ID");

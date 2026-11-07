@@ -82,16 +82,38 @@ std::int16_t next_free_id(const World& world) {
     }
     throw FormatError("household runtime ID space exhausted");
 }
-void initialize_constructor_words(World& world, std::int16_t id) {
+}
+std::optional<std::int16_t> avatar_constructor_initial_value(const std::vector<std::int16_t>& words) {
+    // VMOBJDVariable indices include the two version words. Source TS1 provider
+    // uses NumGraphics4, Master10/Sub11, Disabled16, Price18, FunctionFlags40,
+    // BuildModeType69. Avatar type2 is a singleton, never an abstract master.
+    if(words.size()<70||(words[0]!=136&&words[0]!=138)||words[1]!=0||words[9]!=2||words[10]!=0)return {};
+    // The provider has thirty categories. An invalid build-only category can
+    // throw during catalog insertion; do not claim a price for malformed data.
+    if(words[40]==0&&static_cast<std::uint16_t>(words[69])>22)return {};
+    const bool catalog=(words[40]!=0||words[69]!=0)&&words[16]==0&&static_cast<std::uint16_t>(words[4])>0;
+    // VMContext initializes group.InitialPrice to zero only when the complete
+    // TS1 catalog has no entry; its GetValue41 is the signed low16 price.
+    return catalog?words[18]:std::int16_t{0};
+}
+void initialize_avatar_constructor_words(World& world, std::int16_t id,
+    std::optional<std::int16_t> initial_value) {
+    // The managed allocation has eighty words, but index79 is specifically
+    // FSOEngineQuery, outside the native TS1 bank/profile. Keep0..78 complete.
     for (std::int16_t index = 0; index < 79; ++index) {
-        if (index == 1 || index == 2 || index == 3 || index == 11 ||
-            index == 25 || index == 26 || index == 29 || index == 41 ||
+        // Direction's NORTH default and Room's zero backing storage exist
+        // before placement; GetValue(Room) still derives -5 while out of world.
+        if (index == 2 || index == 3 || index == 11 ||
+            index == 26 || index == 41 ||
             index == 62 || index == 67) continue;
         const auto value = index == 8 ? std::int16_t{256} : std::int16_t{0};
         if (!world.declare_object_word(id, index, value))
-            throw FormatError("household avatar constructor object words exceed World budget");
+            throw FormatError("avatar constructor object words exceed World budget");
     }
+    if(initial_value&&!world.declare_object_word(id,41,*initial_value))
+        throw FormatError("avatar constructor group initial value exceeds World budget");
 }
+namespace {
 HouseholdSpawnResult materialize_household_members_impl(
     const WorldSnapshot& source, const std::vector<HouseholdSpawnRequest>& household,
     std::uint16_t family_chunk_id,
@@ -141,7 +163,7 @@ HouseholdSpawnResult materialize_household_members_impl(
         if (!result.candidate->create(id, EntityKind::avatar, {0, 101, 3, 16}) ||
             !result.candidate->define_type(id, member.guid))
             throw FormatError("cannot create household avatar within World budget");
-        initialize_constructor_words(*result.candidate, id);
+        initialize_avatar_constructor_words(*result.candidate, id);
         if (!prepare_avatar(*result.candidate, id, member.guid))
             throw FormatError("household avatar preparation failed");
         if (defer_inheritance) {
@@ -293,6 +315,76 @@ HouseholdVerificationResult verify_household_members(
         result.new_members.push_back({created.guid, created.runtime_id,
                                       positioned, attempts});
         current = result.candidate->snapshot();
+    }
+    return result;
+}
+HouseholdActivationResult verify_household_members_in_place(
+    World& world,const std::vector<HouseholdSpawnRequest>& household,
+    std::uint16_t family_chunk_id,const HouseholdAvatarPreparer& prepare,
+    std::optional<EntityPosition> mailbox,std::uint16_t width,std::uint16_t height,
+    const HouseholdPositionAttempt& place,const HouseholdMemberActivation& activate) {
+    if(!prepare||!activate||!width||!height||household.empty()||(mailbox&&!place))
+        throw FormatError("in-place household bootstrap requires complete constructor/arrival/activation services");
+    // Authenticate the complete request before its first constructor effect.
+    // Existing GUIDs are identities, not absence inferred from a chosen ID.
+    std::map<std::uint32_t,std::int16_t> existing;
+    for(auto id=world.next_entity(0,EntityKind::avatar);id;id=world.next_entity(*id,EntityKind::avatar)){
+        const auto* avatar=world.find(*id);
+        if(!avatar||avatar->dead||!avatar->definition||!avatar->definition->guid||
+           !existing.emplace(avatar->definition->guid,*id).second)
+            throw FormatError("in-place household has invalid or duplicate existing avatar identity");
+    }
+    std::set<std::uint32_t> seen;
+    for(const auto& request:household)
+        if(!request.guid||!seen.insert(request.guid).second||
+           (!existing.count(request.guid)&&(!request.neighbor||request.neighbor->guid!=request.guid)))
+            throw FormatError("in-place household lacks unique GUID and exact missing-member NBRS");
+    const auto candidates=mailbox?household_spawn_candidates(*mailbox,width,height):std::vector<EntityPosition>{};
+    HouseholdActivationResult result;result.new_members.reserve(household.size());
+    for(const auto& request:household){
+        const auto present=existing.find(request.guid);
+        if(present!=existing.end()){result.runtime_ids.emplace(request.guid,present->second);continue;}
+        const auto id=next_free_id(world);
+        if(!world.create(id,EntityKind::avatar,{0,101,3,16})||!world.define_type(id,request.guid))
+            throw FormatError("in-place household constructor exceeded World budget");
+        const WorldEntityReference identity{id,world.find(id)->generation};
+        initialize_avatar_constructor_words(world,id);
+        // This is an actual NEW cXPerson allocation, not restored-resource
+        // metadata. Share the same source base-constructor proof as NPC
+        // materialization: empty record0, raw Slot=-1/Parent=0, OOW level1.
+        if(!world.declare_object_word(id,14,-1)||!world.declare_object_word(id,26,0)||
+           !world.publish_native_slot0(identity,{})||!world.set_native_out_of_world_level(identity,1))
+            throw FormatError("in-place household native base constructor publication failed");
+        if(world.lockout_count_clock()&&!world.admit_lockout_count_state(id,identity.generation,true,0))
+            throw FormatError("in-place household fresh Thread lockout state unavailable");
+        if(!prepare(world,id,request.guid))throw FormatError("in-place household Init unsupported; discard bootstrap");
+        const auto exact=[&]()->const Entity*{
+            const auto* avatar=world.resolve_reference(identity);
+            if(!world.is_live_reference(identity)||!avatar||avatar->dead||avatar->kind!=EntityKind::avatar||
+               !avatar->definition||avatar->definition->guid!=request.guid)
+                throw FormatError("in-place household constructor identity changed; discard bootstrap");
+            return avatar;
+        };
+        if(exact()->position)throw FormatError("in-place household Init must leave avatar out of world");
+        inherit_staged_household_member(world,id,*request.neighbor,family_chunk_id);
+        bool positioned=false;std::size_t attempts=0;
+        for(const auto& candidate:candidates){
+            ++attempts;const auto outcome=place(world,id,candidate);const auto* avatar=exact();
+            if(outcome==HouseholdPositionAttemptStatus::unsupported)
+                throw FormatError("in-place household placement unsupported; discard bootstrap");
+            positioned=outcome==HouseholdPositionAttemptStatus::placed;
+            if(positioned){
+                if(!(avatar->position==std::optional<EntityPosition>{candidate}))
+                    throw FormatError("in-place household placement did not publish actual selected position");
+                break;
+            }
+            if(avatar->position)throw FormatError("in-place household blocked placement left avatar positioned");
+        }
+        if(!activate(world,id,request.guid,positioned))
+            throw FormatError("in-place household admission failed; discard bootstrap");
+        (void)exact();
+        result.runtime_ids.emplace(request.guid,id);
+        result.new_members.push_back({request.guid,id,positioned,attempts});
     }
     return result;
 }

@@ -34,4 +34,19 @@ SkeletonPose sample_pose(const Skeleton&,const AnimationHeader* =nullptr,
                          const CfpPlanes* =nullptr,double frame=0,
                          const AnimationHeader* carry_animation=nullptr,
                          const CfpPlanes* carry_cfp=nullptr);
+struct PoseClipSample {
+    const AnimationHeader* animation=nullptr;
+    const CfpPlanes* cfp=nullptr;
+    double frame=0;
+    float weight=0;
+};
+// Source VMAvatar.FractionalAnim's ordered collection: each active channel is
+// blended with weight / cumulative-prefix-weight, using translation Lerp and
+// quaternion Slerp. Missing channels preserve preceding transforms. Zero-weight
+// clips contribute no transforms (avoiding source 0/0 on a leading idle clip).
+// At most three clips, matching the current native locomotion collection.
+// Carry overrides its channels at frame0 after the entire collection.
+SkeletonPose sample_pose_collection(const Skeleton&,const std::vector<PoseClipSample>&,
+                         const AnimationHeader* carry_animation=nullptr,
+                         const CfpPlanes* carry_cfp=nullptr);
 }

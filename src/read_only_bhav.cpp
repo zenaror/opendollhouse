@@ -1,12 +1,13 @@
 #include "odh/read_only_bhav.hpp"
 
 #include "odh/object_type.hpp"
+#include "odh/generic_ts1_compatibility.hpp"
 
 namespace odh {
 namespace {
 bool valid_keys(const RoutineSet& routines, bool additional_owner) {
     for (const auto& entry : routines)
-        if (entry.first.id < 256 || entry.first.scope != routine_key(entry.first.id).scope ||
+        if (!routine_key_valid(entry.first) || (entry.first.id < 256 && entry.first.scope<=RoutineScope::semiglobal) ||
             (additional_owner && entry.first.scope == RoutineScope::global)) return false;
     return true;
 }
@@ -35,7 +36,7 @@ ReadOnlyBhavResult evaluate_read_only_bhav(
     const WorldSnapshot& snapshot, const RoutineSet& routines, const RoutineOwners& owners,
     RoutineKey root, VmContext context, const std::vector<std::int16_t>& arguments,
     std::uint64_t instruction_budget, ReadOnlyBhavLimits limits) {
-    if (root.id < 256 || root.scope != routine_key(root.id).scope || !valid_keys(routines, false))
+    if (!routine_key_valid(root) || (root.id < 256 && root.scope<=RoutineScope::semiglobal) || !valid_keys(routines, false))
         return {ReadOnlyBhavState::unsupported, ReadOnlyBhavReason::invalid_resources, 0,
                 "invalid root or default routine keys"};
     for (const auto& owner : owners)
@@ -54,9 +55,12 @@ ReadOnlyBhavResult evaluate_read_only_bhav(
     memory.write = [](const VmFrame&, std::uint8_t, std::int16_t, std::int16_t) { return false; };
     try {
         const auto object_type = object_type_primitive(scratch);
-        VmPrimitive primitive = [&scratch, &object_type](const VmFrame& frame,
+        const auto compatibility = generic_ts1_compatibility_primitive();
+        VmPrimitive primitive = [&scratch, &object_type, &compatibility](const VmFrame& frame,
             const Instruction& instruction, const std::array<std::int16_t, 20>& temps,
             const VmDispatch& dispatch) {
+            const auto compatible=compatibility(frame,instruction,temps,dispatch);
+            if(compatible.disposition!=PrimitiveDisposition::unsupported)return compatible;
             if (instruction.opcode == 31)
                 return set_to_next_person(scratch, frame, instruction);
             return object_type(frame, instruction, temps, dispatch);

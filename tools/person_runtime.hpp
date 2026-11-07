@@ -1,7 +1,12 @@
 #pragma once
+#include "neighborhood_storage.hpp"
+#include "player_preferences.hpp"
+#include "build_mode_presentation.hpp"
 
 #include "odh/session_resource_identity.hpp"
 #include "neighborhood_request.hpp"
+#include "odh/ts1_travel.hpp"
+#include "odh/architecture_edit.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -11,10 +16,16 @@
 #include <string>
 #include <vector>
 
-namespace odh { class PreparedHouseholdTransfer; class InstalledOccupancyRetirement; }
+namespace odh {
+class PreparedHouseholdTransfer;
+class InstalledOccupancyRetirement;
+class PreparedTs1TravelReturn;
+struct ArchitectureSnapshot;
+}
 
 namespace odh_host {
 class LinuxWindow;
+class OriginalCursorPresentation;
 class LinuxSessionLog;
 class FamilySessionJournal;
 using NeighborhoodResumeCallback = std::function<std::optional<NeighborhoodMapRequest>()>;
@@ -23,10 +34,30 @@ struct NeighborhoodTransitionRequest {
     std::uint16_t destination_house = 0;
     std::filesystem::path saved_session_path;
     NeighborhoodRequestKind kind = NeighborhoodRequestKind::travel;
+    bool resume_buy_mode = false; // Presentation state after a committed same-house command.
+    bool paused_before_buy_mode = false;
+    bool resume_build_mode = false;
+    bool paused_before_build_mode = false;
+    // Same-house committed UI continuation, never a save/travel payload.
+    std::optional<BuildModePresentationState> build_presentation;
 };
 struct PersonRunResult {
     int exit_code = 0;
     std::optional<NeighborhoodTransitionRequest> transition;
+    struct TemporaryTravel {
+        odh::Ts1TravelState state;
+        std::filesystem::path saved_session_path;
+        std::vector<std::uint8_t> suspended_home;
+    };
+    std::optional<TemporaryTravel> temporary_travel;
+    // The runtime may adopt an original family when publishing its first
+    // neighborhood-wide state. Return that authority to the launcher.
+    std::shared_ptr<FamilySessionJournal> family_journal;
+    // UI exit to the ordinary neighborhood, distinct from travelling the Sims
+    // or publishing a family-management transaction.
+    bool return_to_neighborhood=false;
+    // Host presentation selection only; not part of the save or travel state.
+    std::optional<std::uint8_t> presentation_speed;
 };
 
 // Stable launch identity retained by the Linux runtime for save metadata.
@@ -39,7 +70,39 @@ struct IntegratedHouseholdMember {
     // Stable logical location, independent of where the installation lives.
     std::string character_asset;
 };
+// One external property command, consumed once before simulation advances.
+// Target generations are resolved from the live session, never from CLI input.
+struct SessionObjectCommand {
+    enum class Kind { purchase, move, sell, cancel };
+    Kind kind=Kind::cancel;
+    std::uint32_t guid=0;
+    std::int16_t object=0;
+    std::int32_t x=0,y=0;
+    std::int16_t level=1;
+    std::uint8_t direction=0;
+};
 struct IntegratedSessionContext {
+    std::shared_ptr<const odh::ArchitectureSnapshot> community_architecture;
+    // Separate from residence/transfer: a visit retains the permanent family
+    // and exact suspended home while the active session describes another lot.
+    std::optional<odh::Ts1TravelState> travel_state;
+    std::vector<std::uint8_t> suspended_home;
+    // Enabled only after the host can bootstrap the destination without
+    // publishing or ticking its arriving avatars ahead of the source call.
+    bool temporary_travel_enabled = false;
+    // A private validation launcher can exercise destinations beyond Downtown.
+    bool all_travel_destinations = false;
+    // Fresh destination construction uses the exact departed active session,
+    // which can differ from the permanent suspended home on later visits.
+    // Its VM/entity IDs are never restored into the new destination World.
+    bool temporary_travel_arrival = false;
+    std::vector<std::uint8_t> travel_departure_archive;
+    std::filesystem::path travel_checkpoint_path;
+    std::optional<std::array<std::uint8_t,32>> travel_checkpoint_head;
+    // The launcher authenticates the durable visited source separately. The
+    // runtime prepares this unpublished home candidate, then publishes home()
+    // with the same expected source head before allowing its first tick.
+    std::shared_ptr<const odh::PreparedTs1TravelReturn> travel_return;
     std::shared_ptr<FamilySessionJournal> family_journal;
     std::shared_ptr<const odh::PreparedHouseholdTransfer> family_transfer;
     std::shared_ptr<const odh::InstalledOccupancyRetirement> occupancy_retirement;
@@ -49,8 +112,18 @@ struct IntegratedSessionContext {
     std::optional<odh::SessionResourceIdentity> resources;
     std::vector<std::uint8_t> restore_archive; // Verified launch input; never rewritten.
     bool save_on_exit = false;
+    bool start_buy_mode = false;
+    bool paused_before_buy_mode = false;
+    bool start_build_mode = false;
+    std::uint8_t presentation_speed = 1;
+    bool paused_before_build_mode = false;
+    std::optional<SessionObjectCommand> object_command;
+    // A real architecture transaction, consumed once before simulation advances.
+    std::optional<odh::ArchitectureEditCommand> architecture_command;
     bool bounded_headless = false;
     std::filesystem::path game_root;
+    std::filesystem::path installed_user_data;
+    unsigned neighborhood_number=1;
     std::filesystem::path player_character_root;
     std::vector<std::filesystem::path> resource_paths;
     std::uint8_t language_code = 1;
@@ -61,6 +134,11 @@ struct IntegratedSessionContext {
     std::int32_t family_number = 0;
     std::uint32_t resident_guid = 0;
     std::int16_t resident_neighbor_id = 0;
+    std::shared_ptr<OriginalCursorPresentation> cursors;
+    PlayerPreferences preferences;
+    // Publish a preference only after its platform store accepts the change.
+    std::function<bool(const PlayerPreferences&,std::string&)> save_preferences;
+    std::optional<BuildModePresentationState> build_presentation;
 };
 }
 

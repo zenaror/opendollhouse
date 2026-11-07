@@ -4,8 +4,10 @@ namespace odh {
 
 ObjectConstructionProfile object_construction_profile(
     const ObjectDefinition& definition, const SlotTable& table,
-    const ObjectConstructionLimits& limits) {
-    if (definition.is_multitile)
+    const ObjectConstructionLimits& limits, bool selected_subpart) {
+    // The abstract master never becomes a body. A caller which has selected
+    // an exact subpart can allocate its own banks before the group runs Init.
+    if (definition.is_multitile && (!selected_subpart || definition.sub_index == -1))
         return {ObjectConstructionStatus::unsupported_multitile, {}};
     if (!definition.slot_table_id || !definition.num_attributes)
         return {ObjectConstructionStatus::missing_runtime_fields, {}};

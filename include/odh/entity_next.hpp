@@ -19,6 +19,8 @@ struct EntityNext {
 // next avatar sharing PersonData[61] (FAMI chunk ID), with wrap. Modes 0/1/2
 // include unknown definitions and ignore GUID/Local operand bytes. Mode3 wraps
 // within its group. Other modes stop without wrap.
+// Mode10 enumerates the authenticated Work.iff CARR provider (nullopt means
+// unavailable, negative result means end); mode11 ClosestHouse returns source false.
 // World must
 // outlive the primitive/VM. Callbacks are owned copies; objects they capture
 // must also outlive it. Memory callbacks and observer must not throw or reenter
@@ -28,5 +30,6 @@ struct EntityNext {
 // are staged and published by Vm after the primitive returns.
 VmPrimitive entity_next_primitive(const World&,VmMemory memory={},
     std::function<void(const EntityNext&)> observed={},
-    std::vector<std::vector<std::int16_t>> multitile_groups={});
+    std::vector<std::vector<std::int16_t>> multitile_groups={},
+    std::function<std::optional<std::int16_t>(std::int16_t)> next_career={});
 }

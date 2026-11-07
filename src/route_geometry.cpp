@@ -60,7 +60,7 @@ WallRaycastResult check_edge(
     const SavedArchitecture& architecture, const std::vector<ResolvedWallEdges>& resolved,
     std::int16_t level, std::int32_t x, std::int32_t y, bool top_left) {
     const auto solid = crossed_edge(architecture, resolved, level, x, y, top_left);
-    if (!solid) return {WallRaycastState::unsupported, x, y, top_left};
+    if (!solid) return {WallRaycastState::unsupported, x, y, top_left,WallRaycastFailure::unresolved_edge};
     if (*solid) return {WallRaycastState::blocked, x, y, top_left};
     return {WallRaycastState::clear, -1, -1, false};
 }
@@ -76,18 +76,29 @@ std::optional<std::uint16_t> prepared_precise_floor(
     return precise_floor(architecture, x, y, level);
 }
 
+const char* wall_raycast_failure_name(WallRaycastFailure failure) noexcept {
+    switch(failure){
+    case WallRaycastFailure::none:return "none";
+    case WallRaycastFailure::architecture:return "architecture";
+    case WallRaycastFailure::level:return "level";
+    case WallRaycastFailure::resolver_extent:return "resolver_extent";
+    case WallRaycastFailure::coordinate_domain:return "coordinate_domain";
+    case WallRaycastFailure::unresolved_edge:return "unresolved_edge";
+    }
+    return "unknown";
+}
 WallRaycastResult saved_wall_raycast(
     const SavedArchitecture& architecture, std::int16_t level,
     std::int32_t start_x, std::int32_t start_y, std::int32_t end_x, std::int32_t end_y,
     const std::vector<ResolvedWallEdges>& resolved) {
-    if (!valid_architecture(architecture) || level < 1 || level > 2 ||
-        resolved.size() != std::size_t(architecture.width) * architecture.height ||
-        start_x < 0 || start_y < 0 || end_x < 0 || end_y < 0 ||
-        static_cast<std::uint32_t>(start_x) >= architecture.width ||
-        static_cast<std::uint32_t>(end_x) >= architecture.width ||
-        static_cast<std::uint32_t>(start_y) >= architecture.height ||
-        static_cast<std::uint32_t>(end_y) >= architecture.height)
-        return {};
+    if(!valid_architecture(architecture))return {WallRaycastState::unsupported,-1,-1,false,WallRaycastFailure::architecture};
+    if(level<1||level>2)return {WallRaycastState::unsupported,-1,-1,false,WallRaycastFailure::level};
+    if(resolved.size()!=std::size_t(architecture.width)*architecture.height)
+        return {WallRaycastState::unsupported,-1,-1,false,WallRaycastFailure::resolver_extent};
+    constexpr std::int32_t minimum_tile=-2048,maximum_tile=2047;
+    const auto represented=[&](std::int32_t value){return value>=minimum_tile&&value<=maximum_tile;};
+    if(!represented(start_x)||!represented(start_y)||!represented(end_x)||!represented(end_y))
+        return {WallRaycastState::unsupported,-1,-1,false,WallRaycastFailure::coordinate_domain};
 
     // Bounded exact translation of the reference's integer Bresenham walk.
     auto x = start_x;

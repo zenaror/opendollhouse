@@ -40,6 +40,10 @@ try {
     require(c.tick(true) && c.snapshot().minute==1 && c.snapshot().minute_fraction==0,"first SIMI tick consumes one overflow only");
     require(!c.initialize_simi(7,17,0,60,6,1997),"malformed SIMI seconds rejected");
     require(c.global(0)==7 && c.global(1)==17 && c.global(4)==0 && c.global(5)==1 && c.global(6)==0 && c.global(7)==6 && c.global(8)==1997 && !c.global(9),"clock global mapping");
+    require(c.initialize_simi(23,16,59,59,6,1997)&&c.seconds()==3540&&c.daylight_seconds_of_day()==58*60,
+        "late bootstrap carries into the next daylight cycle without changing VM seconds");
+    require(c.snapshot().hour==23&&c.snapshot().minute==59&&c.snapshot().day==16&&c.snapshot().ticks==0,
+        "sampling daylight preserves the unadvanced simulation date and time");
     // VMTS1MotiveDecay.cs:29-38 order; Model/VMMotive.cs:9-20 bank indexes.
     const unsigned bank[]={7,6,8,9,5,15,14};
     for(unsigned i=0;i<7;++i)require(odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))==bank[i],"explicit motive mapping");
@@ -84,9 +88,84 @@ try {
     in=input();in.sleep_state=-1;in.needs.fill(0);
     for(unsigned m=6;m<60;m+=2){auto a=sleep.update(6,m,in);auto b=copy.update(6,m,in);require(a.needs==b.needs && a.mood==b.mood && sleep.snapshot().fractions==copy.snapshot().fractions,"continued motive snapshot deterministic");in.needs=a.needs;}
     require(copy.update(7,0,in).status==odh::Ts1MotiveStatus::updated,"hour wrap bucket runs");
-    ds=copy.snapshot();ds.fractions[0]=1001;require(!copy.restore(ds),"invalid carry rejected");ds=copy.snapshot();ds.last_two_minute_bucket=30;require(!copy.restore(ds),"invalid gate rejected");
+    ds=copy.snapshot();ds.fractions[0]=1001;require(copy.restore(ds),"signed source carry may exceed the normalized post-update interval");ds=copy.snapshot();ds.last_two_minute_bucket=30;require(!copy.restore(ds),"invalid gate rejected");
     const auto previous=copy.snapshot();in.active_personality.reset();require(copy.update(7,2,in).status==odh::Ts1MotiveStatus::unsupported && copy.snapshot().fractions==previous.fractions,"missing personality unsupported atomic");
-    in=input();in.needs[0]=101;require(copy.update(7,2,in).status==odh::Ts1MotiveStatus::unsupported,"overfill unsupported");
+    in=input();in.needs[0]=101;require(copy.update(7,2,in).status==odh::Ts1MotiveStatus::updated,"existing signed overfill is valid source input");
+    // SleepState is a signed motive word; only exact -1 has the bed Energy rate.
+    for(const auto state:{-32768,-100,-40,-2,-1,0,1,2,100,32767})for(const unsigned hour:{6U,8U}){
+        odh::Ts1MotiveDecay actual;auto values=input();values.sleep_state=static_cast<std::int16_t>(state);
+        const auto result=actual.update(hour,2,values);const bool sleeping=state!=0;
+        require(result.status==odh::Ts1MotiveStatus::updated&&result.sleep_state==state&&!result.sleep_state_written&&
+            actual.snapshot().fractions[2]==(sleeping?80:170)&&actual.snapshot().fractions[3]==(sleeping?210:360)&&
+            actual.snapshot().fractions[5]==(sleeping?0:250),"every signed nonzero SleepState preserves source sleeping rates");
+        require(actual.snapshot().fractions[energy]==(state==-1?714:sleeping?(hour>=7?10:0):375)&&
+            result.needs[energy]==(state==-1?2:0)&&result.needs_written[energy]==(state==-1)&&result.mood_written,
+            "exact minus-one Energy is separate from all other signed sleeping states");
+        odh::Ts1MotiveDecay waking;values.needs[energy]=80;
+        const auto woke=waking.update(7,2,values);
+        require(woke.sleep_state==(sleeping?0:state)&&woke.sleep_state_written==sleeping&&
+            waking.snapshot().fractions[energy]==(sleeping?10:375)&&waking.snapshot().fractions[5]==(sleeping?0:250),
+            "wake hour writes zero but retains the captured sleeping branch for this entire update");
+    }
+    {
+        odh::Ts1MotiveDecay actual;auto values=input();values.active_personality.reset();values.outgoing_personality.reset();
+        values.hidden=true;const auto before=actual.snapshot();const auto hidden=actual.update(6,2,values);
+        require(hidden.status==odh::Ts1MotiveStatus::unchanged&&!hidden.mood_written&&
+            actual.snapshot().fractions==before.fractions&&actual.snapshot().last_two_minute_bucket==before.last_two_minute_bucket,
+            "Hidden gates before any optional personality access or decay mutation");
+        values.hidden=false;require(actual.update(6,0,values).status==odh::Ts1MotiveStatus::unchanged,
+            "same-minute gate does not demand unused personality inputs");
+        values.active_changes.fill(true);values.needs[energy]=80;
+        const auto changed=actual.update(6,2,values);
+        require(changed.status==odh::Ts1MotiveStatus::updated&&changed.mood==10&&actual.snapshot().fractions[energy]==375&&
+            !changed.needs_written[energy]&&changed.mood_written,
+            "active changes skip personality access and mood contributions, while Energy still advances");
+        values.active_changes[static_cast<std::size_t>(odh::Ts1Need::comfort)]=false;
+        const auto previous=actual.snapshot();
+        require(actual.update(6,4,values).status==odh::Ts1MotiveStatus::unsupported&&
+            actual.snapshot().last_two_minute_bucket==previous.last_two_minute_bucket&&actual.snapshot().fractions==previous.fractions,
+            "a genuinely needed missing personality capability rejects atomically");
+    }
+    for(const auto personality:{-32768,32767}){
+        odh::Ts1MotiveDecay actual;auto values=input();values.active_personality=static_cast<std::int16_t>(personality);
+        values.outgoing_personality=static_cast<std::int16_t>(personality);
+        require(actual.update(6,2,values).status==odh::Ts1MotiveStatus::updated&&
+            actual.snapshot().fractions[1]==(personality<666?600:400)&&actual.snapshot().fractions[6]==55,
+            "signed personality extremes are source comparison operands, not a restricted input profile");
+    }
+    {
+        odh::Ts1MotiveDecay actual;auto values=input();values.sleep_state=-40;values.needs[energy]=-200;
+        const auto result=actual.update(6,2,values);
+        require(result.status==odh::Ts1MotiveStatus::updated&&result.needs[energy]==-200&&!result.needs_written[energy]&&result.mood==-25,
+            "unchanged signed need is not passed through a setter or normalized prematurely");
+        odh::Ts1MotiveDecay overfill;values=input();values.sleep_state=-1;values.needs[energy]=200;
+        const auto filled=overfill.update(6,2,values);
+        require(filled.needs[energy]==200&&filled.needs_written[energy]&&filled.mood==25,
+            "actual Energy setter preserves old overfill limit while Mood uses the local202 intermediate");
+        odh::Ts1MotiveDecay wrap;values.needs[energy]=32767;
+        const auto wrapped=wrap.update(6,2,values);
+        require(wrapped.needs[energy]==-100&&wrapped.needs_written[energy]&&wrapped.mood==-100,
+            "source local short wraps before the real setter and Mood calculation");
+    }
+    for(const auto carry:{-32768,32767}){
+        odh::Ts1MotiveDecay actual;auto saved=actual.snapshot();saved.fractions[energy]=static_cast<std::int16_t>(carry);
+        require(actual.restore(saved),"full signed fraction word restores without repair");auto values=input();
+        const auto result=actual.update(6,2,values);
+        require(result.needs[energy]==33&&result.needs_written[energy]&&actual.snapshot().fractions[energy]==(carry<0?607:606),
+            "fraction addition and negative carry normalization use source signed-short wrap");
+        odh::Ts1MotiveDecay reopened;require(reopened.restore(actual.snapshot()),"normalized signed fraction snapshot reopens");
+        values.needs=result.needs;values.mood=result.mood;
+        const auto continued=actual.update(6,4,values),fresh=reopened.update(6,4,values);
+        require(continued.needs==fresh.needs&&continued.mood==fresh.mood&&continued.needs_written==fresh.needs_written&&
+            actual.snapshot().fractions==reopened.snapshot().fractions,"signed-fraction resumed execution preserves values and actual setter decisions");
+    }
+    {
+        odh::Ts1MotiveDecay actual;auto values=input();values.needs[0]=32767;values.mood=5000;
+        const auto result=actual.update(6,2,values);
+        require(result.needs[0]==32767&&!result.needs_written[0]&&actual.snapshot().fractions[0]==198&&
+            result.needs[3]==-20&&result.needs_written[3]&&actual.snapshot().fractions[3]==20&&result.mood==4093,
+            "extreme Hunger rate casts before carry, affects later Bladder and respects existing Mood overfill");
+    }
     std::cout<<checks<<" TS1 simulation checks passed\n";
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

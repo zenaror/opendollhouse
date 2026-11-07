@@ -74,7 +74,8 @@ def make_two_occupied_lots(root):
     # Give House08 its own two Sims and household, while retaining the same
     # complete serialized lot/World structure as the existing House07 fixture.
     family8 = struct.pack("<II4siiiiiiI", 0, 9, b"IMAF", 8, 901, 100, 0, 0, 0, 2)
-    family8 += struct.pack("<2I", *SECOND_GUIDS)
+    extension=struct.pack("<I6h",0,0,0,0,0,0,0)
+    family8 += struct.pack("<2I", *SECOND_GUIDS)+extension
     neighbors = struct.pack("<II4sI", 0, 62, b"SRBN", 4)
     # Keep the first household's roster equivalent to its source fixture and
     # append a second, independently identified household.
@@ -98,7 +99,7 @@ def make_two_occupied_lots(root):
         second_records += struct.pack("<hIii", 11 + index, guid, -1, 0)
     neighborhood = iff([
         ("FAMI", 201, struct.pack("<II4siiiiiiI", 0, 9, b"IMAF", 7, 900, 100, 0, 0, 0, 2)
-         + struct.pack("<2I", *GUIDS)),
+         + struct.pack("<2I", *GUIDS)+extension),
         ("FAMI", 202, family8),
         ("NBRS", 1, neighbors + first_records + second_records),
     ])
@@ -142,7 +143,8 @@ def main():
         assert [visit["neighborhood_resume_runtime"]["tick_before"] for visit in visits[:2]] == [1, 1], visits
         assert all(not visit["neighborhood_resume_runtime"]["selected_same_lot"] for visit in visits[:2]), visits
         assert all(not visit["host_failed"] for visit in visits), visits
-        saves = base / "XDG_DATA_HOME/opendollhouse/saves"
+        namespace="neighborhood-"+hashlib.sha256((root/"UserData/Neighborhood.iff").read_bytes()).hexdigest()
+        saves = base / "XDG_DATA_HOME/opendollhouse/saves" / namespace
         assert (saves / "mode-1-house-7-family-900.odhs").is_file(), "House07 save was not retained"
         assert (saves / "mode-1-house-8-family-901.odhs").is_file(), "House08 save was not retained"
 
@@ -187,7 +189,7 @@ def main():
             assert not neighborhood["selected_same_lot"], neighborhood
             assert all(neighborhood[key] for key in
                        ("tick_held", "vm_held", "world_held", "relationship_counts_held")), neighborhood
-        delayed_saves = Path(delayed_env["XDG_DATA_HOME"]) / "opendollhouse/saves"
+        delayed_saves = Path(delayed_env["XDG_DATA_HOME"]) / "opendollhouse/saves" / namespace
         assert (delayed_saves / "mode-1-house-7-family-900.odhs").is_file()
         delayed_save = Path(delayed[-1]["saved_session_path"]).read_bytes()
         assert Path(delayed[-1]["saved_session_path"]) == delayed_saves / "mode-1-house-8-family-901.odhs"

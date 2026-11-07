@@ -55,6 +55,38 @@ NeighborhoodFamilySource load_neighborhood_family_source(
     return result;
 }
 
+SessionEntry load_visit_session_entry(const std::filesystem::path& user_data,
+        unsigned home_mode, std::uint16_t home_house, unsigned mode,
+        std::uint16_t house, const std::vector<std::uint32_t>& travelers,
+        std::uint8_t language, const FamilyOverlay* overlay,
+        const std::filesystem::path& player_characters) {
+    const auto home = load_session_entry(user_data, home_mode, home_house,
+        language, overlay, player_characters);
+    if (!neighborhood_mode_supported(mode) || !house || house >= 99)
+        throw FormatError("temporary visit mode or house is unsupported");
+    std::optional<LotLocations> locations;
+    with_iff_file(user_data / "LotLocations.iff", [&](const auto& view) {
+        iff_chunks(view, [&](const Chunk& chunk) {
+            if (chunk.type != "STR#" || chunk.id != mode) return;
+            if (locations) throw FormatError("ambiguous temporary visit LotLocations table");
+            locations = read_lot_locations(chunk.payload, 1);
+        });
+    });
+    if (!locations) throw FormatError("temporary visit mode has no LotLocations table");
+    const auto file = user_data / "Houses" /
+        ("House" + (house < 10 ? std::string("0") : std::string()) + std::to_string(house) + ".iff");
+    bool simi = false;
+    with_iff_file(file, [&](const auto& view) {
+        iff_chunks(view, [&](const Chunk& chunk) {
+            if (chunk.type != "SIMI" || chunk.id != 1) return;
+            if (simi) throw FormatError("ambiguous temporary visit SIMI1");
+            (void)read_simi(chunk.payload); simi = true;
+        });
+    });
+    if (!simi) throw FormatError("temporary visit destination has no valid SIMI1");
+    return resolve_visit_session_entry(home, mode, house, file.string(), *locations, travelers);
+}
+
 SessionEntry load_session_entry(const std::filesystem::path& user_data,
         unsigned mode, std::uint16_t house, std::uint8_t language,
         const FamilyOverlay* saved_overlay,

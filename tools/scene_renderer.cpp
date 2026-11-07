@@ -16,14 +16,20 @@ std::string fold(std::string name) {
     return name;
 }
 
+std::string resource_basename(std::string value){
+    std::replace(value.begin(),value.end(),'\\','/');const auto at=value.find_last_of('/');
+    return fold(at==std::string::npos?value:value.substr(at+1));
+}
+
 float finite_float(double value) {
     if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
         throw odh::FormatError("scene renderer coordinate overflow or nonfinite value");
     return static_cast<float>(value);
 }
 
-std::array<float, 3> rotate_avatar(std::array<float, 3> point, std::uint8_t direction) {
-    const double angle = std::acos(-1.0) - direction * std::acos(-1.0) / 4;
+std::array<float, 3> rotate_avatar(std::array<float, 3> point, std::uint8_t direction,
+        std::optional<float> radians={}) {
+    const double angle = std::acos(-1.0) - (radians?static_cast<double>(*radians):direction * std::acos(-1.0) / 4);
     const double c = std::cos(angle), s = std::sin(angle);
     return {finite_float(point[0] * c + point[2] * s), point[1],
             finite_float(-point[0] * s + point[2] * c)};
@@ -42,7 +48,8 @@ Vector3d normalized(Vector3d value,const char* error){
 }
 void validate_portrait_camera(const HeadPortraitCamera& camera){
     constexpr auto pi=3.14159265358979323846;
-    if(!std::isfinite(camera.vertical_fov_radians)||camera.vertical_fov_radians<=0.05||
+    if(camera.viewport_size<16||camera.viewport_size>512||
+       !std::isfinite(camera.vertical_fov_radians)||camera.vertical_fov_radians<=0.05||
        camera.vertical_fov_radians>=pi-0.05||!std::isfinite(camera.zoom)||
        camera.zoom<=0.0||camera.zoom>64.0||!std::isfinite(camera.distance)||
        camera.distance<=camera.near_plane||camera.distance>1000.0||
@@ -54,7 +61,7 @@ void validate_portrait_camera(const HeadPortraitCamera& camera){
 }
 struct PortraitView {
     Vector3d position,right,up,forward;
-    double focal,near_plane;
+    double focal,near_plane,center;
 };
 PortraitView portrait_view(const HeadPortraitCamera& camera,const std::array<float,3>& head){
     const Vector3d target{head[0],double(head[1])+camera.target_y_offset,head[2]};
@@ -67,9 +74,9 @@ PortraitView portrait_view(const HeadPortraitCamera& camera,const std::array<flo
     const auto forward=normalized(subtract(target,position),"scene renderer portrait forward vector is invalid");
     const auto right=normalized(cross(forward,{0.0,1.0,0.0}),"scene renderer portrait up vector is parallel to view");
     const auto up=normalized(cross(right,forward),"scene renderer portrait up vector is invalid");
-    const auto focal=(74.0/2.0)/std::tan(camera.vertical_fov_radians/2.0)*camera.zoom;
+    const auto focal=(camera.viewport_size/2.0)/std::tan(camera.vertical_fov_radians/2.0)*camera.zoom;
     if(!std::isfinite(focal)||focal>1e7)throw odh::FormatError("scene renderer portrait focal length exceeds limit");
-    return {position,right,up,forward,focal,camera.near_plane};
+    return {position,right,up,forward,focal,camera.near_plane,camera.viewport_size/2.0};
 }
 std::array<float,3> project_portrait_vertex(const PortraitView& camera,const std::array<float,3>& point){
     const Vector3d relative{double(point[0])-camera.position[0],
@@ -79,8 +86,8 @@ std::array<float,3> project_portrait_vertex(const PortraitView& camera,const std
     if(!std::isfinite(measured_depth)||measured_depth<camera.near_plane-tolerance)
         throw odh::FormatError("scene renderer portrait vertex is behind the near plane");
     const auto depth=std::max(measured_depth,camera.near_plane);
-    const auto x=37.0+camera.focal*dot(relative,camera.right)/depth;
-    const auto y=37.0-camera.focal*dot(relative,camera.up)/depth;
+    const auto x=camera.center+camera.focal*dot(relative,camera.right)/depth;
+    const auto y=camera.center-camera.focal*dot(relative,camera.up)/depth;
     return {finite_float(x),finite_float(y),finite_float(depth)};
 }
 std::array<float,3> portrait_normal(const PortraitView& camera,const std::array<float,3>& normal){
@@ -235,43 +242,47 @@ struct SceneRenderer::Impl {
         if (!selected_skeleton) throw odh::FormatError("scene renderer exact skeleton name not found: " + config.skeleton_name);
         skeleton = *selected_skeleton;
         Archive texture_archive(config.textures_far);
+        std::map<std::string,std::unique_ptr<Archive>> component_archives;
+        const auto archive_for=[&](const std::string& path,Archive& fallback)->Archive&{
+            if(path.empty())return fallback;
+            if(path.size()>4096||path.find('\0')!=std::string::npos)throw odh::FormatError("scene component archive path exceeds bound");
+            if(path==config.animation_far)return animation_archive;
+            if(path==config.textures_far)return texture_archive;
+            auto found=component_archives.find(path);
+            if(found==component_archives.end()){
+                if(component_archives.size()>=48)throw odh::FormatError("scene component archive count exceeds bound");
+                found=component_archives.emplace(path,std::make_unique<Archive>(path)).first;}
+            return *found->second;
+        };
         std::uint64_t geometry_vertices = 0, texture_pixels = 0;
         for (const auto& part : config.parts) {
             if (part.hand && (!odh::valid_hand_gesture(part.hand->gesture) || part.hand->gesture == odh::HandGesture::none))
                 throw odh::FormatError("scene renderer hand part must specify idle, pointing or fist");
             odh::Mesh mesh;odh::BitmapImage texture;std::string attachment_bone;
+            odh::AppearanceCollection appearances;
             if(part.loose_skin_assets){
-                const auto appearances=loose_cmx(part.appearance_entry);const odh::Appearance* appearance=nullptr;
-                for(const auto& candidate:appearances.appearances)if(fold(candidate.name)==fold(part.appearance_name)){
-                    if(appearance)throw odh::FormatError("scene renderer ambiguous CMX appearance name: "+part.appearance_name);
-                    appearance=&candidate;}
-                if(!appearance)throw odh::FormatError("scene renderer CMX appearance not found: "+part.appearance_name);
-                const odh::AppearanceBinding* binding=nullptr;
-                for(const auto& candidate:appearance->bindings)if(fold(candidate.mesh_name+".skn")==fold(std::filesystem::path(part.bmf_entry).filename().string())){
-                    if(binding)throw odh::FormatError("scene renderer ambiguous CMX SKN binding: "+part.bmf_entry);
-                    binding=&candidate;}
-                if(!binding)throw odh::FormatError("scene renderer CMX appearance has no selected SKN binding: "+part.bmf_entry);
-                attachment_bone=binding->bone;
-                mesh=loose_skn(part.bmf_entry);
-                if(fold(mesh.skin_name)!=fold(binding->mesh_name))throw odh::FormatError("scene renderer SKN skin name differs from CMX binding");
-                texture=loose_bmp(part.texture_entry);
-            }else{
-                const auto appearances=odh::read_bcf_appearances(animation_archive.exact(part.appearance_entry));
-                const odh::Appearance* appearance=nullptr;
-                for(const auto& candidate:appearances.appearances){if(candidate.name!=part.appearance_name)continue;
-                    if(appearance)throw odh::FormatError("scene renderer ambiguous appearance name: "+part.appearance_name);
-                    appearance=&candidate;}
-                if(!appearance)throw odh::FormatError("scene renderer exact appearance name not found: "+part.appearance_name);
-                const odh::AppearanceBinding* binding=nullptr;
-                for(const auto& candidate:appearance->bindings){if(fold(candidate.mesh_name+".bmf")!=fold(part.bmf_entry))continue;
-                    if(binding)throw odh::FormatError("scene renderer ambiguous appearance mesh binding: "+part.bmf_entry);
-                    binding=&candidate;}
-                if(!binding)throw odh::FormatError("scene renderer appearance has no selected BMF binding: "+part.bmf_entry);
-                attachment_bone=binding->bone;
-                mesh=odh::read_bmf(animation_archive.exact(part.bmf_entry));
-                if(fold(mesh.skin_name)!=fold(binding->mesh_name))throw odh::FormatError("scene renderer BMF skin name differs from appearance binding");
-                texture=odh::read_bmp(texture_archive.exact(part.texture_entry));
-            }
+                appearances=part.appearance_far.empty()?loose_cmx(part.appearance_entry):
+                    odh::read_cmx_appearances(archive_for(part.appearance_far,animation_archive).exact(part.appearance_entry));
+            }else appearances=odh::read_bcf_appearances(archive_for(part.appearance_far,animation_archive).exact(part.appearance_entry));
+            const odh::Appearance* appearance=nullptr;
+            for(const auto& candidate:appearances.appearances)if(fold(candidate.name)==fold(part.appearance_name)){
+                if(appearance)throw odh::FormatError("scene renderer ambiguous selected appearance name");appearance=&candidate;}
+            if(!appearance)throw odh::FormatError("scene renderer selected appearance not found: "+part.appearance_name);
+            const odh::AppearanceBinding* binding=nullptr;
+            const auto selected_mesh=resource_basename(part.bmf_entry);
+            for(const auto& candidate:appearance->bindings)
+                if(resource_basename(candidate.mesh_name+".bmf")==selected_mesh||
+                   resource_basename(candidate.mesh_name+".skn")==selected_mesh){
+                    if(binding)throw odh::FormatError("scene renderer ambiguous selected appearance mesh");binding=&candidate;}
+            if(!binding)throw odh::FormatError("scene renderer appearance has no selected mesh binding: "+part.bmf_entry);
+            attachment_bone=binding->bone;
+            if(part.loose_mesh_asset||(part.loose_skin_assets&&part.mesh_far.empty()))mesh=loose_skn(part.bmf_entry);
+            else {auto& source=archive_for(part.mesh_far,animation_archive);
+                const auto skn=selected_mesh.size()>=4&&selected_mesh.substr(selected_mesh.size()-4)==".skn";
+                mesh=skn?odh::read_skn(source.exact(part.bmf_entry)):odh::read_bmf(source.exact(part.bmf_entry));}
+            if(fold(mesh.skin_name)!=fold(binding->mesh_name))throw odh::FormatError("scene renderer mesh skin name differs from appearance binding");
+            if(part.loose_texture_asset||(part.loose_skin_assets&&part.texture_far.empty()))texture=loose_bmp(part.texture_entry);
+            else texture=odh::read_bmp(archive_for(part.texture_far,texture_archive).exact(part.texture_entry));
             std::size_t bones = 0;
             for(const auto& bone:skeleton.bones)if(fold(bone.name)==fold(attachment_bone))++bones;
             if(bones!=1)throw odh::FormatError("scene renderer appearance bone must resolve uniquely in skeleton");
@@ -357,56 +368,75 @@ struct SceneRenderer::Impl {
 
     odh::CompositeFrame render(const SceneState& state, const odh::WorldProjection& camera,
                                odh::RasterOptions options,const HeadPortraitCamera* portrait=nullptr,
-                               ScenePoseAnchors* anchors=nullptr) {
-        if (state.avatar_direction > 7 || state.object_direction > 7)
+                               ScenePoseAnchors* anchors=nullptr,bool pose_only=false) {
+        if ((state.avatar_visible&&state.avatar_direction > 7) || state.object_direction > 7)
             throw odh::FormatError("scene renderer direction must be 0..7");
-        if (!odh::valid_hand_gesture(state.hands.left) || !odh::valid_hand_gesture(state.hands.right))
+        if (state.avatar_visible&&(!odh::valid_hand_gesture(state.hands.left) || !odh::valid_hand_gesture(state.hands.right)))
             throw odh::FormatError("scene renderer invalid hand gesture");
-        if (!std::isfinite(state.frame)) throw odh::FormatError("scene renderer frame must be finite");
+        if (state.avatar_visible&&!std::isfinite(state.frame)) throw odh::FormatError("scene renderer frame must be finite");
+        if (state.avatar_visible&&state.avatar_radians&&!std::isfinite(*state.avatar_radians))
+            throw odh::FormatError("scene renderer continuous direction must be finite");
         // Validate the camera before decoding any CFP. Portraits deliberately
         // use a separate perspective camera and never the lot's tile projection.
         if(portrait)validate_portrait_camera(*portrait);
-        else odh::project_tile(camera, state.avatar_tile);
+        else odh::project_tile(camera, state.avatar_visible?state.avatar_tile:camera.center_tile);
         const odh::DgrpImage* image=nullptr;
-        if (group) {
+        if (group&&!pose_only) {
             if(portrait)throw odh::FormatError("scene renderer portrait does not include an object graphic");
             odh::project_tile(camera, state.object_tile);
             image = odh::dgrp_image(*group, static_cast<std::uint8_t>(1U << state.object_direction), camera.zoom, camera.rotation);
             if (!image) throw odh::FormatError("scene renderer drawing direction/zoom missing");
         }
-        // The provider is authoritative when installed: a rejection or missing
-        // result never falls back to the base rig archive. Keep its owner alive
-        // through sampling/rasterization without retaining a second CFP cache.
-        std::shared_ptr<const odh::CfpPlanes> external,carry_external;
-        const auto resolve_planes=[&](const odh::AnimationHeader* animation,
-                                     std::shared_ptr<const odh::CfpPlanes>& owner)->const odh::CfpPlanes* {
-            if(!animation)return nullptr;
-            if(cfp_resolver){
-                owner=cfp_resolver(*animation);
-                if(!owner)throw odh::FormatError("scene renderer CFP resolver returned no planes");
-                return owner.get();
+        odh::SkeletonPose pose;
+        if(state.avatar_visible){
+            // The provider is authoritative when installed: a rejection or missing
+            // result never falls back to the base rig archive. Keep its owner alive
+            // through sampling/rasterization without retaining a second CFP cache.
+            std::shared_ptr<const odh::CfpPlanes> external,carry_external;
+            const auto resolve_planes=[&](const odh::AnimationHeader* animation,
+                                         std::shared_ptr<const odh::CfpPlanes>& owner)->const odh::CfpPlanes* {
+                if(!animation)return nullptr;
+                if(cfp_resolver){
+                    owner=cfp_resolver(*animation);
+                    if(!owner)throw odh::FormatError("scene renderer CFP resolver returned no planes");
+                    return owner.get();
+                }
+                return &planes(*animation);
+            };
+            const auto* cfp=resolve_planes(state.animation,external);
+            const auto* carry_cfp=resolve_planes(state.carry_animation,carry_external);
+            std::vector<std::shared_ptr<const odh::CfpPlanes>> layer_owners;
+            std::vector<odh::PoseClipSample> layer_samples;
+            if(!state.animation_layers.empty()){
+                if(state.animation_layers.size()>3)throw odh::FormatError("scene animation collection exceeds three clips");
+                layer_owners.resize(state.animation_layers.size());
+                layer_samples.reserve(state.animation_layers.size());
+                for(std::size_t i=0;i<state.animation_layers.size();++i){
+                    const auto& layer=state.animation_layers[i];
+                    layer_samples.push_back({layer.animation,resolve_planes(layer.animation,layer_owners[i]),layer.frame,layer.weight});
+                }
             }
-            return &planes(*animation);
-        };
-        const auto* cfp=resolve_planes(state.animation,external);
-        const auto* carry_cfp=resolve_planes(state.carry_animation,carry_external);
-        auto pose = odh::sample_pose(skeleton,state.animation,cfp,state.frame,state.carry_animation,carry_cfp);
+            pose = layer_samples.empty()?
+                odh::sample_pose(skeleton,state.animation,cfp,state.frame,state.carry_animation,carry_cfp):
+                odh::sample_pose_collection(skeleton,layer_samples,state.carry_animation,carry_cfp);
+        }
         ScenePoseAnchors prepared_anchors;
-        if(anchors){
+        if(anchors&&state.avatar_visible){
             constexpr std::array<const char*,3> names{"r_finger0","head","pelvis"};
             for(const auto& bone:pose.bones)for(std::size_t slot=0;slot<names.size();++slot){
                 if(fold(bone.name)!=names[slot])continue;
                 if(prepared_anchors.avatar_slots[slot])
                     throw odh::FormatError("scene renderer avatar slot bone is ambiguous");
-                const auto point=rotate_avatar(bone.absolute_position,state.avatar_direction);
+                const auto point=rotate_avatar(bone.absolute_position,state.avatar_direction,state.avatar_radians);
                 prepared_anchors.avatar_slots[slot]=std::array<float,3>{
                     finite_float(double(point[0])/3+state.avatar_tile[0]-.5),
                     finite_float(double(point[2])/3+state.avatar_tile[1]-.5),
                     finite_float(double(point[1])/3+state.avatar_tile[2])};
             }
         }
+        if(pose_only){if(anchors)*anchors=prepared_anchors;return {};}
         std::optional<std::array<float,3>> head_position;
-        if(state.head_only) {
+        if(state.head_only&&state.avatar_visible) {
             std::optional<std::size_t> head;
             for(std::size_t i=0;i<pose.bones.size();++i)if(fold(pose.bones[i].name)=="head") {
                 if(head)throw odh::FormatError("scene renderer head-only pose has ambiguous HEAD bone");
@@ -423,13 +453,13 @@ struct SceneRenderer::Impl {
             }
         }
         std::optional<PortraitView> view;
-        if(portrait) {
+        if(portrait&&state.avatar_visible) {
             if(!head_position)throw odh::FormatError("scene renderer portrait requires head-only pose");
             view=portrait_view(*portrait,*head_position);
         }
         std::vector<odh::RasterTriangle> triangles;
         triangles.reserve(static_cast<std::size_t>(triangle_count)*(portrait?2U:1U));
-        for (std::size_t index = 0; index < meshes.size(); ++index) {
+        for (std::size_t index = 0; state.avatar_visible&&index < meshes.size(); ++index) {
             if (hands[index] && hands[index]->gesture != (hands[index]->right ? state.hands.right : state.hands.left))
                 continue;
             const auto mesh = odh::skin_mesh(meshes[index], pose);
@@ -454,19 +484,19 @@ struct SceneRenderer::Impl {
             std::vector<odh::RasterVertex> projected;
             projected.reserve(mesh.vertices.size());
             for (const auto& vertex : mesh.vertices) {
-                auto world = rotate_avatar(vertex.position, state.avatar_direction);
+                auto world = rotate_avatar(vertex.position, state.avatar_direction,state.avatar_radians);
                 world[0] = finite_float(double(world[0]) + 3 * double(state.avatar_tile[0]));
                 world[1] = finite_float(double(world[1]) + 3 * double(state.avatar_tile[2]));
                 world[2] = finite_float(double(world[2]) + 3 * double(state.avatar_tile[1]));
                 projected.push_back({odh::project_world(camera, world), vertex.texcoord,
-                                     rotate_avatar(vertex.normal, state.avatar_direction)});
+                                     rotate_avatar(vertex.normal, state.avatar_direction,state.avatar_radians)});
             }
             for (const auto& face : mesh.faces)
                 triangles.push_back({{projected[face[0]], projected[face[1]], projected[face[2]]}, index,
                     state.owner_id?state.owner_id:static_cast<std::uint16_t>(index)});
         }
         if(portrait)options.perspective_correct=true;
-        const auto base = portrait ? odh::rasterize(74,74,triangles,textures,options)
+        const auto base = portrait ? odh::rasterize(portrait->viewport_size,portrait->viewport_size,triangles,textures,options)
                                    : odh::rasterize(camera.width,camera.height,triangles,textures,options);
         if (!image) {
             if(anchors)*anchors=prepared_anchors;
@@ -494,6 +524,13 @@ SceneRenderer& SceneRenderer::operator=(SceneRenderer&&) noexcept = default;
 odh::CompositeFrame SceneRenderer::render(const SceneState& state, const odh::WorldProjection& camera, odh::RasterOptions options, ScenePoseAnchors* anchors) {
     if (!impl_) throw odh::FormatError("scene renderer used after move");
     return impl_->render(state,camera,options,nullptr,anchors);
+}
+
+ScenePoseAnchors SceneRenderer::pose_anchors(const SceneState& state) {
+    if(!impl_)throw odh::FormatError("scene renderer used after move");
+    ScenePoseAnchors anchors;
+    (void)impl_->render(state,odh::WorldProjection{},odh::RasterOptions{},nullptr,&anchors,true);
+    return anchors;
 }
 
 odh::CompositeFrame SceneRenderer::render_head_portrait(const SceneState& state,

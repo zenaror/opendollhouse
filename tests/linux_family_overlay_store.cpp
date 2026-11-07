@@ -248,6 +248,40 @@ int main() {
     const auto selected = odh_host::read_linux_family_overlay_for_neighborhood(neighborhood);
     require(selected && selected->neighborhood_identity == identity,
             "neighborhood source selects the matching saved overlay");
+    const odh_host::LinuxNeighborhoodStorage third(3),fourth(4);
+    const auto parent=neighborhood.parent_path();
+    if(::setenv("XDG_DATA_HOME",temp.path.c_str(),1)!=0)
+        throw std::runtime_error("cannot isolate test character directories");
+    for(const auto invalid:{"UserData0","UserData1","UserData03","UserData9"})
+        rejects([&]{(void)odh_host::LinuxNeighborhoodStorage::from_user_data(parent/invalid);},
+            "ambiguous installation directory cannot select a storage namespace");
+    const auto alias_base=parent/"alias-base";
+    std::filesystem::create_directory(alias_base);
+    std::filesystem::create_directory_symlink(parent,alias_base/"UserData3");
+    rejects([&]{(void)third.qualify(alias_base);},"a linked namespace cannot redirect saves to another town");
+    for(const auto scope:{third,fourth}){
+        const auto folder=parent/scope.user_data_name();
+        std::filesystem::create_directory(folder);
+        std::filesystem::copy_file(neighborhood,folder/"Neighborhood.iff");
+        require(odh_host::LinuxNeighborhoodStorage::from_user_data(folder).number()==scope.number() &&
+            !odh_host::read_linux_family_overlay_for_neighborhood(folder/"Neighborhood.iff",scope),
+            "byte-identical installed town does not inherit the first town's overlay");
+    }
+    const auto third_path=odh_host::linux_family_overlay_path(identity,third);
+    const auto fourth_path=odh_host::linux_family_overlay_path(identity,fourth);
+    odh_host::compare_exchange_linux_family_overlay_atomic(third_path,std::nullopt,created);
+    odh_host::compare_exchange_linux_family_overlay_atomic(fourth_path,std::nullopt,persisted);
+    require(odh::encode_family_overlay(*odh_host::read_linux_family_overlay_for_neighborhood(
+            parent/"UserData3"/"Neighborhood.iff",third))==odh::encode_family_overlay(created) &&
+        odh::encode_family_overlay(*odh_host::read_linux_family_overlay_for_neighborhood(
+            parent/"UserData4"/"Neighborhood.iff",fourth))==odh::encode_family_overlay(persisted) &&
+        odh::encode_family_overlay(*odh_host::read_linux_family_overlay_for_neighborhood(neighborhood))==
+            odh::encode_family_overlay(persisted),"three independent overlay heads, including unchanged legacy head");
+    require(odh_host::linux_player_character_directory(third)!=odh_host::linux_player_character_directory(fourth) &&
+        odh_host::linux_player_character_directory().parent_path().filename()=="opendollhouse",
+        "created character catalogs are separated without moving the legacy catalog");
+    rejects([&]{(void)odh_host::read_linux_family_overlay_for_neighborhood(parent/"UserData3"/"Neighborhood.iff",fourth);},
+        "matching commercial digests cannot substitute a different installed neighborhood");
     auto mismatched = persisted;
     mismatched.neighborhood_identity[0] ^= 1U;
     odh_host::write_linux_family_overlay_atomic(

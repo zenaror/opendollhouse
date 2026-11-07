@@ -117,7 +117,7 @@ void validate(const EntityVmSchedulerSnapshot& snapshot,
         if (previous && entity.id <= *previous)
             throw FormatError("scheduler entity IDs are not in strict ascending order");
         previous = entity.id;
-        if (entity.status > VmStatus::yielded)
+        if (entity.status > VmStatus::next_tick)
             throw FormatError("invalid scheduler VM status");
         if (snapshot.budget_cursor && entity.id == *snapshot.budget_cursor) cursor_found = true;
     }
@@ -139,7 +139,9 @@ std::vector<std::uint8_t> encode_entity_vm_scheduler_snapshot(
         throw FormatError("scheduler snapshot byte limit is too small");
     validate(snapshot, limits);
     Writer writer(limits.max_bytes);
-    writer.u16(codec_version);
+    const auto version=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),[](const auto& entity){
+        return entity.status==VmStatus::next_tick;})?std::uint16_t{2}:codec_version;
+    writer.u16(version);
     writer.u64(static_cast<std::uint64_t>(snapshot.entity_limit));
     writer.u32(static_cast<std::uint32_t>(snapshot.entities.size()));
     for (const auto& entity : snapshot.entities) {
@@ -168,7 +170,8 @@ EntityVmSchedulerSnapshot decode_entity_vm_scheduler_snapshot(
         throw FormatError("scheduler snapshot exceeds byte limit");
     if (bytes.size() < header_size) throw FormatError("scheduler snapshot header is truncated");
     Reader reader(bytes);
-    if (reader.u16() != codec_version) throw FormatError("unsupported scheduler snapshot version");
+    const auto version=reader.u16();
+    if (version!=1 && version!=2) throw FormatError("unsupported scheduler snapshot version");
     EntityVmSchedulerSnapshot snapshot;
     const auto entity_limit = reader.u64();
     if (entity_limit > std::numeric_limits<std::size_t>::max())
@@ -182,7 +185,7 @@ EntityVmSchedulerSnapshot decode_entity_vm_scheduler_snapshot(
         entity.run_generation = reader.u64();
         entity.steps = reader.u64();
         const auto status = reader.u8();
-        if (status > static_cast<std::uint8_t>(VmStatus::yielded))
+        if (status > static_cast<std::uint8_t>(version>=2?VmStatus::next_tick:VmStatus::yielded))
             throw FormatError("invalid scheduler VM status");
         entity.status = static_cast<VmStatus>(status);
         entity.before = reader.boolean();

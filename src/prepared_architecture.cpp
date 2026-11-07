@@ -146,8 +146,7 @@ PreparedArchitecture prepare_saved_architecture(
                     const auto pool = (*saved.pools)[index], water = (*saved.water)[index];
                     const bool overlay = (pool != 0 && pool != 255) ||
                                          (water != 0 && water != 255);
-                    if (pool != 0 && pool != 255) floor = 65535;
-                    if (water != 0 && water != 255) floor = 65534;
+                    floor = ts1_surface_pattern(floor, pool, water);
                     if (!diagonal && overlay) floor_identity_used = false;
                 }
                 if (floor_declared_unresolved && floor_identity_used)

@@ -61,6 +61,6 @@ inline odh::SavedArchitecture prepared_render_architecture(
             target->push_back((*source)[std::size_t(y)*raw.width+x]);
     };
     crop(raw.altitude,result.altitude);crop(raw.grass,result.grass);crop(raw.target_grass,result.target_grass);
-    crop(raw.pools,result.pools);crop(raw.water,result.water);
+    // Prepared floors already include the overlays and any subsequent player edits.
     return result;
 }

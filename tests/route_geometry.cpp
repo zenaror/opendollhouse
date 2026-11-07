@@ -124,12 +124,37 @@ int main() {
         architecture.levels[0].walls[at(architecture,2,2)].segments=16;
         require(odh::saved_wall_raycast(architecture,1,1,2,4,2,resolved).state==odh::WallRaycastState::clear,
                 "reference wall raycast does not test diagonal wall bits");
-        require(odh::saved_wall_raycast(architecture,1,-1,2,4,2,resolved).state==odh::WallRaycastState::unsupported&&
-                odh::saved_wall_raycast(architecture,3,1,2,4,2,resolved).state==odh::WallRaycastState::unsupported&&
-                odh::saved_wall_raycast(architecture,1,1,2,4,2,{}).state==odh::WallRaycastState::unsupported,
-                "invalid point, level, or resolver extent is unsupported");
+        require(odh::saved_wall_raycast(architecture,1,-1,2,4,2,resolved).state==odh::WallRaycastState::clear,
+                "source GetWall outside-map cells are empty rather than an unsupported endpoint");
+        require(odh::saved_wall_raycast(architecture,3,1,2,4,2,resolved).failure==odh::WallRaycastFailure::level&&
+                odh::saved_wall_raycast(architecture,1,1,2,4,2,{}).failure==odh::WallRaycastFailure::resolver_extent,
+                "unknown level and resolver extent retain distinct unsupported diagnostics");
+        architecture=lot();resolved.assign(25,{});
+        for(const auto [x,y]:std::array<std::array<int,2>,8>{{{{2047,1}},{{2047,2047}},{{1,2047}},{{-2048,2047}},{{-2048,1}},{{-2048,-2048}},{{1,-2048}},{{2047,-2048}}}}){
+            require(ray(2,2,x,y).state==odh::WallRaycastState::clear&&ray(x,y,2,2).state==odh::WallRaycastState::clear,
+                "outside-map endpoints preserve source empty walls in all octants and reverse directions");
+        }
+        require(ray(-2048,-2048,2047,2047).state==odh::WallRaycastState::clear&&
+                ray(-2048,2047,2047,-2048).state==odh::WallRaycastState::clear&&
+                ray(-2048,-2048,-2048,-2048).state==odh::WallRaycastState::clear,
+                "full source tile domain and stationary OOW query remain bounded and exact");
+        architecture.levels[0].walls[at(architecture,2,2)].segments=1;
+        resolved[at(architecture,2,2)].top_left=odh::WallEdgeKnowledge::solid;
+        require(ray(-2048,2,2047,2).state==odh::WallRaycastState::blocked&&
+                ray(2047,2,-2048,2).state==odh::WallRaycastState::blocked,
+                "long outside-to-outside rays still test actual interior walls both ways");
+        resolved[at(architecture,2,2)].top_left=odh::WallEdgeKnowledge::unresolved;
+        const auto exterior_unknown=ray(-2048,2,2047,2);
+        require(exterior_unknown.state==odh::WallRaycastState::unsupported&&
+                exterior_unknown.failure==odh::WallRaycastFailure::unresolved_edge&&exterior_unknown.tile_x==2&&
+                exterior_unknown.tile_y==2&&exterior_unknown.top_left,
+                "outside traversal preserves exact unknown interior edge instead of assuming it empty");
+        require(ray(-2049,2,4,2).failure==odh::WallRaycastFailure::coordinate_domain&&
+                ray(2,2,2048,2).failure==odh::WallRaycastFailure::coordinate_domain&&
+                ray(INT32_MIN,2,INT32_MAX,2).failure==odh::WallRaycastFailure::coordinate_domain,
+                "unrepresented int32 ranges fail before subtraction or unbounded iteration");
         auto malformed_walls=architecture;malformed_walls.levels[0].walls.pop_back();
-        require(odh::saved_wall_raycast(malformed_walls,1,1,2,4,2,resolved).state==odh::WallRaycastState::unsupported,
+        require(odh::saved_wall_raycast(malformed_walls,1,1,2,4,2,resolved).failure==odh::WallRaycastFailure::architecture,
                 "malformed architecture rejects wall queries");
 
         std::cout<<checks<<" route geometry checks passed\n";

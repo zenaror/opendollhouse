@@ -74,6 +74,32 @@ int main() {
         require(first->stack().empty() && second->stack().empty(),
                 "startup helper never stacks or dispatches Main");
 
+        // A declared argument count is not the constructor's actual array length.
+        odh::Bhav defaults{0x8002, {}, {}, odh::Bhav::Metadata{0, 0, 0, 0}};
+        for (std::uint16_t n = 0; n < 4; ++n) {
+            defaults.instructions.push_back({2, static_cast<std::uint8_t>(n == 3 ? 254 : n + 1), 255,
+                {static_cast<std::uint8_t>(n), 0, 0, 0, 0, 2, 9, 7}}); // Param n == 0
+        }
+        odh::Vm default_vm(shared, odh::ShareVmProgramTag{}, memory, odh::VmLimits{}, {},
+            odh::RoutineOwners{{55, {{key(4096), defaults}, {key(4097), defaults}}}});
+        const auto default_result = odh::run_avatar_startup(default_vm, 55, 4096, 4097);
+        require(default_result.completed && default_result.steps == 8 &&
+                default_result.stages[0].status == odh::VmStatus::returned_true &&
+                default_result.stages[1].status == odh::VmStatus::returned_true,
+                "both avatar constructor phases can read default Params0..3 despite zero metadata arguments");
+        auto outside_defaults = defaults;
+        outside_defaults.metadata->arguments = 9;
+        outside_defaults.instructions = {{2, 254, 255, {4, 0, 0, 0, 0, 2, 9, 7}}};
+        for (const bool dynamic_phase : {false, true}) {
+            odh::Vm bounded_vm(shared, odh::ShareVmProgramTag{}, memory, odh::VmLimits{}, {},
+                odh::RoutineOwners{{55, {{key(4096), dynamic_phase ? defaults : outside_defaults},
+                                        {key(4097), outside_defaults}}}});
+            const auto bounded_result = odh::run_avatar_startup(bounded_vm, 55, 4096, 4097);
+            require(!bounded_result.completed && bounded_result.stages.back().status == odh::VmStatus::fault &&
+                    bounded_result.stages.back().phase == (dynamic_phase ? "dynamic_multitile" : "init"),
+                    "neither avatar constructor phase pads Params beyond the four source defaults");
+        }
+
         auto skipped_vm = make_vm(33, 0, 0);
         const auto skipped = odh::run_avatar_startup(*skipped_vm, 33, 255, 8);
         require(skipped.completed && skipped.steps == 0 && skipped.stages.size() == 2 &&

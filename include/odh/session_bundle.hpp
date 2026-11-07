@@ -1,4 +1,5 @@
 #pragma once
+#include "odh/installed_lot_limits.hpp"
 
 #include "odh/entity_scheduler_snapshot_codec.hpp"
 #include "odh/entity_thread_controllers_snapshot_codec.hpp"
@@ -11,6 +12,20 @@
 #include "odh/ts1_simulation.hpp"
 #include "odh/vm_snapshot_codec.hpp"
 #include "odh/world_snapshot_codec.hpp"
+#include "odh/headline_snapshot_codec.hpp"
+#include "odh/runtime_globals.hpp"
+#include "odh/architecture_snapshot.hpp"
+#include "odh/architecture_object_support.hpp"
+#include "odh/architecture_object_state.hpp"
+#include "odh/dialog.hpp"
+#include "odh/ts1_travel.hpp"
+#include "odh/neighbor_inventory.hpp"
+#include "odh/build_buy_permission.hpp"
+#include "odh/family_spells.hpp"
+#include "odh/type_attributes.hpp"
+#include "odh/object_group.hpp"
+#include "odh/object_trade.hpp"
+#include "odh/house_layout_history.hpp"
 
 #include <optional>
 #include <functional>
@@ -61,7 +76,10 @@ struct SessionDynamicActionOwner {
 // Resource ownership is independent of the objects currently named by a call.
 // The host rebuilds this exact bank before applying any VM snapshot.
 enum class SessionCodeBankKind : std::uint8_t {
-    private_closure = 0, complete_private = 1, private_and_semiglobal = 2
+    private_closure = 0, complete_private = 1, private_and_semiglobal = 2,
+    // Complete immutable numeric + named resource bank; kind pins the named
+    // root's physical resource without changing the authored ushort ID.
+    complete_named_private = 3, complete_named_semiglobal = 4
 };
 enum class SessionCodeOwnerIdentity : std::uint8_t { process = 0, resource_guid = 1 };
 struct SessionResourceCodeOwner {
@@ -74,24 +92,67 @@ struct SessionResourceCodeOwner {
     std::optional<SessionLinkedSemiglobal> linked_semiglobal;
     std::array<std::uint8_t,32> routine_fingerprint{};
 };
+inline RoutineKey session_resource_root_key(const SessionResourceCodeOwner& owner) {
+    if(owner.bank_kind==SessionCodeBankKind::complete_named_private)
+        return {RoutineScope::named_private,owner.root_routine};
+    if(owner.bank_kind==SessionCodeBankKind::complete_named_semiglobal)
+        return {RoutineScope::named_semiglobal,owner.root_routine};
+    return routine_key(owner.root_routine);
+}
 struct SessionCreatedObject {
     std::int16_t id = 0;
     std::uint64_t generation = 0;
     std::uint32_t guid = 0;
     std::string source, asset;
     std::uint16_t definition_chunk_id = 0;
+    std::optional<std::uint32_t> master_guid; // Exact construction master; absent for direct parts.
+};
+// Required OTRD v1, coupled to HOST v5. Omitted entries have UNKNOWN
+// InitialPrice/Wear, never an inferred zero or ObjectData41 replacement.
+// A null wear means known absent ObjectState (source refund fallback80).
+struct SessionObjectTradeState {
+    SessionCreatedObject object;
+    std::int32_t initial_price = 0;
+    std::optional<std::uint16_t> wear;
+};
+enum class SessionObjectPriceSource : std::uint8_t { unknown,legacy_v1,fresh_import_objd,purchase,current_value_write,constructed_catalog };
+struct SessionObjectPriceOrigin {
+    SessionObjectPriceSource kind=SessionObjectPriceSource::unknown;
+    std::uint32_t guid=0;
+    std::string source,asset;
+    std::uint16_t definition_chunk_id=0;
+    std::optional<std::array<std::uint8_t,32>> objd_sha256;
+    std::optional<ObjectTradeIdentity> writer;
+};
+struct SessionObjectValueMember {
+    SessionCreatedObject object; // Exact individual resource/master provenance.
+    std::int16_t offset_x=0,offset_y=0,offset_level=0;
+    std::optional<std::uint16_t> lead_object; // Exact OBJD.MyLeadObject; absent unknown.
+    bool wear_known=false; // Distinguish unknown from known absent ObjectState.
+    std::optional<std::uint16_t> wear;
+    // Actual VMGameObject.Disabled runtime enum, not OBJD.Disabled16 or OD43.
+    // Missing is unknown; authenticated fresh TS1 activation may establish0.
+    std::optional<std::uint8_t> disabled;
+};
+struct SessionObjectValueGroup {
+    std::uint64_t group_id=0; // Stable registry token <= ledger revision; canonical ascending order.
+    bool multitile=false; // Actual source group property, no common-master inference.
+    std::vector<SessionObjectValueMember> members; // Exact source Objects order.
+    std::optional<ObjectTradeIdentity> base; // Actual BaseObject, absent when unknown.
+    std::optional<std::int32_t> initial_price;
+    SessionObjectPriceOrigin price_origin;
+    std::uint64_t revision=0;
+};
+struct SessionObjectTradeLedger {
+    std::vector<SessionObjectTradeState> objects; // Legacy v1 ascending live IDs.
+    std::vector<SessionObjectValueGroup> groups; // v2 owner; never active with objects.
+    std::uint16_t version=1; // Preserve even empty legacy/v2 byte roundtrips.
+    std::uint64_t revision=0;
 };
 struct SessionRemovedOriginalObject {
     std::int16_t id = 0;
     std::uint64_t generation = 0;
     std::uint32_t guid = 0;
-};
-// Required OHST v1 when present. Absence means unknown historical coverage;
-// an incomplete history must never be promoted merely by loading/saving it.
-struct SessionObjectHistory {
-    bool complete = false;
-    std::vector<SessionCreatedObject> retired_created_objects;
-    std::vector<std::int16_t> reserved_entity_ids;
 };
 struct SessionDeferredRemoval {
     std::int16_t id = 0;
@@ -107,7 +168,42 @@ struct SessionRuntimeEntity {
     std::optional<LocalRouteSnapshot> route;
     std::vector<SessionDynamicActionOwner> dynamic_action_owners; // Strictly ascending owner IDs.
     std::vector<SessionResourceCodeOwner> resource_owners; // Installed generic code banks, including idle cached owners; ascending IDs.
+    std::optional<RouteStackSnapshot> route_stack; // Mutually exclusive with legacy route.
 };
+
+// A created visiting avatar has resource/neighbor identity, but no household,
+// family-budget or occupancy authority. source is game-root-relative; asset is
+// the exact archive entry, or empty for a standalone character IFF.
+struct SessionNpcAvatarOrigin {
+    std::int16_t id = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t guid = 0;
+    std::int16_t neighbor_id = 0;
+    std::string source, asset;
+    std::uint16_t object_definition_id = 0;
+    std::array<std::uint8_t,32> character_fingerprint{};
+};
+// OHST v1 preserves the legacy permanently reserved-ID policy. V2 records
+// reusable identities and retained visitor provenance. V3 permits resource-only
+// visitors; V4 adds exact retired construction masters and an explicit reuse
+// policy. Incomplete coverage is never promoted merely by loading/saving it.
+struct SessionObjectHistory {
+    bool complete = false;
+    std::vector<SessionCreatedObject> retired_created_objects; // Lexicographic (id,generation).
+    std::vector<std::int16_t> reserved_entity_ids; // Legacy reservations only.
+    bool reusable_entity_ids = false;
+    std::vector<SessionNpcAvatarOrigin> retired_npc_avatars; // Lexicographic (id,generation).
+};
+struct SessionNpcAvatar {
+    SessionNpcAvatarOrigin origin;
+    SessionRuntimeEntity runtime;
+    Ts1MotiveSnapshot decay;
+    // Resource-derived body/walk tables are rebuilt without startup or RNG.
+    // The host must check this choice against the exact resource BodySTR names.
+    std::optional<std::string> selected_name;
+    CodeOwner primary_owner = 0; // Exact complete private or private+linked bank in runtime.resource_owners.
+};
+using SessionNpcAvatarResolver = std::function<Entity(const SessionNpcAvatarOrigin&)>;
 
 // A process-local owner is meaningful only with its exact resource provenance
 // and the digest of the bounded private-call closure loaded from that resource.
@@ -191,6 +287,13 @@ struct SessionUiState {
 // Values only. The host must rebuild matching resources, programs, callbacks,
 // and presentation state before applying these snapshots to a fresh session.
 struct SessionBundle {
+    // Required NINV/TRIP profiles. Legacy nontravel archives omit both unchanged.
+    std::optional<NeighborInventorySnapshot> neighbor_inventory;
+    std::optional<Ts1TravelState> travel;
+    // Required TVIS: journal-published permanent-home envelope, with one active
+    // visited bundle. Nested envelopes are forbidden. Home World/VM stay intact.
+    std::optional<std::vector<std::uint8_t>> travel_visited_session;
+    std::optional<std::vector<std::uint8_t>> travel_home_session; // Required THOM, exact original bytes.
     std::optional<SessionSimulationState> simulation; // Absent in older archives.
     SessionResourceIdentity resources;
     SessionHostState host;
@@ -198,31 +301,64 @@ struct SessionBundle {
     WorldSnapshot world;
     RelationshipSnapshot relationships;
     std::vector<SessionRuntimeEntity> runtime_entities; // Strictly ascending IDs.
+    // Required NPCA v1 when nonempty. Never included in HHRD or resident SIMS.
+    std::vector<SessionNpcAvatar> npc_avatars; // Strictly ascending live IDs.
     std::vector<SessionObjectThread> object_threads; // Strictly ascending IDs, disjoint from avatars.
     EntityVmSchedulerSnapshot scheduler;
     std::optional<SessionSeatedContinuation> seated_continuation; // Legacy HOST v1 / SEAT v1-v2.
-    // HOST v2 / required SEAT v3; ascending actor IDs, only seated residents.
-    // Mutually exclusive with the legacy singular continuation.
+    // HOST v2 legacy completed-Sit history / SEAT v3; ascending actor IDs.
+    // GEXP posture/active actions use World/VM/controllers without this history.
+    // Explicit records remain strict and exclude the singular continuation.
     std::vector<SessionSeatedContinuation> household_seated_continuations;
-    // GEXP v1 is required when true: older readers must reject this profile.
+    // GEXP is required when true; v2 adds exact live construction masters.
+    // Without those optional masters the original v1 bytes remain unchanged.
     bool generic_execution = false;
     CodeOwner next_code_owner = 0x80000000U;
     bool code_owner_ids_exhausted = false;
     std::vector<SessionCreatedObject> created_objects; // Ascending live IDs.
     std::vector<SessionRemovedOriginalObject> removed_original_objects; // Ascending baseline IDs.
     std::optional<SessionObjectHistory> object_history;
+    std::optional<SessionObjectTradeLedger> object_trade;
+    // Required RGLB v1 with HOST v6. Single authority for raw globals;
+    // host.global_values must be empty when this snapshot is present.
+    std::optional<RuntimeGlobalsSnapshot> runtime_globals;
     std::vector<SessionDeferredRemoval> deferred_removals; // Ordered host intents, unique identities.
     // Required FAML v1 when present. The overlay owns the checkpoint head;
     // this identifies the occupancy, not permission to overwrite a newer save.
     std::optional<SessionFamilyLease> family_lease;
     // Optional UIST v1; absent archives retain the host's legacy selection fallback.
     std::optional<SessionUiState> ui_state;
+    // Required DLOG when present: the actual blocking dialog and its VM wait
+    // are restored together. No host pointers or implicit answers are saved.
+    std::optional<DialogState> dialog;
+    // Required HLDN v1 when nonempty; absent older archives have no headlines.
+    BalloonHeadlineSnapshot headlines;
+    // ARCT v1 is required when present; legacy archives omit it unchanged.
+    std::optional<ArchitectureSnapshot> architecture;
+    // Required OSUP v1 when present; absence means unknown legacy event history.
+    std::optional<ArchitectureObjectSupport> architecture_object_support;
+    // Required AOBJ when present; owns support + event overlays as one state.
+    // Mutually exclusive with the legacy support-only OSUP field.
+    std::optional<ArchitectureObjectState> architecture_object_state;
+    // Required BBUY v1 when present. Legacy absence means source default true.
+    std::optional<BuildBuyPermissionSnapshot> build_buy_permission;
+    // Required FSPL v1: private mutable Family spell carrier, bound to HOST.
+    std::optional<FamilySpellsSnapshot> family_spells;
+    // Required TATT v1 when present: shared TS1 per-type attributes; absence
+    // keeps the immutable Neighborhood seed for legacy session profiles.
+    std::optional<TypeAttributesSnapshot> type_attributes;
+    // Required OGRP v1 when present. Exact dynamic physical-group ownership;
+    // imported OBJM groups remain authenticated separately by the host.
+    std::optional<ObjectGroupSnapshot> object_groups;
+    // HLST v1 required when present. Bound on wire to HOST house and META
+    // resource identity. Legacy absence remains unknown, never a zero baseline.
+    std::optional<HouseLayoutHistory> house_layout_history;
 };
 
 struct SessionBundleLimits {
     SessionArchiveLimits archive{};
-    // The saved-lot host uses a 131,072-word budget for House02 and larger lots.
-    WorldSnapshotCodecLimits world{{4096,131072,4096},64u*1024u*1024u};
+    // Same admission policy as installed-lot import and runtime candidates.
+    WorldSnapshotCodecLimits world{installed_lot_world_limits(),64u*1024u*1024u};
     RelationshipSnapshotCodecLimits relationships{};
     VmSnapshotCodecLimits vm{};
     EntityVmSchedulerSnapshotCodecLimits scheduler{};
@@ -232,16 +368,28 @@ struct SessionBundleLimits {
     std::uint32_t max_playback_frames = 1048576;
     std::uint64_t max_playback_ticks = 1048576;
     std::size_t max_runtime_entities = 64;
+    std::size_t max_npc_avatars = 64; // Also bounded by the portable profile ceiling of 64.
     std::size_t max_route_points = 262145;
-    std::size_t max_object_threads = 64;
+    // Whole saved lots may have a Main per object (including multitile parts).
+    // This is an admission ceiling, not an allocation of4096 VM instances.
+    std::size_t max_object_threads = 4096;
     std::size_t max_resource_owners_per_thread = 256;
     std::size_t max_host_globals = 256;
+    ObjectGroupLimits object_groups{};
 };
 
 // Shared value-only validation for a host continuation profile that accepts
 // an already-serialized Main animation wait. Does not modify execution state.
 void validate_session_playback_links(const SessionRuntimeEntity&, const Entity&,
     const SessionHostState&, const SessionBundleLimits& = {});
+
+// Imported ordinary object Main frames have no resident action queue. Mark
+// their ordinary execution once, while retaining any explicit VM ancestry.
+void resolve_object_thread_action_tree(SessionObjectThread&) noexcept;
+
+// Unpublished restore candidate only. Upgrade legacy identity/action markers
+// once against this exact restored World before binding controller proofs.
+void bind_legacy_session_entity_references(SessionBundle&,const World&);
 
 std::vector<std::uint8_t> encode_session_bundle(
     const SessionBundle& bundle, SessionBundleLimits limits = {});

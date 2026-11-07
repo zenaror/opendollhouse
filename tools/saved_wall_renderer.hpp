@@ -6,6 +6,7 @@
 #include "odh/wall_sprite.hpp"
 #include "odh/wall_junction.hpp"
 #include <memory>
+#include <functional>
 
 struct SavedWallFace {
     std::uint32_t x,y,owner_x,owner_y;
@@ -100,7 +101,8 @@ public:
     SavedWallRenderer& operator=(SavedWallRenderer&&) noexcept;
     SavedWallRenderResult render(const odh::SavedArchitecture&,const odh::WallAppearance&,
         const odh::WorldProjection&,const odh::RasterFrame&,
-        bool apply_terrain=true,std::int32_t base_alt=0,odh::WallView={});
+        bool apply_terrain=true,std::int32_t base_alt=0,odh::WallView={},
+        const std::function<std::array<float,3>(std::uint32_t,std::uint32_t,std::uint8_t,std::uint8_t)>& light = {});
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

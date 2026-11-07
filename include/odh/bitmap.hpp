@@ -13,7 +13,7 @@ struct BitmapImage {
     std::uint32_t width, height;
     std::uint16_t bit_count;
     bool top_down; // Original file orientation; output rows always start at top.
-    std::vector<std::array<std::uint8_t, 4>> pixels; // RGBA, opaque alpha.
+    std::vector<std::array<std::uint8_t, 4>> pixels; // RGBA; BMP opaque, UI TGA32 retains alpha.
     std::uint64_t remaining_bytes;
 };
 
@@ -21,6 +21,10 @@ struct BitmapImage {
 // BGR, or bottom-up BI_RLE8. Reserved file fields must be zero. Palette
 // reserved bytes are ignored; no Sims color-key or transparency semantics are
 // inferred.
-BitmapImage read_bmp(const View&, BitmapLimits = {});
+enum class BmpExtentPolicy { file_header,iff_container };
+// IFF BMP_ resources may have bfSize=0. Only the explicit container profile
+// substitutes the authenticated View extent; all pixel/offset/budget checks
+// remain shared with standalone BMPs. A nonzero bfSize is always respected.
+BitmapImage read_bmp(const View&, BitmapLimits = {},BmpExtentPolicy=BmpExtentPolicy::file_header);
 
 } // namespace odh

@@ -24,6 +24,15 @@ struct SessionExecutionBinding {
     PlaybackRestoreResolver resolver;
 };
 
+// Reconstruct metadata from the exact externally authenticated family character
+// resource without rerunning Init/Main. Used for HOME residents created after
+// the original lot and for admitted TRIP travelers. prepare() first compares
+// HHRD against the host's family/resource roster, then checks exact identity,
+// fresh generation, original-cohort collisions and (for visits) party authority.
+using SessionHouseholdAvatarResolver = std::function<Entity(const SessionHouseholdMember&)>;
+// Compatibility alias: existing travel consumers keep the same callback/API.
+using SessionTravelAvatarResolver = SessionHouseholdAvatarResolver;
+
 class HouseholdSessionRestore {
 public:
     using DynamicActionLoader = std::function<std::pair<RoutineSet,
@@ -40,7 +49,10 @@ public:
         const Ts1BootstrapGlobals& bootstrap,
         std::optional<std::int16_t> family_global,
         SessionBundleLimits limits = {},
-        const SessionCreatedObjectResolver& created_objects = {});
+        const SessionCreatedObjectResolver& created_objects = {},
+        const SessionNpcAvatarResolver& npc_avatars = {},
+        std::optional<Ts1TravelState> expected_travel = std::nullopt,
+        const SessionTravelAvatarResolver& travel_avatars = {});
 
     World& world() {
         if(!world_)throw FormatError("candidate World ownership was transferred to the host");
@@ -60,12 +72,26 @@ public:
     const std::optional<SessionSimulationState>& simulation() const {return bundle_.simulation;}
     const std::optional<std::int32_t>& family_budget() const {return bundle_.host.family_budget;}
     const SessionHostState& host() const { return bundle_.host; }
+    const std::optional<SessionObjectTradeLedger>& object_trade() const { return bundle_.object_trade; }
+    const std::optional<RuntimeGlobalsSnapshot>& runtime_globals() const { return bundle_.runtime_globals; }
+    const BalloonHeadlineSnapshot& headlines() const { return bundle_.headlines; }
     const std::optional<SessionUiState>& ui_state() const { return bundle_.ui_state; }
+    const std::optional<DialogState>& dialog() const { return bundle_.dialog; }
+    const std::optional<Ts1TravelState>& travel() const { return bundle_.travel; }
+    // Explicit ownership handoff: the enabled host installs this validated
+    // state in its travel authority before restoring any VM continuation.
+    std::optional<Ts1TravelState> consume_travel() {
+        if(attempted_||travel_consumed_)throw FormatError("travel restore state can only be consumed once before execution restore");
+        auto state=bundle_.travel;travel_consumed_=true;return state;
+    }
+    const std::optional<NeighborInventorySnapshot>& neighbor_inventory() const { return bundle_.neighbor_inventory; }
     const std::vector<SessionObjectThread>& object_threads() const { return bundle_.object_threads; }
+    const std::vector<SessionNpcAvatar>& npc_avatars() const { return bundle_.npc_avatars; }
     bool generic_execution() const {return bundle_.generic_execution;}
     CodeOwner next_code_owner() const {return bundle_.next_code_owner;}
     bool code_owner_ids_exhausted() const {return bundle_.code_owner_ids_exhausted;}
     const std::vector<SessionCreatedObject>& created_objects() const {return bundle_.created_objects;}
+    const std::optional<ObjectGroupSnapshot>& object_groups() const {return bundle_.object_groups;}
     const std::optional<SessionObjectHistory>& object_history() const {return bundle_.object_history;}
     const std::vector<SessionDeferredRemoval>& deferred_removals() const {return bundle_.deferred_removals;}
     const SessionSeatedContinuation* seated_continuation(std::int16_t id) const {
@@ -78,16 +104,23 @@ public:
     const std::vector<SessionDynamicActionOwner>& dynamic_action_owners(std::int16_t id) const;
     void install_dynamic_action_owners(std::int16_t id, Vm&, const DynamicActionLoader&);
     const LocalRouteSnapshot* local_route(std::int16_t id) const {
-        const auto found=std::find_if(bundle_.runtime_entities.begin(),bundle_.runtime_entities.end(),
-            [&](const auto& entity){return entity.id==id&&entity.route.has_value();});
-        return found==bundle_.runtime_entities.end()?nullptr:&*found->route;
+        const auto* state=runtime_entity(id);
+        return state&&state->route?&*state->route:nullptr;
+    }
+    const RouteStackSnapshot* route_stack(std::int16_t id) const {
+        const auto* state=runtime_entity(id);
+        return state&&state->route_stack?&*state->route_stack:nullptr;
     }
     // Every binding is an unpublished fresh execution graph against this World.
     // Failure invalidates all candidate graphs; discard them without publication.
     // Tick/RNG are committed only after the entire roster and scheduler succeed.
     void restore_execution(const std::vector<SessionExecutionBinding>&,
         EntityVmScheduler&, RandomState&, std::uint64_t& tick);
+    void restore_execution(const std::vector<SessionExecutionBinding>& residents,
+        const std::vector<SessionExecutionBinding>& npcs,
+        EntityVmScheduler&, RandomState&, std::uint64_t& tick);
 private:
+    const SessionRuntimeEntity* runtime_entity(std::int16_t id) const;
     HouseholdSessionRestore(SessionBundle, const LotContext&,
         const Ts1BootstrapGlobals&, std::optional<std::int16_t>, WorldLimits,
         RelationshipLimits);
@@ -98,6 +131,7 @@ private:
     Ts1BootstrapGlobals bootstrap_;
     std::optional<std::int16_t> family_global_;
     bool attempted_ = false;
+    bool travel_consumed_ = false;
     std::optional<std::int16_t> dynamic_owner_resident_;
     const Vm* dynamic_owner_vm_ = nullptr;
     bool dynamic_owners_verified_ = false;

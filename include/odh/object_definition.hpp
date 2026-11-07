@@ -24,6 +24,14 @@ struct ObjectDefinition {
     // Raw BuildModeType at byte0x8a in supported layouts. Missing differs
     // from zero (ordinary buy-mode); do not guess it from object type.
     std::optional<std::uint16_t> build_mode_type;
+    // Raw OBJD.Global word (VMOBJDVariable42), byte84 in136/138.
+    // Pinned TS1 provider selects exactly1 and excludes GiftToken type12.
+    // Absence is not a known non-global definition.
+    std::optional<std::uint16_t> global_flag;
+    // Effective source TypeAttrGUID. Full v138 reads uint32 at byte184 and
+    // substitutes GUID only when that value is zero. Full v136 leaves zero;
+    // truncated metadata cannot establish this property.
+    std::optional<std::uint32_t> type_attribute_guid;
 };
 
 // Explicit OBJD136/138 metadata profiles through TreeTableID/GUID (32 bytes),
@@ -34,5 +42,13 @@ struct ObjectDefinition {
 // header_extent is the highest inspected prefix extent, not full validation.
 // No complete-definition validation, instance decoding, or construction occurs.
 ObjectDefinition read_object_definition(const View&);
+
+// Runtime resource data for StackObjectDefinition (scope21), indexed directly
+// by VMOBJDVariable. Pinned FreeSO7e76 OBJD.Read/GetEntityDefinitionVar expose
+// 80 words for136 and95 for138, including two special version words. Only
+// complete words actually present are returned; no padding or unknown suffix.
+// This separate derived bank does not extend serialized Entity.definition_words
+// or alter the metadata profile/header_extent above.
+std::vector<std::int16_t> read_object_definition_words(const View&);
 
 } // namespace odh

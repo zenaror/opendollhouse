@@ -17,7 +17,7 @@ CLOCK = (13, 9, 17, 10, 2026)  # hour, day, minute, month, year, in saved SIMI
 
 
 def make_missing(root, failure=None, clock=CLOCK):
-    make_household(root)
+    make_household(root,continuous_main=True)
     user = root / 'UserData'
     # Two FAMI/NBRS/resources, but only the primary and mailbox exist in OBJM.
     records = b''
@@ -28,6 +28,7 @@ def make_missing(root, failure=None, clock=CLOCK):
         records += struct.pack('<II', 1, 4) + f'Sim{index}'.encode() + b'\0\0' + struct.pack('<ii', index, 1)
         records += struct.pack('<80h', *bank) + struct.pack('<hIii', 11 + index, guid, -1, 0)
     family = struct.pack('<II4siiiiiiI', 0, 9, b'IMAF', 7, 900, 100, 0, 0, 0, 2) + struct.pack('<2I', *GUIDS)
+    family += struct.pack('<I6h',0,0,0,0,0,0,0)  # Complete version-9 extension.
     (user / 'Neighborhood.iff').write_bytes(iff([
         ('FAMI', 201, family), ('NBRS', 1, struct.pack('<II4sI', 0, 62, b'SRBN', 2) + records)]))
     table = Bits()
@@ -97,7 +98,7 @@ def make_missing(root, failure=None, clock=CLOCK):
             for index, (lhs, rhs, scope) in enumerate(checks)]
     count = len(checks)
     rows += [(2, count + 1, 255, struct.pack('<hhBBBB', 1, 2, 0, 3, 18, 7)),
-             expression(0, 4, scope=9, yes=count + 2), (0, count + 2, 255, bytes(8))]
+             expression(0, 4, scope=9, yes=count + 2), (0, count + 1, 255, bytes(8))]
     body = [''] * 27
     body[0], body[11], body[12], body[13] = 'adult', 'Ada;Bea', 'male', '27'
     if failure == 'child': body[0], body[13] = 'child', '17'
@@ -116,9 +117,13 @@ def main():
         originals = {path: hashlib.sha256(path.read_bytes()).digest() for path in root.rglob('*') if path.is_file()}
         fresh = ['--mode', '1', '--house', '7', '--resident-id', '11', '--language', '1']
 
-        def run(options, selected=root, error=None):
+        def profile(name):
+            return dict(env,XDG_CONFIG_HOME=str(base/'profiles'/name/'config'),
+                        XDG_DATA_HOME=str(base/'profiles'/name/'data'))
+
+        def run(options, selected=root, error=None, control=None):
             result = subprocess.run([binary, '--game-root', str(selected)] + options,
-                                    capture_output=True, text=True, env=env, timeout=30)
+                                    capture_output=True, text=True, env=profile(control or selected.name), timeout=30)
             if error:
                 assert result.returncode == 2 and error in result.stderr, (result.returncode, result.stdout, result.stderr)
                 return result.stderr
@@ -140,7 +145,7 @@ def main():
         selected_missing = ['--mode', '1', '--house', '7', '--resident-id', '12', '--language', '1']
         result = subprocess.run([binary, '--game-root', str(root)] + selected_missing +
                                 ['--headless-ticks', '1'], capture_output=True, text=True,
-                                env=env, timeout=30)
+                                env=profile('selected-missing'), timeout=30)
         assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
         selected_report = json.loads(result.stdout)
         assert not selected_report['host_failed'], selected_report
@@ -156,14 +161,14 @@ def main():
         resumed = run(['--load-session', str(path), '--headless-ticks', '5', '--save-session-on-exit'])
         assert resumed['session_loaded'] and resumed['resumed_tick'] == 1 and resumed['ticks'] == 6, resumed
         resumed_bytes = path.read_bytes()
-        direct = run(fresh + ['--headless-ticks', '6', '--save-session-on-exit'])
+        direct = run(fresh + ['--headless-ticks', '6', '--save-session-on-exit'], control='continuous')
         assert resumed_bytes == Path(direct['saved_session_path']).read_bytes(), 'materialized fresh-process resume differs from continuous run'
         previous = path.read_bytes()
         alternate_clock = base / 'alternate-clock'
         make_missing(alternate_clock, clock=(6, 23, 41, 4, 1999))
         run(fresh + ['--headless-ticks', '1'], alternate_clock)
         failures = [('ep9', 'absent placement EP9'), ('ep5_actor', 'arrival semantics are unsupported'),
-                    ('ep5_blocker', 'arrival semantics are unsupported'), ('global_write', 'startup unsupported'),
+                    ('ep5_blocker', 'arrival semantics are unsupported'), ('global_write', 'household member activation failed'),
                     ('primitive', 'startup unsupported'), ('burning', 'startup unsupported'), ('child', 'supports adults only'),
                     ('mailbox', 'one positioned singleton mailbox'), ('ghost', 'household member activation failed'),
                     ('roomimpact', 'arrival semantics are unsupported'), ('lighting', 'arrival semantics are unsupported'),

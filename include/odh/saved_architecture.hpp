@@ -38,6 +38,16 @@ struct SavedArchitecture {
     // including unknown IDs. Duplicate IDs are rejected before interpretation.
     std::vector<SavedArchitectureArray> records;
 };
+// TS1 activator applies ARRY9 first and ARRY10 last, on the ground level only.
+inline std::uint16_t ts1_surface_pattern(std::uint16_t floor,std::uint8_t pool,std::uint8_t water) {
+    if(water!=0&&water!=255)return 65534;
+    if(pool!=0&&pool!=255)return 65535;
+    return floor;
+}
+inline std::uint16_t rendered_floor_pattern(const SavedArchitecture& lot,std::size_t level,std::size_t cell){
+    const auto pattern=lot.levels[level].floors.at(cell);
+    return level?pattern:ts1_surface_pattern(pattern,lot.pools?lot.pools->at(cell):0,lot.water?lot.water->at(cell):0);
+}
 SavedArchitecture interpret_saved_architecture(
     const std::vector<SavedArchitectureArray>& arrays,
     const SavedArchitectureLimits& limits={});

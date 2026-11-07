@@ -64,6 +64,8 @@ CompositeFrame composite_wall_sprites(const RasterFrame& base,
     std::uint64_t sources = 0, destinations = 0, candidates = 0;
     for(const auto& l : layers) {
         if(!l.pattern || !l.depth) throw FormatError("wall sprite null source");
+        for(const auto value:l.linear_light)if(!std::isfinite(value)||value<0||value>1)
+            throw FormatError("wall sprite linear light outside [0,1]");
         const auto& m = l.mask ? *l.mask : *l.pattern;
         validate(*l.pattern,limits);
         validate(m,limits);
@@ -81,6 +83,8 @@ CompositeFrame composite_wall_sprites(const RasterFrame& base,
     CompositeFrame result{base,candidates,0,0,0,{}};
     for(const auto& l : layers) {
         const auto& p = *l.pattern;
+        std::array<double,3> light;
+        for(unsigned c=0;c<3;++c)light[c]=std::pow(double(l.linear_light[c]),1.0/2.2);
         const auto& m = l.mask ? *l.mask : p;
         const auto& d = *l.depth;
         const auto b = bounds(l,base);
@@ -94,6 +98,9 @@ CompositeFrame composite_wall_sprites(const RasterFrame& base,
             const auto z = static_cast<float>(depth(l,d.pixels[sample(sx,sy,d.width,d.height,l)]));
             if(!(z < result.image.depth[target])) { ++result.occluded_samples; continue; }
             auto color = p.pixels[sample(sx,sy,p.width,p.height,l)];
+            for(unsigned channel=0;channel<3;++channel)if(l.linear_light[channel]!=1)
+                color[channel]=static_cast<std::uint8_t>(std::clamp(std::floor(double(color[channel])*
+                    light[channel]+0.5),0.0,255.0));
             color[3] = 255;
             result.image.pixels[target] = color;
             result.image.depth[target] = z;

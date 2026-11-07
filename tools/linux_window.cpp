@@ -121,12 +121,17 @@ struct LinuxWindow::Impl {
     std::uint32_t width = 0, height = 0;
     Channel red, green, blue;
     std::array<bool,256> key_down{};
-    bool alive = false;
+    bool alive = false,focused=false,primary_held=false,expose_pending=false;
+    std::optional<std::array<std::int32_t,2>> pointer_position,right_press_origin;
     WindowQuitReason quit_reason = WindowQuitReason::none;
+    std::array<Cursor,128> cursors{};
+    std::size_t cursor_count=0;
+    std::optional<WindowCursorHandle> active_cursor;
 
     ~Impl() {
         if (image) XDestroyImage(image);
         if (display) {
+            for(std::size_t i=0;i<cursor_count;++i)XFreeCursor(display,cursors[i]);
             if (input_context) XDestroyIC(input_context);
             if (input_method) XCloseIM(input_method);
             if (gc) XFreeGC(display, gc);
@@ -185,7 +190,7 @@ LinuxWindow::LinuxWindow(std::uint32_t width, std::uint32_t height, const std::s
     p.alive = true;
     p.gc = XCreateGC(p.display, p.window, 0, nullptr);
     if (!p.gc) throw odh::FormatError("X11: cannot create graphics context");
-    XSelectInput(p.display, p.window, KeyPressMask | KeyReleaseMask | ButtonPressMask |
+    XSelectInput(p.display, p.window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | LeaveWindowMask |
                  FocusChangeMask | StructureNotifyMask | ExposureMask);
     // XIM interprets the process C character locale. Select the user's locale
     // once before opening the first input method; fallback remains ASCII.
@@ -203,7 +208,7 @@ LinuxWindow::LinuxWindow(std::uint32_t width, std::uint32_t height, const std::s
                 long filter_events = 0;
                 XGetICValues(p.input_context, XNFilterEvents, &filter_events, nullptr);
                 XSelectInput(p.display, p.window, KeyPressMask | KeyReleaseMask |
-                    ButtonPressMask | FocusChangeMask | StructureNotifyMask |
+                    ButtonPressMask | ButtonReleaseMask | PointerMotionMask | LeaveWindowMask | FocusChangeMask | StructureNotifyMask |
                     ExposureMask | filter_events);
             }
         }
@@ -232,6 +237,58 @@ LinuxWindow::LinuxWindow(std::uint32_t width, std::uint32_t height, const std::s
 }
 
 LinuxWindow::~LinuxWindow() = default;
+
+std::optional<WindowCursorHandle> LinuxWindow::create_cursor(const odh::CursorImage& image){
+    auto& p=*impl_;
+    if(!image.width||!image.height||image.width>256||image.height>256||
+       std::uint64_t(image.width)*image.height>65536||image.hotspot_x>=image.width||image.hotspot_y>=image.height||
+       image.pixels.size()!=std::size_t(image.width)*image.height||image.invert.size()!=image.pixels.size())
+        throw odh::FormatError("X11: cursor dimensions/hotspot/pixel arrays invalid");
+    bool unsupported=false;
+    for(std::size_t i=0;i<image.pixels.size();++i){
+        if(image.invert[i]>1)throw odh::FormatError("X11: cursor inversion mask is not binary");
+        const auto& color=image.pixels[i];
+        if(image.invert[i]|| (color[3]!=0&&color[3]!=255) ||
+           (color[3]&&!(color[0]==color[1]&&color[1]==color[2]&&(color[0]==0||color[0]==255))))unsupported=true;
+    }
+    p.require_alive();
+    if(unsupported||p.cursor_count==p.cursors.size())return {};
+    unsigned best_width=0,best_height=0;
+    if(!XQueryBestCursor(p.display,p.window,image.width,image.height,&best_width,&best_height)||
+       best_width<image.width||best_height<image.height)return {};
+    // XCreateBitmapFromData consumes top-down, LSB-first packed rows, unlike
+    // the bottom-up/MSB-first CUR masks already decoded by the portable parser.
+    const auto stride=(std::size_t(image.width)+7)/8;
+    std::vector<char> source(stride*image.height,0),mask(source.size(),0);
+    for(std::size_t y=0;y<image.height;++y)for(std::size_t x=0;x<image.width;++x){
+        const auto& color=image.pixels[y*image.width+x];
+        if(!color[3])continue;
+        const auto byte=y*stride+x/8;
+        const auto bit=static_cast<unsigned char>(1u<<(x%8));
+        mask[byte]=static_cast<char>(static_cast<unsigned char>(mask[byte])|bit);
+        if(color[0]==0)source[byte]=static_cast<char>(static_cast<unsigned char>(source[byte])|bit);
+    }
+    const auto source_map=XCreateBitmapFromData(p.display,p.window,source.data(),image.width,image.height);
+    if(!source_map)return {};
+    const auto mask_map=XCreateBitmapFromData(p.display,p.window,mask.data(),image.width,image.height);
+    if(!mask_map){XFreePixmap(p.display,source_map);return {};}
+    XColor foreground{},background{};foreground.red=foreground.green=foreground.blue=0;
+    background.red=background.green=background.blue=65535;
+    const auto cursor=XCreatePixmapCursor(p.display,source_map,mask_map,&foreground,&background,image.hotspot_x,image.hotspot_y);
+    XFreePixmap(p.display,source_map);XFreePixmap(p.display,mask_map);
+    if(!cursor)return {};
+    p.cursors[p.cursor_count++]=cursor;
+    return static_cast<WindowCursorHandle>(p.cursor_count);
+}
+void LinuxWindow::use_cursor(std::optional<WindowCursorHandle> handle){
+    auto& p=*impl_;
+    if(handle&&(!*handle||*handle>p.cursor_count))throw odh::FormatError("X11: invalid local cursor handle");
+    p.require_alive();
+    if(handle==p.active_cursor)return;
+    if(handle)XDefineCursor(p.display,p.window,p.cursors[*handle-1]);
+    else XUndefineCursor(p.display,p.window);
+    p.active_cursor=handle;XFlush(p.display);
+}
 
 void LinuxWindow::resize(std::uint32_t width, std::uint32_t height) {
     auto& p = *impl_;
@@ -320,8 +377,17 @@ WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
     for (unsigned count = 0; count < 4096 && XPending(p.display); ++count) {
         XEvent event{};
         XNextEvent(p.display, &event);
+        // MappingNotify belongs to the display, not our drawable. Refresh
+        // Xlib's key-symbol cache before filtering by window so layout changes
+        // and newly mapped accented characters reach the text input method.
+        if(event.type==MappingNotify){XRefreshKeyboardMapping(&event.xmapping);continue;}
         if (event.xany.window != p.window) continue;
+        if(event.type==LeaveNotify||event.type==FocusOut){
+            p.pointer_position.reset();p.right_press_origin.reset();p.primary_held=false;
+        }
+        if(event.type==FocusIn)p.focused=true;
         if (event.type == FocusOut) {
+            p.focused=false;result.pointer_cancelled=true;
             p.key_down.fill(false);
             if (p.input_context) XUnsetICFocus(p.input_context);
         }
@@ -363,14 +429,36 @@ WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
             event.xclient.format == 32 &&
             static_cast<Atom>(event.xclient.data.l[0]) == p.delete_message)
             p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::window_manager_close);
+        if(p.focused&&(event.type==ButtonPress||event.type==ButtonRelease)){
+            p.pointer_position=std::array<std::int32_t,2>{event.xbutton.x,event.xbutton.y};
+            if(event.xbutton.button==Button1)p.primary_held=event.type==ButtonPress;
+            if(event.xbutton.button==Button3){
+                if(event.type==ButtonPress)p.right_press_origin=p.pointer_position;
+                else p.right_press_origin.reset();
+            }
+        }else if(p.focused&&event.type==MotionNotify)
+            p.pointer_position=std::array<std::int32_t,2>{event.xmotion.x,event.xmotion.y};
         if (event.type == ButtonPress && event.xbutton.button == Button1) {
             result.action = true;
             result.primary_click=std::array<std::int32_t,2>{event.xbutton.x,event.xbutton.y};
         }
+        if(event.type==ButtonPress&&event.xbutton.button==Button4){
+            --result.dialog_scroll_delta;if(p.focused)--result.catalog_wheel_steps;
+        }
+        if(event.type==ButtonPress&&event.xbutton.button==Button5){
+            ++result.dialog_scroll_delta;if(p.focused)++result.catalog_wheel_steps;
+        }
+        if((event.type==ButtonPress||event.type==ButtonRelease)&&event.xbutton.button==Button1)
+            append_window_pointer_event(result,{event.type==ButtonPress?WindowPointerKind::press:WindowPointerKind::release,
+                event.xbutton.x,event.xbutton.y,(event.xbutton.state&ShiftMask)!=0,(event.xbutton.state&ControlMask)!=0});
+        if(event.type==MotionNotify)
+            result.pointer_motion=std::array<std::int32_t,2>{event.xmotion.x,event.xmotion.y};
+        if(event.type==MotionNotify)
+            append_window_pointer_event(result,{WindowPointerKind::motion,event.xmotion.x,event.xmotion.y,
+                (event.xmotion.state&ShiftMask)!=0,(event.xmotion.state&ControlMask)!=0});
         if (event.type == ConfigureNotify) result.redraw = true;
         if (event.type == Expose && p.alive && event.xexpose.count == 0) {
-            result.redraw = true;
-            XPutImage(p.display, p.window, p.gc, p.image, 0, 0, 0, 0, p.width, p.height);
+            p.expose_pending=true;
         }
         if (event.type == KeyRelease) {
             bool repeat_pair = false;
@@ -416,6 +504,12 @@ WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
                 append_window_text_utf8(result,
                     std::string_view(committed.data(), static_cast<std::size_t>(length)));
         }
+        if(event.xkey.state&ShiftMask){
+            if(key==XK_Left){--result.camera_steps[0];continue;}
+            if(key==XK_Right){++result.camera_steps[0];continue;}
+            if(key==XK_Up){--result.camera_steps[1];continue;}
+            if(key==XK_Down){++result.camera_steps[1];continue;}
+        }
         switch (key) {
         case XK_Escape: p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::escape_key); break;
         case XK_BackSpace: if (!held) result.interrupt = true; break;
@@ -429,19 +523,46 @@ WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
             break;
         case XK_Tab: result.interaction_selection_delta += (event.xkey.state & ShiftMask) ? -1 : 1; break;
         case XK_ISO_Left_Tab: --result.interaction_selection_delta; break;
+        case XK_Prior: --result.dialog_scroll_delta; --result.catalog_page_steps; break;
+        case XK_Next: ++result.dialog_scroll_delta; ++result.catalog_page_steps; break;
         case XK_p: case XK_P: if (!held) result.pause = true; break;
+        case XK_1: if(!held) result.simulation_speed=1; break;
+        case XK_2: if(!held) result.simulation_speed=3; break;
+        case XK_3: if(!held) result.simulation_speed=10; break;
         case XK_Left: --result.rotation; break;
         case XK_Right: ++result.rotation; break;
+        case XK_F1: if(!held) result.live_mode=true; break;
+        case XK_F2: if(!held) result.buy_mode=true; break;
+        case XK_F3: if(!held) result.build_mode=true; break;
+        case XK_F5: if(!held) result.options_mode=true; break;
+        case XK_Delete: if(!held) result.sell_object=true; break;
+        case XK_comma: case XK_less: if(!held) --result.object_rotation; break;
+        case XK_period: case XK_greater: if(!held) ++result.object_rotation; break;
+        case XK_Home: if (!held) result.walls_down = false; break;
+        case XK_End: if (!held) result.walls_down = true; break;
         case XK_plus: case XK_equal: case XK_KP_Add: case XK_Up: ++result.zoom; break;
         case XK_minus: case XK_underscore: case XK_KP_Subtract: case XK_Down: --result.zoom; break;
         default: break;
         }
     }
+    // A queued Expose can precede DestroyNotify even though the server has
+    // already destroyed the drawable. Preserve cached repaint behavior only
+    // after draining the queue and observing that this window remains alive.
+    // A bounded poll with events still pending must not paint ahead of them.
+    if(p.expose_pending&&p.alive&&!XPending(p.display)){
+        result.redraw=true;p.expose_pending=false;
+        XPutImage(p.display,p.window,p.gc,p.image,0,0,0,0,p.width,p.height);
+    }
+    if(!p.alive)p.expose_pending=false;
+    result.pointer_position=p.pointer_position;result.right_press_origin=p.right_press_origin;
+    result.primary_held=p.primary_held;
     result.quit_reason = p.quit_reason;
     result.quit = p.quit_reason != WindowQuitReason::none;
     XFlush(p.display);
     return result;
 }
+
+bool LinuxWindow::alive() const noexcept { return impl_->alive; }
 
 WindowQuitReason LinuxWindow::quit_reason() const noexcept {
     return impl_->quit_reason;
@@ -450,6 +571,11 @@ WindowQuitReason LinuxWindow::quit_reason() const noexcept {
 void LinuxWindow::clear_escape_quit_reason() noexcept {
     if (impl_->quit_reason == WindowQuitReason::escape_key)
         impl_->quit_reason = WindowQuitReason::none;
+}
+
+bool LinuxWindow::acknowledge_window_close_request() noexcept {
+    if(!impl_->alive||impl_->quit_reason!=WindowQuitReason::window_manager_close)return false;
+    impl_->quit_reason=WindowQuitReason::none;return true;
 }
 
 void LinuxWindow::set_title(const std::string& title) {

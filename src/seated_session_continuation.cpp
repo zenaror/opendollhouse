@@ -72,19 +72,25 @@ std::array<std::uint8_t,32> session_loaded_bank_fingerprint(const RoutineSet& ro
     // failures. The map keyspace bounds routine count, while vector lengths
     // are serialized without narrowing and SHA-256 checks its own length bound.
     static_assert(sizeof(std::size_t)<=sizeof(std::uint64_t),"loaded bank length must fit uint64");
-    Sha256 hash;static constexpr char domain[]="ODH-LOADED-CODE-BANK-V1";
+    const bool named=std::any_of(routines.begin(),routines.end(),[](const auto& entry){
+        return entry.first.scope==RoutineScope::named_private||entry.first.scope==RoutineScope::named_semiglobal;
+    });
+    Sha256 hash;static constexpr char legacy_domain[]="ODH-LOADED-CODE-BANK-V1";
+    static constexpr char named_domain[]="ODH-LOADED-CODE-BANK-V2";
     const auto length=[&](std::size_t value){
         const auto count=static_cast<std::uint64_t>(value);
         std::array<std::uint8_t,8> bytes{};
         for(unsigned n=0;n<8;++n)bytes[n]=static_cast<std::uint8_t>(count>>(n*8));
         hash.update(bytes.data(),bytes.size());
     };
-    hash.update(domain,sizeof(domain));length(routines.size());
+    if(named)hash.update(named_domain,sizeof(named_domain));
+    else hash.update(legacy_domain,sizeof(legacy_domain));
+    length(routines.size());
     for(const auto& item:routines){
         const auto& key=item.first;const auto& bhav=item.second;
-        if((key.scope!=RoutineScope::private_object&&key.scope!=RoutineScope::semiglobal)||
-           routine_key(key.id).scope!=key.scope)
+        if(key.scope==RoutineScope::global||!routine_key_valid(key))
             throw FormatError("loaded owner bank has invalid native owner routine keys");
+        if(named){const auto scope=static_cast<std::uint8_t>(key.scope);hash.update(&scope,1);}
         digest_u16(hash,key.id);digest_u16(hash,bhav.version);
         hash.update(bhav.header.data(),bhav.header.size());
         const std::uint8_t metadata_present=bhav.metadata?1:0;hash.update(&metadata_present,1);
@@ -113,6 +119,73 @@ const SessionSeatedContinuation* find_seated_session_continuation(const SessionB
     return found==bundle.household_seated_continuations.end()?nullptr:&*found;
 }
 
+void validate_generic_session_posture(const SessionBundle& bundle) {
+    if(!bundle.generic_execution)throw FormatError("generic posture requires GEXP execution authority");
+    const auto validate=[&](const SessionRuntimeEntity& state){
+        const auto& actor=entity(bundle,state.id);
+        const auto& queue=state.controllers.interactions;
+        // This additional posture contract concerns physical containment.
+        // Ordinary unbound GEXP actors retain the existing codec's complete
+        // execution validation, including minimal source-independent fixtures.
+        if(!actor.attachment)return;
+        if(actor.kind!=EntityKind::avatar||!actor.generation||!actor.definition||actor.person_data.empty()||
+           queue.actor_id!=actor.id||queue.actor_generation!=actor.generation||queue.run_generation!=state.vm.run_generation)
+            throw FormatError("generic posture actor/controller identity is stale");
+        // Posture is source-writable state. An actual container is independently
+        // authoritative during intermediate EP26 instructions as well as after
+        // the route returns; no completion record is manufactured here.
+        // VMRoutingFrame.STAND_FUNC explicitly accepts Posture.Sitting with
+        // no Container and resets it when routing next runs. Preserve that
+        // writable intermediate source state rather than inventing a seat.
+        const auto& attachment=*actor.attachment;
+        const auto& parent=entity(bundle,attachment.container);
+        if(parent.id==actor.id||!parent.generation||!parent.definition||!attachment.positioned||
+           attachment.slot>=parent.slots.size()||parent.slots[attachment.slot]!=actor.id||
+           !actor.position||!parent.position||actor.position->x!=parent.position->x||
+           actor.position->y!=parent.position->y||actor.position->level!=parent.position->level)
+            throw FormatError("generic posture physical containment is nonreciprocal or stale");
+        const auto known_owner=[&](CodeOwner owner){
+            if(owner==0||owner==static_cast<CodeOwner>(actor.id)||std::any_of(state.resource_owners.begin(),state.resource_owners.end(),
+                [&](const auto& bank){return bank.owner==owner&&bank.resource_guid&&nonzero(bank.routine_fingerprint);}))return true;
+            // DYNO retains its existing exact route/resource/VM validation in
+            // the bundle codec; it is not a GEXP bank alias. Physical seating
+            // must not erase a legitimate already-owned Go Here ancestry.
+            if(!state.route&&(!state.route_stack||state.route_stack->jobs.empty()))return false;
+            return std::any_of(state.dynamic_action_owners.begin(),state.dynamic_action_owners.end(),[&](const auto& bank){
+                const auto target=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
+                    [&](const auto& value){return value.id==bank.target_id;});
+                return bank.owner==owner&&nonzero(bank.routine_fingerprint)&&target!=bundle.world.entities.end()&&
+                    target->generation==bank.target_generation&&target->definition&&target->definition->guid==bank.target_guid;
+            });
+        };
+        for(const auto& frame:state.vm.stack)if(!known_owner(frame.context.code_owner))
+            throw FormatError("generic posture frame has no installed resource bank");
+        for(const auto& action:queue.actions)if(!known_owner(action.call.context.code_owner))
+            throw FormatError("generic posture queued action has no installed resource bank");
+        if(state.playback.carry&&!known_owner(state.playback.carry->code_owner))
+            throw FormatError("generic posture carry has no installed resource bank");
+        const auto route=[&](const auto& job){
+            if(!job.external_frame_sitting)return;
+            const auto* call=job.external_frame_call?&*job.external_frame_call:nullptr;
+            if(!job.external_frame_active||!job.selected_sitting_object||!call||
+               call->context.caller!=actor.id||call->context.callee!=*job.selected_sitting_object||
+               call->context.stack_object!=*job.selected_sitting_object||!known_owner(call->context.code_owner))
+                throw FormatError("generic chair continuation has no exact installed EP26 call");
+            const auto& chair=entity(bundle,*job.selected_sitting_object);
+            if(!chair.entry_points||chair.entry_points->size()<=26||call->key.id!=chair.entry_points->at(26).action)
+                throw FormatError("generic chair continuation differs from actual EP26");
+            if(job.source_choices){const auto& selected=job.source_choices->selected;
+                if(!selected.chair||selected.chair->id!=chair.id||selected.chair->generation!=chair.generation)
+                    throw FormatError("generic chair continuation identity is stale");}
+        };
+        if(state.route_stack)for(const auto& job:state.route_stack->jobs)route(job);
+        // A local route cannot own an external child; its complete validation
+        // remains in the ordinary RouteStack/VM codec, including return ABI.
+    };
+    for(const auto& state:bundle.runtime_entities)validate(state);
+    for(const auto& npc:bundle.npc_avatars)validate(npc.runtime);
+}
+
 void validate_seated_session_continuations(const SessionBundle& bundle) {
     if(bundle.seated_continuation){
         if(!bundle.household_roster.empty()||!bundle.household_seated_continuations.empty())
@@ -126,6 +199,7 @@ void validate_seated_session_continuations(const SessionBundle& bundle) {
         if(c.actor_id<=previous)throw FormatError("household seated actor roster is duplicated or unordered");
         validate_seated_session_continuation(bundle,c);previous=c.actor_id;
     }
+    if(bundle.generic_execution){validate_generic_session_posture(bundle);return;}
     if(!bundle.household_roster.empty())for(const auto& state:bundle.runtime_entities){
         const auto& actor=entity(bundle,state.id);
         const bool seated=!actor.person_data.empty()&&actor.person_data[0]==1;
@@ -255,8 +329,7 @@ void validate_seated_session_continuation(const SessionBundle& bundle,const Sess
             !(animation&&value.instruction.instruction.opcode==44)))
             throw FormatError("seated continuation has a pending action, route or foreign animation");
         const auto& frame=state.vm.stack[value.instruction.depth-1];
-        if(frame.context.caller!=value.context.caller||frame.context.callee!=value.context.callee||
-           frame.context.stack_object!=value.context.stack_object||frame.context.code_owner!=value.context.code_owner)
+        if(!vm_context_equal(frame.context,value.context))
             throw FormatError("seated continuation pending instruction does not match its owning frame");
         if(value.context.code_owner!=static_cast<CodeOwner>(c.actor_id)&&
            (!animation||value.instruction.instruction.opcode!=44))

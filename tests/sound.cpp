@@ -22,7 +22,98 @@ odh::PrimitiveOutcome invoke(const odh::VmPrimitive& primitive,const odh::Instru
     return primitive(frame(),i,{}, {nullptr,0});
 }
 }
+namespace {
+void bound_play_sound_contract(){
+    odh::World world;require(world.create(1,odh::EntityKind::object,{1})&&world.create(2,odh::EntityKind::object,{2}),"create exact PlaySound owners");
+    odh::VmFrame write;write.context.caller=1;require(world.write(write,0,0,11),"seed caller sound variables");
+    write.context.caller=2;require(world.write(write,0,0,7)&&world.write(write,0,1,8),"seed original StackObject sound variables");
+    const odh::WorldEntityReference caller{1,world.find(1)->generation},old{2,world.find(2)->generation};
+    require(world.remove_retaining_body(old)&&world.create(2,odh::EntityKind::object,{2}),"retain original source while reusing its numeric ID");
+    write.context.caller=2;require(world.write(write,0,0,70)&&world.write(write,0,1,80),"seed different replacement sound variables");
+    const auto replacement=world.find(2)->generation;const auto key=odh::routine_key(4096);
+    unsigned resolves=0,submits=0;odh::SoundRequest captured{};std::string status;
+    const odh::SoundResolver resource=[&](const auto& frame,std::uint16_t event)->std::optional<odh::SoundEvent>{
+        ++resolves;require(frame.context.code_owner==0&&event==0x1234,"resource resolver keeps CodeOwner and exact event ID");
+        return odh::SoundEvent{"bound_source_fixture",0};};
+    const odh::SoundSink sink=[&](const auto& request){++submits;captured=request;return true;};
+    const auto observe=[&](const auto& request,const auto& value){captured=request;status=value;};
+    const auto run=[&](std::uint8_t flags,odh::VmContext context,const odh::VmPrimitive& handler){
+        auto op=instruction(flags);op.operands[2]=0;op.operands[3]=1;
+        odh::Vm vm({{key,{0x8002,{op},{},odh::Bhav::Metadata{0,0,0,0}}}},world.vm_memory(),{},handler);
+        vm.start(key,context,{},true);return vm.run_synchronous_check(10,handler).status;
+    };
+    const auto context=[&](std::uint64_t target){return odh::VmContext{1,1,2,0,true,caller.generation,caller.generation,target};};
+    const auto play=odh::sound_primitive(world,resource,sink,observe);
+    require(run(2,context(old.generation),play)==odh::VmStatus::returned_true&&status=="submitted"&&submits==1&&
+        captured.source_variables&&captured.source_variables->generation==old.generation&&
+        captured.source_variables->fields==std::vector<std::int32_t>({0,7,8})&&captured.sample_rate==256,
+        "lifecycle query submits original bound StackObject generation and variables, never its live replacement");
+    require(run(2,context(replacement),play)==odh::VmStatus::returned_true&&submits==2&&
+        captured.source_variables->generation==replacement&&captured.source_variables->fields==std::vector<std::int32_t>({0,70,80}),
+        "a bound replacement has its own distinct submission snapshot");
+    require(run(0,context(old.generation),play)==odh::VmStatus::returned_true&&submits==3&&
+        captured.source_variables->generation==caller.generation&&captured.source_variables->fields==std::vector<std::int32_t>({0,11}),
+        "flags without StackObject bit use exact bound Caller source");
+    const auto before=resolves;
+    require(run(2,context(0),play)==odh::VmStatus::returned_true&&status=="missing_owner"&&resolves==before&&submits==3,
+        "known nil bound owner skips resolver/backend despite a same-ID live replacement");
+    const auto missing=odh::sound_primitive(world,[](const auto&,auto)->std::optional<odh::SoundEvent>{return {};},sink,observe);
+    require(run(2,context(replacement),missing)==odh::VmStatus::returned_true&&status=="missing_resource"&&submits==3,
+        "absent exact FWAV stays diagnosed and cannot invent an audio submission");
+    const auto silent=odh::sound_primitive(world,resource,{},observe);
+    require(run(2,context(replacement),silent)==odh::VmStatus::returned_true&&status=="skipped_no_backend"&&submits==3,
+        "known no-audio host resolves resources without claiming actual playback");
+    require(world.collect_retained_bodies({}),"release old source body after its owning execution is gone");
+    const auto last_resolves=resolves;
+    require(run(2,context(old.generation),play)==odh::VmStatus::fault&&status=="unavailable_owner_reference"&&
+        resolves==last_resolves&&submits==3,"unavailable bound owner never resolves or submits using its replacement");
+}
+void stop_all_sounds_contract(){
+    odh::World world;
+    require(world.create(1,odh::EntityKind::object,{})&&world.create(2,odh::EntityKind::object,{}),"create exact sound owners");
+    const odh::WorldEntityReference caller{1,world.find(1)->generation},original{2,world.find(2)->generation};
+    std::vector<odh::WorldEntityReference> stopped;
+    const auto handler=odh::stop_all_sounds_primitive(world,[&](auto owner){stopped.push_back(owner);});
+    const auto key=odh::routine_key(4096);
+    const auto code=[&](std::uint8_t flags){return odh::RoutineSet{{key,{0x8002,
+        {{48,254,255,{flags,255,255,255,255,255,255,255}}},{},odh::Bhav::Metadata{0,0,0,0}}}};};
+    const auto run=[&](std::uint8_t flags,odh::VmContext context,bool check,const odh::VmPrimitive& primitive){
+        odh::Vm vm(code(flags),world.vm_memory(),{},primitive);vm.start(key,context,{},true);
+        return check?vm.run_synchronous_check(10,primitive).status:vm.run(10);
+    };
+    for(const auto flags:{std::uint8_t{0},std::uint8_t{1},std::uint8_t{2},std::uint8_t{255}}){
+        stopped.clear();require(run(flags,{1,1,2},false,handler)==odh::VmStatus::returned_true&&stopped.size()==1,
+            "authenticated Main StopAllSounds reaches its actual backend");
+        const auto expected=flags==1?original:caller;
+        require(stopped[0].id==expected.id&&stopped[0].generation==expected.generation,
+            "only exact flags1 selects StackObject; other flag bytes select Caller");
+    }
+    require(world.remove_retaining_body(original)&&world.create(2,odh::EntityKind::object,{}),"retain old sound owner beside reused numeric ID");
+    const auto context=[&](std::uint64_t generation){return odh::VmContext{1,1,2,0,true,caller.generation,caller.generation,generation};};
+    stopped.clear();require(run(1,context(original.generation),true,handler)==odh::VmStatus::returned_true&&stopped.size()==1&&
+        stopped[0].generation==original.generation&&stopped[0].generation!=world.find(2)->generation,
+        "synchronous lifecycle query stops the retained original owner, never its numeric replacement");
+    stopped.clear();require(run(1,context(0),true,handler)==odh::VmStatus::returned_true&&stopped.empty(),
+        "bound nil StackObject remains nil even beside a live same-ID object");
+    const auto no_audio=odh::stop_all_sounds_primitive(world);
+    require(run(0,{1,1,2},true,no_audio)==odh::VmStatus::returned_true,"known no-audio backend has no owner threads to stop");
+    require(world.collect_retained_bodies({}),"collect no-longer-rooted original sound owner");
+    stopped.clear();require(run(1,context(original.generation),false,handler)==odh::VmStatus::fault&&stopped.empty(),
+        "unavailable bound generation cannot fall back to a live replacement or fabricate success");
+    const odh::VmPrimitive authenticate=[&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+        auto stale=dispatch;++stale.ticket;
+        require(handler(frame,instruction,temps,stale).disposition==odh::PrimitiveDisposition::unsupported,"forged sound-stop ticket rejected");
+        auto changed=frame;++changed.context.caller_generation;
+        require(handler(changed,instruction,temps,dispatch).disposition==odh::PrimitiveDisposition::unsupported,"changed owner generation cannot reuse dispatch proof");
+        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+    };
+    stopped.clear();require(run(0,{1,1,2},true,authenticate)==odh::VmStatus::returned_true&&stopped.empty(),
+        "rejected sound-stop proofs have no backend effects");
+}
+}
 int main() {try {
+    stop_all_sounds_contract();
+    bound_play_sound_contract();
     const auto empty=parse(std::string(1,'\0'),0);
     require(empty.name.empty() && empty.remaining_bytes==0,"empty bounded event");
     const std::string raw("a\xFF\x80\0tail\0",9);

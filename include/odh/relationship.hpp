@@ -56,6 +56,9 @@ public:
     RelationshipState(RelationshipState&&) = delete;
     RelationshipState& operator=(RelationshipState&&) = delete;
     RelationshipSnapshot snapshot() const;
+    // Read only the selected neighbor's directional pairs for a UI panel.
+    // No matrix mutation or implicit zero-valued relationship is introduced.
+    std::vector<RelationshipPairSnapshot> neighbor_pairs(std::int16_t source) const;
     // Fresh destination only, including for an empty snapshot. Saved limits
     // must fit the destination's configured caps and become its runtime limits.
     // Invalid state returns false; allocation exceptions propagate. Both leave
@@ -69,6 +72,23 @@ public:
     // no clamp and all tails preserved; caller retains the raw saved snapshot.
     // Allocation exceptions propagate with all matrix/counts unchanged.
     bool import_object_relationships(const World&, const std::vector<SavedObjectRelationships>&);
+    // Retire one OBJECT source identity and remove inbound OBJECT pairs whose
+    // ushort target is id. Neighbor matrices and other source identities are
+    // retained; inbound removal also applies to those other OBJECT identities.
+    // The host validates the live World generation first. Valid repeated calls
+    // are idempotent; invalid IDs
+    // return false without mutation. Performs no allocation or I/O.
+    bool retire_object_identity(std::int16_t id, std::uint64_t generation) noexcept;
+    // Remove a deleted Sim's neighbor source and inbound neighbor pairs only.
+    // Object matrices and unrelated neighbor values survive. Idempotent, no I/O.
+    bool retire_neighbor_identity(std::int16_t id) noexcept;
+    // Actual Delete preserves outgoing pairs to OTHER bodies. Indexed sources
+    // and the exact retiring source lose the numeric inbound pair (including
+    // self-target); other retained bodies stay untouched.
+    bool remove_inbound_object_references(const World&,std::int16_t id,std::uint64_t generation) noexcept;
+    // GC removes only this collected old source, never inbound pairs of a
+    // replacement live object that happens to have reused its numeric ID.
+    bool forget_object_source(std::int16_t id,std::uint64_t generation) noexcept;
     // State and World must outlive the returned callback/bound VM. Captured
     // memory/observer callbacks are owned. Callbacks must not reenter or mutate
     // this relationship state; observers must not throw;
@@ -83,6 +103,11 @@ public:
     std::optional<std::int16_t> value(std::int16_t source, std::int32_t target, std::size_t index) const;
     std::optional<std::int16_t> object_value(const World&, std::int16_t source,
         std::int16_t target, std::size_t index) const;
+    // Pinned FreeSO7e76 scope24 field5. Count reciprocal neighbor score0>=50
+    // against this mutable matrix, not immutable NBRS. Raw target keys narrow
+    // to signed low16 neighbor IDs. Empty accessed score vectors are unknown
+    // (the reference throws); no pairs, values or source entries are created.
+    std::optional<std::int16_t> mutual_neighbor_friend_count(const NeighborContext&,std::int16_t neighbor) const;
     std::size_t source_count() const { return sources_.size(); }
     std::size_t pair_count() const { return pairs_; }
     std::size_t value_count() const { return values_; }

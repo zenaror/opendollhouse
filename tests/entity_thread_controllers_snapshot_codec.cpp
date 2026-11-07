@@ -158,11 +158,13 @@ void same(const odh::EntityThreadControllersSnapshot& left,
     const auto& a = left.sleep; const auto& b = right.sleep;
     require(a.actor.has_value() == b.actor.has_value() && a.job.has_value() == b.job.has_value() &&
         a.last_tick == b.last_tick && a.clock == b.clock && a.interrupted == b.interrupted &&
-        a.notify_resume == b.notify_resume && a.diagnostic == b.diagnostic, "Sleep fields round-trip");
+        a.notify_resume == b.notify_resume && a.diagnostic == b.diagnostic &&
+        left.schedule_idle_start==right.schedule_idle_start,"Sleep/controller fields round-trip");
     if (a.actor) require(a.actor->id == b.actor->id && a.actor->generation == b.actor->generation &&
         a.actor->run_generation == b.actor->run_generation, "Sleep actor round-trips");
     if (a.job) require(a.job->ticket == b.job->ticket && a.job->idle_start == b.job->idle_start &&
-        a.job->deadline == b.job->deadline && a.job->argument == b.job->argument, "Sleep job round-trips");
+        a.job->deadline == b.job->deadline && a.job->argument == b.job->argument &&
+        a.job->next_evaluation==b.job->next_evaluation, "Sleep job round-trips");
     const auto& x = left.interactions; const auto& y = right.interactions;
     require(x.actor_id == y.actor_id && x.capacity == y.capacity &&
         x.actor_generation == y.actor_generation && x.run_generation == y.run_generation &&
@@ -185,11 +187,12 @@ void same(const odh::EntityThreadControllersSnapshot& left,
             p.call.context.caller == q.call.context.caller && p.call.context.callee == q.call.context.callee &&
             p.call.context.stack_object == q.call.context.stack_object &&
             p.call.context.code_owner == q.call.context.code_owner && p.call.arguments == q.call.arguments &&
-            p.call.return_mode == q.call.return_mode && p.queue_uid == q.queue_uid &&
+            p.call.return_mode == q.call.return_mode&&p.call.exact_arguments==q.call.exact_arguments&&
+            p.argument_mode==q.argument_mode&&p.check_context==q.check_context&&p.queue_uid == q.queue_uid &&
             p.priority == q.priority && p.mode == q.mode && p.flags == q.flags &&
             p.notify_idle == q.notify_idle && p.check.has_value() == q.check.has_value() &&
             (!p.check || (p.check->id == q.check->id && p.check->scope == q.check->scope)) &&
-            p.check_permissions == q.check_permissions, "queued call fields round-trip");
+            p.check_permissions == q.check_permissions&&p.interaction_number==q.interaction_number, "queued call fields round-trip");
     }
     if (x.active) require(x.active->uid == y.active->uid && x.active->ticket == y.active->ticket,
                           "active action round-trips");
@@ -205,6 +208,230 @@ int main() {
     try {
         const auto state = fixture();
         const auto encoded = odh::encode_entity_thread_controllers_snapshot(state);
+        require(encoded[0]==5&&encoded[1]==0,"legacy schedule keeps controller wire version5");
+        require(odh::encode_entity_thread_controllers_snapshot(
+            odh::decode_entity_thread_controllers_snapshot(encoded))==encoded,
+            "legacy schedule reencodes byte-identically");
+        {
+            auto labeled=state;
+            auto& action=labeled.interactions.actions.front();
+            action.label=odh::InteractionLabel{"Voltar para casa",{odh::InteractionLabelKind::script_string,
+                14,"GameData/Objects/Objects.far","PhonePay.iff",302,2}};
+            const auto bytes=odh::encode_entity_thread_controllers_snapshot(labeled);
+            const auto restored=odh::decode_entity_thread_controllers_snapshot(bytes);
+            const auto& saved=restored.interactions.actions.front();
+            require(bytes[0]==14&&saved.label&&saved.label->text=="Voltar para casa"&&saved.label->origin.language==14&&
+                saved.label->origin.kind==odh::InteractionLabelKind::script_string&&saved.label->origin.table==302&&
+                saved.label->origin.index==2&&saved.label->origin.asset=="PhonePay.iff"&&
+                saved.label->origin.resource=="GameData/Objects/Objects.far"&&saved.call.arguments==action.call.arguments&&
+                !restored.interactions.actions.back().label&&odh::encode_entity_thread_controllers_snapshot(restored)==bytes,
+                "chosen localized action label and original call survive reopening independently of another queued action");
+            action.label->origin.language=0;
+            rejects([&]{odh::encode_entity_thread_controllers_snapshot(labeled);},"unidentified source language rejected");
+            action.label->origin.language=14;action.label->origin.resource="../PhonePay.iff";
+            rejects([&]{odh::encode_entity_thread_controllers_snapshot(labeled);},"label resource traversal rejected");
+            action.label->origin.resource="GameData/Objects/Objects.far";action.label->text.assign(2049,'x');
+            rejects([&]{odh::encode_entity_thread_controllers_snapshot(labeled);},"oversize label rejected");
+        }
+        {
+            auto named=state;named.interactions.actions.front().call.key=odh::named_routine_key(400,false);
+            named.interactions.actions.front().check=odh::named_routine_key(0,true);
+            const auto bytes=odh::encode_entity_thread_controllers_snapshot(named);
+            const auto restored=odh::decode_entity_thread_controllers_snapshot(bytes);
+            require(bytes[0]==13&&bytes[1]==0&&restored.interactions.actions.front().call.key.scope==odh::RoutineScope::named_private&&
+                restored.interactions.actions.front().call.key.id==400&&restored.interactions.actions.front().check->id==0&&
+                odh::encode_entity_thread_controllers_snapshot(restored)==bytes,
+                "controller v13 retains physical named scope and exact ushort IDs including zero");
+            auto legacy=bytes;legacy[0]=12;
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(legacy);},"legacy controller wire cannot silently reinterpret named entry scopes");
+        }
+        {
+            auto automatic=state;auto& action=automatic.interactions.actions.front();
+            action.argument_mode=odh::InteractionArgumentMode::source_explicit;action.call.exact_arguments=true;
+            action.call.arguments={19,0,0,0};action.check_permissions=true;action.check_context=odh::InteractionCheckContext::autonomous;
+            const auto bytes=odh::encode_entity_thread_controllers_snapshot(automatic);
+            const auto restored=odh::decode_entity_thread_controllers_snapshot(bytes);
+            require(bytes[0]==11&&bytes[1]==0&&restored.interactions.actions.front().check_context==odh::InteractionCheckContext::autonomous&&
+                restored.interactions.actions.front().call.arguments==std::vector<std::int16_t>{19,0,0,0},"controller11 persists automatic eligibility independently of authored action arguments");
+            same(automatic,restored);require(odh::encode_entity_thread_controllers_snapshot(restored)==bytes,"automatic eligibility controller archive reencodes identically");
+            for(std::size_t size=0;size<bytes.size();++size){auto prefix=bytes;prefix.resize(size);
+                rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(prefix);},"every truncated automatic eligibility controller archive rejects");}
+            auto old=automatic;old.interactions.actions.front().check_context=odh::InteractionCheckContext::default_zero;
+            const auto legacy=odh::encode_entity_thread_controllers_snapshot(old);const auto old_restored=odh::decode_entity_thread_controllers_snapshot(legacy);
+            require(legacy[0]==10&&old_restored.interactions.actions.front().check_context==odh::InteractionCheckContext::default_zero&&
+                odh::encode_entity_thread_controllers_snapshot(old_restored)==legacy,"older exact-argument saves retain zero check context and identical bytes");
+            auto single=automatic;single.interactions.actions.resize(1);single.interactions.active.reset();
+            single.interactions.suspended_active.clear();single.interactions.wait.reset();single.interactions.completion.reset();single.interactions.resume_tick.reset();
+            single.interactions.diagnostic.clear();single.schedule_idle_start.reset();
+            auto zero_context=odh::encode_entity_thread_controllers_snapshot(single);
+            // Last action context precedes the fixed empty interaction tail (17 bytes).
+            require(zero_context.size()>18&&zero_context[zero_context.size()-18]==1,"single-action v11 eligibility wire marker located");
+            zero_context[zero_context.size()-18]=0;
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(zero_context);},"v11 with only default contexts cannot silently downgrade to v10");
+            zero_context[zero_context.size()-18]=2;
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(zero_context);},"unknown wire eligibility context rejects");
+            auto invalid=automatic;invalid.interactions.actions.front().check_context=static_cast<odh::InteractionCheckContext>(2);
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},"unknown eligibility context rejects");
+            invalid=automatic;invalid.interactions.actions.front().check_permissions=false;
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},"automatic eligibility cannot silently disable original permissions");
+            invalid=automatic;invalid.interactions.actions.front().call.arguments.pop_back();
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},"automatic producer retains original four-argument action extent");
+        }
+        {
+            for(const auto mode:{odh::InteractionArgumentMode::source_null,odh::InteractionArgumentMode::source_explicit}){
+                auto exact=state;auto& action=exact.interactions.actions.front();action.argument_mode=mode;
+                action.call.exact_arguments=true;action.call.arguments=mode==odh::InteractionArgumentMode::source_null?
+                    std::vector<std::int16_t>(4,0):std::vector<std::int16_t>{};
+                const auto bytes=odh::encode_entity_thread_controllers_snapshot(exact);
+                const auto restored=odh::decode_entity_thread_controllers_snapshot(bytes);
+                require(bytes.front()==10&&restored.interactions.actions.front().argument_mode==mode&&
+                    restored.interactions.actions.front().call.arguments==action.call.arguments&&
+                    !restored.interactions.actions.back().call.exact_arguments,
+                    "conditional controller10 preserves source null/explicit Args alongside legacy queued calls");
+                same(exact,restored);
+                require(odh::encode_entity_thread_controllers_snapshot(restored)==bytes,
+                    "exact source action controller archive reencodes canonically");
+                for(std::size_t size=0;size<bytes.size();++size){auto truncated=bytes;truncated.resize(size);
+                    rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(truncated);},
+                        "every truncated source Args controller archive rejected");}
+                auto broken=bytes;broken[0]=12;
+                rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                    "future version beyond exact source Args rejected");
+                auto invalid=exact;invalid.interactions.actions.front().call.exact_arguments=false;
+                rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+                    "source Args mode cannot hide a padded call extent");
+                invalid=exact;invalid.interactions.actions.front().argument_mode=odh::InteractionArgumentMode::legacy_metadata;
+                rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+                    "exact action extent requires explicit source Args provenance");
+            }
+            auto null_args=state;auto& action=null_args.interactions.actions.front();
+            action.argument_mode=odh::InteractionArgumentMode::source_null;action.call.exact_arguments=true;action.call.arguments={};
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(null_args);},
+                "source null Args requires four explicit zeros in the normalized call");
+            action.call.arguments={0,0,7,0};
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(null_args);},
+                "source null Args cannot fabricate nonzero action parameters");
+            action.argument_mode=odh::InteractionArgumentMode::source_explicit;
+            const auto explicit_bytes=odh::encode_entity_thread_controllers_snapshot(null_args);
+            require(odh::decode_entity_thread_controllers_snapshot(explicit_bytes).interactions.actions.front().call.arguments==
+                std::vector<std::int16_t>({0,0,7,0}),"nonnull source Args retains exact provided values");
+            require(odh::encode_entity_thread_controllers_snapshot(state)==encoded,
+                "absent source Args modes preserve existing controller version and bytes");
+        }
+        {
+            for(const std::int32_t number:{std::int32_t{0},std::int32_t{255},std::int32_t{65535},
+                    std::int32_t{-2147483647-1},std::int32_t{2147483647},std::int32_t{-1}}){
+                auto numbered=state;numbered.interactions.actions.front().interaction_number=number;
+                const auto bytes=odh::encode_entity_thread_controllers_snapshot(numbered);
+                const auto restored=odh::decode_entity_thread_controllers_snapshot(bytes);
+                require(bytes[0]==9&&restored.interactions.actions.front().interaction_number==number&&
+                    !restored.interactions.actions.back().interaction_number,
+                    "conditional controller v9 preserves full signed32 provenance and unknown neighboring action");
+                same(numbered,restored);
+                require(odh::encode_entity_thread_controllers_snapshot(restored)==bytes,
+                    "interaction-number controller extension reencodes byte-identically");
+                numbered.interactions.actions.front().interaction_number.reset();
+                require(odh::encode_entity_thread_controllers_snapshot(numbered)==encoded,
+                    "absent interaction-number metadata leaves original controller bytes unchanged");
+            }
+            auto numbered=state;numbered.interactions.actions.front().interaction_number=3;
+            auto bytes=odh::encode_entity_thread_controllers_snapshot(numbered);
+            for(std::size_t size=0;size<bytes.size();++size){auto truncated=bytes;truncated.resize(size);
+                rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(truncated);},
+                    "every truncated v9 interaction provenance snapshot rejected");}
+            auto broken=bytes;broken[0]=11;
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                "future controller version beyond provenance extension rejected");
+            broken=bytes;broken.push_back(0);
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                "v9 interaction provenance trailing bytes rejected");
+        }
+        {
+            auto scheduled=state;
+            scheduled.sleep.job->idle_start=scheduled.sleep.clock;
+            scheduled.sleep.job->next_evaluation=scheduled.sleep.clock+1;
+            const auto scheduled_bytes=odh::encode_entity_thread_controllers_snapshot(scheduled);
+            require(scheduled_bytes[0]==6&&scheduled_bytes.size()==encoded.size()+9,
+                "only scheduled override upgrades codec and adds optional timestamp");
+            same(scheduled,odh::decode_entity_thread_controllers_snapshot(scheduled_bytes));
+            auto bad=scheduled;
+            bad.sleep.job->next_evaluation=bad.sleep.clock;
+            rejects([&]{odh::encode_entity_thread_controllers_snapshot(bad);},"elapsed override rejected");
+            bad=scheduled;bad.sleep.job->next_evaluation=bad.sleep.job->deadline;
+            rejects([&]{odh::encode_entity_thread_controllers_snapshot(bad);},"redundant natural override rejected");
+            bad=scheduled;bad.sleep.job->idle_start--;
+            rejects([&]{odh::encode_entity_thread_controllers_snapshot(bad);},"override must match scheduled next tick");
+            auto broken=scheduled_bytes;broken[54]=2;
+            rejects([&]{odh::decode_entity_thread_controllers_snapshot(broken);},"override boolean must be canonical");
+            broken=scheduled_bytes;broken[0]=5;
+            rejects([&]{odh::decode_entity_thread_controllers_snapshot(broken);},"legacy version cannot consume override bytes");
+        }
+        {
+            auto active_clock=empty_fixture();active_clock.schedule_idle_start=0;
+            auto bytes=odh::encode_entity_thread_controllers_snapshot(active_clock);
+            require(bytes[0]==7&&bytes.size()==odh::encode_entity_thread_controllers_snapshot(empty_fixture()).size()+9,
+                "present zero ScheduleIdleStart selects v7 and appends its value");
+            same(active_clock,odh::decode_entity_thread_controllers_snapshot(bytes));
+            active_clock.sleep.clock=40;active_clock.sleep.last_tick=40;
+            active_clock.interactions.clock=40;active_clock.interactions.last_tick=40;
+            active_clock.schedule_idle_start=12;
+            same(active_clock,odh::decode_entity_thread_controllers_snapshot(
+                odh::encode_entity_thread_controllers_snapshot(active_clock)));
+            auto invalid_clock=active_clock;invalid_clock.schedule_idle_start=41;
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid_clock);},
+                "shared idle clock beyond service clock rejected");
+            invalid_clock=active_clock;invalid_clock.interactions.clock=39;invalid_clock.interactions.last_tick=39;
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid_clock);},
+                "shared idle clock requires service clock equality");
+            invalid_clock=active_clock;invalid_clock.schedule_idle_start=0x100000000ULL;
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid_clock);},
+                "shared idle clock bounded to source uint32 domain");
+            bytes=odh::encode_entity_thread_controllers_snapshot(active_clock);
+            auto broken=bytes;broken.back()=0xff;
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                "decoded shared idle clock beyond service clock rejected");
+            broken=bytes;broken[broken.size()-9]=2;
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                "v7 clock presence boolean must be canonical");
+            broken=bytes;broken.pop_back();
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                "truncated v7 shared clock rejected");
+        }
+        {
+            auto immediate=state;
+            immediate.interactions.actions.front().flags=4U;
+            immediate.interactions.actions.front().call.return_mode=odh::VmCallReturnMode::immediate;
+            const auto bytes=odh::encode_entity_thread_controllers_snapshot(immediate);
+            require(bytes[0]==7&&!immediate.schedule_idle_start,
+                "queued RunImmediately action selects v7 without requiring a clock");
+            same(immediate,odh::decode_entity_thread_controllers_snapshot(bytes));
+            auto broken=bytes;broken[0]=6;
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                "v1-v6 readers reject immediate call mode");
+            for(std::size_t size=0;size<bytes.size();++size) {
+                auto truncated=bytes;truncated.resize(size);
+                rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(truncated);},
+                    "every truncated v7 immediate snapshot rejected");
+            }
+            broken=bytes;broken.push_back(0);
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                "v7 trailing bytes rejected");
+            broken=bytes;broken[0]=8;
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(broken);},
+                "unsupported future controller version rejected");
+            auto invalid_action=immediate;
+            invalid_action.interactions.actions.front().call.return_mode=odh::VmCallReturnMode::interaction_next_tick;
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid_action);},
+                "RunImmediately flag requires immediate call mode");
+            invalid_action=state;
+            invalid_action.interactions.actions.front().call.return_mode=odh::VmCallReturnMode::immediate;
+            rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid_action);},
+                "immediate call mode requires RunImmediately flag");
+            auto empty_v7=odh::encode_entity_thread_controllers_snapshot(empty_fixture());
+            empty_v7[0]=7;empty_v7.push_back(0);
+            rejects([&]{(void)odh::decode_entity_thread_controllers_snapshot(empty_v7);},
+                "empty v7 extension is noncanonical");
+        }
         same(state, odh::decode_entity_thread_controllers_snapshot(encoded));
         auto nested=state;
         nested.interactions.suspended_active={{1,6}};
@@ -253,7 +480,7 @@ int main() {
             rejects([&] { (void)odh::decode_entity_thread_controllers_snapshot(truncated); }, "every truncated prefix rejected");
         }
         auto changed = encoded;
-        changed[0] = 6;
+        changed[0] = 8;
         rejects([&] { (void)odh::decode_entity_thread_controllers_snapshot(changed); }, "unsupported version rejected");
         changed = encoded;
         changed[2] = 2;
@@ -380,6 +607,22 @@ int main() {
         rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
             "suspended parent without active child rejected");
 
+        auto modern=state;
+        for(auto& action:modern.interactions.actions){auto& context=action.call.context;
+            context.entity_references_bound=true;context.caller_generation=modern.interactions.actor_generation;
+            context.callee_generation=action.target_generation;context.stack_object_generation=action.target_generation;
+            action.call.action_tree_override=true;
+        }
+        const auto modern_bytes=odh::encode_entity_thread_controllers_snapshot(modern);
+        require(modern_bytes[0]==12&&modern_bytes[1]==0,"bound queued references select controller wire12");
+        const auto modern_copy=odh::decode_entity_thread_controllers_snapshot(modern_bytes);
+        require(modern_copy.interactions.actions[0].call.context.entity_references_bound&&
+            modern_copy.interactions.actions[0].call.context.callee_generation==modern.interactions.actions[0].target_generation&&
+            modern_copy.interactions.actions[0].call.action_tree_override==std::optional<bool>{true},"controller wire12 preserves body and action-tree intent");
+        invalid=modern;++invalid.interactions.actions[0].call.context.callee_generation;
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},"hybrid callee generations rejected");
+        invalid=modern;invalid.interactions.actions[0].call.context.entity_references_bound=false;
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},"unbound context cannot smuggle generation tags");
         std::cout << checks << " thread controller snapshot codec checks passed (synthetic values only)\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

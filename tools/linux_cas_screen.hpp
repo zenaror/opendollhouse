@@ -15,8 +15,9 @@ struct LinuxCasFamilyDraft {
     std::vector<SimitoneCasPersonInput> members;
 };
 
-// Keyboard/mouse CAS flow. Escape cancels without writing player data.
+// Keyboard/mouse CAS flow. Escape dismisses the current question or editor;
+// leaving the family asks before discarding the draft. Only Done returns it.
 std::optional<LinuxCasFamilyDraft> show_linux_cas_family_creator(
-    LinuxWindow& window, const LinuxCasCatalog& catalog, std::uint8_t language);
+    LinuxWindow& window, const LinuxCasCatalog& catalog, std::uint8_t language,const std::filesystem::path& game_root);
 
 } // namespace odh_host

@@ -124,8 +124,9 @@ public:
                 return reject("invalid or duplicate native player queue identity");
             if(action.check_permissions&&(!action.target_generation||action.call.context.caller!=queue.actor_id||
                action.call.context.callee<=0||action.call.context.stack_object!=action.call.context.callee||
-               action.call.key.scope!=routine_key(action.call.key.id).scope||
-               action.call.return_mode!=VmCallReturnMode::interaction_next_tick))
+               !routine_key_valid(action.call.key)||
+               action.call.return_mode!=((action.flags&4U)?VmCallReturnMode::immediate:
+                   VmCallReturnMode::interaction_next_tick)))
                 return reject("invalid player request target or routine metadata");
         }
         if(queue.completion&&(!queue.completion->uid||queue.completion->uid>queue.sequence||

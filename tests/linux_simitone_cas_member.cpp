@@ -1,4 +1,5 @@
 #include "linux_simitone_cas_member.hpp"
+#include "linux_cas_draft.hpp"
 
 #include <array>
 #include <cstdint>
@@ -99,6 +100,67 @@ int main() {
         try { (void)odh_host::make_simitone_cas_member(invalid, [](std::uint32_t) { return 0U; }); }
         catch (const std::invalid_argument&) { rejected = true; }
         need(rejected, "CAS accepted a path-like appearance asset name");
+
+        // EditIndex replaces an existing WIP member, including at capacity;
+        // selection/cancel must not publish the unfinished editor contents.
+        odh_host::LinuxCasDraftMembers family;
+        family.accept(adult());
+        family.accept(child);
+        auto changed=family.select(0);
+        changed.name_utf8="Ágata";
+        changed.biography_utf8="Nome revisto";
+        changed.child=true;
+        changed.female=false;
+        changed.skin="drk";
+        changed.body_appearance="b002mcchd";
+        changed.body_texture="b002mcchddrk_01";
+        changed.head_appearance="c002mc";
+        changed.head_texture="c002mcdrk_01";
+        changed.personality_points={1,2,3,4,5};
+        need(family.members()[0].name_utf8=="Ana", "merely opening/editing form changed accepted member");
+        family.begin_new();
+        need(family.members()[0].name_utf8=="Ana", "canceling member edit changed the family");
+        (void)family.select(0);
+        family.accept(changed);
+        need(family.members().size()==2&&family.members()[0].name_utf8=="Ágata"&&
+            family.members()[1].skin=="drk"&&family.members()[1].name_utf8==child.name_utf8,
+            "editing first member appended, reordered, or changed the other member");
+        draw_index=0;
+        const auto converted=odh_host::make_simitone_cas_member(family.members()[0],
+            [&](std::uint32_t upper) {
+                need(draw_index<random_values.size(),"edited CAS fixture exhausted its valid trait sequence");
+                const auto value=random_values[draw_index++];
+                need(value<upper,"edited CAS fixture value exceeds requested range");
+                return value;
+            });
+        need(converted.name_utf8=="Ágata"&&converted.biography_utf8=="Nome revisto"&&
+            converted.person_data[2]==100&&converted.person_data[3]==200&&
+            converted.person_data[5]==300&&converted.person_data[6]==400&&
+            converted.person_data[7]==500&&converted.person_data[58]==9&&
+            converted.person_data[60]==2&&converted.person_data[65]==0,
+            "edited text, personality, age/gender/skin did not reach the private-character consumer");
+        bool edited_body=false,edited_head=false;
+        for(const auto& replacement:converted.body_strings) {
+            if(replacement.index==1)edited_body=replacement.bytes=="b002mcchd,BODY=b002mcchddrk_01";
+            if(replacement.index==2)edited_head=replacement.bytes=="c002mc,HEAD-HEAD=c002mcdrk_01";
+        }
+        need(edited_body&&edited_head,"edited draft appearance did not reach character body strings");
+        while(family.members().size()<8)family.accept(adult());
+        (void)family.select(0);family.accept(changed);
+        need(family.members().size()==8,"editing a full household consumed another place");
+        rejected=false;
+        try {family.accept(adult());}catch(const std::invalid_argument&){rejected=true;}
+        need(rejected&&family.members().size()==8,"ninth member changed the draft");
+        (void)family.select(0);
+        need(family.erase_selected()&&family.members().size()==7&&
+            family.members()[0].name_utf8==child.name_utf8,"removing draft member damaged roster order");
+        need(!family.erase_selected(),"removing without a selection changed another member");
+        family.accept(changed);
+        need(family.members().size()==8&&family.members().back().name_utf8=="Ágata",
+            "removal did not release a place for a new member");
+        rejected=false;
+        try {(void)family.select(8);}catch(const std::out_of_range&){rejected=true;}
+        need(rejected&&!family.editing(),"invalid selection changed active edit state");
 
         std::cout << "Simitone TS1 CAS member conversion checks passed\n";
         return 0;

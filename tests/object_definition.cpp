@@ -16,6 +16,10 @@ odh::ObjectDefinition read(const std::string& bytes) {
     std::istringstream stream(bytes);
     return odh::read_object_definition(odh::View(stream, bytes.size()));
 }
+std::vector<std::int16_t> words(const std::string& bytes) {
+    std::istringstream stream(bytes);
+    return odh::read_object_definition_words(odh::View(stream,bytes.size()));
+}
 template<class F> bool rejects(F fn) {
     try { fn(); } catch (const odh::FormatError&) { return true; }
     return false;
@@ -39,6 +43,28 @@ int main() {
         put16(bytes, 22, 0xffff);
         put32(bytes, 28, 0xfedcba98);
         auto metadata = read(bytes);
+        {
+            auto raw=bytes;
+            raw.resize(224,'\x5a');
+            for(std::size_t i=2;i<112;++i)put16(raw,i*2,static_cast<std::uint16_t>(0x8000+i));
+            for(auto version:{136U,138U}) {
+                put32(raw,0,version);
+                const auto bank=words(raw);
+                check(bank.size()==(version==136 ? 80U : 95U));
+                check(bank[0]==static_cast<std::int16_t>(version)&&bank[1]==0);
+                for(std::size_t i=2;i<bank.size();++i)
+                    check(bank[i]==static_cast<std::int16_t>(-32768+static_cast<int>(i)));
+                // Price18 is the raw word at36, not sale price34 or GUID14.
+                check(bank[18]==-32750&&bank[34]==-32734&&bank[14]==-32754);
+            }
+            put32(raw,0,138);put16(raw,36,321);put16(raw,38,999);
+            check(words(raw)[18]==321);
+            raw.resize(37);check(words(raw).size()==18); // incomplete Price
+            raw.resize(38);put16(raw,36,0xffff);
+            check(words(raw).size()==19&&words(raw)[18]==-1);
+            check(words(bytes).size()==16); // no fabricated optional words
+            put32(raw,0,142);check(rejects([&]{words(raw);}));
+        }
         check(metadata.version == 138 && metadata.object_type == 0xfedc);
         check(metadata.guid == 0xfedcba98 && metadata.master_id == 0x9876);
         check(metadata.tree_table_id == 128);
@@ -46,6 +72,27 @@ int main() {
         check(metadata.header_extent == 32 && metadata.remaining_bytes == 0);
         check(!metadata.level_offset&&!metadata.tile_width&&!metadata.footprint_mask&&
               !metadata.slot_table_id&&!metadata.num_attributes&&!metadata.build_mode_type);
+        check(!metadata.global_flag);
+        check(!metadata.type_attribute_guid);
+        {
+            auto type=bytes;type.resize(188,0);put32(type,0,138);
+            put32(type,184,0x81234567);
+            check(read(type).type_attribute_guid==0x81234567&&read(type).header_extent==188);
+            put32(type,184,0);check(read(type).type_attribute_guid==0xfedcba98);
+            type.resize(187);check(!read(type).type_attribute_guid);
+            // The pinned v136 reader never reaches its v138 fallback branch.
+            put32(type,0,136);type.resize(160);check(read(type).type_attribute_guid==0);
+            type.resize(159);check(!read(type).type_attribute_guid);
+        }
+        for(const auto version:{136u,138u}){
+            auto controller=bytes;controller.resize(85,0);put32(controller,0,version);
+            check(!read(controller).global_flag); // Half a raw Global word is unknown.
+            controller.resize(86,0);put16(controller,84,1);
+            check(read(controller).global_flag==1&&read(controller).header_extent==86);
+            put16(controller,84,0);check(read(controller).global_flag==0);
+            put16(controller,84,0xffff);check(read(controller).global_flag==65535);
+            check(words(controller)[42]==-1); // Preserve raw bits; do not coerce a boolean.
+        }
         // read() destroys its stream: metadata remains independently owned.
         check(metadata.guid == 0xfedcba98);
 
@@ -81,7 +128,7 @@ int main() {
             check(parsed.level_offset==0x8001&&parsed.header_extent==114&&parsed.remaining_bytes==2);
             placement.resize(113);
             const auto partial=read(placement);
-            check(!partial.level_offset&&partial.header_extent==42);
+            check(!partial.level_offset&&partial.global_flag==0&&partial.header_extent==86);
         }
         {
             auto collision=std::string(160,'\0');put32(collision,0,138);

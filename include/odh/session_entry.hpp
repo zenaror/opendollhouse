@@ -63,11 +63,26 @@ SessionEntry resolve_session_entry(unsigned neighborhood_mode,
     const LotLocations&, const FamilyContext&, const NeighborContext&,
     const DefinitionIndex& character_definitions);
 
+// Prepare a visited lot using the origin household's resolved resources.
+// Destination occupancy does not choose the traveling family. This creates no
+// World entities and does not perform residential arrival or a move-in.
+SessionEntry resolve_visit_session_entry(const SessionEntry& permanent_home,
+    unsigned destination_mode, std::uint16_t destination_house,
+    std::string destination_file, const LotLocations& destination_locations,
+    const std::vector<std::uint32_t>& traveler_guids);
+
 // Load and resolve a selected household from installed UserData. An optional,
 // explicit player-owned character directory may supply additional OBJD138
 // person definitions; it is never inferred from a save or resource file.
 SessionEntry load_session_entry(const std::filesystem::path& user_data,
     unsigned neighborhood_mode, std::uint16_t house_number, std::uint8_t language = 1,
+    const FamilyOverlay* saved_overlay = nullptr,
+    const std::filesystem::path& player_character_directory = {});
+
+SessionEntry load_visit_session_entry(const std::filesystem::path& user_data,
+    unsigned home_mode, std::uint16_t home_house,
+    unsigned destination_mode, std::uint16_t destination_house,
+    const std::vector<std::uint32_t>& traveler_guids, std::uint8_t language = 1,
     const FamilyOverlay* saved_overlay = nullptr,
     const std::filesystem::path& player_character_directory = {});
 

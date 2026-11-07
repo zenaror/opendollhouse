@@ -47,8 +47,9 @@ Palette read_palt(const View& view, SpriteLimits limits) {
     return result;
 }
 
-Spr2Frame read_spr2_frame(const View& view, std::uint32_t frame_index,
-                          const Palette& palette, SpriteLimits limits) {
+namespace {
+Spr2Frame parse_spr2_frame(const View& view, std::uint32_t frame_index,
+                           const Palette& palette, SpriteLimits limits,bool decode_pixels,Spr2Inspection inspect) {
     std::array<std::uint8_t,12> header{};
     view.read(0,header.data(),header.size());
     Spr2Frame result{};
@@ -98,10 +99,13 @@ Spr2Frame read_spr2_frame(const View& view, std::uint32_t frame_index,
             std::to_string(result.width)+" height="+std::to_string(result.height)+
             " pixels="+std::to_string(count)+" pixel_limit="+std::to_string(limits.pixels)+
             " size_limit="+std::to_string(limits.width)+"x"+std::to_string(limits.height));
-    result.pixels.resize(static_cast<std::size_t>(count));
-    result.indices.resize(static_cast<std::size_t>(count));
+    if(inspect==Spr2Inspection::geometry)return result;
     const bool has_z=(result.flags&2U)!=0;
-    if(has_z)result.z.resize(static_cast<std::size_t>(count));
+    if(decode_pixels){
+        result.pixels.resize(static_cast<std::size_t>(count));
+        result.indices.resize(static_cast<std::size_t>(count));
+        if(has_z)result.z.resize(static_cast<std::size_t>(count));
+    }
     auto transparent=palette.colors[result.transparent_index]; transparent[3]=0;
     const auto put_transparent=[&](std::uint32_t y,std::uint32_t x) {
         const auto at=static_cast<std::size_t>(std::uint64_t{y}*result.width+x);
@@ -122,8 +126,9 @@ Spr2Frame read_spr2_frame(const View& view, std::uint32_t frame_index,
         if(code==4) {
             if(run>std::uint32_t{result.height}-y)
                 throw FormatError("SPR2 skipped rows exceed height");
-            for(std::uint32_t row=0;row<run;++row,++y)
-                for(std::uint32_t x=0;x<result.width;++x)put_transparent(y,x);
+            if(decode_pixels)for(std::uint32_t row=0;row<run;++row)
+                for(std::uint32_t x=0;x<result.width;++x)put_transparent(y+row,x);
+            y+=run;
         } else if(code==0) {
             if(run<2 || y>=result.height)throw FormatError("invalid SPR2 row extent");
             const auto row=input.take(run-2);
@@ -142,12 +147,13 @@ Spr2Frame read_spr2_frame(const View& view, std::uint32_t frame_index,
                    (operation==2 && (!has_z || (result.flags&4U)==0)))
                     throw FormatError("SPR2 pixel command requires missing Z or alpha flag");
                 for(std::uint32_t n=0;n<length;++n,++x) {
-                    if(operation==3) { put_transparent(y,x); continue; }
+                    if(operation==3) { if(decode_pixels)put_transparent(y,x); continue; }
                     const auto z=operation==6?std::uint8_t{0}:packets.byte();
                     const auto index=packets.byte();
                     if(index>=palette.colors.size())throw FormatError("SPR2 index exceeds palette");
                     const auto alpha=operation==2?packets.byte():std::uint8_t{31};
                     if(alpha>31)throw FormatError("SPR2 alpha exceeds five-bit range");
+                    if(!decode_pixels)continue;
                     const auto at=static_cast<std::size_t>(std::uint64_t{y}*result.width+x);
                     result.pixels[at]=palette.colors[index];
                     result.pixels[at][3]=static_cast<std::uint8_t>(std::uint32_t{alpha}*255/31);
@@ -158,7 +164,7 @@ Spr2Frame read_spr2_frame(const View& view, std::uint32_t frame_index,
             }
             // The source profile only fills Z in an unencoded row tail;
             // untouched RGBA/index values retain their zero initialization.
-            if(has_z)for(;x<result.width;++x)
+            if(decode_pixels&&has_z)for(;x<result.width;++x)
                 result.z[static_cast<std::size_t>(std::uint64_t{y}*result.width+x)]=255;
             ++y;
         } else throw FormatError("unsupported SPR2 outer command");
@@ -167,5 +173,13 @@ Spr2Frame read_spr2_frame(const View& view, std::uint32_t frame_index,
         throw FormatError("SPR2 ends before all rows without end marker");
     result.remaining_bytes=input.remaining();
     return result;
+}
+} // namespace
+Spr2Frame read_spr2_frame(const View& view,std::uint32_t index,const Palette& palette,SpriteLimits limits) {
+    return parse_spr2_frame(view,index,palette,limits,true,Spr2Inspection::full);
+}
+Spr2Frame inspect_spr2_frame(const View& view,std::uint32_t index,const Palette& palette,
+                             SpriteLimits limits,Spr2Inspection inspect) {
+    return parse_spr2_frame(view,index,palette,limits,false,inspect);
 }
 } // namespace odh

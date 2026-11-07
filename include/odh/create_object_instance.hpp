@@ -50,13 +50,45 @@ enum class CreateObjectInstanceStatus {
     definition_mismatch,
     unsupported_resources,
     slot_occupied,
-    world_rejected
+    world_rejected,
+    unsupported_flags,
+    invalid_caller,
+    invalid_created_object
 };
 
 struct CreateObjectInstanceResult {
     CreateObjectInstanceStatus status = CreateObjectInstanceStatus::world_rejected;
     std::optional<std::int16_t> object_id;
 };
+
+enum class CreateObjectPlacementStatus {
+    resolved, unsupported_position, invalid_caller, invalid_reference,
+    invalid_frame, unknown_direction, invalid_position
+};
+struct CreateObjectPlacementIdentity {
+    std::int16_t id=0;std::uint64_t generation=0;
+    bool operator==(const CreateObjectPlacementIdentity& other) const {
+        return id==other.id&&generation==other.generation;
+    }
+};
+struct CreateObjectPlacementPlan {
+    CreateObjectPlacementStatus status=CreateObjectPlacementStatus::invalid_frame;
+    CreateObjectPosition position=CreateObjectPosition::out_of_world;
+    CreateObjectPlacementIdentity caller;
+    std::optional<CreateObjectPlacementIdentity> reference,container;
+    std::optional<std::size_t> container_slot;
+    // Absence is the KNOWN source OUT_OF_WORLD sentinel, not unknown geometry.
+    // Negative/wrapped coordinates remain real source candidates for the host
+    // placement service to reject; this capture never invents a valid lot point.
+    std::optional<EntityPosition> destination;
+    std::uint8_t direction=0;
+    bool retry_underneath=false;
+};
+// Pure initial positioning stage of pinned VMCreateObjectInstance.Execute.
+// No construction, placement checks, register/World mutation, IDs, Init or RNG.
+// Captures references before Init; final slot/underneath behavior belongs to host.
+CreateObjectPlacementPlan capture_create_object_placement(const World&,const VmFrame&,
+    const CreateObjectInstanceRequest&);
 
 // Materialize the supported InSlot0OfStackObject profile. The caller supplies
 // resources selected by an exact, unique GUID match and a fresh positive ID.
@@ -71,5 +103,27 @@ CreateObjectInstanceResult create_object_instance_in_slot0(
 CreateObjectInstanceResult create_object_instance_out_of_world(
     World&, std::int16_t new_id, const CreateObjectInstanceRequest&,
     const ObjectRuntimeResources&);
+
+// Read-only NoDuplicate admission, before ID allocation/Init/RNG. The source
+// explicitly bypasses both slot modes. Other modes query the destination TILE
+// (not subtile/GUID globally), excluding ghosts and out-of-world entities.
+// nullopt means the destination or a candidate's definition is unknown, so
+// absence is unproven. OutOfWorld has no registered destination bucket.
+std::optional<bool> create_object_instance_has_duplicate(const World&,
+    const CreateObjectInstanceRequest&,std::optional<EntityPosition> destination);
+// Resolved OUT_OF_WORLD is known to have no spatial bucket; unresolved plans
+// remain unknown and cannot authorize construction under NoDuplicate.
+std::optional<bool> create_object_instance_has_duplicate(const World&,
+    const CreateObjectInstanceRequest&,const CreateObjectPlacementPlan&);
+
+
+// After construction, Init/EP8 and preparation of Main, place an initialized
+// ordinary object in CALLER avatar slot0. NoDuplicate is ignored here exactly
+// as in pinned7e76; other flags require host semantics and are rejected.
+// Direction was captured by the host before Init; current caller coordinates
+// are read at placement. The host owns carry playback and Main scheduling.
+// Private-candidate operation: exceptions require discarding the candidate.
+CreateObjectInstanceResult place_created_object_in_hand(World&,std::int16_t object,
+    std::int16_t caller,const CreateObjectInstanceRequest&,std::uint8_t captured_direction);
 
 } // namespace odh

@@ -30,10 +30,22 @@ Family read_fami(const View& view, const FamiLimits& limits) {
     f.member_guids.reserve(members);
     for (std::uint32_t i=0;i<members;++i) f.member_guids.push_back(view.le32(40+4*static_cast<std::uint64_t>(i)));
     f.remaining_bytes=view.size()-40-4*static_cast<std::uint64_t>(members);
+    const auto tail_start=40+4*static_cast<std::uint64_t>(members);
+    f.tail_bytes.reserve(static_cast<std::size_t>(f.remaining_bytes));
+    for(std::uint64_t n=0;n<f.remaining_bytes;++n)f.tail_bytes.push_back(view.u8(tail_start+n));
+    if(f.version==9&&f.remaining_bytes>=16) {
+        FamilyV9Extension extension;
+        extension.extension_dword=view.le32(tail_start);
+        for(std::size_t n=0;n<extension.spell_words.size();++n) {
+            const auto word=view.le16(tail_start+4+2*n);
+            extension.spell_words[n]=static_cast<std::int16_t>(word<32768?static_cast<std::int32_t>(word):static_cast<std::int32_t>(word)-65536);
+        }
+        f.original_v9_extension=extension;
+    }
     return f;
 }
 std::vector<std::uint8_t> encode_fami(const Family& family, const FamiLimits& limits) {
-    if (family.remaining_bytes != 0)
+    if (family.remaining_bytes != 0 || !family.tail_bytes.empty() || family.original_v9_extension)
         throw FormatError("cannot encode FAMI with unpreserved tail");
     if (family.member_guids.size() > limits.members || family.member_guids.size() > 0x7fffffffU ||
         limits.payload_bytes < 40 || family.member_guids.size() > (limits.payload_bytes-40)/4)
@@ -53,9 +65,29 @@ std::vector<std::uint8_t> encode_fami(const Family& family, const FamiLimits& li
     for(const auto guid:family.member_guids)put(guid);
     return out;
 }
+std::vector<std::uint8_t> encode_preserved_fami(const Family& family,const FamiLimits& limits) {
+    if(family.remaining_bytes!=family.tail_bytes.size())throw FormatError("FAMI tail extent does not match preserved bytes");
+    if(family.original_v9_extension&&(family.version!=9||family.tail_bytes.size()<16))
+        throw FormatError("typed FAMI9 extension lacks a complete original suffix");
+    if(family.remaining_bytes>limits.payload_bytes)throw FormatError("preserved FAMI suffix exceeds payload limit");
+    auto prefix=family;
+    prefix.remaining_bytes=0;prefix.tail_bytes.clear();prefix.original_v9_extension.reset();
+    auto prefix_limits=limits;prefix_limits.payload_bytes-=family.remaining_bytes;
+    auto result=encode_fami(prefix,prefix_limits);
+    const auto tail_start=result.size();
+    result.insert(result.end(),family.tail_bytes.begin(),family.tail_bytes.end());
+    if(family.original_v9_extension) {
+        const auto put=[&](std::size_t at,std::uint32_t value,std::size_t count){
+            for(std::size_t n=0;n<count;++n)result[tail_start+at+n]=static_cast<std::uint8_t>(value>>(8*n));
+        };
+        put(0,family.original_v9_extension->extension_dword,4);
+        for(std::size_t n=0;n<6;++n)put(4+2*n,static_cast<std::uint16_t>(family.original_v9_extension->spell_words[n]),2);
+    }
+    return result;
+}
 std::vector<std::uint8_t> encode_simitone_create_family_fami(
     const Family& family, const FamiLimits& limits) {
-    if (family.remaining_bytes != 0)
+    if (family.remaining_bytes != 0 || !family.tail_bytes.empty() || family.original_v9_extension)
         throw FormatError("cannot encode Simitone CreateFamily FAMI with unpreserved tail");
     if (family.version != 9 || family.house_number != 0 || family.value_in_arch != 0 ||
         family.unknown != 24 || family.member_guids.empty())
@@ -73,12 +105,15 @@ std::vector<std::uint8_t> encode_simitone_create_family_fami(
 }
 FamilyContext::FamilyContext(const std::vector<FamilyEntry>& source) {
     if (source.size() > 4096) throw FormatError("family runtime exceeds bounded 4096 entries");
-    std::size_t members=65536;
+    std::size_t members=65536,tail_bytes=4*1024*1024;
     // Validate before copying any owned member arrays or allocating indexes.
     for (const auto& entry:source) {
         const auto size=entry.family.member_guids.size();
         if (size > 256 || size > members) throw FormatError("family runtime member budget exceeded");
         members-=size;
+        const auto tail=entry.family.tail_bytes.size();
+        if(tail>64*1024||tail>tail_bytes)throw FormatError("family runtime preserved tail budget exceeded");
+        tail_bytes-=tail;
     }
     for (std::size_t i=0;i<source.size();++i) {
         if (!ids_.emplace(source[i].chunk_id,i).second) throw FormatError("ambiguous duplicate family chunk ID");

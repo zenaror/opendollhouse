@@ -57,6 +57,15 @@ void apply_simitone_saved_return_mapping(SimitoneSavedThreadPlan&,
 // dormant and does not execute Main. The caller supplies the intended resources.
 void restore_simitone_saved_thread_plan(Vm&, const SimitoneSavedThreadPlan&);
 
+using SavedThreadCodeOwnerMapper = std::function<CodeOwner(std::uint32_t resource_guid)>;
+// Resolve source resource GUIDs to the host's installed code-owner IDs. Only
+// frame.context.code_owner changes; source plans remain immutable provenance.
+// Every referenced GUID must resolve to a nonzero owner. Mapping and frame
+// validation precede VM publication; absent/zero mappings throw FormatError.
+void restore_simitone_saved_thread_plan(Vm&, const SimitoneSavedThreadPlan&,
+                                         const SavedThreadCodeOwnerMapper&,
+                                         VmSavedRoutinePolicy = VmSavedRoutinePolicy::require_present);
+
 // Owns a decoded saved World and imported VM states for entities with saved
 // stacks. Admission binds each dormant VM to the World entity generation. Only
 // const VM views are exposed; this session offers no activation or scheduler path.

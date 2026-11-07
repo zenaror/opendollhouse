@@ -115,5 +115,15 @@ int main(){try{
     auto foreign=table(fields());foreign.entries.resize(65536,odh::StringEntry{2,"",""});
     check(odh::parse_avatar_body_strings(foreign).age==27);
     foreign.entries.push_back({2,"",""});rejects([&]{odh::parse_avatar_body_strings(foreign);});
+    body=odh::parse_avatar_body_strings(table(fields()));
+    odh::AvatarOutfitReference live;live.literal="sleep,BODY=sleeptexture";live.hands.fill("newhand");
+    check(world.set_avatar_outfit(1,live,true));
+    const auto effective=odh::effective_avatar_body(body,*world.find(1));
+    check(effective.body==live.literal&&effective.hands==live.hands&&effective.head==body.head&&body.body=="body_first");
+    check(world.add_bound_appearance(1,"Raw","Raw.apr"));
+    check(odh::effective_avatar_accessories(*world.find(1))==std::vector<std::string>{"Raw.apr"});
+    live.kind=odh::AvatarOutfitKind::identifier;live.identifier=123;live.literal.clear();live.hands.fill("");
+    check(world.set_avatar_outfit(1,live));
+    rejects([&]{odh::effective_avatar_body(body,*world.find(1));});
     std::cout<<checks<<" avatar body checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

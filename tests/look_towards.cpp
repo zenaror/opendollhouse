@@ -28,8 +28,14 @@ int main(){
             odh::VmFrame frame;frame.context={1,1,2,1};
             const odh::Instruction instruction{22,254,0,{1,0,0,0,0,0,0,0}};
             const auto outcome=primitive(frame,instruction,{},odh::VmDispatch{nullptr,0});
-            require(outcome.disposition==odh::PrimitiveDisposition::unsupported&&world.find(1)->person_data[42]==0,
-                "unsupported body/camera mode fails without state mutation");
+            require(outcome.disposition==odh::PrimitiveDisposition::goto_true&&world.find(1)->person_data[42]==0,
+                "source camera mode succeeds without state mutation");
+            auto body=instruction;body.operands[0]=2;
+            require(primitive(frame,body,{},odh::VmDispatch{nullptr,0}).disposition==
+                odh::PrimitiveDisposition::unsupported,"body mode requires a route service");
+            require(primitive(frame,body,{},odh::VmDispatch{nullptr,0,true}).disposition==
+                odh::PrimitiveDisposition::goto_false&&world.find(1)->person_data[37]==0,
+                "body check returns false without a route service or state mutation");
         }
         std::cout<<"LookTowards checks: "<<checks<<"\n";return 0;
     }catch(const std::exception& e){std::cerr<<"LookTowards test failed: "<<e.what()<<'\n';return 1;}

@@ -51,6 +51,52 @@ int main() { try {
     require(opaque.image.pixels[0] == red && opaque.image.depth[0] == 0 &&
             opaque.tested_samples == 1 && opaque.shaded_samples == 1,
             "opaque sprite writes color and depth");
+    {
+        auto color=sprite(1,1,Pixel{200,160,120,255});auto lit=layer(color,0,0,0,0,false,19);
+        lit.linear_light={0.25f,0.5f,1};
+        const auto frame=odh::composite_sprites(backdrop,{lit},{},true);
+        require(frame.image.pixels[0]==Pixel{107,117,120,255}&&frame.image.depth[0]==opaque.image.depth[0]&&
+            frame.owner_ids[0]==19&&frame.shaded_samples==opaque.shaded_samples,
+            "basic gamma room lighting modulates RGB independently without changing ownership or depth");
+        lit.grayscale=true;lit.linear_light={0,0,0};
+        require(odh::composite_sprites(backdrop,{lit}).image.pixels[0]==Pixel{167,167,167,255},
+            "disabled grayscale bypasses room light");
+        lit.invert=true;
+        require(odh::composite_sprites(backdrop,{lit}).image.pixels[0]==Pixel{55,95,135,255},
+            "source inversion takes precedence over disabled grayscale and room light");
+        lit.grayscale=lit.invert=false;
+        color.pixels[0][3]=0;const auto transparent=odh::composite_sprites(backdrop,{lit},{},true);
+        require(transparent.image.pixels==backdrop.pixels&&transparent.transparent_samples==1&&transparent.owner_ids[0]==0,
+            "room lighting never makes transparent sprite visible");
+        for(const auto invalid:{-0.01f,1.01f,std::numeric_limits<float>::quiet_NaN()}){
+            lit.linear_light[0]=invalid;rejects([&]{odh::composite_sprites(backdrop,{lit});});
+        }
+    }
+    {
+        auto translucent_red=sprite(1,1,Pixel{255,0,0,128});
+        auto translucent_blue=sprite(1,1,Pixel{0,0,255,128});
+        auto opaque_green=sprite(1,1,green);
+        const std::vector<odh::SpriteLayer> layers{layer(translucent_red,0,0,0,0,false,1),
+            layer(translucent_blue,0,0,-1,0,false,2),layer(opaque_green,0,0,1,0,false,3)};
+        const auto regular=odh::composite_sprites(backdrop,layers,{},true);
+        const auto rgba=odh::composite_sprites(backdrop,layers,{},true,true);
+        require(regular.sprite_rgba.empty(),"default compositor allocates no sprite RGBA plane");
+        require(rgba.sprite_rgba==std::vector<Pixel>{Pixel{85,0,170,192}},
+            "accepted depth-ordered translucent layers retain straight RGB and accumulated alpha");
+        require(rgba.image.pixels==regular.image.pixels&&rgba.image.depth==regular.image.depth&&
+            rgba.owner_ids==regular.owner_ids&&rgba.owner_ids[0]==2&&rgba.occluded_samples==1,
+            "RGBA opt-in changes neither opaque bytes nor depth/picks and excludes occluded fragments");
+        const auto isolated=odh::composite_sprites(backdrop,{layer(translucent_red)},{},false,true);
+        require(isolated.sprite_rgba[0]==translucent_red.pixels[0],
+            "first translucent fragment retains source RGB without dark backdrop rounding");
+        auto transparent=sprite(1,1,Pixel{255,0,255,0});
+        require(odh::composite_sprites(backdrop,{layer(transparent)},{},false,true).sprite_rgba[0]==Pixel{0,0,0,0},
+            "transparent fragments leave clear RGBA even on opaque backdrop");
+        require(odh::composite_sprites(base(1,1,blue,-2),layers,{},false,true).sprite_rgba[0]==Pixel{0,0,0,0},
+            "base depth rejects RGBA exactly as it rejects opaque fragment output");
+        require(odh::composite_sprites(base(2,1),{layer(opaque_green)},{},false,true).sprite_rgba[1]==Pixel{0,0,0,0},
+            "untouched canvas pixels retain transparent RGBA");
+    }
     auto ground_backdrop=base(1,1,blue);ground_backdrop.owner_ids={77};
     auto ground_sprite=sprite(1,1,red);
     const auto ground_occlusion=odh::composite_sprites(ground_backdrop,{layer(ground_sprite)}, {}, true);

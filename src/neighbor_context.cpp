@@ -1,4 +1,5 @@
 #include "odh/neighbor_context.hpp"
+#include "odh/world.hpp"
 #include <algorithm>
 namespace odh {
 NeighborContext::NeighborContext(Nbrs source):source_(std::move(source)) {
@@ -27,6 +28,18 @@ NeighborContext::NeighborContext(Nbrs source):source_(std::move(source)) {
 const NeighborRecord* NeighborContext::by_id(std::int16_t id) const {
     const auto active=active_.find(id);
     return active==active_.end()?nullptr:&*source_.entries[ordered_[active->second].serialized_index].record;
+}
+std::optional<std::int16_t> NeighborContext::instance_id(const World& world,std::int16_t neighbor) const {
+    const auto* record=by_id(neighbor);
+    if(!record)return std::int16_t{0};
+    auto cursor=std::int16_t{-1};
+    while(const auto id=world.next_entity(cursor,EntityKind::avatar)) {
+        cursor=*id;
+        const auto* avatar=world.find(*id);
+        if(!avatar || !avatar->definition)return {};
+        if(avatar->definition->guid==record->guid)return *id;
+    }
+    return std::int16_t{0};
 }
 std::optional<std::int16_t> NeighborContext::id_for_guid(std::uint32_t guid) const {
     const auto found=guids_.find(guid);return found==guids_.end()?std::nullopt:std::optional<std::int16_t>{found->second};
@@ -61,6 +74,9 @@ std::optional<NeighborDataValue> NeighborContext::person_data(std::int16_t neigh
 namespace {
 bool valid(std::int16_t index,std::size_t size){return index>=0&&static_cast<std::size_t>(index)<size;}
 std::optional<std::int16_t> target(const VmFrame& f,const std::array<std::int16_t,20>& temps,const VmMemory& memory,std::uint8_t scope,std::int16_t index){
+    const auto resolved=resolve_ts1_variable_address(scope,index,f,temps);
+    if(!resolved)return {};
+    scope=resolved->scope;index=resolved->index;
     switch(scope){
     case 7:return index;
     case 8:return valid(index,temps.size())?std::optional<std::int16_t>{temps[static_cast<std::size_t>(index)]}:std::nullopt;
@@ -88,13 +104,15 @@ VmPrimitive NeighborContext::primitive(VmMemory memory,std::function<void(const 
             (static_cast<std::uint32_t>(i.operands[3])<<24);
         const auto result=mode==7?next_of_guid(*current,guid):next(*current);
         PrimitiveOutcome outcome{result<0?PrimitiveDisposition::goto_false:PrimitiveDisposition::goto_true,{}};
-        if(result>=0){switch(scope){
+        if(result>=0){const auto output=resolve_ts1_variable_address(scope,index,frame,temps);
+            if(!output)return {PrimitiveDisposition::unsupported,"enumeration indirect output unavailable"};
+            switch(output->scope){
             case 7:return {PrimitiveDisposition::unsupported,"neighbor enumeration literal target is not writable"};
-            case 8:outcome.temp_write=VmTempWrite{static_cast<std::size_t>(index),result};break;
-            case 9:outcome.write=VmFrameWrite{VmFrameBank::arguments,static_cast<std::size_t>(index),result};break;
+            case 8:outcome.temp_write=VmTempWrite{static_cast<std::size_t>(output->index),result};break;
+            case 9:outcome.write=VmFrameWrite{VmFrameBank::arguments,static_cast<std::size_t>(output->index),result};break;
             case 10:outcome.stack_object_write=VmStackObjectWrite{result};break;
-            case 25:outcome.write=VmFrameWrite{VmFrameBank::locals,static_cast<std::size_t>(index),result};break;
-            default:{const auto address=resolve_person_data_address(scope,index,temps);
+            case 25:outcome.write=VmFrameWrite{VmFrameBank::locals,static_cast<std::size_t>(output->index),result};break;
+            default:{const auto address=resolve_ts1_variable_address(scope,index,frame,temps);
                 if(!address||!memory.write||!memory.write(frame,address->scope,address->index,result))
                     return {PrimitiveDisposition::unsupported,"neighbor enumeration target rejected write"};}
         }}

@@ -1,4 +1,7 @@
 #include "scene_renderer.hpp"
+#include "original_portrait.hpp"
+#include "odh/special_effect.hpp"
+#include "special_effect_view.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -23,14 +26,15 @@ void far(const std::filesystem::path& p,const std::vector<Entry>& entries){
     for(std::size_t i=0;i<entries.size();++i){auto size=static_cast<std::uint32_t>(entries[i].second.size());word(b,size);word(b,size);word(b,offsets[i]);word(b,static_cast<std::uint32_t>(entries[i].first.size()));b+=entries[i].first;}
     std::ofstream out(p,std::ios::binary);out.write(b.data(),static_cast<std::streamsize>(b.size()));
 }
-std::string rig(bool include_head=true){
-    std::string b;word(b,1);text(b,"rig");word(b,include_head?2:1);
-    const auto bone=[&](const char* name,const char* parent,float y){
+std::string rig(bool include_head=true,bool include_pelvis=false){
+    std::string b;word(b,1);text(b,"rig");word(b,(include_head?2:1)+(include_pelvis?1:0));
+    const auto bone=[&](const char* name,const char* parent,float y,float x=0.f){
         text(b,name);text(b,parent);word(b,0);
-        for(float n:{0.f,y,0.f,0.f,0.f,0.f,1.f})scalar(b,n);
+        for(float n:{x,y,0.f,0.f,0.f,0.f,1.f})scalar(b,n);
         for(auto n:{1U,1U,0U})word(b,n);scalar(b,0);scalar(b,0);
     };
     bone("ROOT","NULL",0.f);if(include_head)bone("HEAD","ROOT",1.2f);
+    if(include_pelvis)bone("PELVIS","ROOT",2.4f,1.5f);
     word(b,0);word(b,0);return b;
 }
 std::string appearance(const std::string& name,const std::string& bone="ROOT"){
@@ -76,6 +80,27 @@ int main(){try{
     odh::WorldProjection camera;camera.width=160;camera.height=160;
     SceneState state;const auto defaults=renderer.render(state,camera);
     check(defaults.image.shaded_samples>0);
+    // Off-lot visibility hides body, hand variants, accessories and pose
+    // anchors without substituting an origin or resolving unavailable clips.
+    auto hidden=state;hidden.avatar_visible=false;hidden.head_only=true;
+    odh::AnimationHeader unavailable;unavailable.name="unavailable-offlot";unavailable.xskill="missing";
+    hidden.animation=&unavailable;hidden.carry_animation=&unavailable;
+    hidden.animation_layers={{&unavailable,0,1}};hidden.owner_id=123;
+    odh::RasterOptions background;background.clear={17,29,43,255};background.record_owner_ids=true;
+    ScenePoseAnchors hidden_anchors;hidden_anchors.avatar_slots[0]=std::array<float,3>{1,2,3};
+    const auto clips_before_hidden=renderer.cache_clips();const auto samples_before_hidden=renderer.cache_samples();
+    const auto offlot=renderer.render(hidden,camera,background,&hidden_anchors);
+    check(offlot.image.width==camera.width&&offlot.image.height==camera.height&&offlot.image.shaded_samples==0);
+    check(std::all_of(offlot.image.pixels.begin(),offlot.image.pixels.end(),[&](const auto& pixel){return pixel==background.clear;}));
+    check(std::all_of(offlot.image.depth.begin(),offlot.image.depth.end(),[](float z){return std::isinf(z)&&z>0;}));
+    check(std::all_of(offlot.image.owner_ids.begin(),offlot.image.owner_ids.end(),[](auto owner){return owner==0;}));
+    check(std::all_of(hidden_anchors.avatar_slots.begin(),hidden_anchors.avatar_slots.end(),[](const auto& slot){return !slot;}));
+    check(renderer.pose_anchors(hidden).avatar_slots==hidden_anchors.avatar_slots);
+    check(renderer.cache_clips()==clips_before_hidden&&renderer.cache_samples()==samples_before_hidden);
+    const auto visible_again=renderer.render(state,camera);
+    check(visible_again.image.pixels==defaults.image.pixels&&visible_again.image.depth==defaults.image.depth&&
+        visible_again.image.shaded_samples==defaults.image.shaded_samples);
+
     const auto resident_vertices=renderer.vertices(),resident_triangles=renderer.triangles(),resident_textures=renderer.texture_bytes();
     check(resident_vertices==24&&resident_triangles==8&&resident_textures==32);
     SceneState head_state;head_state.head_only=true;
@@ -105,6 +130,18 @@ int main(){try{
     check(clipped_portrait.image.width==74&&clipped_portrait.image.height==74&&
           clipped_portrait.image.shaded_samples>0);
     check(clipped_portrait.image.pixels!=portrait.image.pixels);
+    // The action-menu render gets its own native resolution and orbit; later
+    // HUD renders must retain the original projection and pose.
+    const auto pie_camera=original_pie_portrait_camera({160,120},{220,120});
+    const auto pie_portrait=renderer.render_head_portrait(SceneState{},pie_camera);
+    check(pie_portrait.image.width==200&&pie_portrait.image.height==200&&pie_portrait.image.shaded_samples>0);
+    const auto neutral_pie=renderer.render_head_portrait(SceneState{},original_pie_portrait_camera({160,120},{160,120}));
+    check(neutral_pie.image.pixels!=pie_portrait.image.pixels);
+    check(renderer.render_head_portrait(SceneState{}).image.pixels==portrait.image.pixels);
+    for(const auto invalid_size:{0U,15U,513U,65536U}){
+        auto invalid=pie_camera;invalid.viewport_size=invalid_size;
+        rejects([&]{renderer.render_head_portrait(SceneState{},invalid);});
+    }
     for(unsigned left=0;left<4;++left)for(unsigned right=0;right<4;++right){
         state.hands={static_cast<odh::HandGesture>(left),static_cast<odh::HandGesture>(right)};
         auto subset=config;subset.parts.clear();
@@ -131,6 +168,64 @@ int main(){try{
     SceneRenderer no_head_renderer(no_head_config);
     auto invalid_head_state=SceneState{};invalid_head_state.head_only=true;
     rejects([&]{no_head_renderer.render(invalid_head_state,camera);});
+    // Camera facts use the current draw's full pose sampler, without rasterizing
+    // or borrowing the previous frame's bone cache.
+    const auto pelvis_archive=dir.path/"pelvis.far";
+    far(pelvis_archive,{{"rig.bcf",rig(true,true)},{"part0.bcf",appearance("part0")},
+                         {"part0.bmf",mesh("part0",0.f)}});
+    auto pelvis_config=no_head_config;pelvis_config.animation_far=pelvis_archive.string();
+    SceneRenderer pelvis_renderer(pelvis_config);SceneState pelvis_state;
+    pelvis_state.avatar_tile={8.f,9.f,1.f};pelvis_state.avatar_radians=0.6f;
+    const auto before_pose_samples=pelvis_renderer.cache_samples();
+    const auto facts=pelvis_renderer.pose_anchors(pelvis_state);
+    ScenePoseAnchors drawn_facts;
+    (void)pelvis_renderer.render(pelvis_state,camera,{},&drawn_facts);
+    check(facts.avatar_slots==drawn_facts.avatar_slots&&facts.avatar_slots[2].has_value());
+    check(pelvis_renderer.cache_samples()==before_pose_samples);
+    // CenterTo adds back the slot-only half-tile XY offset; vertical bone
+    // height remains composed. A logical avatar origin is not the pelvis.
+    const auto focus=*facts.avatar_slots[2];
+    check(focus[2]>pelvis_state.avatar_tile[2]&&focus[0]+.5f!=pelvis_state.avatar_tile[0]);
+    pelvis_state.avatar_tile[0]+=3.f;
+    const auto moved_facts=pelvis_renderer.pose_anchors(pelvis_state);
+    check(moved_facts.avatar_slots[2]&&(*moved_facts.avatar_slots[2])[0]>focus[0]+2.99f);
+    check(!no_head_renderer.pose_anchors(SceneState{}).avatar_slots[2]);
+    // One CPU integration path: authored opcode35 -> actual VM proof -> current
+    // animated pelvis -> instant view intent -> camera. No window is involved.
+    odh::World focus_world;
+    check(focus_world.create(1,odh::EntityKind::avatar,{})&&
+        focus_world.set_position(1,{176,144,1,0}));
+    const auto logical_before=*focus_world.find(1)->position;
+    const odh::WorldEntityReference focus_identity{1,focus_world.find(1)->generation};
+    odh_host::SpecialEffectView integrated_view;
+    std::array<float,3> integrated_pelvis{};unsigned focus_calls=0;
+    auto effect=odh::special_effect_primitive(focus_world,{true,
+        [&](const odh::SpecialEffectFocusRequest& request){
+            ++focus_calls;check(request.target==focus_identity&&request.source_still_matches());
+            const auto current_pose=pelvis_renderer.pose_anchors(pelvis_state);
+            check(current_pose.avatar_slots[2].has_value());
+            integrated_pelvis=*current_pose.avatar_slots[2];
+            integrated_pelvis[0]+=.5f;integrated_pelvis[1]+=.5f;
+            std::string reason;
+            const auto completed=integrated_view.center_to(request.target,
+                {focus_identity,1,1,integrated_pelvis},&reason);
+            check(request.source_still_matches());
+            return odh::SpecialEffectFocusResult{completed,reason};
+        }});
+    odh::RoutineSet focus_routines{{odh::routine_key(4096),odh::Bhav{0x8002,
+        {{35,254,255,{10,0,1,2,8,0,0,0}}},{},odh::Bhav::Metadata{0,0,0,0}}}};
+    odh::Vm focus_vm{std::move(focus_routines),focus_world.vm_memory(),{},std::move(effect)};
+    focus_vm.start(odh::routine_key(4096),{1,1,1});
+    check(focus_vm.run(1)==odh::VmStatus::returned_true&&focus_calls==1);
+    check(integrated_view.apply(camera)==std::optional<std::uint8_t>{1}&&
+        camera.center_tile==integrated_pelvis&&integrated_view.focused());
+    check(camera.center_tile[0]!=pelvis_state.avatar_tile[0]&&
+        camera.center_tile[2]>pelvis_state.avatar_tile[2]);
+    const auto& logical_after=*focus_world.find(1)->position;
+    check(logical_after.x==logical_before.x&&logical_after.y==logical_before.y&&
+        logical_after.level==logical_before.level&&logical_after.direction==logical_before.direction);
+    camera.center_tile={90.f,80.f,70.f};
+    check(!integrated_view.apply(camera)&&camera.center_tile==std::array<float,3>{90.f,80.f,70.f});
     state.hands.left=static_cast<odh::HandGesture>(4);odh::AnimationHeader missing{};missing.xskill="missing";state.animation=&missing;
     rejects([&]{renderer.render(state,camera);});check(renderer.cache_clips()==0);
     state.hands={};state.hands.right=static_cast<odh::HandGesture>(255);rejects([&]{renderer.render(state,camera);});

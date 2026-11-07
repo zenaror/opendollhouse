@@ -72,6 +72,33 @@ int main() {
                 "each private action uses the exact resource owner for its entity");
         require(odh::encode_world_snapshot(source) == source_bytes,
                 "staging leaves the source snapshot byte-for-byte unchanged");
+        {
+            auto job_owners=owners;
+            for(auto& [owner,bank]:job_owners){(void)owner;
+                bank[key(4096)]=routine({assign_from_scope(3,23,33,12)});}
+            auto job_temps=zero_temps;job_temps[1][0]=-1;job_temps[1][1]=2;
+            job_temps[2][0]=17;job_temps[2][1]=3;
+            odh::VmMemory jobs;unsigned calls=0,generic_job_reads=0;
+            jobs.read=[&](const auto&,std::uint8_t scope,std::int16_t)->std::optional<std::int16_t>{
+                if(scope!=33)return {}; ++generic_job_reads;return 999;};
+            jobs.job_data=[&](const odh::VmFrame& frame,std::uint16_t job,std::int16_t level,std::int16_t field)->std::optional<std::int16_t>{
+                ++calls;if(field!=12)return {};
+                if(frame.context.caller==1&&frame.context.code_owner==101&&job==65535&&level==2)return 8;
+                if(frame.context.caller==2&&frame.context.code_owner==202&&job==17&&level==3)return 20;
+                return {};
+            };
+            const auto job_result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,job_temps,
+                globals,job_owners,8,{},jobs);
+            require(job_result.snapshot&&calls==2&&generic_job_reads==0&&
+                job_result.snapshot->entities[0].object_words.at(23)==8&&
+                job_result.snapshot->entities[1].object_words.at(23)==20,
+                "Load forwards typed Work.iff provider while each real staged Thread supplies its own saved Temp0/Temp1");
+            jobs.job_data={};
+            const auto absent=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,job_temps,
+                globals,job_owners,8,{},jobs);
+            require(!absent.snapshot&&generic_job_reads==0&&odh::encode_world_snapshot(source)==source_bytes,
+                "missing staged job provider rejects without generic scope fallback or source publication");
+        }
 
         auto score_source=source;
         for(auto& entity:score_source.entities){
@@ -134,6 +161,23 @@ int main() {
                 "a supplemental owner-scoped read reaches the staged Load VM and its World copy");
 
         auto missing_primitive_owners=owners;
+        for(const bool ghost:{false,true}){
+            auto wide_owners=owners;
+            auto wide=routine({assign_from_scope(3,23,9,3)});
+            wide.metadata->arguments=9;
+            wide_owners[101][key(4096)]=wide;
+            result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,{{1,ghost},{2,false}},zero_temps,
+                globals,wide_owners,8);
+            require(result.snapshot&&result.snapshot->entities[0].object_words.at(23)==(ghost?-1:0),
+                "Load supplies its fourth zero argument even with wide metadata in either candidate mode");
+            wide.instructions={assign_from_scope(3,23,9,4)};
+            wide_owners[101][key(4096)]=wide;
+            result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,{{1,ghost},{2,false}},zero_temps,
+                globals,wide_owners,8);
+            require(!result.snapshot&&result.failed_entity==1&&result.failed_opcode==2&&
+                result.reason.find("variable index outside frame")!=std::string::npos,
+                "Load never pads a null four-word argument array to its metadata count");
+        }
         missing_primitive_owners[101][key(4096)]=routine({
             {10,1,253,{}},assign(23,71)
         });
@@ -146,8 +190,39 @@ int main() {
         });
         result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
             globals,missing_primitive_owners,8);
-        require(result.snapshot.has_value()&&result.snapshot->entities[0].object_words.at(23)==72,
-                "Simitone's unregistered opcode 1 placeholder follows its true branch in saved Load");
+        require(!result.snapshot&&result.failed_opcode==1&&!result.build_buy_enabled&&
+                result.deferred_build_buy_events.empty()&&odh::encode_world_snapshot(source)==source_bytes,
+                "TS1 Generic1 is registered: an unported mode cannot publish a falsely successful Load");
+        {
+            auto permission_owners=owners;
+            permission_owners[101][key(4096)]=routine({
+                {1,1,253,{10,0,0,0,0,0,0,0}},
+                {1,2,253,{10,0,0,0,0,0,0,0}},
+                {1,3,253,{11,0,0,0,0,0,0,0}},assign(23,72)});
+            result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+                globals,permission_owners,8);
+            require(result.snapshot&&result.build_buy_enabled==std::optional<bool>{true}&&
+                result.deferred_build_buy_events==std::vector<bool>({false,false,true})&&
+                result.snapshot->entities[0].object_words.at(23)==72,
+                "registered TS1 permission modes publish final state and every ordered notification only with the batch");
+            result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,{{1,true},{2,false}},zero_temps,
+                globals,permission_owners,8);
+            require(result.snapshot&&result.build_buy_enabled==std::optional<bool>{true}&&
+                result.deferred_build_buy_events.empty()&&result.snapshot->entities[0].object_words.at(23)==-1,
+                "GhostImage permission changes and notifications are discarded with its private World");
+            permission_owners[101][key(4096)]=routine({{1,254,253,{10,0,0,0,0,0,0,0}}});
+            permission_owners[202][key(4096)]=routine({{1,254,253,{43,0,0,0,0,0,0,0}}});
+            result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+                globals,permission_owners,8);
+            require(!result.snapshot&&!result.build_buy_enabled&&result.deferred_build_buy_events.empty()&&
+                result.failed_entity==2&&result.failed_opcode==1&&odh::encode_world_snapshot(source)==source_bytes,
+                "later unsupported Generic1 discards earlier permission effects along with the complete candidate");
+            result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+                globals,owners,8,{}, {}, {}, {},nullptr,{},false);
+            require(result.snapshot&&result.build_buy_enabled==std::optional<bool>{false}&&
+                result.deferred_build_buy_events.empty(),
+                "staged Load inherits an explicitly disabled architecture without inventing a notification");
+        }
         missing_primitive_owners[101][key(4096)]=routine({
             {49,1,253,{0,0,0,0,0,0,0,0}},assign(23,75)
         });

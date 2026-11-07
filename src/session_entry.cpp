@@ -3,6 +3,7 @@
 
 #include <map>
 #include <set>
+#include <algorithm>
 
 namespace odh {
 
@@ -56,6 +57,37 @@ SessionEntry resolve_session_entry(unsigned mode, std::uint16_t house,
             throw FormatError("family Sim GUID has no matching character resource");
         result.members.push_back({guid, *neighbor_id, character->source,
                                   character->asset, character->chunk_id});
+    }
+    return result;
+}
+
+SessionEntry resolve_visit_session_entry(const SessionEntry& home,
+    unsigned mode, std::uint16_t house, std::string file,
+    const LotLocations& locations, const std::vector<std::uint32_t>& travelers) {
+    if (!neighborhood_mode_supported(mode) || !house || house >= 99 ||
+        house == home.house_number || file.empty())
+        throw FormatError("invalid temporary visit destination; home uses the return path");
+    if (!home.family_chunk_id || home.members.empty() || home.members.size() > 8 ||
+        travelers.empty() || travelers.size() > home.members.size())
+        throw FormatError("temporary visit requires an origin household and traveler subset");
+    if (std::count_if(locations.lots.begin(), locations.lots.end(),
+            [&](const auto& lot) { return lot.house == house; }) != 1)
+        throw FormatError("temporary visit destination is absent or ambiguous in LotLocations");
+    std::set<std::uint32_t> home_guids, selected;
+    std::set<std::int16_t> home_neighbors;
+    for (const auto& member : home.members)
+        if (!member.guid || member.neighbor_id <= 0 || member.character_asset.empty() ||
+            !home_guids.insert(member.guid).second || !home_neighbors.insert(member.neighbor_id).second)
+            throw FormatError("temporary visit origin has ambiguous member identities");
+    SessionEntry result{mode, house, std::move(file), home.family_chunk_id, home.family_number, {}};
+    for (const auto guid : travelers) {
+        if (!selected.insert(guid).second)
+            throw FormatError("temporary visit contains duplicate travelers");
+        const auto found = std::find_if(home.members.begin(), home.members.end(),
+            [&](const auto& member) { return member.guid == guid; });
+        if (found == home.members.end())
+            throw FormatError("temporary visitor is not a member of the permanent household");
+        result.members.push_back(*found);
     }
     return result;
 }

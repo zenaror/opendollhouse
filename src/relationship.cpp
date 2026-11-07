@@ -11,6 +11,9 @@ std::int16_t low16(std::int32_t v) {
 bool valid(std::int16_t i, std::size_t size) { return i >= 0 && static_cast<std::size_t>(i) < size; }
 std::optional<std::int16_t> input(const VmFrame& f, const std::array<std::int16_t,20>& t,
     const VmMemory& m, std::uint8_t scope, std::int16_t index) {
+    const auto resolved=resolve_ts1_variable_address(scope,index,f,t);
+    if(!resolved)return {};
+    scope=resolved->scope;index=resolved->index;
     switch (scope) {
     case 7: return index;
     case 8: return valid(index,t.size()) ? std::optional<std::int16_t>{t[static_cast<std::size_t>(index)]} : std::nullopt;
@@ -50,6 +53,14 @@ RelationshipSnapshot RelationshipState::snapshot() const {
         for (const auto& [target,values] : pairs) entry.pairs.push_back({target,values});
         result.sources.push_back(std::move(entry));
     }
+    return result;
+}
+std::vector<RelationshipPairSnapshot> RelationshipState::neighbor_pairs(std::int16_t source) const {
+    std::vector<RelationshipPairSnapshot> result;
+    const auto found=sources_.find({RelationshipMatrix::neighbor,source,0});
+    if(found==sources_.end())return result;
+    result.reserve(found->second.size());
+    for(const auto& pair:found->second)result.push_back({pair.first,pair.second});
     return result;
 }
 bool RelationshipState::restore_snapshot(const RelationshipSnapshot& snapshot) {
@@ -131,6 +142,64 @@ bool RelationshipState::import_object_relationships(const World& world,
     pairs_=pairs;values_=values;fresh_=false;
     return true;
 }
+bool RelationshipState::forget_object_source(std::int16_t id,std::uint64_t generation) noexcept {
+    if(id<=0||!generation)return false;
+    const auto own=sources_.find({RelationshipMatrix::object,id,generation});
+    if(own!=sources_.end()){
+        for(const auto& entry:own->second){--pairs_;values_-=entry.second.size();}
+        sources_.erase(own);
+    }
+    fresh_=false;return true;
+}
+bool RelationshipState::remove_inbound_object_references(const World& world,std::int16_t id,std::uint64_t generation) noexcept {
+    if(id<=0||!generation||!world.reference_is_dead({id,generation}))return false;
+    for(auto& entry:sources_){const auto& source=entry.first;
+        if(source.matrix!=RelationshipMatrix::object||
+           (!world.is_live_reference({source.id,source.generation})&&(source.id!=id||source.generation!=generation)))continue;
+        const auto found=entry.second.find(static_cast<std::uint16_t>(id));if(found==entry.second.end())continue;
+        --pairs_;values_-=found->second.size();entry.second.erase(found);
+    }
+    fresh_=false;return true;
+}
+bool RelationshipState::retire_object_identity(std::int16_t id,std::uint64_t generation) noexcept {
+    if(id<=0||!generation)return false;
+    const Source retired{RelationshipMatrix::object,id,generation};
+    const auto own=sources_.find(retired);
+    if(own!=sources_.end()){
+        for(const auto& [target,values]:own->second){
+            (void)target;
+            --pairs_;
+            values_-=values.size();
+        }
+        sources_.erase(own);
+    }
+    const auto target=static_cast<std::uint16_t>(id);
+    for(auto& [source,pairs]:sources_){
+        if(source.matrix!=RelationshipMatrix::object)continue;
+        const auto inbound=pairs.find(target);
+        if(inbound==pairs.end())continue;
+        --pairs_;
+        values_-=inbound->second.size();
+        pairs.erase(inbound);
+    }
+    fresh_=false;
+    return true;
+}
+bool RelationshipState::retire_neighbor_identity(std::int16_t id) noexcept {
+    if(id<=0)return false;
+    const auto own=sources_.find({RelationshipMatrix::neighbor,id,0});
+    if(own!=sources_.end()){
+        for(const auto& entry:own->second){--pairs_;values_-=entry.second.size();}
+        sources_.erase(own);
+    }
+    for(auto& entry:sources_){
+        if(entry.first.matrix!=RelationshipMatrix::neighbor)continue;
+        const auto inbound=entry.second.find(id);
+        if(inbound==entry.second.end())continue;
+        --pairs_;values_-=inbound->second.size();entry.second.erase(inbound);
+    }
+    fresh_=false;return true;
+}
 std::optional<std::int16_t> RelationshipState::lookup(Source source,std::int32_t target,std::size_t index) const {
     const auto s=sources_.find(source); if (s==sources_.end()) return {};
     const auto p=s->second.find(target); if (p==s->second.end() || index>=p->second.size()) return {};
@@ -142,6 +211,26 @@ std::optional<std::int16_t> RelationshipState::value(std::int16_t source,std::in
 std::optional<std::int16_t> RelationshipState::object_value(const World& w,std::int16_t source,std::int16_t target,std::size_t index) const {
     const auto entity=w.find(source); if (!entity) return {};
     return lookup({RelationshipMatrix::object,source,entity->generation},static_cast<std::uint16_t>(target),index);
+}
+std::optional<std::int16_t> RelationshipState::mutual_neighbor_friend_count(
+    const NeighborContext& neighbors,std::int16_t neighbor) const {
+    if(!neighbors.by_id(neighbor))return std::int16_t{0};
+    const auto source=sources_.find({RelationshipMatrix::neighbor,neighbor,0});
+    if(source==sources_.end())return std::int16_t{0};
+    std::uint16_t count=0;
+    for(const auto& [target,values]:source->second) {
+        if(values.empty())return {};
+        if(values[0]<50)continue;
+        const auto other=low16(target);
+        if(!neighbors.by_id(other))continue;
+        const auto reverse_source=sources_.find({RelationshipMatrix::neighbor,other,0});
+        if(reverse_source==sources_.end())continue;
+        const auto reverse=reverse_source->second.find(neighbor);
+        if(reverse==reverse_source->second.end())continue;
+        if(reverse->second.empty())return {};
+        if(reverse->second[0]>=50)++count;
+    }
+    return low16(count);
 }
 VmPrimitive RelationshipState::primitive(const World& world,VmMemory memory,std::function<void(const RelationshipRecord&)> observer) {
     return [this,&world,memory=std::move(memory),observer=std::move(observer)]
@@ -172,7 +261,7 @@ VmPrimitive RelationshipState::primitive(const World& world,VmMemory memory,std:
         if (flags&2) {
             std::int16_t caller_neighbor=0;
             if (mode<2) {
-                const auto caller=world.find(frame.context.caller);
+                const auto caller=world.frame_entity(frame,VmEntityRole::caller);
                 if (!caller || caller->kind!=EntityKind::avatar || caller->person_data.size()<=31)
                     return finish(PrimitiveDisposition::unsupported,"relationship caller neighbor ID unavailable");
                 caller_neighbor=caller->person_data[31];
@@ -182,7 +271,9 @@ VmPrimitive RelationshipState::primitive(const World& world,VmMemory memory,std:
         } else {
             const auto first=mode==0?frame.context.caller:mode==3?selected:frame.context.stack_object;
             const auto second=mode==0||mode==3?frame.context.stack_object:mode==1?frame.context.caller:selected;
-            const auto a=world.find(first), c=world.find(second);
+            const auto a=mode==3?world.find(first):world.frame_entity(frame,mode==0?VmEntityRole::caller:VmEntityRole::stack_object);
+            const auto c=mode==0||mode==3?world.frame_entity(frame,VmEntityRole::stack_object):
+                mode==1?world.frame_entity(frame,VmEntityRole::caller):world.find(second);
             record.matrix=RelationshipMatrix::object;record.source=first;record.target=static_cast<std::uint16_t>(second);
             if (!a || !c) {record.skipped_entities=true;return finish(PrimitiveDisposition::goto_true);}
             const auto nid=[](const Entity& e)->std::int16_t {
@@ -213,16 +304,19 @@ VmPrimitive RelationshipState::primitive(const World& world,VmMemory memory,std:
             record.value_before=before;
             if (set_mode==0) {
                 result=before;
-                switch (scope) {
-                case 8: if (!valid(var,temps.size())) return finish(PrimitiveDisposition::unsupported,"relationship temp output unavailable");
-                    outcome.temp_write=VmTempWrite{static_cast<std::size_t>(var),result};break;
-                case 9: if (!valid(var,frame.arguments.size())) return finish(PrimitiveDisposition::unsupported,"relationship argument output unavailable");
-                    outcome.write=VmFrameWrite{VmFrameBank::arguments,static_cast<std::size_t>(var),result};break;
-                case 25: if (!valid(var,frame.locals.size())) return finish(PrimitiveDisposition::unsupported,"relationship local output unavailable");
-                    outcome.write=VmFrameWrite{VmFrameBank::locals,static_cast<std::size_t>(var),result};break;
+                const auto output=resolve_ts1_variable_address(scope,var,frame,temps);
+                if(!output)return finish(PrimitiveDisposition::unsupported,"relationship indirect output unavailable");
+                const auto output_index=output->index;
+                switch (output->scope) {
+                case 8: if (!valid(output_index,temps.size())) return finish(PrimitiveDisposition::unsupported,"relationship temp output unavailable");
+                    outcome.temp_write=VmTempWrite{static_cast<std::size_t>(output_index),result};break;
+                case 9: if (!valid(output_index,frame.arguments.size())) return finish(PrimitiveDisposition::unsupported,"relationship argument output unavailable");
+                    outcome.write=VmFrameWrite{VmFrameBank::arguments,static_cast<std::size_t>(output_index),result};break;
+                case 25: if (!valid(output_index,frame.locals.size())) return finish(PrimitiveDisposition::unsupported,"relationship local output unavailable");
+                    outcome.write=VmFrameWrite{VmFrameBank::locals,static_cast<std::size_t>(output_index),result};break;
                 case 10: outcome.stack_object_write=VmStackObjectWrite{result};break;
                 case 7: return finish(PrimitiveDisposition::unsupported,"relationship literal output is not writable");
-                default: output_address=resolve_person_data_address(scope,var,temps);
+                default: output_address=output;
                     if (!output_address || !memory.write) return finish(PrimitiveDisposition::unsupported,"relationship external output unavailable");
                 }
             } else {

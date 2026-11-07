@@ -141,5 +141,32 @@ int main(){try{
      require(inactive.bones[1].translation==before.bones[1].translation,"inactive carry channel preserves ordinary pose");
      reject([&]{odh::sample_pose(rig,nullptr,nullptr,0,&carry.animation,nullptr);},"carry requires paired CFP");
      carry.cfp.bits[0].clear();reject([&]{odh::sample_pose(rig,nullptr,nullptr,0,&carry.animation,&carry.cfp);},"carry plane bounds validated");}
+    {Clip idle,full,half,carry;
+     idle.translations({{0,0,0}});idle.rotations({{0,0,0,-1}});idle.motion("ROOT",1,0,0);
+     full.translations({{30,0,0}});full.motion("ROOT",1,0);
+     half.translations({{60,0,0}});half.motion("ROOT",1,0);
+     std::vector<odh::PoseClipSample> clips={{&idle.animation,&idle.cfp,0,0.5f},
+         {&full.animation,&full.cfp,0,0.25f},{&half.animation,&half.cfp,0,0.25f}};
+     const auto mixed=odh::sample_pose_collection(s,clips);
+     close(mixed.bones[0].translation[0],-22.5f,"ordered cumulative weights reproduce source collection blend");
+     close(mixed.bones[0].rotation[3],1,"later clips without rotation preserve preceding rotation channel");
+     close(mixed.bones[1].absolute_position[0],-23.5f,"hierarchy rebuild follows combined primary channels");
+     clips[0].weight=0;clips[1].weight=0.66f;clips[2].weight=0.33f;
+     const auto walking=odh::sample_pose_collection(s,clips);
+     close(walking.bones[0].translation[0],-40,"zero idle contributes nothing; source full/half weights normalize by prefix");
+     carry.translations({{7,0,0}});carry.motion("ROOT",1,0);
+     const auto held=odh::sample_pose_collection(s,clips,&carry.animation,&carry.cfp);
+     close(held.bones[0].translation[0],-7,"carry overrides after all three locomotion clips");
+     clips[1].weight=-1;reject([&]{odh::sample_pose_collection(s,clips);},"negative collection weight rejected");
+     clips[1].weight=std::numeric_limits<float>::quiet_NaN();
+     reject([&]{odh::sample_pose_collection(s,clips);},"nonfinite collection weight rejected");
+     clips[1].weight=1;clips.push_back(clips[1]);
+     reject([&]{odh::sample_pose_collection(s,clips);},"collection budget preserves bounded three-clip profile");}
+    {Clip first,second;first.rotations({{0,0,0,-1}});first.motion("ROOT",1,-1,0);
+     second.rotations({{0,0,-1,0}});second.motion("ROOT",1,-1,0);
+     const auto mixed=odh::sample_pose_collection(s,{{&first.animation,&first.cfp,0,0.5f},
+         {&second.animation,&second.cfp,0,0.5f}});
+     close(mixed.bones[0].rotation[2],std::sqrt(0.5f),"collection rotations use shortest-arc Slerp");
+     close(mixed.bones[0].rotation[3],std::sqrt(0.5f),"collection rotation midpoint stays finite");}
     std::cout<<checks<<" pose checks passed (synthetic CPU transforms only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Pose test failed: "<<e.what()<<'\n';return 1;}}

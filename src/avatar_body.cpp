@@ -3,6 +3,22 @@
 #include <cctype>
 
 namespace odh {
+AvatarBodyStrings effective_avatar_body(const AvatarBodyStrings& original,const Entity& entity){
+    auto result=original;
+    if(entity.avatar_appearance&&entity.avatar_appearance->body){
+        const auto& outfit=*entity.avatar_appearance->body;
+        if(outfit.kind!=AvatarOutfitKind::literal)
+            throw FormatError("live avatar outfit requires unavailable numeric/null outfit content");
+        result.body=outfit.literal;result.hands=outfit.hands;
+    }
+    return result;
+}
+std::vector<std::string> effective_avatar_accessories(const Entity& entity){
+    if(entity.avatar_appearance&&entity.avatar_appearance->accessory_assets)
+        return *entity.avatar_appearance->accessory_assets;
+    return entity.bound_appearances;
+}
+
 namespace {
 std::vector<std::string> us_strings(const StringTable& table) {
     if(table.state!=StringTableState::decoded)

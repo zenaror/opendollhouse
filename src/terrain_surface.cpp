@@ -36,17 +36,16 @@ TerrainSurface terrain_surface(const SavedArchitecture& a,const WorldProjection&
     if(!a.grass||a.grass->size()!=count||!a.altitude||a.altitude->size()!=count||
        a.levels[0].floors.size()!=count||a.levels[0].walls.size()!=count)
         throw FormatError("terrain surface grid extent missing or mismatched");
-    for(const auto* grid:{&a.pools,&a.water})if(*grid){if((*grid)->size()!=count)throw FormatError("terrain pool/water extent mismatch");
-        for(auto v:**grid)if(v!=0&&v!=255)throw FormatError("terrain water/pool surface unsupported");}
+    for(const auto* grid:{&a.pools,&a.water})if(*grid&&(*grid)->size()!=count)throw FormatError("terrain pool/water extent mismatch");
     TerrainSurface out;
     out.triangles.reserve(std::size_t(a.width-2)*(a.height-2)*2);
     for(std::uint32_t y=1;y+1<a.height;++y)for(std::uint32_t x=1;x+1<a.width;++x){
-        const auto at=std::size_t(y)*a.width+x;const auto& wall=a.levels[0].walls[at];auto pattern=a.levels[0].floors[at];
+        const auto at=std::size_t(y)*a.width+x;const auto& wall=a.levels[0].walls[at];auto pattern=rendered_floor_pattern(a,0,at);
         const auto diag=wall.segments&48;
         if(diag==48)throw FormatError("terrain double diagonal unsupported");
         std::array<bool,2> draw{};
-        if(diag){auto first=wall.top_left_pattern,second=wall.top_left_style;if(first==0&&second==0)first=second=pattern;draw={first==0,second==0};}
-        else draw={pattern==0,pattern==0};
+        if(diag){auto first=wall.top_left_pattern,second=wall.top_left_style;if(first==0&&second==0)first=second=pattern;draw={first==0||first==65534,second==0||second==65534};}
+        else draw={pattern==0||pattern==65534,pattern==0||pattern==65534};
         if(!draw[0]&&!draw[1])continue;
         std::array<RasterVertex,4> vertices{};
         const std::array<std::array<std::uint32_t,2>,4> corners{{{x,y},{x+1,y},{x+1,y+1},{x,y+1}}};
@@ -54,7 +53,9 @@ TerrainSurface terrain_surface(const SavedArchitecture& a,const WorldProjection&
             vertices[c]={project_tile(camera,{static_cast<float>(cx),static_cast<float>(cy),terrain_corner_altitude(a,cx,cy,base_alt)}),{0,0},normal(a,cx,cy),color(a,cx,cy,type)};}
         const auto owner=record_owners?ground_owner_id(x,y,1):std::uint16_t{0};
         if(record_owners&&!owner)throw FormatError("terrain owner tile outside supported lot");
-        auto tri=[&](unsigned i,unsigned j,unsigned k){out.triangles.push_back({{vertices[i],vertices[j],vertices[k]},0,owner});};
+        auto tri=[&](unsigned i,unsigned j,unsigned k){out.triangles.push_back({{vertices[i],vertices[j],vertices[k]},0,owner});
+            out.room_samples.push_back({static_cast<std::int32_t>((corners[i][0]+corners[j][0]+corners[k][0])*16/3),
+                static_cast<std::int32_t>((corners[i][1]+corners[j][1]+corners[k][1])*16/3),1});};
         if(!diag){tri(0,1,2);tri(2,3,0);++out.whole_tiles;}
         else if(diag==16){if(draw[0]){tri(1,2,3);++out.half_tiles;}if(draw[1]){tri(0,1,3);++out.half_tiles;}}
         else {if(draw[0]){tri(0,1,2);++out.half_tiles;}if(draw[1]){tri(2,3,0);++out.half_tiles;}}

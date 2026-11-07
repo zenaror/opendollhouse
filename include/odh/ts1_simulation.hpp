@@ -23,6 +23,12 @@ public:
     const Ts1ClockSnapshot& snapshot() const {return state_;}
     bool restore(const Ts1ClockSnapshot&);
     unsigned seconds() const {return state_.minute_fraction*60U/ticks_per_minute;}
+    // VMArchitecture uses the sum of these three clock components for daylight.
+    // A newly imported SIMI can carry more than one minute in Seconds. Cycle
+    // only the visual time at midnight, preserving the VM registers and tick.
+    unsigned daylight_seconds_of_day() const {
+        return (state_.hour*3600U+state_.minute*60U+seconds())%(24U*3600U);
+    }
 private:
     Ts1ClockSnapshot state_;
 };
@@ -39,20 +45,27 @@ struct Ts1MotiveInputs {
     std::optional<std::int16_t> active_personality,outgoing_personality;
     std::int16_t sleep_state=0,room_score=0;
     bool hidden=false;
+    std::int16_t mood=0; // Current stored Mood for the default source setter limit.
 };
 struct Ts1MotiveSnapshot {
     std::uint8_t last_two_minute_bucket=0;
     std::array<std::int16_t,ts1_need_count> fractions{};
 };
 enum class Ts1MotiveStatus {updated,unchanged,unsupported};
-// Consume needs/mood/sleep_state only for updated; unsupported never mutates decay state.
+// Only flagged values correspond to source SetMotiveData calls. Unflagged
+// signed values remain untouched. Unsupported never mutates decay state.
 struct Ts1MotiveResult {
     Ts1MotiveStatus status=Ts1MotiveStatus::unsupported;
     std::array<std::int16_t,ts1_need_count> needs{};
     std::int16_t sleep_state=0,room_score=0,mood=0;
+    std::array<bool,ts1_need_count> needs_written{};
+    bool sleep_state_written=false,mood_written=false;
 };
-// Default reference constants and need limits [-100,100] only. Custom tuning,
-// overfilled needs and room-score calculation remain outside this model.
+// Default reference constants and setter limit100, preserving signed source
+// values and existing overfill via max(old,100). Custom tuning and room-score
+// calculation remain external. Every nonzero SleepState sleeps; -1 alone uses
+// the bed Energy fraction. Source LastMinute is default0, then minute/2; native
+// snapshots retain that reachable0..29 bucket and any signed fraction words.
 class Ts1MotiveDecay {
 public:
     Ts1MotiveResult update(unsigned hour,unsigned minute,const Ts1MotiveInputs&);

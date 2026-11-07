@@ -44,6 +44,19 @@ int main() {
         check(odh::object_construction_profile(d, slots).status ==
                   odh::ObjectConstructionStatus::unsupported_multitile,
               "multitile definitions are rejected explicitly");
+        d.master_id=42;d.sub_index=0x0102;
+        const auto part_profile=odh::object_construction_profile(d,slots,{},true);
+        check(part_profile.status==odh::ObjectConstructionStatus::ready&&
+            part_profile.layout.attributes==16&&part_profile.layout.containment_slots==2,
+            "explicit selected subpart allocates only its own attribute and SLOT banks");
+        check(odh::object_construction_profile(d,slots).status==odh::ObjectConstructionStatus::unsupported_multitile,
+            "selected-subpart opt-in never changes the default rejection profile");
+        d.sub_index=-1;
+        check(odh::object_construction_profile(d,slots,{},true).status==odh::ObjectConstructionStatus::unsupported_multitile,
+            "abstract master remains non-materializable even with subpart opt-in");
+        d.sub_index=0;d.num_attributes.reset();
+        check(odh::object_construction_profile(d,slots,{},true).status==odh::ObjectConstructionStatus::missing_runtime_fields,
+            "subpart opt-in cannot invent missing bank metadata");
         d = definition();
         d.slot_table_id.reset();
         check(odh::object_construction_profile(d, slots).status ==
@@ -65,6 +78,10 @@ int main() {
         check(odh::object_construction_profile(definition(), slots, limits).status ==
                   odh::ObjectConstructionStatus::resource_limit_exceeded,
               "containment slot budget is enforced");
+        auto bounded_part=definition();bounded_part.is_multitile=true;bounded_part.master_id=42;bounded_part.sub_index=1;
+        check(odh::object_construction_profile(bounded_part,slots,{4,8},true).status==
+            odh::ObjectConstructionStatus::resource_limit_exceeded,
+            "selected subpart retains normal allocation budgets before any body is created");
 
         const odh::SlotTable no_containment{0, 10, {slot(3), slot(2)}, 0};
         const auto no_slots = odh::object_construction_profile(definition(), no_containment);
@@ -96,6 +113,17 @@ int main() {
                   world.snapshot().entities.size() == live.entities.size() &&
                   world.snapshot().word_count == live.word_count,
               "duplicate identity fails without publishing partial state");
+        for(const auto invalid_master:{0U,0xf301e375U}) {
+            const auto unchanged=world.snapshot();
+            check(!world.create_runtime_object(5,0xf301e375,{}, {},invalid_master)&&
+                world.snapshot().entities.size()==unchanged.entities.size()&&
+                world.snapshot().generation_sequence==unchanged.generation_sequence&&
+                world.snapshot().spatial_revision==unchanged.spatial_revision&&world.word_count()==unchanged.word_count,
+                "zero or self master override is rejected before changing World state");
+        }
+        check(world.create_runtime_object(5,0xf301e375,{}, {},0x81234567U)&&
+            world.find(5)->definition->guid==0xf301e375U&&world.find(5)->definition->master_guid==0x81234567U,
+            "explicit group master remains separate from actual part definition identity");
         odh::World tight({2, 32, 128, 16, 16});
         check(tight.create(1, odh::EntityKind::avatar),
               "tight World fixture starts with one existing entity");

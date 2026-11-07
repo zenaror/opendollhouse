@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/household_spawn.hpp"
+#include "odh/installed_lot_limits.hpp"
 #include "odh/floor_placement.hpp"
 #include "odh/room_map.hpp"
 #include "odh/world_room_info.hpp"
@@ -16,8 +17,15 @@
 // a disposable World; unknown facts and any registration failure fail closed.
 inline odh::HouseholdPositionAttemptStatus attempt_household_runtime_arrival(
     odh::World& world, std::int16_t id, const odh::EntityPosition& position,
-    const odh::DefinitionIndex& definitions, const odh::PreparedArchitecture& architecture) {
+    const odh::DefinitionIndex& definitions, const odh::PreparedArchitecture& architecture,
+    std::optional<std::int16_t> ignored_singleton = {}) {
     using Status = odh::HouseholdPositionAttemptStatus;
+    if(ignored_singleton){
+        const auto* caller=world.find(*ignored_singleton);
+        const auto* definition=caller&&caller->definition?definitions.unique(caller->definition->guid):nullptr;
+        if(!caller||!definition||definition->definition.is_multitile||caller->definition->master_guid)
+            return Status::unsupported;
+    }
     const auto* avatar = world.find(id);
     if (!avatar || avatar->kind != odh::EntityKind::avatar || !avatar->definition ||
         avatar->position || avatar->attachment || avatar->ui_ghost ||
@@ -59,7 +67,7 @@ inline odh::HouseholdPositionAttemptStatus attempt_household_runtime_arrival(
     const auto room = room_for(position);
     const auto shape = odh::avatar_candidate_collision_shape(position);
     if (!room || !*room || shape.state != odh::CollisionShapeState::present) return Status::unsupported;
-    odh::WorldLimits limits; limits.words = 131072;
+    auto limits = odh::installed_lot_world_limits();
     odh::World attempt(limits, world.snapshot().attribute_policy);
     if (!attempt.restore_snapshot(world.snapshot())) return Status::unsupported;
     const odh::AvatarKillTimeoutResolver kill_for = [&attempt](std::int16_t actor, std::uint64_t generation)
@@ -67,7 +75,12 @@ inline odh::HouseholdPositionAttemptStatus attempt_household_runtime_arrival(
         const auto* entity = attempt.find(actor);
         return entity && entity->generation == generation ? entity->kill_timeout : std::nullopt;
     };
-    const auto query = odh::query_world_room_info(attempt,definitions,room_for,kill_for,*room,shape.box,id);
+    auto query = odh::query_world_room_info(attempt,definitions,room_for,kill_for,*room,shape.box,id);
+    // UnderneathMe's retry ignores only the proven singleton Caller's group.
+    // Keep its World/RoomInfo registration; filter only this collision query.
+    if(ignored_singleton)
+        query.intersections.erase(std::remove_if(query.intersections.begin(),query.intersections.end(),
+            [&](const auto& obstacle){return obstacle.owner_id==*ignored_singleton;}),query.intersections.end());
     const auto overlaps = odh::audit_world_avatar_place_overlaps(attempt,id,query,false,
         [](std::int16_t, std::int16_t) { return std::optional<bool>{false}; });
     if (overlaps.rules.status == odh::SavedAvatarPlaceAuditStatus::unsupported) return Status::unsupported;

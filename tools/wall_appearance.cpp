@@ -770,6 +770,8 @@ int main(int argc,char** argv){try{
     <<",\"load_probe_random_seed_initial\":"<<load_probe_seed
     <<",\"load_probe_random_seed_final\":"<<load_probe_random.seed()
     <<",\"load_probe_random_seed_is_saved_state\":false"
+    <<",\"build_buy_enabled\":"<<(result.build_buy_enabled?(*result.build_buy_enabled?"true":"false"):"null")
+    <<",\"deferred_build_buy_events\":"<<result.deferred_build_buy_events.size()
     <<",\"room_score_map\":"<<json_bytes(room_score_map_state)
     <<",\"room_score_updates\":"<<result.room_scores.size()
     <<",\"discarded_room_score_refreshes\":"<<result.discarded_room_score_refreshes

@@ -126,6 +126,8 @@ def make_game(root):
     (user / 'LotLocations.iff').write_bytes(iff([('STR#', 1, strings(['7,10,20']))]))
     (user / 'LotZoning.iff').write_bytes(iff([('STR#', 1, strings(['7, residential']))]))
     family = struct.pack('<II4siiiiiiII', 0, 9, b'IMAF', 7, 900, 100, 0, 0, 0, 1, 0x12345678)
+    # Complete original FAMI9 tail: retained DWORD plus six family spell words.
+    family += struct.pack('<I6h', 0, 0, 0, 0, 0, 0, 0)
     bank = [0] * 80
     bank[61] = 201
     neighbor = struct.pack('<II', 1, 4) + b'Sim0\0\0' + struct.pack('<ii', 0, 1)
@@ -154,8 +156,12 @@ def make_game(root):
     (user / 'Characters/User00000.iff').write_bytes(iff([
         ('OBJD', 128, objd), ('GLOB', 128, b'\x0dPersonGlobals'),
         ('STR#', 200, strings(body)), ('BHAV', 4096, main)]))
+    # Material discovery also enables the ordinary build/portal preparation.
+    # Supply a structurally valid global code bank; this unused routine does
+    # not stand in for any original global gameplay behavior.
     far(game / 'Global/Global.far', [('PersonGlobals.iff', iff([])), ('Global.iff', iff([
-        ('STR#', 150, strings(['walk'])), ('STR#', 158, strings(['swim']))]))])
+        ('STR#', 150, strings(['walk'])), ('STR#', 158, strings(['swim'])),
+        ('BHAV', 255, main)]))])
     for path in ['Objects/Objects.far', 'Animation/Animation.far', 'Textures/Textures.far']:
         far(game / path)
     far(root / 'ExpansionShared/ExpansionShared.far')

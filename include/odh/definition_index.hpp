@@ -27,6 +27,8 @@ public:
     // MasterID, SubIndex=-1. Missing/duplicate globally ambiguous GUIDs fail.
     const DefinitionCandidate* unique_master(const DefinitionCandidate&) const;
     std::size_t guid_count() const{return definitions_.size();}
+    // Bounded owned snapshot for catalog consumers; ambiguities are retained.
+    std::vector<DefinitionCandidate> snapshot_candidates() const;
     std::size_t candidate_count() const{return candidates_;}
 private:
     std::map<std::uint32_t,std::vector<DefinitionCandidate>> definitions_;

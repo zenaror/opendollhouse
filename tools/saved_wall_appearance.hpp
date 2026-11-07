@@ -1,5 +1,6 @@
 #pragma once
 #include "saved_resources.hpp"
+#include "odh/installed_lot_limits.hpp"
 #include "odh/wall_appearance.hpp"
 #include "odh/entry_points.hpp"
 #include <map>
@@ -147,9 +148,16 @@ inline SavedWallAppearance saved_wall_appearance(const odh::SavedWorld& saved,co
     if(!saved.world||saved.records.size()>4096)throw odh::FormatError("wall appearance saved World/record budget invalid");
     SavedWallAppearance out;std::map<std::uint32_t,std::size_t> bindings;std::uint64_t names=0;
     for(const auto& raw:saved.records){const auto id=static_cast<std::int16_t>(raw.saved.object_id);const auto* e=saved.world->find(id);
-        // Removed entities no longer contribute door/window appearance.
-        if(!e&&allow_removed)continue;
-        if(!e||!e->definition)throw odh::FormatError("wall appearance saved entity unavailable");
+        // A replacement at this number has its own wall-use events. It
+        // cannot contribute as the original door/window during a fallback.
+        if(!e||(raw.imported_generation&&e->generation!=raw.imported_generation)){
+            if(allow_removed)continue;
+            throw odh::FormatError("wall appearance imported lifetime unavailable id="+std::to_string(id));
+        }
+        if(!e->definition||(raw.imported_generation&&
+           (e->definition->guid!=raw.saved.guid||e->ui_ghost||
+            ((e->kind==odh::EntityKind::avatar)!=raw.tail.person.has_value()))))
+            throw odh::FormatError("wall appearance imported identity changed id="+std::to_string(id));
         const odh::VmFrame frame{odh::routine_key(4096),0,{id,id,id,0},{},{}};
         const auto flag=saved.world->read(frame,3,40),placement=saved.world->read(frame,3,13);
         if(!flag||!placement)throw odh::FormatError("wall appearance saved bank unavailable");
@@ -157,7 +165,7 @@ inline SavedWallAppearance saved_wall_appearance(const odh::SavedWorld& saved,co
         if(e->kind==odh::EntityKind::object&&e->position&&!e->attachment&&(input.flags2&0xc000U)){
             auto found=bindings.find(input.guid);
             if(found==bindings.end()){
-                if(bindings.size()>=256)throw odh::FormatError("wall appearance binding cache budget exceeded");
+                if(bindings.size()>=odh::installed_lot_limits().definition_catalogs)throw odh::FormatError("wall appearance binding cache budget exceeded");
                 const auto* candidate=index.unique(input.guid);if(!candidate)throw odh::FormatError("wall appearance concrete definition unavailable");
                 if(candidate->source.size()+candidate->asset.size()>256*1024-names)throw odh::FormatError("wall appearance provenance budget exceeded");
                 std::optional<odh::ObjdWallAppearance> binding;

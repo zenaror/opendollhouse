@@ -15,6 +15,7 @@ struct WallSpriteLayer {
     std::int32_t x, y;
     std::uint32_t width, height; // Destination rectangle, independent of sources.
     float back_depth, front_depth_delta;
+    std::array<float,3> linear_light{1,1,1}; // Basic room-light shader; white is legacy.
 };
 struct WallSpriteLimits {
     std::uint32_t layers = 8192, width = 2048, height = 2048, pixels = 1048576;
@@ -24,7 +25,8 @@ struct WallSpriteLimits {
 // Pure 2D wall profile from the pinned FreeSO wall shader contract. Each source
 // is POINT/CLAMP sampled at normalized destination pixel centers, independently.
 // Mask alpha replaces pattern alpha; only binary alpha is accepted. Zero alpha
-// discards without depth. RGB is unlit and output opaque. Byte Z uses the same
+// discards without depth. RGB uses optional basic linear room light through
+// the source gammaMulSimple conversion; default white is unlit. Output opaque. Byte Z uses the same
 // double-to-float depth mapping as composite_sprites; smaller wins, ties retain
 // the existing fragment. No GPU or original-game equivalence is implied.
 // All extents must be nonzero and within width/height limits, with exact arrays;

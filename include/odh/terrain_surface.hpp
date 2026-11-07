@@ -6,6 +6,9 @@ namespace odh {
 enum class TerrainTheme : std::uint8_t {grass, sand, rock, snow, water, dark_grass, autumn_grass, cloud};
 struct TerrainSurface {
     std::vector<RasterTriangle> triangles;
+    // One interior point per triangle before projection, in VM sixteenths and
+    // one-based level. Triangle splits coincide with diagonal room boundaries.
+    std::vector<std::array<std::int32_t,3>> room_samples;
     std::uint32_t whole_tiles=0,half_tiles=0;
 };
 // Ground-level material0 only, including empty diagonal halves. Interior tiles

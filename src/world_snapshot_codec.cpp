@@ -1,5 +1,6 @@
 #include "odh/world_snapshot_codec.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -7,7 +8,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 4;
+constexpr std::uint16_t codec_version = 12;
 constexpr std::size_t minimum_header_size = 31;
 
 class Writer {
@@ -167,7 +168,18 @@ std::vector<std::int16_t> read_i16_vector(Reader& reader, std::size_t maximum) {
     for (std::uint32_t i = 0; i < count; ++i) values.push_back(reader.i16());
     return values;
 }
-void write_entity(Writer& writer, const Entity& entity) {
+void write_outfit(Writer& writer,const AvatarOutfitReference& outfit){
+    writer.u8(static_cast<std::uint8_t>(outfit.kind));writer.u64(outfit.identifier);writer.text(outfit.literal);
+    for(const auto& hand:outfit.hands)writer.text(hand);
+}
+AvatarOutfitReference read_outfit(Reader& reader){
+    AvatarOutfitReference outfit;const auto kind=reader.u8();
+    if(kind>static_cast<std::uint8_t>(AvatarOutfitKind::none))throw FormatError("invalid avatar outfit reference kind");
+    outfit.kind=static_cast<AvatarOutfitKind>(kind);outfit.identifier=reader.u64();outfit.literal=reader.text(4096);
+    for(auto& hand:outfit.hands)hand=reader.text(1024);
+    return outfit;
+}
+void write_entity(Writer& writer, const Entity& entity,std::uint16_t version) {
     writer.i16(entity.id);
     writer.u8(static_cast<std::uint8_t>(entity.kind));
     writer.u64(entity.generation);
@@ -236,6 +248,30 @@ void write_entity(Writer& writer, const Entity& entity) {
     writer.count(entity.bound_appearances.size());
     for(const auto& name:entity.bound_appearances)writer.text(name);
     writer.u64(entity.dynamic_sprite_flags);
+    if(version>=5){
+        writer.boolean(entity.lockout_count.has_value());
+        if(entity.lockout_count){
+            writer.boolean(entity.lockout_count->thread_present);
+            writer.boolean(entity.lockout_count->timestamp.has_value());
+            if(entity.lockout_count->timestamp)writer.u32(*entity.lockout_count->timestamp);
+        }
+    }
+    if(version>=6){
+        writer.boolean(entity.avatar_appearance.has_value());
+        if(entity.avatar_appearance){const auto& state=*entity.avatar_appearance;
+            writer.boolean(state.body.has_value());if(state.body)write_outfit(writer,*state.body);
+            writer.boolean(state.default_daywear.has_value());if(state.default_daywear)write_outfit(writer,*state.default_daywear);
+            writer.boolean(state.accessory_assets.has_value());if(state.accessory_assets){
+                writer.count(state.accessory_assets->size());for(const auto& asset:*state.accessory_assets)writer.text(asset);}
+        }
+    }
+
+    if(version>=7)writer.boolean(entity.dead);
+    if(version>=8){writer.boolean(entity.name_override.has_value());if(entity.name_override)writer.text(*entity.name_override);}
+    if(version>=9)writer.u8(!entity.suppress_referenced_reset?0:*entity.suppress_referenced_reset?2:1);
+    if(version>=10)writer.u8(!entity.skip_native_recovery_position?0:*entity.skip_native_recovery_position?2:1);
+    if(version>=11){writer.boolean(entity.native_slot0.has_value());if(entity.native_slot0){writer.i16(entity.native_slot0->id);writer.u64(entity.native_slot0->generation);}}
+    if(version>=12){writer.boolean(entity.native_out_of_world_level.has_value());if(entity.native_out_of_world_level)writer.i16(*entity.native_out_of_world_level);}
 }
 
 Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits,std::uint16_t version) {
@@ -319,6 +355,34 @@ Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits,std::u
             entity.bound_appearances.push_back(reader.text(256));
     }
     if(version>=4)entity.dynamic_sprite_flags=reader.u64();
+    if(version>=5&&reader.boolean()){
+        EntityLockoutCountState state;state.thread_present=reader.boolean();
+        if(reader.boolean())state.timestamp=reader.u32();
+        entity.lockout_count=state;
+    }
+    if(version>=6&&reader.boolean()){
+        AvatarAppearanceState state;
+        if(reader.boolean())state.body=read_outfit(reader);
+        if(reader.boolean())state.default_daywear=read_outfit(reader);
+        if(reader.boolean()){const auto count=reader.count(limits.world.bound_appearance_names,4);
+            state.accessory_assets=std::vector<std::string>{};state.accessory_assets->reserve(count);
+            for(std::uint32_t n=0;n<count;++n)state.accessory_assets->push_back(reader.text(256));}
+        entity.avatar_appearance=std::move(state);
+    }
+    if(version>=7)entity.dead=reader.boolean();
+    if(version>=8&&reader.boolean())entity.name_override=reader.text(128);
+    if(version>=9){
+        const auto policy=reader.u8();
+        if(policy>2)throw FormatError("invalid World snapshot referenced-reset policy tag");
+        if(policy)entity.suppress_referenced_reset=policy==2;
+    }
+    if(version>=10){
+        const auto policy=reader.u8();
+        if(policy>2)throw FormatError("invalid World snapshot native-recovery-position policy tag");
+        if(policy)entity.skip_native_recovery_position=policy==2;
+    }
+    if(version>=11&&reader.boolean())entity.native_slot0=WorldEntityReference{reader.i16(),reader.u64()};
+    if(version>=12&&reader.boolean())entity.native_out_of_world_level=reader.i16();
     return entity;
 }
 
@@ -338,13 +402,31 @@ std::vector<std::uint8_t> encode_world_snapshot(
         throw FormatError("World snapshot byte limit is too small");
     validate_snapshot(snapshot, limits.world);
     Writer writer(limits.max_bytes);
-    writer.u16(codec_version);
+    const bool appearance=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),[](const auto& entity){return entity.avatar_appearance.has_value();});
+    const bool marked=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),[](const auto& entity){return entity.dead;});
+    const auto named=[](const auto& e){return e.name_override.has_value();};
+    const bool names=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),named)||std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),named);
+    const auto has_reset_policy=[](const auto& entity){return entity.suppress_referenced_reset.has_value();};
+    const bool reset_policy=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),has_reset_policy)||
+        std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),has_reset_policy);
+    const auto has_position_policy=[](const auto& entity){return entity.skip_native_recovery_position.has_value();};
+    const bool position_policy=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),has_position_policy)||
+        std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),has_position_policy);
+    const auto has_native_slot=[](const auto& entity){return entity.native_slot0.has_value();};
+    const bool native_slots=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),has_native_slot)||std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),has_native_slot);
+    const auto has_native_oow=[](const auto& entity){return entity.native_out_of_world_level.has_value();};
+    const bool native_oow=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),has_native_oow)||std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),has_native_oow);
+    const auto version=static_cast<std::uint16_t>(native_oow?12:native_slots?11:position_policy?10:reset_policy?9:names?8:!snapshot.retained_entities.empty()||marked?7:appearance?6:snapshot.lockout_count_clock?5:4);
+    writer.u16(version);
     writer.u8(static_cast<std::uint8_t>(snapshot.attribute_policy));
     writer.u64(static_cast<std::uint64_t>(snapshot.word_count));
     writer.u64(snapshot.generation_sequence);
     writer.u64(snapshot.spatial_revision);
+    if(version>=6)writer.boolean(snapshot.lockout_count_clock.has_value());
+    if(snapshot.lockout_count_clock)writer.u32(*snapshot.lockout_count_clock);
     writer.count(snapshot.entities.size());
-    for (const auto& entity : snapshot.entities) write_entity(writer, entity);
+    for (const auto& entity : snapshot.entities) write_entity(writer, entity,version);
+    if(version>=7){writer.count(snapshot.retained_entities.size());for(const auto& body:snapshot.retained_entities)write_entity(writer,body,version);}
     return writer.take();
 }
 
@@ -365,10 +447,42 @@ WorldSnapshot decode_world_snapshot(
     snapshot.word_count = reader.size(limits.world.words);
     snapshot.generation_sequence = reader.u64();
     snapshot.spatial_revision = reader.u64();
-    const auto count = reader.count(limits.world.entities, 49);
+    if(version>=6){if(reader.boolean())snapshot.lockout_count_clock=reader.u32();}
+    else if(version>=5)snapshot.lockout_count_clock=reader.u32();
+    const auto count = reader.count(limits.world.entities, version>=5?50:49);
     snapshot.entities.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i)
         snapshot.entities.push_back(read_entity(reader, limits,version));
+    if(version>=7){
+        const auto retained=reader.count(limits.world.entities-count,50);
+        if(version==7&&!retained&&!std::any_of(snapshot.entities.begin(),snapshot.entities.end(),[](const auto& entity){return entity.dead;}))
+            throw FormatError("empty retained-body extension is noncanonical");
+        snapshot.retained_entities.reserve(retained);
+        for(std::uint32_t n=0;n<retained;++n)snapshot.retained_entities.push_back(read_entity(reader,limits,version));
+    }
+    if(version==8&&!std::any_of(snapshot.entities.begin(),snapshot.entities.end(),[](const auto& e){return e.name_override.has_value();})&&!std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),[](const auto& e){return e.name_override.has_value();}))throw FormatError("empty name extension is noncanonical");
+    if(version==9){
+        const auto known_policy=[](const auto& e){return e.suppress_referenced_reset.has_value();};
+        if(!std::any_of(snapshot.entities.begin(),snapshot.entities.end(),known_policy)&&
+           !std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),known_policy))
+            throw FormatError("empty referenced-reset policy extension is noncanonical");
+    }
+    if(version==10){
+        const auto known_policy=[](const auto& e){return e.skip_native_recovery_position.has_value();};
+        if(!std::any_of(snapshot.entities.begin(),snapshot.entities.end(),known_policy)&&
+           !std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),known_policy))
+            throw FormatError("empty native-recovery-position policy extension is noncanonical");
+    }
+    if(version==11){
+        const auto known=[](const auto& e){return e.native_slot0.has_value();};
+        if(!std::any_of(snapshot.entities.begin(),snapshot.entities.end(),known)&&!std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),known))
+            throw FormatError("empty native-slot-zero extension is noncanonical");
+    }
+    if(version==12){
+        const auto known=[](const auto& e){return e.native_out_of_world_level.has_value();};
+        if(!std::any_of(snapshot.entities.begin(),snapshot.entities.end(),known)&&!std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),known))
+            throw FormatError("empty native-out-of-world extension is noncanonical");
+    }
     if (!reader.done()) throw FormatError("World snapshot has unclaimed bytes");
     validate_snapshot(snapshot, limits.world);
     return snapshot;

@@ -4,6 +4,9 @@ namespace {
 bool valid(std::int16_t index,std::size_t size){return index>=0&&static_cast<std::size_t>(index)<size;}
 std::optional<std::int16_t> read_target(const VmFrame& f,const std::array<std::int16_t,20>& temps,
     const VmMemory& memory,std::uint8_t scope,std::int16_t index){
+    const auto resolved=resolve_ts1_variable_address(scope,index,f,temps);
+    if(!resolved)return {};
+    scope=resolved->scope;index=resolved->index;
     switch(scope){
     case 7:return index;
     case 8:return valid(index,temps.size())?std::optional<std::int16_t>{temps[static_cast<std::size_t>(index)]}:std::nullopt;
@@ -18,12 +21,13 @@ std::optional<std::int16_t> read_target(const VmFrame& f,const std::array<std::i
 }
 }
 VmPrimitive entity_next_primitive(const World& world,VmMemory memory,std::function<void(const EntityNext&)> observed,
-    std::vector<std::vector<std::int16_t>> multitile_groups){
+    std::vector<std::vector<std::int16_t>> multitile_groups,
+    std::function<std::optional<std::int16_t>(std::int16_t)> next_career){
     return [&world,memory=std::move(memory),observed=std::move(observed),
-        multitile_groups=std::move(multitile_groups)](const VmFrame& frame,
+        multitile_groups=std::move(multitile_groups),next_career=std::move(next_career)](const VmFrame& frame,
         const Instruction& i,const auto& temps,const VmDispatch&)->PrimitiveOutcome {
         const auto mode=static_cast<std::uint8_t>(i.operands[4]&127);
-        if(i.opcode!=31||(mode!=0&&mode!=1&&mode!=2&&mode!=3&&mode!=4&&mode!=6&&mode!=8&&mode!=9&&mode!=12))return {};
+        if(i.opcode!=31||(mode!=0&&mode!=1&&mode!=2&&mode!=3&&mode!=4&&mode!=6&&mode!=8&&mode!=9&&mode!=10&&mode!=11&&mode!=12))return {};
         const auto guid=std::uint32_t{i.operands[0]}|(std::uint32_t{i.operands[1]}<<8)|
             (std::uint32_t{i.operands[2]}<<16)|(std::uint32_t{i.operands[3]}<<24);
         const auto scope=static_cast<std::uint8_t>((i.operands[4]&128)?i.operands[5]:10);
@@ -51,7 +55,14 @@ VmPrimitive entity_next_primitive(const World& world,VmMemory memory,std::functi
                 return {PrimitiveDisposition::unsupported,"same-tile entity cursor is outside the positioned lot profile"};
         }
         std::optional<std::int16_t> result;
-        if(mode==3){
+        if(mode==10){
+            if(!next_career)return {PrimitiveDisposition::unsupported,"career enumeration provider unavailable"};
+            const auto career=next_career(*current);
+            if(!career)return {PrimitiveDisposition::unsupported,"career enumeration provider unavailable"};
+            if(*career>=0)result=*career;
+        } else if(mode==11){
+            // Source ClosestHouse search returns false; it never selects a house.
+        } else if(mode==3){
             const auto group=std::find_if(multitile_groups.begin(),multitile_groups.end(),[&](const auto& members){
                 return std::find(members.begin(),members.end(),*current)!=members.end();
             });
@@ -70,13 +81,15 @@ VmPrimitive entity_next_primitive(const World& world,VmMemory memory,std::functi
             world.next_entity(*current,mode==1?std::optional<EntityKind>{EntityKind::avatar}:
                 mode==2?std::optional<EntityKind>{EntityKind::object}:std::nullopt);
         PrimitiveOutcome outcome{result?PrimitiveDisposition::goto_true:PrimitiveDisposition::goto_false,{}};
-        if(result){switch(scope){
+        if(result){const auto output=resolve_ts1_variable_address(scope,index,frame,temps);
+            if(!output)return {PrimitiveDisposition::unsupported,"enumeration indirect output unavailable"};
+            switch(output->scope){
         case 7:return {PrimitiveDisposition::unsupported,"entity enumeration literal target is not writable"};
-        case 8:outcome.temp_write=VmTempWrite{static_cast<std::size_t>(index),*result};break;
-        case 9:outcome.write=VmFrameWrite{VmFrameBank::arguments,static_cast<std::size_t>(index),*result};break;
+        case 8:outcome.temp_write=VmTempWrite{static_cast<std::size_t>(output->index),*result};break;
+        case 9:outcome.write=VmFrameWrite{VmFrameBank::arguments,static_cast<std::size_t>(output->index),*result};break;
         case 10:outcome.stack_object_write=VmStackObjectWrite{*result};break;
-        case 25:outcome.write=VmFrameWrite{VmFrameBank::locals,static_cast<std::size_t>(index),*result};break;
-        default:{const auto address=resolve_person_data_address(scope,index,temps);
+        case 25:outcome.write=VmFrameWrite{VmFrameBank::locals,static_cast<std::size_t>(output->index),*result};break;
+        default:{const auto address=resolve_ts1_variable_address(scope,index,frame,temps);
             if(!address||!memory.write||!memory.write(frame,address->scope,address->index,*result))
                 return {PrimitiveDisposition::unsupported,"entity enumeration target rejected write"};}
         }}

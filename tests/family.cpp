@@ -33,9 +33,43 @@ std::string encoded_simitone(const odh::Family& value, const odh::FamiLimits& li
     const auto bytes=odh::encode_simitone_create_family_fami(value,limits);
     return std::string(bytes.begin(),bytes.end());
 }
+void original_v9_tail() {
+    auto raw=payload();std::string tail;
+    u32(tail,0x87654321U);
+    const std::array<std::int16_t,6> words{-32768,-1,0,1,12345,32767};
+    for(const auto word:words){const auto bits=static_cast<std::uint16_t>(word);tail+=static_cast<char>(bits);tail+=static_cast<char>(bits>>8);}
+    tail+="XYZ";raw+=tail;
+    auto family=read(raw);
+    require(family.remaining_bytes==19&&family.tail_bytes==std::vector<std::uint8_t>(tail.begin(),tail.end()),
+        "complete raw suffix retains known and unknown byte extents");
+    require(family.original_v9_extension&&family.original_v9_extension->extension_dword==0x87654321U&&
+        family.original_v9_extension->spell_words==words,"FAMI9 decodes exact signed six-word extension");
+    auto encode=[](const odh::Family& value,const odh::FamiLimits& limits=odh::FamiLimits{}){
+        const auto bytes=odh::encode_preserved_fami(value,limits);return std::string(bytes.begin(),bytes.end());
+    };
+    require(encode(family)==raw,"preserved encoder roundtrips known and unknown suffix exactly");
+    const auto original_tail=family.tail_bytes;
+    family.original_v9_extension->extension_dword=7;family.original_v9_extension->spell_words[0]=32767;
+    const auto patched=read(encode(family));
+    require(patched.original_v9_extension&&patched.original_v9_extension->extension_dword==7&&
+        patched.original_v9_extension->spell_words[0]==32767&&patched.tail_bytes[16]=='X'&&
+        patched.tail_bytes[17]=='Y'&&patched.tail_bytes[18]=='Z'&&family.tail_bytes==original_tail,
+        "typed alterations patch output without discarding extras or modifying original suffix");
+    rejects([&]{encoded(family);},"default tail-free encoder cannot silently discard typed extension");
+    auto mismatched=family;--mismatched.remaining_bytes;rejects([&]{encode(mismatched);},"tail extent mismatch rejects");
+    mismatched=family;mismatched.version=8;rejects([&]{encode(mismatched);},"typed extension cannot migrate to another wire version");
+    auto limit=odh::FamiLimits{};limit.payload_bytes=raw.size();require(encode(family,limit).size()==raw.size(),"preserved suffix counts exact payload boundary");
+    --limit.payload_bytes;rejects([&]{encode(family,limit);},"preserved suffix counts against configured payload limit");
+    for(std::size_t count=0;count<16;++count){const auto incomplete=read(payload()+tail.substr(0,count));
+        require(!incomplete.original_v9_extension&&incomplete.remaining_bytes==count&&encode(incomplete)==payload()+tail.substr(0,count),
+            "incomplete v9 suffix stays raw without invented zero spell data");}
+    for(const auto version:{8U,10U,0xffffffffU}){auto other=raw;patch(other,4,version);const auto decoded=read(other);
+        require(!decoded.original_v9_extension&&encode(decoded)==other,"legacy and unknown tails preserve without assuming v9 schema");}
+}
 }
 int main() {
  try {
+    original_v9_tail();
     const auto raw=payload();const auto f=read(raw);
     require(f.reserved==0xdeadbeef&&f.version==9,"header metadata retained");
     require(f.house_number==7&&f.family_number==-1,"house and alternate family number retained");
@@ -145,6 +179,13 @@ int main() {
     bounded.resize(257);for(auto& e:bounded)e.family.member_guids.resize(256);
     rejects([&]{odh::FamilyContext c(bounded);},"runtime cumulative member cap");
     bounded.resize(256);require(odh::FamilyContext(bounded).source().size()==256,"runtime exact cumulative member cap");
+    {
+        std::vector<odh::FamilyEntry> tails;
+        for(std::uint16_t id=0;id<65;++id){auto e=entry(id,id);e.family.tail_bytes.resize(64*1024);e.family.remaining_bytes=e.family.tail_bytes.size();tails.push_back(std::move(e));}
+        rejects([&]{odh::FamilyContext too_many(tails);},"runtime cumulative preserved tails bounded before copying");
+        tails.pop_back();require(odh::FamilyContext(tails).source().size()==64,"runtime exact4MiB preserved tail boundary");
+        tails.resize(1);tails[0].family.tail_bytes.push_back(0);rejects([&]{odh::FamilyContext too_large(tails);},"runtime per-family preserved tail limit");
+    }
     require(odh::FamilyContext({}).source().empty(),"empty runtime context");
     std::cout<<checks<<" family checks passed\n";
  } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }

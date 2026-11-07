@@ -1,16 +1,24 @@
 #pragma once
 #include "saved_architecture_resources.hpp"
+#include "odh/installed_lot_limits.hpp"
+#include "odh/object_group.hpp"
 #include "saved_floor_renderer.hpp"
 #include "saved_wall_renderer.hpp"
 #include "saved_object_renderer.hpp"
+#include "room_lighting_view.hpp"
 #include "odh/graphics_state.hpp"
 #include "odh/room_map.hpp"
 #include "odh/saved_world.hpp"
 #include "odh/terrain_surface.hpp"
+#include "odh/architecture_snapshot.hpp"
+#include "odh/wall_appearance.hpp"
+#include <tuple>
+#include <filesystem>
 #include <map>
+#include <set>
 
 struct SavedGraphicsLimits {
-    std::size_t slot_tables=16,slot_records=4096;
+    std::size_t slot_tables=odh::installed_lot_limits().definition_catalogs,slot_records=4096;
 };
 // Explicit OBJD -> SLOT resolver shared by live saved previews with/without
 // architecture. Definitions outlive this bounded cache. No World is owned.
@@ -34,6 +42,7 @@ struct SavedLotMaterialOptions {
     odh::ArchitecturePreparationOptions preparation;
     odh::ArchitectureAliasResolverLimits alias_limits;
     odh::ArchitecturePreparationLimits preparation_limits;
+    std::optional<odh::ArchitectureSnapshot> restored_architecture;
 };
 struct SavedLotView {
     std::uint8_t level=1;
@@ -64,6 +73,8 @@ struct SavedLotFrame {
 struct SavedLotAvatarLayer {
     odh::RasterFrame image;
     std::uint16_t pick_id=0;
+    std::int16_t entity_id=0;
+    std::uint64_t entity_generation=0;
 };
 // Host-authenticated World/GEXP origin, resolved to this catalog's resource paths.
 // This binds artwork only; it creates no entity or execution state.
@@ -113,10 +124,20 @@ public:
     const std::optional<odh::ResolvedArchitectureAliases>& material_aliases() const{return aliases_;}
     const std::optional<odh::PreparedArchitecture>& prepared_architecture() const{return prepared_;}
     const SavedArchitectureResource& architecture_resource() const{return architecture_;}
+    // Immutable derived runtime geometry, shared by rendering, collision and
+    // routing. The original resource remains available only as provenance.
+    const SavedArchitectureResource& runtime_architecture_resource() const {
+        return prepared_render_?*prepared_render_:architecture_;
+    }
+    const odh::SavedArchitecture& render_architecture() const {
+        return runtime_architecture_resource().architecture;
+    }
     odh::GraphicsEntity avatar(std::int16_t id);
+    std::uint8_t avatar_visual_level(const odh::GraphicsEntity&) const;
     // Runtime projection anchor including the same terrain/group-centre rules
     // used when drawing a saved object in this lot.
     odh::GraphicsEntity entity_graphics(std::int16_t id);
+    std::array<float,3> preview_tile_position(const odh::EntityPosition&) const;
     // Available only when the immutable prepared architecture has unambiguous
     // floor/wall identities. Matches GetRoomAt room-zero fallback outside the
     // lot; it resolves room membership, not portal clearance.
@@ -146,26 +167,78 @@ public:
     // removal/reuse (including the old row's terrain group metadata). Removed
     // entities stop drawing without a refresh; reused IDs require a new binding.
     // Reapply authenticated GEXP origins after restoring the borrowed World.
-    void set_runtime_objects(const std::vector<SavedLotRuntimeObject>&);
+    // Live associations authenticate each origin against the exact catalog and
+    // created binding or immutable imported row. game_root resolves portable
+    // session source keys; it never permits basename matching.
+    void restore_runtime_group_placements(const std::vector<odh::ObjectGroup>&);
+    void set_runtime_objects(const std::vector<SavedLotRuntimeObject>&,
+        const std::vector<odh::ObjectGroup>& authenticated_groups={},
+        const std::filesystem::path& game_root={});
     void set_avatar_slot_anchors(const std::vector<SavedLotAvatarSlotAnchor>&);
+    // Source-event appearance wins over re-deriving post-EP6 object flags.
+    // Value is bounded and authenticated against the current World. Not save
+    // storage: the host must restore/replay its actual event owner separately.
+    void set_runtime_wall_appearance(std::optional<odh::WallAppearance>);
+    // Actual position/style lifecycle owners invalidate after later changes.
+    // A live pose/identity guard also rejects stale captured wall owners.
+    void invalidate_runtime_wall_appearance() noexcept;
+    const std::optional<odh::WallAppearance>& runtime_wall_appearance();
+
     const SavedLotView& view() const{return view_;}
+    void set_view_level(std::uint8_t level){
+        if(level<1||level>2)throw odh::FormatError("saved lot view level is outside supported profile");
+        view_.level=level;
+    }
+    // Change presentation without replacing architecture/room-map objects
+    // borrowed by simulation and placement services.
+    bool can_set_walls_down(std::string* diagnostic=nullptr);
+    bool set_walls_down(bool down);
+    // Explicit basic-source profile. Host supplies the actual visual-room
+    // classifier (including emitter/disabled states) for live identities.
+    void set_room_lighting(std::optional<odh_host::RoomLightingView>,
+        std::function<std::optional<std::uint16_t>(std::int16_t,std::uint64_t)> visual_room = {});
+    // Moving previews hide only the matching presented image. The real entity,
+    // collisions, containment and execution remain in the live World.
+    void set_preview_hidden_object(std::optional<std::pair<std::int16_t,std::uint64_t>> value) {
+        preview_hidden_objects_.clear();if(value)preview_hidden_objects_.insert(*value);
+    }
+    void set_preview_hidden_objects(const std::vector<std::pair<std::int16_t,std::uint64_t>>& values);
 private:
     SavedArchitectureResource architecture_;
     std::optional<odh::ResolvedArchitectureAliases> aliases_;
     std::optional<odh::PreparedArchitecture> prepared_;
-    std::optional<odh::SavedArchitecture> prepared_render_;
+    std::optional<SavedArchitectureResource> prepared_render_;
     std::optional<odh::GeometricRoomMap> runtime_rooms_;
-    const odh::SavedArchitecture& render_architecture() const {
-        return prepared_render_?*prepared_render_:architecture_.architecture;
-    }
+    std::optional<odh_host::RoomLightingView> lighting_;
+    std::function<std::optional<std::uint16_t>(std::int16_t,std::uint64_t)> visual_room_;
     const odh::SavedWorld& saved_;
     const odh::DefinitionIndex& definitions_;
     SavedGraphicsResources graphics_;
     std::map<std::int16_t,std::array<float,2>> group_centers_;
+    struct RestoredGroupPlacement {
+        odh::ObjectGroup group;
+        std::vector<std::pair<std::uint64_t,std::optional<odh::EntityPosition>>> members;
+        std::array<std::int32_t,2> mean{};
+    };
+    std::map<std::int16_t,RestoredGroupPlacement> restored_group_placements_;
+    std::map<std::int16_t,std::array<float,2>> runtime_group_centers_;
+    std::map<std::int16_t,std::uint64_t> runtime_group_members_;
     std::map<std::int16_t,std::uint64_t> object_generations_;
     std::map<std::int16_t,SavedLotRuntimeObject> runtime_objects_;
     std::map<std::pair<std::int16_t,std::size_t>,SavedLotAvatarSlotAnchor> avatar_slot_anchors_;
+    std::optional<odh::WallAppearance> runtime_wall_appearance_;
+    struct WallAppearanceOwnerState {
+        std::uint64_t generation=0;
+        std::uint32_t guid=0;
+        std::optional<odh::EntityPosition> position;
+        std::optional<std::tuple<std::int16_t,std::size_t,bool>> attachment;
+    };
+    std::map<std::int16_t,WallAppearanceOwnerState> runtime_wall_owners_;
+    bool runtime_wall_appearance_current() const;
     SavedLotView view_;
+    std::set<std::pair<std::int16_t,std::uint64_t>> preview_hidden_objects_;
+    std::map<std::pair<std::int16_t,std::uint64_t>,bool> cutaway_hidden_;
+    std::optional<bool> cutaway_hidden_for(const odh::Entity&,const odh::GraphicsEntity*,bool) const;
     SavedFloorRenderer floors_;
     std::unique_ptr<SavedWallRenderer> walls_;
     SavedObjectRenderer objects_;

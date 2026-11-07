@@ -27,17 +27,24 @@ struct ResolvedWallEdges {
     WallEdgeKnowledge top_right = WallEdgeKnowledge::unresolved;
 };
 enum class WallRaycastState : std::uint8_t { clear, blocked, unsupported };
+enum class WallRaycastFailure : std::uint8_t {none,architecture,level,resolver_extent,coordinate_domain,unresolved_edge};
+const char* wall_raycast_failure_name(WallRaycastFailure) noexcept;
 struct WallRaycastResult {
     WallRaycastState state = WallRaycastState::unsupported;
     std::int32_t tile_x = -1;
     std::int32_t tile_y = -1;
     bool top_left = false;
+    WallRaycastFailure failure = WallRaycastFailure::none;
 };
 
 // Bounded port of VMArchitecture.RaycastWall for full-tile coordinates. Door
 // presence is not in SavedWallTile, so every crossed wall edge needs explicit
 // solidity knowledge. Diagonal segments are ignored, as in the reference
 // RaycastWall; this function is not the full VMAvatar placement test.
+// Source GetWall returns an empty tile outside the map. Endpoints may span the
+// LotTilePos signed-int16 subtile domain divided by16, [-2048,2047] tiles,
+// including its OOW sentinel. This bounds Bresenham to4095 steps/8190 edge reads;
+// arbitrary int32 coordinates remain unsupported, never an unbounded walk.
 WallRaycastResult saved_wall_raycast(
     const SavedArchitecture&, std::int16_t level,
     std::int32_t start_x, std::int32_t start_y,

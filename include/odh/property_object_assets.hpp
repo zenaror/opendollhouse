@@ -31,6 +31,10 @@ struct PropertyObjectAssets {
 // Supply a COMPLETE current group partition, INCLUDING singletons. The caller
 // certifies actual runtime group membership/root semantics; identities cannot
 // detect an omitted member disguised as another otherwise valid group.
+// Groups need not share a definition asset/master. Each member's own GUID and
+// canonical multitile master are checked separately against the index. An
+// optional group.master_guid asserts homogeneity and must match every member;
+// absence does not assert that the group is a singleton or all masters absent.
 // All non-UI-ghost live IDs must occur exactly once (maximum4096). Uses current
 // definition identities, ObjectData43/41/15 and each root's OWN position. Saved
 // records/banks, EntityKind and parent positions never replace those inputs.

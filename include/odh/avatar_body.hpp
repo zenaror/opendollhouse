@@ -15,6 +15,9 @@ struct AvatarBodyStrings {
     std::string raw_names;
     std::vector<std::string> names;
 };
+// Apply only live outfit state; original BodySTR remains immutable for Daywear.
+AvatarBodyStrings effective_avatar_body(const AvatarBodyStrings&,const Entity&);
+std::vector<std::string> effective_avatar_accessories(const Entity&);
 // Bounded US group only (language 0/1); present body STR# requires indices
 // 0..22, at most 50 strings and 64 KiB US value bytes, names at most 256.
 // Body keeps the first semicolon segment; head/hands stay unsplit.

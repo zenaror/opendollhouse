@@ -52,6 +52,302 @@ template<class F> void invalid_unchanged(odh::RandomState& random, F operation) 
     require(rejected,"malformed input rejected");
     require(random.seed()==before,"malformed input preserves RNG");
 }
+void source_full_circle() {
+    auto circle=table(255);circle.records[0].max_size=100;circle.records[0].gradient_bits=0;
+    const odh::EntityPosition target{64,64,1,0},caller{32,48,1,0};
+    const auto geometry=odh::enumerate_source_slot_circle_candidates(circle,0,target,0.31f);
+    const std::vector<odh::RoutePoint> expected{{64,80},{75,75},{80,64},{75,53},{64,48},{53,53},{48,64},{53,75}};
+    require(geometry.size()==8,"source circle enumerates exactly eight bounded candidates");
+    for(std::size_t n=0;n<geometry.size();++n){
+        require(geometry[n].position==expected[n],"circle follows source S,SE,E,NE,N,NW,W,SW nearest-even order");
+        const auto face=static_cast<float>(std::atan2(static_cast<double>(target.x-expected[n].x),
+            static_cast<double>(expected[n].y-target.y)));
+        require(geometry[n].radian_direction==face&&geometry[n].entry_flags!=0,
+            "source circle computes FaceTowards from point geometry and continuous target sectors");
+    }
+    odh::RandomState random(7),draws(7);std::vector<odh::RoutePoint> visited;
+    const auto goals=odh::rank_reference_range_slot(circle,0,caller,target,random,false,
+        [&](auto point){return point==expected[0]||point==expected[2]||point==expected[5];},{},{},{},0.31f,
+        [&](auto point){
+            draws.next(1024);require(random.seed()==draws.seed(),"verifier observes its real RNG draw before placement verification");
+            visited.push_back(point);
+            return point==expected[0]?Verification::eligible_with_penalty:
+                point==expected[2]?Verification::rejected_after_score:Verification::eligible;
+        });
+    require(visited==std::vector<odh::RoutePoint>{expected[0],expected[2],expected[5]}&&
+        random.seed()==draws.seed()&&goals.size()==2&&goals.back().position==expected[0],
+        "room filter precedes RNG; rejection consumes draw; avatar/door/destination penalty retains low-ranked option");
+    auto directional=circle;directional.records[0].flags=0x8055;
+    require(odh::is_source_slot_circle(directional.records[0]),
+        "authored cardinal mask plus AllowDifferentAlts follows generic standing circle branch");
+    odh::RandomState masked(9),masked_expected(9);std::vector<odh::RoutePoint> masked_visited;
+    const auto masked_goals=odh::rank_reference_range_slot(directional,0,caller,target,masked,false,
+        [](auto){return true;},{},{},{},0,[&](auto point){masked_visited.push_back(point);return Verification::eligible;});
+    for(unsigned n=0;n<7;++n)masked_expected.next(1024);
+    require(masked_visited==std::vector<odh::RoutePoint>{expected[0],expected[1],expected[2],expected[3],expected[4],expected[6],expected[7]}&&
+        masked.seed()==masked_expected.seed()&&masked_goals.size()==7,
+        "S-first circle geometry filters disallowed floor-tile direction BEFORE RNG and retains AllowDifferentAlts as unused source metadata");
+    for(const auto& goal:masked_goals)require(goal.entry_flags&&(goal.entry_flags&~0x55U)==0&&goal.radian_direction,
+        "masked source goals retain only accepted authored bits and exact continuous facing");
+    auto shuffled=circle;shuffled.records[0].flags|=8192;odh::RandomState changing(55),reference(55);
+    std::vector<std::pair<std::size_t,std::uint32_t>> scores;
+    for(std::size_t n=0;n<8;++n){scores.emplace_back(n,reference.next(1024));reference.next(137);}
+    std::stable_sort(scores.begin(),scores.end(),[](const auto& a,const auto& b){return a.second>b.second;});
+    const auto effectful=odh::rank_reference_range_slot(shuffled,0,caller,target,changing,false,
+        [](auto){return true;},{},{},{},0.31f,[&](auto){changing.next(137);return Verification::eligible;});
+    require(changing.seed()==reference.seed()&&effectful.size()==8,
+        "post-score verifier source effects consume shared RNG between each actual candidate draw");
+    for(std::size_t n=0;n<8;++n)require(effectful[n].position==expected[scores[n].first],
+        "next candidate score/rank uses actual RNG after preceding verifier effects rather than preview draws");
+    auto tied=circle;tied.records[0].flags|=1U<<29;odh::RandomState equal(33);
+    const auto ties=odh::rank_reference_range_slot(tied,0,target,target,equal,false,[](auto){return true;},{},{},{},0,
+        [](auto){return Verification::eligible;});
+    require(equal.seed()==33&&ties.size()==8&&ties[0].position==expected[1]&&ties[1].position==expected[3]&&
+        ties[2].position==expected[5]&&ties[3].position==expected[7]&&ties[4].position==expected[0],
+        "equal scores preserve enumeration ties; diagonal integer caller distance remains source15 rather than16");
+    invalid_unchanged(random,[&]{(void)odh::rank_reference_range_slot(circle,0,caller,target,random,false,
+        [](auto){return true;},{},{},{},0.31f);});
+    invalid_unchanged(random,[&]{(void)odh::rank_reference_range_slot(circle,0,caller,target,random,false,
+        [](auto){return true;},{},{},{},std::numeric_limits<float>::quiet_NaN(),[](auto){return Verification::eligible;});});
+    for(const int radius:{1,23,32}){
+        auto generic=circle;generic.records[0].proximity=std::array<std::int32_t,3>{radius,radius,0};
+        require(odh::is_source_slot_circle(generic.records[0])&&
+            odh::enumerate_source_slot_circle_candidates(generic,0,target,-0.4f).size()==8,
+            "source profile accepts general bounded equal radii without resource or index special cases");
+    }
+    for(unsigned change=0;change<4;++change){
+        auto bad=circle;
+        if(change==0)bad.records[0].proximity=std::array<std::int32_t,3>{0,0,0};
+        if(change==1)bad.records[0].sitting=1;
+        if(change==2)bad.records[0].flags|=4096;
+        if(change==3)bad.records[0].offset_bits[0]=0x3f800000;
+        require(!odh::is_source_slot_circle(bad.records[0]),"zero radius, sitting, snap and offset policies remain outside full-circle profile");
+    }
+}
+odh::SlotTable source_global_range_table(std::uint32_t flags=0x8055) {
+    odh::SlotRecord slot{};
+    slot.type=3;slot.offset_bits={0,0,0};slot.standing=1;slot.sitting=0;slot.ground=0;
+    slot.flags=flags;slot.snap_target_slot=-1;
+    slot.proximity=std::array<std::int32_t,3>{16,80,16};slot.max_size=0;slot.unknown_i10=0;
+    slot.gradient_bits=0x3E400000;slot.height=0;slot.facing=-2;slot.resolution=16;
+    return {0,10,{slot},0};
+}
+void source_standing_range() {
+    auto slots=source_global_range_table();
+    require(odh::is_source_standing_range_slot(slots.records[0]),
+        "generic standing-range profile accepts audited Global SLOT100 type-3/index-3 semantics");
+    const odh::EntityPosition caller{80,160,1,0},target{160,160,2,0};
+    constexpr float target_angle=0.31f;
+    const auto offsets=odh::enumerate_reference_slot_range_lattice(slots,0,4096);
+    const auto ranged=odh::filter_reference_slot_range_proximity(slots,0,offsets);
+    std::vector<odh::ReferenceSlotScoreInput> expected_inputs;
+    std::vector<odh::RoutePoint> room_order,actual_room_order,verification_order;
+    auto verification=[](odh::RoutePoint point) {
+        if(point.x==160&&point.y==80) return Verification::rejected_after_score;
+        return ((point.x+point.y)%5==0)?Verification::eligible_with_penalty:Verification::eligible;
+    };
+    for(const auto offset:ranged) {
+        const odh::RoutePoint position{target.x+offset.x,target.y+offset.y};
+        room_order.push_back(position); // room is queried before the direction mask.
+        const auto flags=odh::reference_slot_entry_flags({target.x,target.y},target.direction,position,
+            static_cast<std::uint8_t>(slots.records[0].flags),target_angle);
+        if(!flags)continue;
+        const auto dx=static_cast<float>(target.x)/16.0f-
+                      (static_cast<float>(target.x)/16.0f+static_cast<float>(offset.x)/16.0f);
+        const auto dy=-(static_cast<float>(target.y)/16.0f-
+                      (static_cast<float>(target.y)/16.0f+static_cast<float>(offset.y)/16.0f));
+        const auto radians=static_cast<float>(std::atan2(static_cast<double>(dx),static_cast<double>(dy)));
+        const auto pi=3.14159265358979323846;
+        const auto value=static_cast<double>(radians)/(pi/4.0);
+        const auto lower=std::floor(value),fraction=value-lower;
+        const auto raw=fraction<0.5?lower:fraction>0.5?lower+1.0:
+            (std::fmod(std::abs(lower),2.0)==0.0?lower:lower+1.0);
+        const auto facing=static_cast<std::uint8_t>((static_cast<int>(raw)%8+8)%8);
+        const auto proximity=std::sqrt(static_cast<double>(offset.x)*offset.x+
+                                        static_cast<double>(offset.y)*offset.y);
+        odh::PreRankedSlotGoal goal{position,flags,facing};goal.radian_direction=radians;
+        expected_inputs.push_back({goal,proximity,verification(position)});
+    }
+    odh::RandomState actual_random(0x6A09E667),expected_random(0x6A09E667),observed_draws(0x6A09E667);
+    const auto expected=odh::score_reference_slot_candidates(slots,0,{target.x,target.y},
+        {caller.x,caller.y},expected_inputs,expected_random);
+    const auto actual=odh::rank_source_standing_range_slot(slots,0,caller,target,target_angle,actual_random,
+        [&](odh::RoutePoint point){actual_room_order.push_back(point);return odh::SourceSlotRoomResult::same_room;},
+        [&](odh::RoutePoint point){
+            verification_order.push_back(point);observed_draws.next(1024);
+            require(actual_random.seed()==observed_draws.seed(),
+                "placement callback observes the candidate's already-published source score draw");
+            return verification(point);
+        });
+    require(actual.size()==expected.ranked_goals.size()&&actual_random.seed()==expected_random.seed(),
+        "generic range uses source score draws, rejections and stable ranked output");
+    require(actual.size()==79&&actual.front().position==odh::RoutePoint{144,160}&&
+            actual_random.seed()==UINT64_C(0x572F7B9A9B3B2215),
+        "independent source arithmetic fixture pins first winner and all 80 candidate draws");
+    require(verification_order.size()==expected_inputs.size(),
+        "every direction-matched candidate reaches post-score verification, including rejected placement");
+    for(std::size_t n=0;n<actual.size();++n) {
+        const auto& a=actual[n];const auto& e=expected.ranked_goals[n];
+        require(a.position==e.position&&a.entry_flags==e.entry_flags&&a.facing==e.facing&&
+                a.radian_direction==e.radian_direction,
+            "ranked generic range retains continuous FaceTowards angle and source tie order");
+    }
+    require(room_order.size()==ranged.size()&&actual_room_order==room_order,
+        "room queries follow every in-range lattice candidate before direction filtering");
+    auto same_level_caller=caller;same_level_caller.level=target.level;
+    odh::RandomState same_level_random(0x6A09E667);
+    const auto same_level=odh::rank_source_standing_range_slot(slots,0,same_level_caller,target,target_angle,
+        same_level_random,[](auto){return odh::SourceSlotRoomResult::same_room;},
+        [&](auto point){return verification(point);});
+    require(same_level.size()==actual.size()&&same_level_random.seed()==actual_random.seed(),
+        "source LotTilePos distance and ranking ignore level while room validation remains explicit");
+    for(std::size_t n=0;n<actual.size();++n)
+        require(same_level[n].position==actual[n].position&&same_level[n].radian_direction==actual[n].radian_direction,
+            "cross-level caller uses the same 2D score ordering as the pinned LotTilePos distance");
+
+    const auto before_room=actual_random.seed();bool unknown_room=false;
+    try {
+        (void)odh::rank_source_standing_range_slot(slots,0,caller,target,target_angle,actual_random,
+            [](auto){return odh::SourceSlotRoomResult::unknown;},
+            [](auto){return Verification::eligible;});
+    } catch(const std::invalid_argument&) {unknown_room=true;}
+    require(unknown_room&&actual_random.seed()==before_room,
+        "unknown room evidence fails closed before scoring the first in-range candidate");
+    odh::RandomState different_room_random(23),different_room_seed(23);std::size_t different_room_checks=0,unexpected_placement=0;
+    const auto different_room=odh::rank_source_standing_range_slot(slots,0,caller,target,target_angle,
+        different_room_random,[&](auto){++different_room_checks;return odh::SourceSlotRoomResult::different_room;},
+        [&](auto){++unexpected_placement;return Verification::eligible;});
+    require(different_room.empty()&&different_room_checks==ranged.size()&&unexpected_placement==0&&
+            different_room_random.seed()==different_room_seed.seed(),
+        "different-room candidates are removed before scoring and never reach placement verification");
+    bool invalid_room=false;odh::RandomState invalid_room_random(29);
+    try {
+        (void)odh::rank_source_standing_range_slot(slots,0,caller,target,target_angle,invalid_room_random,
+            [](auto){return static_cast<odh::SourceSlotRoomResult>(99);},
+            [](auto){return Verification::eligible;});
+    } catch(const std::invalid_argument&) {invalid_room=true;}
+    require(invalid_room&&invalid_room_random.seed()==29,
+        "invalid room enum values fail closed rather than acting as same-room evidence");
+    bool unknown_placement=false;odh::RandomState unknown_random(19),one_draw(19);
+    try {
+        (void)odh::rank_source_standing_range_slot(slots,0,caller,target,target_angle,unknown_random,
+            [](auto){return odh::SourceSlotRoomResult::same_room;},
+            [](auto){return Verification::unknown;});
+    } catch(const std::invalid_argument&) {unknown_placement=true;}
+    one_draw.next(1024);
+    require(unknown_placement&&unknown_random.seed()==one_draw.seed(),
+        "unknown placement evidence is reported after and retains its source score draw");
+    bool invalid_placement=false;odh::RandomState invalid_placement_random(37),invalid_placement_draw(37);
+    try {
+        (void)odh::rank_source_standing_range_slot(slots,0,caller,target,target_angle,invalid_placement_random,
+            [](auto){return odh::SourceSlotRoomResult::same_room;},
+            [](auto){return static_cast<Verification>(99);});
+    } catch(const std::invalid_argument&) {invalid_placement=true;}
+    invalid_placement_draw.next(1024);
+    require(invalid_placement&&invalid_placement_random.seed()==invalid_placement_draw.seed(),
+        "invalid placement enum values fail closed after the source score draw");
+    odh::RandomState no_room_random(31);const auto no_room_seed=no_room_random.seed();bool missing_room=false;
+    try {
+        (void)odh::rank_source_standing_range_slot(slots,0,caller,target,target_angle,no_room_random,{},
+            [](auto){return Verification::eligible;});
+    } catch(const std::invalid_argument&) {missing_room=true;}
+    require(missing_room&&no_room_random.seed()==no_room_seed,
+        "missing required room evidence rejects the profile before RNG");
+
+    auto ignore_rooms=source_global_range_table(0x8055|2048U);
+    odh::RandomState ignored_random(7);bool room_called=false;
+    const auto ignored=odh::rank_source_standing_range_slot(ignore_rooms,0,caller,target,target_angle,ignored_random,
+        [&](auto){room_called=true;return odh::SourceSlotRoomResult::unknown;},
+        [](auto){return Verification::eligible;});
+    require(!ignored.empty()&&!room_called,
+        "IgnoreRooms bypasses the room capability rather than requiring or fabricating a room result");
+
+    auto absolute=source_global_range_table(0x8055|512U);
+    odh::RandomState absolute_random(7);
+    const auto absolute_goals=odh::rank_source_standing_range_slot(absolute,0,caller,target,target_angle,absolute_random,
+        [](auto){return odh::SourceSlotRoomResult::same_room;},[](auto){return Verification::eligible;});
+    require(!absolute_goals.empty()&&absolute_goals.front().radian_direction,
+        "Absolute changes sector origin to north but FaceTowards remains continuous to the target object");
+    for(const auto& goal:absolute_goals)
+        require(goal.entry_flags==odh::reference_slot_entry_flags({target.x,target.y},target.direction,
+            goal.position,0x55U,0.0f),"Absolute slot directions are evaluated in world orientation");
+
+    auto excessive=source_global_range_table();excessive.records[0].proximity=
+        std::array<std::int32_t,3>{1,4096,1};excessive.records[0].resolution=1;
+    odh::RandomState excessive_random(41);std::size_t excessive_callbacks=0;bool lattice_bounded=false;
+    try {
+        (void)odh::rank_source_standing_range_slot(excessive,0,caller,target,target_angle,excessive_random,
+            [&](auto){++excessive_callbacks;return odh::SourceSlotRoomResult::same_room;},
+            [&](auto){++excessive_callbacks;return Verification::eligible;});
+    } catch(const std::length_error&) {lattice_bounded=true;}
+    require(lattice_bounded&&excessive_callbacks==0&&excessive_random.seed()==41,
+        "oversized source lattice rejects before callbacks or RNG consumption");
+
+    auto bad=slots;bad.records[0].flags|=4096U;
+    require(!odh::is_source_standing_range_slot(bad.records[0]),
+        "SnapToDirection remains outside the non-snap range path");
+    bad=slots;bad.records[0].flags|=65536U;
+    require(!odh::is_source_standing_range_slot(bad.records[0]),
+        "UseAverageObjectLocation requires a distinct multitile-aware center capability");
+    bad=slots;bad.records[0].proximity=std::array<std::int32_t,3>{16,16,16};
+    require(!odh::is_source_standing_range_slot(bad.records[0]),
+        "equal proximity belongs to the separate source circle branch");
+    invalid_unchanged(actual_random,[&]{(void)odh::rank_source_standing_range_slot(slots,0,caller,target,
+        std::numeric_limits<float>::quiet_NaN(),actual_random,{},[](auto){return Verification::eligible;});});
+
+    auto out_of_band=source_global_range_table();out_of_band.records[0].proximity=
+        std::array<std::int32_t,3>{16,80,100};
+    odh::RandomState signed_formula(5),signed_draw(5);
+    const auto draw=static_cast<float>(signed_draw.next(1024))/1024.0f;
+    const auto scored=odh::score_reference_slot_candidates(out_of_band,0,{160,160},{80,160},
+        {{{{176,160},1,2},16,Verification::eligible}},signed_formula);
+    const auto source_max_score=std::max(100-16,80-100)+(80+80)/3+2;
+    const auto source_base=draw+source_max_score-std::abs(100-16);
+    require(scored.records.front().base_score==source_base&&
+            *scored.records.front().final_score==source_base-96/3.0,
+        "generic source scoring preserves signed maxScore terms when desired proximity lies outside the range");
+
+    auto weighted=source_global_range_table();weighted.records[0].standing=2;
+    odh::RandomState negative_score_random(1),negative_draw(1);
+    const auto negative_random=static_cast<float>(negative_draw.next(1024))/1024.0f;
+    const auto negative=odh::score_reference_slot_candidates(weighted,0,{0,0},{-20000,0},
+        {{{{26340,0},1,0},16,Verification::eligible_with_penalty}},negative_score_random);
+    const auto negative_base=negative_random+64.0+(20000+80)/3+2-std::abs(16-16);
+    const auto negative_after_distance=(negative_base-46340/3.0)*2.0/100000.0;
+    require(negative.records.front().final_score&&*negative.records.front().final_score==negative_after_distance&&
+            *negative.records.front().final_score<0,
+        "Standing weight multiplies a negative score before the source occupied-goal penalty");
+}
+void source_face_anywhere_range() {
+    auto slots=source_global_range_table(0xA0FF);auto& row=slots.records.front();
+    row.proximity=std::array<std::int32_t,3>{16,64,16};row.resolution=8;
+    row.gradient_bits=0;row.facing=-3;
+    const odh::EntityPosition caller{424,424,1,0},target{424,424,1,0};
+    require(odh::is_source_standing_range_slot(row),"FaceAnywhere standing range uses the shared bounded source classifier");
+    odh::RandomState random(0x6A09E667),draws(0x6A09E667),towards_random(0x6A09E667);
+    std::vector<odh::RoutePoint> verified;
+    const auto verify=[](odh::RoutePoint point){return point.x==432&&point.y==456?
+        Verification::rejected_after_score:Verification::eligible;};
+    const auto anywhere=odh::rank_source_standing_range_slot(slots,0,caller,target,0,random,
+        [](auto){return odh::SourceSlotRoomResult::same_room;},[&](auto point){
+            verified.push_back(point);draws.next(1024);
+            require(random.seed()==draws.seed(),"FaceAnywhere live verification sees its already-consumed source candidate RNG draw");
+            return verify(point);
+        });
+    auto towards_slots=slots;towards_slots.records.front().facing=-2;
+    const auto towards=odh::rank_source_standing_range_slot(towards_slots,0,caller,target,0,towards_random,
+        [](auto){return odh::SourceSlotRoomResult::same_room;},verify);
+    require(!anywhere.empty()&&anywhere.size()==towards.size()&&random.seed()==towards_random.seed()&&
+        verified.size()==anywhere.size()+1,"FaceAnywhere preserves candidate scoring order and post-score rejection draws");
+    for(std::size_t n=0;n<anywhere.size();++n){const auto& goal=anywhere[n];
+        require(goal.position==towards[n].position&&goal.entry_flags==towards[n].entry_flags&&
+            goal.facing==0&&goal.radian_direction&&*goal.radian_direction==0&&!std::signbit(*goal.radian_direction),
+            "FaceAnywhere emits source positive-zero radians and facing0 without changing ranked positions or flags");}
+    const auto geometry=odh::enumerate_source_slot_range_candidates(slots,0,target,0);
+    require(!geometry.empty(),"FaceAnywhere range exposes bounded source geometry");
+    for(const auto& goal:geometry)require(goal.facing==0&&goal.radian_direction==0&&!std::signbit(goal.radian_direction),
+        "FaceAnywhere pure geometry agrees with the scorer's neutral arrival direction");
+}
 void formulas() {
     odh::RandomState random(1), expected(1);
     const auto first = expected.next(1024);
@@ -191,11 +487,60 @@ void bed_north_circle_generation() {
         }
     }
 }
+void canonical_transient_relative_ranges() {
+    constexpr double pi=3.141592653589793238462643383279502884;
+    const odh::EntityPosition caller{48,80,1,0},target{80,80,1,3};
+    for(const auto location:{0,1,2,3,4,5,6,7,255})for(const auto direction:{0,1,2,3,4,5,6,7,254,255}){
+        odh::Instruction instruction{27,254,255,{5,0,static_cast<std::uint8_t>(location),
+            static_cast<std::uint8_t>(direction),0,0,3,0}};
+        const auto canonical=odh::make_source_goto_relative_slot(instruction);
+        require(canonical&&canonical->records.size()==1&&canonical->version==10,
+            "source relative instruction normalizes into one transient SLOT at index zero");
+        const auto& row=canonical->records.front();
+        require(row.proximity==std::optional<std::array<std::int32_t,3>>{{16,location==255?32:24,location==255?16:0}}&&
+            row.flags==(location==255?255U:1U<<location)&&row.max_size==100&&row.gradient_bits==0,
+            "transient SLOT preserves directional Optimal0 and explicit AnywhereNear Optimal16 defaults");
+        auto counters=instruction;counters.operands[0]=231;counters.operands[1]=127;
+        counters.operands[4]=255;counters.operands[5]=254;
+        const auto other=odh::make_source_goto_relative_slot(counters);
+        require(other&&other->records.front().proximity==row.proximity&&other->records.front().flags==row.flags&&
+            other->records.front().facing==row.facing,
+            "unused old counters never become a transient SLOT index or alter its geometry");
+        odh::RandomState random{71},expected{71};unsigned verified=0;
+        const auto goals=odh::rank_source_standing_range_slot(*canonical,0,caller,target,2.3561945f,random,
+            [](auto){return odh::SourceSlotRoomResult::same_room;},[&](auto){++verified;
+                return odh::ReferenceSlotVerification::eligible;});
+        const auto geometry=odh::enumerate_source_slot_range_candidates(*canonical,0,target,2.3561945f);
+        require(!goals.empty()&&verified==geometry.size()&&goals.size()==geometry.size(),
+            "all source sectors and authored facing modes share the standing range verifier");
+        for(std::size_t n=0;n<verified;++n)expected.next(1024);
+        require(random.seed()==expected.seed(),"shared relative range scoring draws once before each actual verification");
+        for(const auto& goal:goals){
+            require(goal.radian_direction.has_value(),"relative range retains exact continuous arrival direction");
+            if(direction==255)require(*goal.radian_direction==0&&goal.facing==0,
+                "AnyDirection keeps the source neutral arrival without imposing a facing");
+            if(direction<8){
+                const auto rotated=(direction+3)%8;
+                const float source=static_cast<float>(rotated>4?static_cast<double>(rotated)*pi/4.0:
+                    static_cast<double>(rotated-8)*pi/4.0);
+                require(*goal.radian_direction==source&&goal.facing==rotated,
+                    "authored direction uses the target's discrete facing and source signed-angle convention");
+            }
+        }
+    }
+    odh::Instruction exact{27,254,255,{0,0,254,254,0,0,0,0}};
+    const auto point=odh::make_source_goto_relative_slot(exact);
+    require(point&&point->records.front().flags==0&&
+        point->records.front().proximity==std::optional<std::array<std::int32_t,3>>{{0,0,0}},
+        "OnTopOf normalizes to the source zero-distance transient SLOT");
+    auto invalid=exact;invalid.operands[2]=8;
+    require(!odh::make_source_goto_relative_slot(invalid),"unknown relative locations never obtain canonical SLOT authority");
+}
 void in_front_relative_generation() {
     odh::SlotRecord relative{};
     relative.type=3;relative.flags=0x01;relative.offset_bits={0,0,0};
     relative.standing=1;relative.sitting=0;relative.ground=0;relative.snap_target_slot=-1;
-    relative.proximity=std::array<std::int32_t,3>{16,24,16};relative.max_size=100;
+    relative.proximity=std::array<std::int32_t,3>{16,24,0};relative.max_size=100;
     relative.unknown_i10=0;relative.gradient_bits=0;relative.height=0;
     relative.facing=-2;relative.resolution=16;
     const odh::SlotTable table{0,10,{relative},0};
@@ -227,6 +572,57 @@ void in_front_relative_generation() {
         [](odh::RoutePoint){return true;},[](odh::RoutePoint){return false;});
     require(blocked.empty()&&random.seed()==expected_after_obstacle.seed(),
         "position rejection happens after relative SLOT scoring consumes RNG");
+}
+void relative_directions_and_near() {
+    odh::SlotRecord slot{};
+    slot.type=3;slot.offset_bits={0,0,0};slot.standing=1;slot.sitting=0;
+    slot.ground=0;slot.snap_target_slot=-1;slot.max_size=100;slot.unknown_i10=0;
+    slot.gradient_bits=0;slot.height=0;slot.resolution=16;
+    const odh::EntityPosition caller{48,80,1,0},target{80,80,1,3};
+    for(unsigned location=0;location<9;++location) {
+        slot.flags=location==8?255U:1U<<location;
+        slot.proximity=std::array<std::int32_t,3>{16,location==8?32:24,location==8?16:0};
+        for(const int facing:{-3,-2,0,1,2,3,4,5,6,7}) {
+            slot.facing=facing;
+            const odh::SlotTable table{0,10,{slot},0};
+            odh::RandomState random(7),rejected(7),expected(7);
+            const auto goals=odh::rank_reference_range_slot(table,0,caller,target,random);
+            require(!goals.empty(),"all relative sectors and AnywhereNear have standing candidates");
+            for(const auto& goal:goals) {
+                const auto flags=odh::reference_slot_entry_flags({80,80},3,goal.position,
+                    static_cast<std::uint8_t>(slot.flags));
+                require(flags&&goal.entry_flags==flags,"relative sector stays anchored to target orientation");
+                if(facing>=0)require(goal.facing==((3+facing)&7),
+                    "relative facing offset is independent of selected approach sector");
+            }
+            const auto blocked=odh::rank_reference_range_slot(table,0,caller,target,rejected,false,
+                [](auto){return true;},[](auto){return false;});
+            for(std::size_t n=0;n<goals.size();++n)expected.next(1024);
+            require(blocked.empty()&&random.seed()==expected.seed()&&rejected.seed()==expected.seed(),
+                "each sector candidate consumes one score draw even when blocked");
+            if(location==8)require(goals.size()==12,"AnywhereNear includes axes at two tiles and diagonals");
+        }
+    }
+}
+void continuous_relative_sector() {
+    odh::SlotRecord slot{};
+    slot.type=3;slot.flags=1;slot.offset_bits={0,0,0};slot.standing=1;slot.sitting=0;
+    slot.ground=0;slot.snap_target_slot=-1;slot.proximity=std::array<std::int32_t,3>{16,24,0};
+    slot.max_size=100;slot.unknown_i10=0;slot.gradient_bits=0;slot.height=0;slot.facing=-2;slot.resolution=16;
+    const odh::SlotTable table{0,10,{slot},0};
+    odh::RandomState random(7),expected(7);
+    const auto goals=odh::rank_reference_range_slot(table,0,{48,80,1,0},{80,80,1,0},random,
+        false,{},{},{},{},0.31f);
+    require(goals.size()==2,"between-notch target angle admits north and northeast in source front sector");
+    for(const auto& goal:goals)require(goal.position==odh::RoutePoint{80,64}||goal.position==odh::RoutePoint{96,64},
+        "continuous source angle changes search sectors without rotating the lattice");
+    expected.next(1024);expected.next(1024);
+    require(random.seed()==expected.seed(),"continuous sector consumes both source score draws");
+    const auto before=random.seed();bool rejected=false;
+    try{(void)odh::rank_reference_range_slot(table,0,{48,80,1,0},{80,80,1,0},random,
+        false,{},{},{},{},std::numeric_limits<float>::quiet_NaN());}
+    catch(const std::invalid_argument&){rejected=true;}
+    require(rejected&&before==random.seed(),"nonfinite source angle rejects before scoring RNG");
 }
 void house07_global_range() {
     const auto table=house07_global_range_table();
@@ -396,11 +792,26 @@ void invalid_inputs() {
         if (field==2) bad.goal.facing=8;
         invalid_unchanged(random,[&]{invoke(table(),{bad});});
     }
-    auto bad=table(); bad.records[0].standing=2;
+    auto weighted=table();weighted.records[0].standing=2;
+    odh::RandomState unit_random(99),weighted_random(99);
+    const auto unit=odh::score_reference_slot_candidates(table(),0,{0,0},{0,0},{input({16,0})},unit_random);
+    const auto doubled=odh::score_reference_slot_candidates(weighted,0,{0,0},{0,0},{input({16,0})},weighted_random);
+    require(unit.records[0].final_score&&doubled.records[0].final_score&&
+        *doubled.records[0].final_score==2*(*unit.records[0].final_score)&&unit_random.seed()==weighted_random.seed(),
+        "generic source circle Standing2 is valid and doubles its actual score without extra RNG");
+    for(const auto standing:{-1,0,32768}){
+        auto invalid=table();invalid.records[0].standing=standing;
+        invalid_unchanged(random,[&]{invoke(invalid,{input({16,0})});});
+    }
+    auto bad=table(0x55|4096);
     invalid_unchanged(random,[&]{invoke(bad,{input({16,0})});});
-    bad=table(0x55|4096);
-    invalid_unchanged(random,[&]{invoke(bad,{input({16,0})});});
-    bad=table(); bad.records[0].proximity=std::array<std::int32_t,3>{16,32,16};
+    auto generic_range=table();generic_range.records[0].proximity=std::array<std::int32_t,3>{16,32,16};
+    odh::RandomState generic_range_random(13);
+    const auto generic_range_result=odh::score_reference_slot_candidates(generic_range,0,{0,0},{0,0},
+        {input({16,0}),{{{24,0},1,2},24,Verification::eligible}},generic_range_random);
+    require(generic_range_result.random_calls==2&&generic_range_result.ranked_goals.size()==2,
+        "source-shaped 16-to-32 standing range is accepted by the generic arithmetic scorer");
+    bad=table(); bad.records[0].proximity=std::array<std::int32_t,3>{32,16,16};
     invalid_unchanged(random,[&]{invoke(bad,{input({16,0})});});
     invalid_unchanged(random,[&]{invoke(table(),{input({32768,0})});});
     invalid_unchanged(random,[&]{invoke(table(),{input({16,0})},{32768,0});});
@@ -411,6 +822,6 @@ void invalid_inputs() {
 }
 }
 int main() {
-    try { formulas(); branches(); door_range(); door_range_generation(); bed_north_circle_generation(); in_front_relative_generation(); house07_global_range(); child_shy_sitting_fallback(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
+    try { canonical_transient_relative_ranges(); source_full_circle(); source_standing_range(); source_face_anywhere_range(); formulas(); branches(); door_range(); door_range_generation(); bed_north_circle_generation(); in_front_relative_generation(); relative_directions_and_near(); continuous_relative_sector(); house07_global_range(); child_shy_sitting_fallback(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

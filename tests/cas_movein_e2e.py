@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -33,15 +34,547 @@ def source_paths(game):
     return sorted(paths)
 
 
+def integrated_family_lot(args, game, runner, person):
+    """One real product path; setup calls the same CAS writer as the screen."""
+    import time
+    checkout = Path(__file__).resolve().parents[1]
+    output = args.output.resolve()
+    def inside(path, parent):
+        try:
+            path.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+    if output.exists() or inside(output, checkout) or inside(output, game):
+        raise ValueError('integrated output must be new and outside checkout/game data')
+    if not args.setup_only and (args.purchase is None or args.floor is None):
+        raise ValueError('integrated flow requires --purchase GUID X Y LEVEL DIRECTION and --floor MATERIAL X Y LEVEL')
+    resumed = None
+    resume_document = None
+    resume_step = None
+    resume_notice = None
+    source_runner = source_person = None
+    resume_receipt = args.resume_run or args.resume_setup
+    resume_inventory = None
+    resume_result_hash = None
+    resume_profile = None
+    def inventory(root):
+        if root.is_symlink() or not root.is_dir():
+            raise ValueError('profile must be a real directory, not a symlink')
+        result = {}
+        for path in sorted(root.rglob('*')):
+            if path.is_symlink():
+                raise ValueError('profile contains a symlink: '+str(path))
+            if path.is_file():
+                result[str(path.relative_to(root))] = digest(path)
+        return result
+    if args.resume_run is not None and args.resume_setup is not None:
+        raise ValueError('choose --resume-run or --resume-setup')
+    if args.respond_observed_notice is not None and args.resume_run is None:
+        raise ValueError('--respond-observed-notice requires --resume-run')
+    if args.second_move and args.resume_run is None:
+        raise ValueError('--second-move requires a guarded completed family/lot --resume-run')
+    if args.revise_pending_purchase and args.resume_run is None:
+        raise ValueError('--revise-pending-purchase requires a guarded pre-purchase --resume-run')
+    if args.observed_response_code is not None and args.respond_observed_notice is None:
+        raise ValueError('--observed-response-code requires the exact --respond-observed-notice receipt')
+    if resume_receipt is not None:
+        if args.setup_only:
+            raise ValueError('resume cannot be combined with --setup-only')
+        receipt = resume_receipt.resolve(strict=True)
+        resume_result_hash = digest(receipt)
+        resumed = json.loads(receipt.read_text())
+        if args.resume_run is None:
+            if (resumed.get('status') != 'setup_ready' or resumed.get('passed') is not True or
+                    resumed.get('setup_only') is not True or
+                    resumed.get('source_guards') != {'commercial_unchanged':True,'binaries_unchanged':True}):
+                raise ValueError('resume receipt is not a successful guarded CAS-only setup')
+        elif (resumed.get('schema') != 'integrated_family_lot/v1' or
+                resumed.get('status') not in ('failed','passed') or
+                not resumed.get('source_guards') or not all(resumed['source_guards'].values())):
+            raise ValueError('resume run requires an intact guarded integrated result')
+        raw_profile = Path(resumed['profile'])
+        if not raw_profile.is_absolute() or raw_profile.is_symlink():
+            raise ValueError('resume profile path must be absolute and not a symlink')
+        resume_profile = raw_profile.resolve(strict=True)
+        if inside(output, resume_profile) or inside(resume_profile, output):
+            raise ValueError('output and resume profile must be separate')
+        resume_inventory = inventory(resume_profile)
+        if not resume_inventory or resume_inventory != resumed.get('profile_files'):
+            raise ValueError('resume profile is absent or differs from its setup receipt')
+        if len(resumed.get('binaries',{})) != 2:
+            raise ValueError('resume receipt lacks the original runner/engine binary provenance')
+        if args.resume_run is None:
+            creation = next((step for step in resumed.get('steps',[]) if step.get('stage') == 'create'), None)
+            if not creation or creation.get('command',[])[1:] != [str(game),str(resume_profile),'--family-lot-flow']:
+                raise ValueError('resume setup belongs to another game or scenario')
+            source_runner=creation['command'][0]
+            source_person=next((path for path in resumed['binaries'] if path!=source_runner),None)
+            if source_runner not in resumed['binaries'] or source_person is None:
+                raise ValueError('setup writer/engine provenance is incomplete')
+        else:
+            checkpoint = resumed.get('last_checkpoint')
+            if checkpoint:
+                stage_name = checkpoint['source_stage']
+                resume_step = next((step for step in resumed['steps'] if step['stage']==stage_name),None)
+            else:
+                resume_step = next((step for step in reversed(resumed.get('steps',[]))
+                    if '--save-session-on-exit' in step.get('command',[]) and step.get('exit')==0),None)
+            if not resume_step:
+                raise ValueError('resume run has no completed product checkpoint operation')
+            command = resume_step['command']
+            source_person=command[0]
+            source_runner=next((path for path in resumed['binaries'] if path!=source_person),None)
+            if source_person not in resumed['binaries'] or source_runner is None:
+                raise ValueError('runtime engine/decoder provenance is incomplete')
+            if '--game-root' not in command or command[command.index('--game-root')+1] != str(game):
+                raise ValueError('resume run belongs to another game installation')
+            source_stdout = receipt.parent/(resume_step['stage']+'-stdout.json')
+            if digest(source_stdout) != resume_step['stdout_sha256']:
+                raise ValueError('observed product stdout changed since the receipt')
+            resume_document = json.loads(source_stdout.read_text())
+            if (resume_document.get('host_failed') is not False or
+                    resume_document.get('instruction_budget_exhausted') is not False or
+                    resume_document.get('scheduler_budget_yields') != 0 or
+                    resume_document.get('object_main_fault_count') != 0 or
+                    resume_document.get('registry_first_spatial_invalidation') is not None or
+                    resume_document.get('headless_dialog_ok_sent') is not False):
+                raise ValueError('resume checkpoint did not stop at a clean product boundary')
+            saved = Path(resume_document['saved_session_path']).resolve(strict=True)
+            if not inside(saved,resume_profile) or digest(saved) != saved.stem:
+                raise ValueError('saved checkpoint is not the intact content-addressed profile archive')
+            resume_notice = resume_document.get('blocking_dialog')
+            if args.respond_observed_notice is not None:
+                if args.respond_observed_notice.resolve(strict=True) != source_stdout.resolve() or not resume_notice:
+                    raise ValueError('notice must name the exact observed stdout of the resumed checkpoint')
+                if (resume_notice.get('choices') != [] or not isinstance(resume_notice.get('title'),str) or
+                        not resume_notice.get('message')):
+                    raise ValueError('observed modal must preserve its exact original prompt without selector input')
+                kind=resume_notice.get('type')
+                if kind==0:
+                    if args.observed_response_code not in (None,0):
+                        raise ValueError('informational modal has only its actual OK button0')
+                elif kind==1:
+                    if args.observed_response_code not in (0,1):
+                        raise ValueError('yes/no modal requires an explicitly selected observed response code0 or1')
+                else:
+                    raise ValueError('this continuation supports only observed informational or explicit yes/no dialogs')
+            elif resume_notice is not None:
+                raise ValueError('pending modal requires explicit --respond-observed-notice OBSERVED_STDOUT')
+            for key,value in (('requested_purchase',args.purchase),('requested_floor',args.floor)):
+                if key in resumed and resumed[key] != value:
+                    if (key!='requested_purchase' or not args.revise_pending_purchase or
+                            (resumed.get('last_checkpoint') or {}).get('logical_stage')!='move-in' or
+                            any(stage in resumed.get('progress',{}) for stage in ('buy','edit','return')) or
+                            not resumed[key] or not value or resumed[key][0]!=value[0]):
+                        raise ValueError('resume cannot change committed transaction inputs; pending placement revision needs its explicit pre-purchase receipt')
+    output.mkdir(parents=True)
+    profile = output / 'profile'
+    if resume_profile is None:
+        profile.mkdir()
+    else:
+        shutil.copytree(resume_profile, profile, symlinks=False)
+        if inventory(profile) != resume_inventory or inventory(resume_profile) != resume_inventory:
+            raise ValueError('resume profile changed while being copied')
+    env = os.environ.copy()
+    for key in ('DISPLAY', 'WAYLAND_DISPLAY', 'ODH_STATE_DIR'):
+        env.pop(key, None)
+    for key, child in (('XDG_CONFIG_HOME','config'),('XDG_DATA_HOME','data'),
+                       ('XDG_STATE_HOME','state'),('XDG_CACHE_HOME','cache')):
+        env[key] = str(profile / child)
+    def profile_tree():
+        return {str(p.relative_to(profile)): digest(p) for p in sorted(profile.rglob('*')) if p.is_file()}
+    source_inventory = sorted(str(p.relative_to(game)) for p in game.rglob('*') if p.is_file())
+    protected = {str(p.relative_to(game)): digest(p) for p in source_paths(game)}
+    binaries = {str(p): digest(p) for p in (runner, person)}
+    archives = {str(profile/name):sha for name,sha in (resume_inventory or {}).items() if name.endswith('.odhs')}
+    report = {'schema':'integrated_family_lot/v1', 'status':'running', 'passed':False,
+              'evidence_scope':'real_CAS_services_and_product_CLI_not_GUI',
+              'playable_milestone_accepted':False, 'profile':str(profile),
+              'initial_budget':20000, 'steps':[], 'errors':[], 'binaries':binaries,
+              'requested_purchase':args.purchase, 'requested_floor':args.floor,
+              'move_in_goal_tick':(resumed or {}).get('move_in_goal_tick',16),
+              'progress':json.loads(json.dumps((resumed or {}).get('progress',{})))}
+    if args.revise_pending_purchase:
+        report['pending_purchase_revision']={'previous':resumed.get('requested_purchase'),
+            'requested':args.purchase,'source_receipt_sha256':resume_result_hash,
+            'scope':'uncommitted placement only; authenticated pre-purchase head still required'}
+    def checked(condition, text):
+        if not condition:
+            raise RuntimeError(text)
+    def publish():
+        (output/'result.json').write_text(json.dumps(report, indent=2)+'\n')
+    def run(name, command):
+        record = {'stage':name, 'command':list(map(str, command))}
+        report['steps'].append(record)
+        publish()
+        begin = time.monotonic()
+        stdout, stderr = output/(name+'-stdout.json'), output/(name+'-stderr.log')
+        with stdout.open('wb') as out, stderr.open('wb') as err:
+            completed = subprocess.run(list(map(str, command)), env=env, cwd=checkout,
+                                       stdout=out, stderr=err, timeout=args.timeout, check=False)
+        record.update(exit=completed.returncode, elapsed_seconds=time.monotonic()-begin,
+                      stdout_sha256=digest(stdout), stderr_sha256=digest(stderr))
+        checked(completed.returncode == 0, name+' exited nonzero; inspect '+str(stderr))
+        document = json.loads(stdout.read_text())
+        checked(isinstance(document, dict), name+' did not return a JSON object')
+        publish()
+        return document
+    common = [str(person), '--game-root', str(game), '--mode', '1', '--language', '14', '--no-audio']
+    def product(name, selection, count, commands=(), logical_stage=None, expected_answers=0):
+        document = run(name, common+list(selection)+list(commands)+[
+            '--headless-ticks',str(count),'--save-session-on-exit'])
+        checked(document.get('host_failed') is False, name+' reported a host failure')
+        checked(document.get('instruction_budget_exhausted') is False and
+                document.get('scheduler_budget_yields') == 0, name+' did not complete its gameplay work')
+        checked(document.get('object_main_fault_count') == 0 and
+                document.get('registry_first_spatial_invalidation') is None,
+                name+' stopped at an object/spatial failure')
+        checked(document.get('headless_dialog_responses_requested') == expected_answers and
+                document.get('headless_dialog_responses_consumed') == expected_answers and
+                document.get('headless_dialog_ok_sent') is False,
+                name+' did not consume exactly its explicitly authorized response count')
+        path = Path(document.get('saved_session_path','')).resolve(strict=True)
+        checked(inside(path, profile.resolve()), name+' save escaped its complete isolated profile')
+        saved_hash = digest(path)
+        checked(str(path) not in archives or archives[str(path)] == saved_hash,
+                name+' overwrote an earlier immutable checkpoint')
+        archives[str(path)] = saved_hash
+        projection = run(name+'-inspect', [runner,'--inspect-session',path])
+        checked(projection['tick'] == document['ticks'], name+' inspector tick differs')
+        checked(projection.get('blocking_dialog') == document.get('blocking_dialog'),
+                name+' serialized modal differs from its actual product observation')
+        report['last_checkpoint'] = {'logical_stage':logical_stage or name,'source_stage':name,
+            'relative_path':str(path.relative_to(profile)), 'sha256':saved_hash,
+            'tick':document['ticks'],'blocking_dialog':document.get('blocking_dialog')}
+        publish()
+        checked(document.get('blocking_dialog') is None,
+                name+' stopped at an observed original modal; inspect this receipt before authorizing any response')
+        return document, path, projection
+    def remember(stage, value):
+        document,path,projection=value
+        report['progress'][stage]={'document':document,'relative_path':str(path.relative_to(profile)),
+            'sha256':digest(path),'projection':projection}
+        publish()
+    def previous(stage):
+        value=report['progress'].get(stage)
+        if value is None:return None
+        path=profile/value['relative_path']
+        checked(path.is_file() and digest(path)==value['sha256'],stage+' prior checkpoint changed')
+        projection=json.loads(json.dumps(value['projection']))
+        if 'archive_path' in projection:projection['archive_path']=str(path.resolve())
+        return value['document'],path,projection
+    def roster(projection):
+        return sorted((m['guid'],m['neighbor_id'],m['age'],m['gender'],m['body'])
+                      for m in projection['members'])
+    def ownership(projection):
+        return (projection['house'],projection['family_chunk_id'],projection['family_number'],
+                projection['occupancy_epoch'],roster(projection))
+    try:
+        if resumed is None:
+            created = run('create', [runner, game, profile, '--family-lot-flow'])
+        else:
+            created = resumed['created_family']
+            report['resumed_run' if args.resume_run else 'resumed_setup'] = {'result':str(resume_receipt.resolve()),
+                'sha256':resume_result_hash, 'profile':str(resume_profile),
+                'profile_files':resume_inventory,
+                'setup_runner':{'path':source_runner,'sha256':resumed['binaries'][source_runner]},
+                'current_runner':{'path':str(runner),'sha256':digest(runner)},
+                'runner_changed_since_source_receipt':resumed['binaries'][source_runner] != digest(runner),
+                'CAS_writer_reexecuted':False,
+                'person_binary':{'source_path':source_person,'current_path':str(person),
+                    'source_sha256':resumed['binaries'][source_person],
+                    'current_sha256':digest(person),
+                    'changed_since_source_receipt':resumed['binaries'][source_person] != digest(person),
+                    'source_receipt_was_CAS_only':args.resume_run is None}}
+        checked(created.get('integrated_family_lot') is True and created['initial_budget'] == 20000,
+                'setup did not use the explicit normal-budget scenario')
+        checked(sorted(m['age'] for m in created['members']) == [9,27] and
+                sorted(m['body_type'] for m in created['members']) == ['adult','child'],
+                'actual private CAS files do not describe an adult and a child')
+        checked(0 <= created['purchase_price'] < 20000, 'selected lot is not affordable')
+        report['created_family'] = created
+        publish()
+        private_files = {str(p.relative_to(profile)):digest(p) for p in
+                         (profile/'data/opendollhouse/Characters').glob('*.iff')}
+        checked(len(private_files) == 2, 'CAS did not publish exactly two private character files')
+        if args.setup_only:
+            report.update(status='setup_ready', passed=True, setup_only=True,
+                evidence_scope='real_CAS_creation_only_runtime_and_transactions_not_executed',
+                gui_verified=False, private_character_count=len(private_files))
+        elif args.second_move:
+            checked(resumed.get('passed') is True and resumed.get('same_file_after_return') is True,
+                    'second move requires the completed purchase/floor/new-process return receipt')
+            checked(set(('move-in','buy','edit')).issubset(report['progress']),
+                    'second move cannot replace an incomplete first family/lot chain')
+            old_save=Path(resume_document['saved_session_path']).resolve()
+            current_save=profile/old_save.relative_to(resume_profile)
+            current=run('second-source-inspect',[runner,'--inspect-session',current_save])
+            authenticated=run('second-source-head',[runner,'--inspect-session-head',game,
+                str(current['house']),str(created['family_chunk_id'])])
+            checked(authenticated.get('authenticated_journal_head') is True and
+                    Path(authenticated['archive_path']).resolve()==current_save.resolve() and
+                    digest(current_save)==old_save.stem and current.get('blocking_dialog') is None,
+                    'second move source is not its current unblocked authenticated home head')
+            # Fresh read-only runtime evaluation and its ordinary zero-tick
+            # save synchronize the property cache in this copied profile only.
+            query_doc,query_save,query_current=product('second-property-query',
+                ['--load-session',str(current_save)],0,logical_stage='second-property-query')
+            checked(query_current==current and digest(query_save)==digest(current_save),
+                    'property query unexpectedly changed the complete gameplay checkpoint')
+            refreshed_head=run('second-property-head',[runner,'--inspect-session-head',game,
+                str(current['house']),str(created['family_chunk_id'])])
+            checked(refreshed_head.get('authenticated_journal_head') is True and
+                    Path(refreshed_head['archive_path']).resolve()==query_save.resolve(),
+                    'fresh property query did not retain the authenticated checkpoint head')
+            destination=created['second_house']
+            state=run('second-source-family',[runner,'--inspect-family-state',game,
+                str(created['family_chunk_id']),str(destination)])
+            checked(state['managed'] and state['house']==current['house'] and
+                    state['budget']==current['budget'] and
+                    sorted(state['member_guids'])==sorted(m['guid'] for m in current['members']),
+                    'family property state differs from the authenticated live household')
+            checked(state['destination_price']==created['second_purchase_price'] and
+                    state['destination_house']==destination,
+                    'destination purchase value differs from its protected original SIMI')
+            report['second_move']={'source':current,'source_family_state':state,
+                'source_receipt_sha256':resume_result_hash,'destination':destination,
+                'original_first_chain_preserved':True,'first_chain_replayed':False,
+                'runtime_property_valuation':query_doc.get('runtime_property_valuation')}
+            publish()
+            # This gate requires an independently evaluated current property
+            # value, not merely the planner repeating its stored FAMI scalar.
+            valuation=query_doc.get('runtime_property_valuation')
+            checked(valuation is not None and valuation.get('status')=='resolved',
+                    'second move requires the real current property valuation before eviction; stored FAMI ValueInArch alone is insufficient')
+            checked(valuation.get('tick')==query_doc['ticks'] and
+                    valuation['property_value']==state['value_in_arch'],
+                    'current property valuation differs from stored move-out refund; synchronize the real owner before eviction')
+            quote=state['move_out_quote_budget']
+            checked(isinstance(quote,int) and quote==current['budget']+valuation['property_value'],
+                    'source move-out quote differs from independently measured property and current cash')
+            out=run('second-move-out',common+['--house',str(current['house']),
+                '--resident-id',str(created['neighbor_id']),'--headless-move-out-family',
+                str(created['family_chunk_id']),'--headless-ticks','0'])
+            checked(out=={'status':'moved_out','family_chunk_id':created['family_chunk_id']},
+                    'real move-out command did not complete')
+            vacant=run('second-unhoused-family',[runner,'--inspect-family-state',game,
+                str(created['family_chunk_id']),str(destination)])
+            checked(vacant['house']==0 and vacant['budget']==quote and vacant['value_in_arch']==0 and
+                    vacant['member_guids']==state['member_guids'],
+                    'move-out did not preserve family identity or its independently quoted refund')
+            report['second_move']['unhoused']=vacant;publish()
+            selection=['--house',str(destination),'--resident-id',str(created['neighbor_id'])]
+            arrival_options=['--headless-move-in-family',str(created['family_chunk_id'])]
+            if args.recover_saved_code:arrival_options.append('--recover-saved-code')
+            arrived_doc,arrived_save,arrived=product('second-move-in',selection,0,arrival_options,
+                logical_stage='second-move-in')
+            checked(arrived['house']==destination and roster(arrived)==roster(current) and
+                    arrived['family_chunk_id']==current['family_chunk_id'] and
+                    arrived['family_number']==current['family_number'] and
+                    arrived['occupancy_epoch']!=current['occupancy_epoch'],
+                    'second move did not bind the same family into a fresh destination occupancy')
+            checked(arrived['budget']==quote-vacant['destination_price'],
+                    'second move did not debit exactly the protected destination purchase price')
+            for before in current['members']:
+                after=next(m for m in arrived['members'] if m['guid']==before['guid'])
+                checked(all(after['motives'][i]==before['motives'][i] for i in (5,6,7,8,9,14,15)),
+                        'second move lost portable needs for GUID '+str(before['guid']))
+            remember('second-move-in',(arrived_doc,arrived_save,arrived))
+            returned_doc,returned_save,returned=product('second-return',selection,0,
+                logical_stage='second-return')
+            checked(returned_doc.get('session_loaded') is True and returned==arrived and
+                    digest(returned_save)==digest(arrived_save),
+                    'new-process second-house selection did not preserve the entire arrival checkpoint')
+            checked({name:digest(profile/name) for name in private_files}==private_files,
+                    'second move modified immutable private character resources')
+            report['second_move'].update(arrived=arrived,returned=returned,
+                quote_before_effects=quote,first_chain_replayed=False)
+            report.update(status='passed',passed=True,second_move_completed=True,
+                final_checkpoint={'path':str(returned_save),'sha256':digest(returned_save)},
+                same_file_after_return=True,gui_verified=False,
+                limits=['CLI consumers and authenticated complete profiles; no GUI acceptance',
+                        'Personal transfer validation covers identity and portable needs; broader state remains separately audited'])
+        else:
+            selection = ['--house',str(created['house']),'--resident-id',str(created['neighbor_id'])]
+            initial_options = ['--headless-move-in-family',str(created['family_chunk_id'])]
+            if args.recover_saved_code:
+                initial_options.append('--recover-saved-code')
+            resumed_stage = None
+            continued = None
+            if args.resume_run is not None:
+                old_path=Path(resume_document['saved_session_path']).resolve()
+                resumed_path=profile/old_path.relative_to(resume_profile)
+                observed=run('resume-checkpoint-inspect',[runner,'--inspect-session',resumed_path])
+                head=run('resume-authenticated-head',[runner,'--inspect-session-head',game,
+                    str(observed['house']),str(created['family_chunk_id'])])
+                checked(head.get('authenticated_journal_head') is True and
+                        Path(head['archive_path']).resolve()==resumed_path.resolve() and
+                        digest(resumed_path)==old_path.stem,
+                        'resume checkpoint is not the current authenticated copied profile head')
+                checked(observed.get('blocking_dialog')==resume_notice and head.get('blocking_dialog')==resume_notice,
+                        'serialized current modal does not exactly match ticket/routine/pc/caller/type/title/message/choices')
+                resumed_stage=(resumed.get('last_checkpoint') or {}).get('logical_stage',resume_step['stage'])
+                checked(resumed_stage in ('move-in','buy','edit','return'),'unsupported continuation stage')
+                answer_code=0 if args.observed_response_code is None else args.observed_response_code
+                answer=['--headless-dialog-response',str(answer_code),''] if resume_notice is not None else []
+                remaining=max(0,report['move_in_goal_tick']-int(resume_document['ticks'])) if resumed_stage=='move-in' else 0
+                if answer:remaining=max(1,remaining)
+                report['authorized_observed_notice']=resume_notice
+                report['authorized_observed_response']={'code':answer_code,'text':''} if resume_notice is not None else None
+                continued=product(resumed_stage+'-resume',['--load-session',str(resumed_path)],remaining,answer,
+                    logical_stage=resumed_stage,expected_answers=1 if answer else 0)
+            if resumed_stage=='move-in':
+                initial_doc,initial_save,initial=continued
+            elif previous('move-in') is not None:
+                initial_doc,initial_save,initial=previous('move-in')
+            else:
+                initial_doc, initial_save, initial = product('move-in', selection, report['move_in_goal_tick'], initial_options)
+            checked(initial['tick']>=report['move_in_goal_tick'],'move-in did not complete its original bounded horizon')
+            checked(initial['budget'] == 20000-created['purchase_price'], 'move-in money was not charged exactly once')
+            checked(initial['family_chunk_id'] == created['family_chunk_id'] and
+                    initial['family_number'] == created['family_number'] and
+                    initial['house'] == created['house'] and initial['occupancy_epoch'] is not None,
+                    'move-in did not publish its actual family/occupancy lease')
+            checked(sorted(m['guid'] for m in initial['members']) ==
+                    sorted(m['guid'] for m in created['members']) and
+                    sorted(m['age'] for m in initial['members']) == [9,27],
+                    'saved World lost the created adult/child identities or ages')
+            checked(initial_doc.get('body_initialized') is True and
+                    initial_doc.get('body_state',{}).get('avatar_type') == 'adult' and
+                    initial_doc.get('body_state',{}).get('body') and
+                    initial_doc.get('body_state',{}).get('head'),
+                    'selected adult lacks its actual initialized BodySTR descriptor')
+            # World.avatar_appearance is a live outfit override, not the
+            # resource's default BodySTR. Its absence does not erase the
+            # immutable CAS character resource used to recreate that default.
+            report['appearance_evidence'] = {
+                'primary_runtime_descriptor':initial_doc['body_state'],
+                'private_CAS_types':[m['body_type'] for m in created['members']],
+                'per_member_default_resources_preserved':True,
+                'all_residents_visually_verified':False}
+            if args.revise_pending_purchase:
+                checked(resumed_stage=='move-in' and not initial['purchase_groups'] and
+                        initial['budget']==20000-created['purchase_price'],
+                        'revised placement requires the real uncharged pre-purchase family checkpoint')
+            remember('move-in',(initial_doc,initial_save,initial))
+            owner = ownership(initial)
+            purchase = list(args.purchase)
+            old_groups = {g['group_id'] for g in initial['purchase_groups']}
+            if resumed_stage=='buy':
+                bought_doc,bought_save,bought=continued
+            elif previous('buy') is not None:
+                bought_doc,bought_save,bought=previous('buy')
+            else:
+                bought_doc, bought_save, bought = product('buy', ['--load-session',str(initial_save)], 0,
+                                                         ['--buy-object']+list(map(str,purchase)))
+            checked(ownership(bought) == owner, 'purchase changed family, occupancy or resident appearance')
+            new = [g for g in bought['purchase_groups'] if g['group_id'] not in old_groups]
+            checked(len(new) == 1 and new[0]['requested_guid'] == purchase[0] and new[0]['members'],
+                    'purchase did not publish one actual requested furniture group')
+            group = new[0]
+            checked(isinstance(group['price'],int) and group['price'] > 0 and
+                    bought['budget'] == initial['budget']-group['price'],
+                    'purchase price and real family debit disagree')
+            checked(any(m['position'] == purchase[1:] for m in group['members']),
+                    'purchased furniture did not retain the requested placement')
+            remember('buy',(bought_doc,bought_save,bought))
+            material, x, y, level = args.floor
+            if resumed_stage=='edit':
+                edited_doc,edited_save,edited=continued
+            elif previous('edit') is not None:
+                edited_doc,edited_save,edited=previous('edit')
+            else:
+                edited_doc, edited_save, edited = product('edit', ['--load-session',str(bought_save)], 0,
+                    ['--edit-floor',str(material),str(x),str(y),str(level)])
+            checked(ownership(edited) == owner and edited['purchase_groups'] == bought['purchase_groups'],
+                    'floor edit changed residents or the purchased furniture')
+            architecture = edited.get('architecture')
+            checked(architecture is not None and 0 <= x < architecture['width'] and
+                    0 <= y < architecture['height'] and level in (1,2),
+                    'floor edit did not publish its actual architecture grid')
+            checked(architecture['floors'][level-1][y*architecture['width']+x] == material,
+                    'saved floor cell differs from the selected material')
+            checked(isinstance(edited['budget'],int) and 0 <= edited['budget'] < bought['budget'],
+                    'floor edit did not debit a positive cost from the real remaining budget')
+            remember('edit',(edited_doc,edited_save,edited))
+            # A new process enters by house/resident selection, not the saved file.
+            # This exercises the current neighborhood occupancy and journal head.
+            returned_doc, returned_save, returned = product('return', selection, 0)
+            checked(returned_doc.get('session_loaded') is True, 'house selection did not load its current journal checkpoint')
+            checked(returned == edited and digest(returned_save) == digest(edited_save),
+                    'new-process return did not preserve the whole final checkpoint')
+            checked({name:digest(profile/name) for name in private_files} == private_files,
+                    'runtime modified the private source character IFFs')
+            checked(all(digest(Path(path)) == sha for path,sha in archives.items()),
+                    'an earlier immutable checkpoint changed')
+            report.update(status='passed', passed=True, created_family=created,
+                initial=initial, purchased_group=group, edited=edited, returned=returned,
+                money={'after_move_in':initial['budget'],'after_purchase':bought['budget'],
+                       'after_floor_edit':edited['budget'],'after_return':returned['budget']},
+                final_checkpoint={'path':str(returned_save),'sha256':digest(returned_save)},
+                same_file_after_return=True, gui_verified=False,
+                limits=['CAS setup invokes real screen services through its native runner; the screen itself is not driven',
+                        'Purchase, floor edit and return use product CLI with real journal publication/reload',
+                        'This case does not accept all content, all family profiles or the first playable milestone'])
+    except Exception as error:
+        report['status'] = 'failed'
+        report['errors'].append(str(error))
+    finally:
+        try:
+            current_inventory = sorted(str(p.relative_to(game)) for p in game.rglob('*') if p.is_file())
+            report['commercial_inventory_added'] = sorted(set(current_inventory)-set(source_inventory))
+            report['commercial_inventory_removed'] = sorted(set(source_inventory)-set(current_inventory))
+            report['commercial_files_changed'] = [name for name,sha in protected.items()
+                if not (game/name).is_file() or digest(game/name) != sha]
+            report['source_guards'] = {'commercial_unchanged':not(report['commercial_inventory_added'] or
+                report['commercial_inventory_removed'] or report['commercial_files_changed']),
+                'binaries_unchanged':all(digest(Path(path)) == sha for path,sha in binaries.items())}
+            if resume_profile is not None:
+                report['source_guards']['setup_profile_unchanged'] = inventory(resume_profile) == resume_inventory
+                report['source_guards']['setup_receipt_unchanged'] = digest(resume_receipt.resolve()) == resume_result_hash
+            report['profile_files'] = profile_tree()
+            report['profile_files_created'] = sorted(report['profile_files'])
+            if not all(report['source_guards'].values()):
+                report.update(passed=False,status='failed')
+                report['errors'].append('source immutability guard failed')
+        except Exception as error:
+            report.update(passed=False,status='failed')
+            report['errors'].append('source guard verification failed: '+str(error))
+        publish()
+    print(json.dumps({'status':report['status'],'result':str(output/'result.json'),
+                      'profile':str(profile),'errors':report['errors']}))
+    return 0 if report['passed'] else 1
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runner', required=True, type=Path, help='built odh-cas-movein-e2e executable')
     parser.add_argument('--person', required=True, type=Path, help='built odh-person executable')
     parser.add_argument('--game-root', required=True, type=Path)
     parser.add_argument('--timeout', type=int, default=600)
+    parser.add_argument('--integrated-family-lot', action='store_true')
+    parser.add_argument('--resume-run', type=Path, help='continue a guarded full-profile integrated result without replaying completed transactions')
+    parser.add_argument('--second-move', action='store_true', help='continue a completed integrated family/lot receipt through real eviction, second-house purchase and new-process return')
+    parser.add_argument('--revise-pending-purchase', action='store_true', help='explicitly revise only an uncommitted furniture placement from an authenticated pre-purchase resume receipt')
+    parser.add_argument('--respond-observed-notice', type=Path, help='respond once to the exact serialized modal observed in this previous product stdout')
+    parser.add_argument('--observed-response-code', type=int, choices=(0,1), help='explicit observed button: informational OK0; yes/no Yes0 or No1 (required for type1)')
+    parser.add_argument('--resume-setup', type=Path, help='integrated mode: copy a verified CAS-only result/profile without creating another family')
+    parser.add_argument('--setup-only', action='store_true', help='integrated mode: create the real adult/child family without launching gameplay')
+    parser.add_argument('--output', type=Path, help='new durable evidence/profile directory for integrated mode')
+    parser.add_argument('--purchase', nargs=5, type=int, metavar=('GUID','X','Y','LEVEL','DIRECTION'))
+    parser.add_argument('--floor', nargs=4, type=int, metavar=('MATERIAL','X','Y','LEVEL'))
+    parser.add_argument('--recover-saved-code', action='store_true')
     args = parser.parse_args()
     game = args.game_root.resolve(strict=True)
     runner, person = args.runner.resolve(strict=True), args.person.resolve(strict=True)
+    if args.integrated_family_lot:
+        if args.output is None:
+            parser.error('--integrated-family-lot requires --output')
+        return integrated_family_lot(args, game, runner, person)
+    if args.output is not None or args.purchase is not None or args.floor is not None or args.recover_saved_code or args.setup_only or args.resume_setup is not None or args.resume_run is not None or args.respond_observed_notice is not None or args.observed_response_code is not None or args.revise_pending_purchase or args.second_move:
+        parser.error('integrated options require --integrated-family-lot')
     inputs = source_paths(game)
     before = {p: digest(p) for p in inputs}
     with tempfile.TemporaryDirectory(prefix='odh-cas-movein-e2e-') as temp:
@@ -134,4 +667,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

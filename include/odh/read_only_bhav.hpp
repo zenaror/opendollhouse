@@ -22,7 +22,8 @@ struct ReadOnlyBhavLimits {
 
 // Restore only into a fresh disposable World. All World writes are denied;
 // VM-local temps/arguments/locals/StackObjectID may change during execution.
-// Only expressions, explicit BHAV calls and object_type_primitive are enabled.
+// Expressions, explicit BHAV calls, object-type checks, bounded SetToNext
+// Person and finite pinned TS1 no-effect compatibility modes are enabled.
 // No callback, file lookup, owner inference, WAIT resumption or World publication.
 // Every call starts fresh, runs at most instruction_budget instructions, and
 // treats faults/budget exhaustion as unsupported. Allocation exceptions propagate.

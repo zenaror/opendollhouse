@@ -1,4 +1,5 @@
 #include "odh/household_transfer.hpp"
+#include "odh/installed_lot_limits.hpp"
 #include "odh/sha256.hpp"
 #include <algorithm>
 #include <map>
@@ -112,6 +113,7 @@ PreparedHouseholdTransfer prepare_household_transfer(const std::vector<std::uint
         std::copy_n(actor->motives.begin(), 16, profile.motives.begin());
         profile.attributes = actor->attributes;
         profile.bound_appearances = actor->bound_appearances;
+        profile.avatar_appearance = actor->avatar_appearance;
         profile.decay = decay->decay;
         unsupported_source(profile);
         result.members_.push_back(std::move(profile));
@@ -146,7 +148,7 @@ AppliedHouseholdTransfer apply_household_transfer(const PreparedHouseholdTransfe
         throw FormatError("household transfer destination family or occupancy is invalid");
     Ts1Clock clock;
     if (!clock.restore(destination_clock)) throw FormatError("household transfer destination clock is invalid");
-    WorldLimits limits; limits.words = 131072;
+    auto limits = odh::installed_lot_world_limits();
     World validation(limits, destination_world.attribute_policy);
     if (!validation.restore_snapshot(destination_world)) throw FormatError("household transfer destination World is invalid");
     validate_relationships(destination_relationships);
@@ -169,6 +171,10 @@ AppliedHouseholdTransfer apply_household_transfer(const PreparedHouseholdTransfe
             actor->ui_ghost || actor->person_data[0] != 0 || actor->person_data[68] != 0 ||
             std::any_of(actor->slots.begin(), actor->slots.end(), [](auto value) { return value != 0; }))
             throw FormatError("household transfer destination resident has unsupported banks, posture, ghost or attachment");
+        AvatarPersonalStateChange personal;
+        personal.reference={actor->id,actor->generation};
+        personal.expected={actor->person_data,actor->motives,actor->avatar_appearance};
+        personal.expected_position=actor->position;personal.expected_attachment=actor->attachment;
         // VMContext creates the avatar, runs Init/EP8, then inherits only the
         // neighbor person bank. Keep those fresh runtime attributes; the full
         // previous bank remains authenticated in the source archive/profile.
@@ -185,9 +191,15 @@ AppliedHouseholdTransfer apply_household_transfer(const PreparedHouseholdTransfe
         for (unsigned index : {2U,3U,4U,5U,6U,7U,10U,11U,12U,15U,17U,18U,36U,
                 46U,47U,48U,49U,50U,51U,52U,53U,56U,57U,58U,60U,63U,65U,68U,69U,70U,
                 75U,76U,80U,81U,82U,83U,84U,85U,86U}) actor->person_data[index] = profile.person_data[index];
+        if(profile.avatar_appearance){
+            actor->avatar_appearance=profile.avatar_appearance;
+            actor->person_data[8]=profile.person_data[8];
+        }
         actor->person_data[31] = profile.identity.neighbor_id;
         actor->person_data[61] = signed_family(destination_lease.family_chunk_id);
         for (unsigned index : {5U,6U,7U,8U,9U,14U,15U}) actor->motives[index] = profile.motives[index];
+        personal.replacement={actor->person_data,actor->motives,actor->avatar_appearance};
+        result.personal_changes_.push_back(std::move(personal));
         // Mood/room score/sleep and motive change controllers stay destination-owned.
         auto decay = profile.decay;
         decay.last_two_minute_bucket = static_cast<std::uint8_t>(destination_clock.minute / 2);
@@ -221,5 +233,31 @@ AppliedHouseholdTransfer apply_household_transfer(const PreparedHouseholdTransfe
     std::sort(result.members_.begin(), result.members_.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     std::sort(result.decays_.begin(), result.decays_.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     return result;
+}
+bool publish_household_transfer_state(World& world,const AppliedHouseholdTransfer& applied) {
+    if(applied.personal_changes_.size()!=applied.members_.size()||applied.personal_changes_.empty())return false;
+    // This allowlist is exactly the pure TS1 carry merge above. No resource,
+    // position, slots, attributes, flags or arbitrary personal-bank restore.
+    const std::set<std::size_t> person_fields{2,3,4,5,6,7,8,10,11,12,15,17,18,31,36,
+        46,47,48,49,50,51,52,53,56,57,58,60,61,63,65,68,69,70,75,76,80,81,82,83,84,85,86};
+    const std::set<std::size_t> motives{5,6,7,8,9,14,15};
+    std::set<WorldEntityReference> members;
+    for(const auto& member:applied.members_)members.insert({member.id,member.generation});
+    for(const auto& change:applied.personal_changes_){
+        const auto member=std::find_if(applied.members_.begin(),applied.members_.end(),[&](const auto& entry){
+            return entry.id==change.reference.id&&entry.generation==change.reference.generation;});
+        const auto* actor=world.resolve_reference(change.reference);
+        if(member==applied.members_.end()||!actor||!actor->definition||actor->definition->guid!=member->guid||
+           actor->attachment||actor->ui_ghost||!actor->bound_appearances.empty()||
+           std::any_of(actor->slots.begin(),actor->slots.end(),[](auto id){return id!=0;}))return false;
+        const auto& before=change.expected;const auto& after=change.replacement;
+        if(!members.erase(change.reference)||before.person_data.size()!=88||after.person_data.size()!=88||
+           before.motives.size()!=16||after.motives.size()!=16)return false;
+        for(std::size_t n=0;n<88;++n)if(before.person_data[n]!=after.person_data[n]&&
+            (!person_fields.count(n)||(n==8&&!after.appearance)))return false;
+        for(std::size_t n=0;n<16;++n)if(before.motives[n]!=after.motives[n]&&
+            (!motives.count(n)||after.motives[n]<-100||after.motives[n]>100))return false;
+    }
+    return members.empty()&&world.publish_avatar_personal_states(applied.personal_changes_);
 }
 } // namespace odh

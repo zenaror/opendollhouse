@@ -264,8 +264,9 @@ void household_seated_cases(){
         !decoded.seated_continuation,"canonical two seated household roundtrip");
     const auto bad=[&](auto mutate){auto changed=saved;mutate(changed);
         rejects([&]{odh::encode_session_bundle(changed);},"invalid household seated state accepted");};
-    bad([](auto& b){b.household_seated_continuations.pop_back();});
-    bad([](auto& b){b.household_seated_continuations.clear();});
+    auto partial=saved;partial.household_seated_continuations.pop_back();
+    require(odh::decode_session_bundle(odh::encode_session_bundle(partial)).household_seated_continuations.size()==1,
+        "GEXP preserves physical seats without manufacturing missing completed-Sit sidecars");
     bad([](auto& b){b.household_seated_continuations[1]=b.household_seated_continuations[0];});
     bad([](auto& b){std::swap(b.household_seated_continuations[0],b.household_seated_continuations[1]);});
     bad([](auto& b){++b.household_seated_continuations[1].actor_generation;});
@@ -347,6 +348,57 @@ void household_seated_cases(){
             require(clock.tick(3,8,8),"both household Main threads continue after seated restore");}
     };
     restore_case(0);restore_case(1);restore_case(2);
+    auto generic=saved;generic.household_seated_continuations.clear();
+    for(auto& state:generic.runtime_entities)state.controllers.interactions.completion.reset();
+    const auto generic_bytes=odh::encode_session_bundle(generic);
+    const auto generic_loaded=odh::decode_session_bundle(generic_bytes,generic.resources);
+    require(generic_loaded.household_seated_continuations.empty()&&odh::encode_session_bundle(generic_loaded)==generic_bytes,
+        "generic post-route seated state roundtrips exact bytes without fake Sit completion");
+    odh::validate_generic_session_posture(generic_loaded);
+    auto unbound=generic;unbound.world.entities[0].attachment.reset();unbound.world.entities[1].slots[0]=0;
+    const auto unbound_bytes=odh::encode_session_bundle(unbound);
+    const auto unbound_loaded=odh::decode_session_bundle(unbound_bytes);
+    require(unbound_loaded.world.entities[0].person_data[0]==1&&!unbound_loaded.world.entities[0].attachment&&
+        odh::encode_session_bundle(unbound_loaded)==unbound_bytes,
+        "source STAND_FUNC accepts unbound Posture.Sitting without inventing seat or completion");
+    require(vm1.install_owner(0x80000000U,bank)&&
+        first.interactions().enqueue(odh::routine_key(4097),{1,2,2,0x80000000U},{0,0,0,0}),
+        "real seated actor enqueues an ordinary action without completed Sit history");
+    auto queued=generic;queued.runtime_entities[0].vm=vm1.snapshot();queued.runtime_entities[0].controllers=first.snapshot();
+    const auto queued_bytes=odh::encode_session_bundle(queued);
+    const auto queued_loaded=odh::decode_session_bundle(queued_bytes);
+    require(queued_loaded.runtime_entities[0].controllers.interactions.actions.size()==1&&
+        !queued_loaded.runtime_entities[0].controllers.interactions.completion&&
+        odh::encode_session_bundle(queued_loaded)==queued_bytes,
+        "generic seated queued action preserves actual queue and omits fake completion");
+    const auto generic_bad=[&](auto mutate){auto changed=generic;mutate(changed);
+        rejects([&]{odh::encode_session_bundle(changed);},"invalid generic physical posture accepted");};
+    generic_bad([](auto& b){b.world.entities[1].slots[0]=0;});
+    generic_bad([](auto& b){++b.runtime_entities[0].controllers.interactions.actor_generation;});
+    generic_bad([](auto& b){b.world.entities[0].position->level=2;});
+    generic_bad([](auto& b){b.runtime_entities[0].resource_owners.clear();});
+    generic_bad([](auto& b){b.runtime_entities[0].playback.carry->code_owner=12345;});
+    auto native=odh::HouseholdSessionRestore::prepare(generic_bytes,generic.resources,generic.host,generic.household_roster,
+        baseline,f.lot,f.bootstrap,21);
+    auto& fresh=native->world();odh::EntityThreadControllers ga(fresh,1),gb(fresh,3);
+    odh::Playback gpa(fresh,{}),gpb(fresh,{});
+    odh::Vm gva(odh::RoutineSet{},fresh.vm_memory(),{},ga.sleep_primitive(),{{1,main_program()}});
+    odh::Vm gvb(odh::RoutineSet{},fresh.vm_memory(),{},gb.sleep_primitive(),{{3,main_program()}});
+    require(ga.bind(gva)&&gb.bind(gvb)&&gpa.bind(gva)&&gpb.bind(gvb),"bind generic seated fresh execution");
+    const auto generic_bank=[&](const auto&){return std::make_pair(bank,std::optional<odh::SessionLinkedSemiglobal>{});};
+    native->install_resource_owners(1,gva,generic_bank);native->install_resource_owners(3,gvb,generic_bank);
+    auto generic_clip=std::make_shared<odh::AnimationHeader>();generic_clip->name="household-seated-carry";
+    const odh::PlaybackRestoreResolver generic_resolver=[&](const auto&){return generic_clip;};
+    odh::EntityVmScheduler generic_clock(4);
+    require(generic_clock.add(1,gva,[&](auto tick){return ga.advance(tick);},[&]{return ga.observe();},[&]{return ga.notify();})&&
+        generic_clock.add(3,gvb,[&](auto tick){return gb.advance(tick);},[&]{return gb.observe();},[&]{return gb.notify();}),
+        "schedule generic seated fresh execution");
+    odh::RandomState generic_random{999};std::uint64_t generic_tick=999;
+    native->restore_execution({{1,&gva,&ga,&gpa,generic_resolver},{3,&gvb,&gb,&gpb,generic_resolver}},generic_clock,generic_random,generic_tick);
+    require(generic_tick==2&&fresh.find(1)->attachment->container==2&&fresh.find(3)->attachment->container==4&&
+        gpa.carry_clip()==generic_clip&&gpb.carry_clip()==generic_clip&&generic_clock.tick(3,8,8),
+        "generic seated World VM controllers carry and Main resume without legacy completion verification");
+
     auto archive=odh::decode_session_archive(bytes);
     auto section=std::find_if(archive.sections.begin(),archive.sections.end(),[](const auto& entry){return entry.id==std::array<char,4>{{'S','E','A','T'}};});
     require(section!=archive.sections.end()&&section->data[0]==3,"household seats use required SEAT v3");

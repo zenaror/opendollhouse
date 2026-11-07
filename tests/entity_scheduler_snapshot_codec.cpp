@@ -59,7 +59,7 @@ int main() {
             rejects([&] { (void)odh::decode_entity_vm_scheduler_snapshot(truncated); }, "every truncated prefix rejected");
         }
         auto changed = encoded;
-        changed[0] = 2;
+        changed[0] = 3;
         rejects([&] { (void)odh::decode_entity_vm_scheduler_snapshot(changed); }, "unsupported version rejected");
         changed = encoded;
         changed[first_status_offset] = 0xff;

@@ -3,6 +3,7 @@
 #include "odh/lot.hpp"
 #include "odh/sound.hpp"
 #include "resource.hpp"
+#include "odh/installed_lot_limits.hpp"
 
 struct SavedDefinitionSource {std::string path;bool standalone;};
 inline odh::Simi saved_lot_simi(const std::string& path){
@@ -81,9 +82,11 @@ inline std::vector<odh::SavedWorldEntity> saved_world_records(const std::string&
         if(chunk.type=="objt"&&chunk.id==0){if(types)throw odh::FormatError("duplicate objt0");types=odh::read_objt(chunk.payload);}
     });});
     if(!objects||!types)throw odh::FormatError("ObjM1/objt0 absent for World import");
-    auto prefixes=odh::read_saved_object_prefixes(*objects,*types);
+    const auto profile=odh::installed_lot_limits();
+    auto prefixes=odh::read_saved_object_prefixes(*objects,*types,profile.prefix);
     std::vector<odh::SavedWorldEntity> records;records.reserve(prefixes.size());
-    std::uint64_t common_available=65536,tail_available=65536,strings_available=256*1024;
+    std::uint64_t common_available=profile.common_words,tail_available=profile.tail_words,
+        strings_available=profile.saved_world.retained_string_bytes;
     for(std::size_t n=0;n<prefixes.size();++n){
         auto& prefix=prefixes[n];const auto* candidate=index.unique(prefix.guid);
         if(!candidate){

@@ -4,8 +4,8 @@
 
 namespace odh {
 
-// Supported TS1 mode-0 head target bookkeeping. Body rotation/routing modes
-// remain unsupported until a lot-turn scheduler is connected.
+// TS1 mode-0 head target bookkeeping and source camera-mode no-op. Body modes
+// execute through the caller's bound Routing controller.
 VmPrimitive look_towards_primitive(World&);
 
 }

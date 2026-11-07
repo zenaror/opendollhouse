@@ -138,6 +138,67 @@ int main() {
         odh::Ts1ClockSnapshot destination_clock; destination_clock.minute = 42;
         const auto applied = odh::apply_household_transfer(prepared, world_before, relationship_before,
             destination_lease, identities(), destination_clock);
+        for(const auto kind:{odh::AvatarOutfitKind::literal,odh::AvatarOutfitKind::identifier,odh::AvatarOutfitKind::none}){
+            auto dressed=source;
+            odh::AvatarOutfitReference original;original.literal="daywear,BODY=original";original.hands.fill("original-hand");
+            odh::AvatarOutfitReference current;current.kind=kind;
+            if(kind==odh::AvatarOutfitKind::literal){current.literal="workwear,BODY=uniform";current.hands.fill("work-hand");}
+            if(kind==odh::AvatarOutfitKind::identifier)current.identifier=0x123456789abcdef0ULL;
+            odh::AvatarAppearanceState appearance;appearance.body=current;appearance.default_daywear=original;
+            appearance.accessory_assets=std::vector<std::string>{}; // Known empty is not unknown.
+            dressed.world.entities[0].avatar_appearance=appearance;dressed.world.entities[0].person_data[8]=3;
+            const auto archive=odh::encode_session_bundle(dressed);
+            const auto decoded=odh::decode_session_bundle(archive);
+            require(decoded.world.entities[0].avatar_appearance==appearance,"source World v6 authenticates typed outfit/default/hands/assets");
+            const auto incoming=odh::prepare_household_transfer(archive,ticket_for(dressed,archive),identities());
+            require(incoming.members()[0].avatar_appearance==appearance&&incoming.members()[0].person_data[8]==3&&
+                !incoming.members()[1].avatar_appearance,"portable profile retains represented outfit and distinguishes legacy member");
+            odh::World initialized;
+            require(initialized.restore_snapshot(world_before)&&initialized.set_avatar_outfit(101,original,true,9)&&
+                initialized.set_avatar_outfit(102,original,true,9),"destination Init has its own known appearance");
+            const auto destination_state=initialized.snapshot();const auto original_bytes=odh::encode_world_snapshot(destination_state);
+            const auto carried=odh::apply_household_transfer(incoming,destination_state,relationship_before,
+                destination_lease,identities(),destination_clock);
+            require(actor(carried.world(),101).avatar_appearance==appearance&&actor(carried.world(),101).person_data[8]==3&&
+                actor(carried.world(),101).generation==actor(destination_state,101).generation&&
+                actor(carried.world(),101).position==actor(destination_state,101).position,
+                "new destination identity retains source outfit/default/hands/assets and matching CurrentOutfit");
+            require(actor(carried.world(),102).avatar_appearance==actor(destination_state,102).avatar_appearance&&
+                actor(carried.world(),102).person_data[8]==9,"legacy absent appearance preserves fresh Init appearance and raw outfit");
+            const auto bytes=odh::encode_world_snapshot(carried.world());
+            odh::World reopened;
+            require(bytes[0]==6&&reopened.restore_snapshot(odh::decode_world_snapshot(bytes))&&
+                odh::encode_world_snapshot(reopened.snapshot())==bytes&&reopened.find(101)->avatar_appearance==appearance,
+                "fresh World after transfer preserves exact version6 appearance bytes");
+            require(odh::encode_world_snapshot(initialized.snapshot())==original_bytes,"appearance transfer staging never mutates live destination");
+            const auto* live_first=initialized.find(101);const auto* live_second=initialized.find(102);
+            auto memory=initialized.vm_memory();
+            require(odh::publish_household_transfer_state(initialized,carried)&&initialized.find(101)==live_first&&initialized.find(102)==live_second,
+                "typed carry publishes into the same entities without replacing World or service pointers");
+            require(live_first->person_data==actor(carried.world(),101).person_data&&
+                live_first->motives==actor(carried.world(),101).motives&&live_first->avatar_appearance==appearance&&
+                live_second->avatar_appearance==actor(carried.world(),102).avatar_appearance&&
+                live_first->position==actor(destination_state,101).position&&live_first->generation==actor(destination_state,101).generation,
+                "in-place carry exactly publishes personal/motive/outfit projection and preserves position/identity");
+            odh::VmFrame read;read.context.caller=101;
+            require(memory.read(read,18,51)==actor(carried.world(),101).person_data[51],
+                "preexisting World memory service observes projected progression after in-place carry");
+            odh::World conflict;require(conflict.restore_snapshot(destination_state)&&conflict.set_person_data(102,16,334),"late second-member conflict");
+            const auto conflict_bytes=odh::encode_world_snapshot(conflict.snapshot());
+            require(!odh::publish_household_transfer_state(conflict,carried)&&odh::encode_world_snapshot(conflict.snapshot())==conflict_bytes,
+                "late member baseline conflict refuses before first member mutation");
+            odh::World late_prop;require(late_prop.restore_snapshot(destination_state)&&late_prop.add_bound_appearance(102,"new-prop"),
+                "late destination appearance prop fixture");
+            const auto prop_bytes=odh::encode_world_snapshot(late_prop.snapshot());
+            require(!odh::publish_household_transfer_state(late_prop,carried)&&odh::encode_world_snapshot(late_prop.snapshot())==prop_bytes,
+                "late bound prop cannot bypass original pure carry preconditions");
+            auto changed_roster=identities();changed_roster[0].character_fingerprint[0]^=1;
+            rejects([&]{(void)odh::apply_household_transfer(incoming,destination_state,relationship_before,
+                destination_lease,changed_roster,destination_clock);},"outfit state never bypasses destination resource identity");
+            auto invalid=dressed;invalid.world.entities[0].avatar_appearance->body=original;
+            invalid.world.entities[0].avatar_appearance->body->literal.push_back('\0');
+            rejects([&]{(void)odh::encode_session_bundle(invalid);},"malformed outfit cannot enter portable projection");
+        }
         require(applied.members()[0].id == 101 && applied.members()[1].id == 102 &&
             applied.ticket().archive_sha256 == ticket.archive_sha256 && applied.destination_lease().occupancy_epoch == 2,
             "receipt binds original archive and every rebased destination runtime identity");

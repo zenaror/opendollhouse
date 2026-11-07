@@ -52,9 +52,13 @@ bool SavedWorldSession::all_dormant_bindings_valid() const {
         [this](const auto& item) { return valid_binding(item.first, item.second); });
 }
 
-void restore_simitone_saved_thread_plan(Vm& vm, const SimitoneSavedThreadPlan& plan) {
+namespace {
+void restore_saved_thread_plan(Vm& vm, const SimitoneSavedThreadPlan& plan,
+                              const SavedThreadCodeOwnerMapper* mapper,
+                              VmSavedRoutinePolicy policy = VmSavedRoutinePolicy::require_present) {
     std::vector<VmFrame> frames;
     frames.reserve(plan.frames.size());
+    std::map<std::uint32_t,CodeOwner> mapped_owners;
     std::vector<bool> requires_return_mapping(plan.frames.size(),false);
     for(const auto& use:plan.object_uses){
         if(use.stack_length<=0||static_cast<std::size_t>(use.stack_length)>plan.frames.size()||use.target_id<=0)
@@ -76,11 +80,32 @@ void restore_simitone_saved_thread_plan(Vm& vm, const SimitoneSavedThreadPlan& p
             !requires_return_mapping[n]?SimitoneSavedReturnState::normal:saved.return_state;
         if (return_state != SimitoneSavedReturnState::normal || saved.action_tree)
             throw FormatError("saved thread return/action state is not supported by VM import");
+        auto owner=saved.code_owner_guid;
+        if(mapper) {
+            const auto found=mapped_owners.find(saved.code_owner_guid);
+            if(found!=mapped_owners.end())owner=found->second;
+            else {
+                if(!saved.code_owner_guid || !(owner=(*mapper)(saved.code_owner_guid)))
+                    throw FormatError("saved thread resource GUID has no host code-owner mapping");
+                mapped_owners.emplace(saved.code_owner_guid,owner);
+            }
+        }
         frames.push_back({routine_key(saved.routine_id), saved.instruction_pointer,
-            {saved.caller, saved.callee, saved.stack_object, saved.code_owner_guid},
+            {saved.caller, saved.callee, saved.stack_object, owner},
             saved.arguments, saved.locals, VmCallReturnMode::ordinary, 0});
     }
-    vm.restore_dormant_state(std::move(frames), plan.temp_registers);
+    vm.restore_dormant_state(std::move(frames), plan.temp_registers,policy);
+}
+} // namespace
+
+void restore_simitone_saved_thread_plan(Vm& vm,const SimitoneSavedThreadPlan& plan) {
+    restore_saved_thread_plan(vm,plan,nullptr);
+}
+
+void restore_simitone_saved_thread_plan(Vm& vm,const SimitoneSavedThreadPlan& plan,
+                                      const SavedThreadCodeOwnerMapper& mapper,VmSavedRoutinePolicy policy) {
+    if(!mapper)throw FormatError("saved thread requires a resource code-owner resolver");
+    restore_saved_thread_plan(vm,plan,&mapper,policy);
 }
 
 void apply_simitone_saved_return_mapping(

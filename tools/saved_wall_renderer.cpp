@@ -191,7 +191,8 @@ SavedWallRenderer& SavedWallRenderer::operator=(SavedWallRenderer&&) noexcept=de
 
 SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& architecture,
     const odh::WallAppearance& appearance,const odh::WorldProjection& camera,
-    const odh::RasterFrame& base,bool terrain,std::int32_t base_alt,odh::WallView view){
+    const odh::RasterFrame& base,bool terrain,std::int32_t base_alt,odh::WallView view,
+    const std::function<std::array<float,3>(std::uint32_t,std::uint32_t,std::uint8_t,std::uint8_t)>& light){
     if(!impl_)throw odh::FormatError("moved saved wall renderer");
     if(base.width!=camera.width||base.height!=camera.height)throw odh::FormatError("saved wall camera/base mismatch");
     odh::project_tile(camera,camera.center_tile);
@@ -242,6 +243,7 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
         const auto back_depth=odh::project_world(camera,{3*tile[0]+b[0],3*tile[2],3*tile[1]+b[2]})[2];
         constexpr float front_delta=-3.6742346141747673f;
         layers.push_back({&frame.image,nullptr,&z->second,x,y,rect.w,rect.h,back_depth,front_delta});
+        if(light)layers.back().linear_light=light(j.x,j.y,j.level,0);
         if(impl_->global.size()>256*1024-names)throw odh::FormatError("saved wall junction provenance budget exceeded");
         names+=impl_->global.size();
         result.junctions.push_back({j,impl_->global,id,frame.palette,frame.palette_missing,x,y,rect.w,rect.h,back_depth,front_delta});
@@ -324,6 +326,7 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
         const auto back_depth=odh::project_world(camera,{3*tile[0]+b[0],3*tile[2],3*tile[1]+b[2]})[2];
         constexpr float front_delta=-3.6742346141747673f;
         layers.push_back({&pattern.image,mask?&mask->image:nullptr,&z->second,x,y,rect.w,rect.h,back_depth,front_delta});
+        if(light)layers.back().linear_light=light(f.x,f.y,f.level,f.orientation);
         if(pattern_source.size()+pattern_asset.size()+mask_source.size()+mask_asset.size()>256*1024-names)
             throw odh::FormatError("saved wall draw provenance budget exceeded");
         names+=pattern_source.size()+pattern_asset.size()+mask_source.size()+mask_asset.size();

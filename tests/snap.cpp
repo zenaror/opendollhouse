@@ -1,6 +1,10 @@
 #include "odh/snap.hpp"
 #include <iostream>
 #include <sstream>
+#include <cmath>
+#include <cstring>
+#include <memory>
+#include "odh/random.hpp"
 namespace {
 int checks=0;
 void require(bool v,const char* why){++checks;if(!v)throw std::runtime_error(why);}
@@ -71,8 +75,128 @@ void seat(Fixture& f) {
     require(f.world.place_in_slot(2,0,1),"floor test starts with positioned actor in chair");
     require(f.world.set_person_data(1,0,1),"floor test sitting posture");
 }
+std::uint32_t float_bits(float value){std::uint32_t result;std::memcpy(&result,&value,sizeof(value));return result;}
+struct DirectionalFixture {
+    odh::World world;odh::SlotTable slots=global_idle_table();odh::RandomState random{91};
+    std::optional<odh::Snap> snap;std::unique_ptr<odh::Vm> vm;
+    odh::Snap::SourcePlacementResult first{odh::Snap::SourcePlacementStatus::accepted};
+    odh::Snap::SourcePlacementResult last{odh::Snap::SourcePlacementStatus::accepted};
+    unsigned candidates=0,placements=0;std::vector<int> order;
+    odh::EntityPosition observed_candidate{},observed_final{};
+    bool mutate_target=false,side_effects=false,lie=false;
+    explicit DirectionalFixture(bool self=false){
+        require(world.create(1,odh::EntityKind::avatar,{1,88,1})&&world.create(2,odh::EntityKind::avatar,{1,88,1})&&
+            world.create(3,odh::EntityKind::object)&&world.create(4,odh::EntityKind::avatar,{0,88})&&
+            world.set_position(1,{10,20,1,2})&&world.set_position(2,{48,64,1,0})&&
+            world.declare_object_word(1,52,17)&&world.declare_object_word(1,54,23),"source directional Snap fixture");
+        const auto target=static_cast<std::int16_t>(self?1:2);
+        odh::Snap::DirectionalServices services;
+        services.candidate=[this](const auto& frame,const auto& instruction,const auto& dispatch,auto actor,auto target,const auto& point){
+            require(instruction.opcode==46&&dispatch.origin==vm.get()&&actor==1&&frame.context.stack_object==target,
+                "candidate receives exact source dispatch proof");
+            ++candidates;order.push_back(1);observed_candidate=point;
+            require(point.direction==0,"parser PositionValid receives NORTH independently of final facing");
+            if(side_effects){require(world.write(frame,0,0,99),"source EP5 World effect uses live memory");vm->temps()[0]=71;}
+            if(mutate_target){require(world.set_position(target,{80,90,1,0})&&world.set_radian_direction(target,2.1f),
+                "source EP5 changes another live target after geometry was frozen");}
+            return first;
+        };
+        services.place=[this](const auto&,const auto&,const auto&,auto actor,auto,const auto& point){
+            ++placements;order.push_back(2);observed_final=point;
+            if(last.status==odh::Snap::SourcePlacementStatus::accepted&&!lie)
+                require(world.place_on_floor(actor,point),"final default SetPosition publishes actual World pose");
+            return last;
+        };
+        snap.emplace(world,target,odh::ObjdBinding{138,0x12345678,129,128},slots,100,odh::Snap::PlacementValidator{},
+            odh::Snap::StairPlacementValidator{},true,std::move(services));
+        auto code=routine(4,5);code.begin()->second.instructions[0].operands[4]=0;
+        vm=std::make_unique<odh::Vm>(code,world.vm_memory(),odh::VmLimits{},snap->primitive());
+        require(snap->bind(*vm),"bind exact directional Snap actor VM");
+        require(vm->start(odh::routine_key(4096),{1,target,target})==odh::VmStatus::running,"start directional Snap source frame");
+    }
+    void blocked(odh::Snap::SourcePlacementResult& result,odh::Snap::SourcePlacementStatus status,std::int16_t id){
+        result={status,id,world.find(id)->generation};
+    }
+};
+void directional_source_tests(){
+    constexpr double pi=3.141592653589793238462643383279502884;
+    for(const auto angle:{-0.0f,0.31f,-0.31f,2.7f,-2.7f}){
+        DirectionalFixture f;require(f.world.set_radian_direction(2,angle),"set actual continuous target angle");
+        auto expected=std::fmod(std::fmod(static_cast<double>(angle)+pi,pi*2)+pi*2,pi*2);
+        if(expected>pi)expected-=pi*2;
+        const auto seed=f.random.seed();
+        require(f.vm->run(1)==odh::VmStatus::returned_true&&f.candidates==1&&f.placements==1&&f.order==std::vector<int>{1,2}&&
+            f.world.find(1)->position->x==48&&f.world.find(1)->position->y==64&&
+            float_bits(f.world.find(1)->radian_direction)==float_bits(static_cast<float>(expected))&&f.random.seed()==seed,
+            "SnapToDirection selects exactly the target center and continuous angle, with no radius or RNG");
+        require(f.world.read(odh::VmFrame{odh::routine_key(4096),0,{1,2,2},{},{}},3,52)==17&&
+            f.world.read(odh::VmFrame{odh::routine_key(4096),0,{1,2,2},{},{}},3,54)==23,
+            "successful final placement does not overwrite source primitive failure registers");
+    }
+    DirectionalFixture frozen;frozen.mutate_target=true;frozen.side_effects=true;
+    require(frozen.world.set_radian_direction(2,0.31f),"set frozen non-notch target");
+    auto& row=frozen.slots.records[5];row.standing=-3;row.ground=77;row.proximity=std::array<std::int32_t,3>{91,3,-5};
+    row.max_size=42;row.unknown_i10=-7;row.gradient_bits=0x7fc00000;row.height=123;row.resolution=-1;
+    row.offset_bits={0x80000000,0,0x80000000};
+    require(frozen.vm->run(1)==odh::VmStatus::returned_true&&frozen.world.find(1)->position->x==48&&
+        frozen.world.find(1)->position->y==64&&frozen.world.find(2)->position->x==80&&
+        frozen.world.find(1)->attributes[0]==99&&frozen.vm->temps()[0]==71,
+        "ignored SLOT metadata and signed-zero offsets do not exclude the point; live EP5 effects survive without reranking geometry");
+    for(const std::uint32_t mask:{0U,1U,2U,3U,16U,32U,255U}){
+        DirectionalFixture f;f.slots.records[5].flags=4096U|mask;
+        const auto active=mask?mask:1U;
+        const auto rounded=std::floor(std::log2(static_cast<double>(active))+0.5);
+        auto angle=std::fmod(std::fmod(rounded*(pi/4),pi*2)+pi*2,pi*2);if(angle>pi)angle-=pi*2;
+        require(f.vm->run(1)==odh::VmStatus::returned_true&&float_bits(f.world.find(1)->radian_direction)==float_bits(static_cast<float>(angle)),
+            "generic direction masks use source FlagsAsRad logarithm and NORTH fallback");
+    }
+    for(bool original_mask:{false,true}){
+        DirectionalFixture f;require(f.world.set_radian_direction(2,0.31f),"set Absolute facing profile target");
+        f.slots.records[5].flags=4096U|512U|(original_mask?16U:0U);f.slots.records[5].facing=2;
+        const auto mask=original_mask?20U:4U;
+        const auto base=original_mask?0.0:static_cast<double>(0.31f);
+        const auto rounded=std::floor(std::log2(static_cast<double>(mask))+0.5);
+        auto angle=std::fmod(std::fmod(base+rounded*pi/4,pi*2)+pi*2,pi*2);if(angle>pi)angle-=pi*2;
+        require(f.vm->run(1)==odh::VmStatus::returned_true&&float_bits(f.world.find(1)->radian_direction)==float_bits(static_cast<float>(angle)),
+            "Facing ORs into flags after original onPoint decides Absolute rotation base");
+    }
+    DirectionalFixture self(true);require(self.vm->run(1)==odh::VmStatus::returned_true&&
+        self.world.find(1)->position->x==10&&self.world.find(1)->position->y==20,
+        "global self SnapToDirection rotates in place rather than shifting SOUTH16");
+    for(unsigned failure=0;failure<5;++failure){
+        DirectionalFixture f;const auto original=*f.world.find(1)->position;const auto original_angle=f.world.find(1)->radian_direction;
+        if(failure==0)f.blocked(f.first,odh::Snap::SourcePlacementStatus::blocked_object,3);
+        if(failure==1)f.first={odh::Snap::SourcePlacementStatus::out_of_bounds};
+        if(failure==2)f.blocked(f.last,odh::Snap::SourcePlacementStatus::blocked_avatar,4);
+        if(failure==3)f.last={odh::Snap::SourcePlacementStatus::out_of_bounds};
+        if(failure==4){f.blocked(f.first,odh::Snap::SourcePlacementStatus::blocked_avatar,4);f.blocked(f.last,odh::Snap::SourcePlacementStatus::blocked_object,3);}
+        require(f.vm->run(1)==odh::VmStatus::returned_false&&*f.world.find(1)->position==original&&
+            float_bits(f.world.find(1)->radian_direction)==float_bits(original_angle),
+            "known candidate/final failures preserve complete original actor transform");
+        const auto expected_id=failure==0||failure==4?3:failure==2?4:0;
+        require(f.world.read(odh::VmFrame{odh::routine_key(4096),0,{1,2,2},{},{}},3,54)==expected_id&&
+            f.world.read(odh::VmFrame{odh::routine_key(4096),0,{1,2,2},{},{}},3,52)==((failure==1||failure==3)?2:17)&&
+            f.placements==(failure<2?0U:1U),"source failure writes exact PrimitiveResult/ID and candidate phase gates final placement");
+    }
+    DirectionalFixture avatar;avatar.blocked(avatar.first,odh::Snap::SourcePlacementStatus::blocked_avatar,4);
+    require(avatar.vm->run(1)==odh::VmStatus::returned_true&&avatar.placements==1,
+        "candidate blocking avatar only penalizes the single goal and cannot skip final validation");
+    DirectionalFixture floor;floor.first={odh::Snap::SourcePlacementStatus::blocked_object};
+    floor.last={odh::Snap::SourcePlacementStatus::blocked_object};
+    require(floor.vm->run(1)==odh::VmStatus::returned_false&&floor.placements==1&&
+        floor.world.read(odh::VmFrame{odh::routine_key(4096),0,{1,2,2},{},{}},3,52)==17&&
+        floor.world.read(odh::VmFrame{odh::routine_key(4096),0,{1,2,2},{},{}},3,54)==0,
+        "non-entity PositionValid failure remains a candidate but final SetPosition fails with ID0 and preserved result52");
+    DirectionalFixture unknown;unknown.first={odh::Snap::SourcePlacementStatus::unsupported};
+    require(unknown.vm->run(1)==odh::VmStatus::fault&&unknown.placements==0&&unknown.world.find(1)->position->x==10,
+        "unknown candidate capability faults without inventing a source false");
+    DirectionalFixture lie;lie.lie=true;
+    require(lie.vm->run(1)==odh::VmStatus::fault&&lie.world.find(1)->radian_direction!=0,
+        "final service cannot claim success without real World publication");
+}
 }
 int main(){try{
+    directional_source_tests();
     std::string b(42,'\0');b[0]=static_cast<char>(138);b[26]=static_cast<char>(129);
     b[28]=0x78;b[29]=0x56;b[30]=0x34;b[31]=0x12;b[40]=static_cast<char>(128);
     auto parse=[](const std::string& bytes){std::istringstream s(bytes);return odh::read_objd_binding(odh::View(s,bytes.size()));};
@@ -87,9 +211,9 @@ int main(){try{
          [](auto,const auto&){return true;}, {},true};
      odh::Vm vm(routines,world.vm_memory(),{},snap.primitive());require(snap.bind(vm),"global self-snap VM binding");
      vm.start(odh::routine_key(4096),{1,1,1});
-     require(vm.run(1)==odh::VmStatus::returned_true&&world.find(1)->position&&
-             *world.find(1)->position==odh::EntityPosition{10,36,1,4},
-             "global SLOT100 index5 moves a Sim to its idle position");}
+     require(vm.run(1)==odh::VmStatus::fault&&world.find(1)->position&&
+             *world.find(1)->position==odh::EntityPosition{10,20,1,0},
+             "zero-offset directional Snap refuses the old one-tile fallback when source services are unavailable");}
     {Fixture f;odh::Vm vm(routine(),f.world.vm_memory(),{},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
      require(vm.run(1)==odh::VmStatus::returned_true,"literal snap succeeds");
      require(f.world.find(2)->slots[0]==1 && f.world.find(1)->attachment->positioned,"both relation ends and placement marked");
@@ -258,6 +382,29 @@ int main(){try{
     {FloorFixture f;seat(f);f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{9,8,1,6});f.world.attach(1,0,3);
      require(f.world.place_on_floor(1,{40,50,2,4}) && f.world.find(3)->attachment && *f.world.find(3)->position==odh::EntityPosition{9,8,1,6},"floor World move does not physically move unpositioned attachment");
      require(!f.world.place_on_floor(99,{40,50,1,0}),"floor World rejects missing identity");}
+    {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,4});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
+     odh::ObjdBinding binding{138,0x79E2B825,129,128};binding.master_id=4;
+     bool authorized=false;unsigned checked=0,authorizations=0;
+     odh::Snap::DirectionalServices services;
+     services.stair_authorized=[&](const auto& frame,const auto& instruction,const auto& dispatch){
+         require(frame.context.caller==1&&frame.context.stack_object==2&&instruction.opcode==46&&dispatch.origin,
+                 "stair authorization receives the actual VM invocation");
+         ++authorizations;return authorized;
+     };
+     odh::Snap snap{world,2,binding,slots,128,{},[&](auto,auto,const auto&){
+         ++checked;return odh::Snap::StairPlacementStatus::accepted;},false,services};
+     odh::Vm vm(stair_routine(),world.vm_memory(),{},snap.primitive());snap.bind(vm);
+     for(const bool permit:{false,true,false}){
+         world.set_position(1,{312,424,1,6});authorized=permit;const auto before=checked;
+         vm.start(odh::routine_key(4113),{1,2,2});const auto status=vm.run(1);
+         require(permit?status==odh::VmStatus::returned_true:status==odh::VmStatus::fault,
+                 "cached stair controller rechecks current authorization on every invocation");
+         require(permit?checked==before+2:checked==before,
+                 "unauthorized stair invocation never runs placement");
+         require(world.find(1)->position->level==(permit?2:1),"rejected stair authorization preserves position");
+     }
+     require(authorizations==3,"stair authorization is not cached with the target");}
     {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
      world.create(2,odh::EntityKind::object,{0,0,4});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
      odh::ObjdBinding binding{138,0x79E2B825,129,128};binding.master_id=4;std::vector<odh::EntityPosition> checked;

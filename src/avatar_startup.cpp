@@ -28,7 +28,7 @@ AvatarStartupResult run_avatar_startup(
         const auto remaining = result.steps < instruction_budget ?
             instruction_budget - result.steps : 0;
         const VmContext context{avatar_id, avatar_id, 0, static_cast<CodeOwner>(avatar_id)};
-        vm.start(routine_key(entry.routine), context, {0, 0, 0, 0});
+        vm.start(routine_key(entry.routine), context, {0, 0, 0, 0},true);
         vm.run(remaining, [&](const VmTrace& record) {
             if (trace) trace(entry.phase, record);
         });

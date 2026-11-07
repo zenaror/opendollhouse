@@ -13,9 +13,14 @@ struct SavedWorldEntity {
     ObjmTailState tail;
     ObjectDefinition definition;
     std::uint16_t serialized_object_type; // OBJT metadata; selects person2/portal8.
+    // Lifetime assigned when this ObjM row was materialized. Its numeric ID
+    // can be reused before a renderer is constructed for a reopened session.
+    std::uint64_t imported_generation=0;
 };
 struct SavedMultitileGroup {
     std::int16_t leader;
+    // Common canonical master only. Source-linked heterogeneous groups have
+    // none; each member retains its own authenticated definition/master.
     std::optional<std::uint32_t> master_guid;
     std::vector<std::int16_t> members;
 };

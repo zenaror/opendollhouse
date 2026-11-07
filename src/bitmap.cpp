@@ -20,7 +20,8 @@ std::uint64_t add(std::uint64_t a, std::uint64_t b) {
 }
 }
 
-BitmapImage read_bmp(const View& view, BitmapLimits limits) {
+BitmapImage read_bmp(const View& view, BitmapLimits limits,BmpExtentPolicy policy) {
+    if(policy!=BmpExtentPolicy::file_header&&policy!=BmpExtentPolicy::iff_container)throw FormatError("unknown BMP extent policy");
     // Read the complete mandatory headers, including metadata not interpreted
     // by this profile. A partially backed View must not hide truncated fields.
     std::array<std::uint8_t,54> header{};
@@ -29,7 +30,8 @@ BitmapImage read_bmp(const View& view, BitmapLimits limits) {
         throw FormatError("unsupported BMP signature or DIB header");
     if(view.le16(6)!=0 || view.le16(8)!=0)
         throw FormatError("nonzero BMP file reserved fields");
-    const auto declared_size=view.le32(2);
+    const auto header_size=view.le32(2);
+    const auto declared_size=header_size==0&&policy==BmpExtentPolicy::iff_container?view.size():static_cast<std::uint64_t>(header_size);
     const auto pixel_offset=view.le32(10);
     const auto signed_width=signed32(view.le32(18));
     const auto signed_height=signed32(view.le32(22));

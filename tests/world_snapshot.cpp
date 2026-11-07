@@ -20,11 +20,12 @@ void require(bool value,const char* message) {
     if(!value) throw std::runtime_error(message);
 }
 bool same(const odh::Entity& a,const odh::Entity& b) {
+    if(a.native_out_of_world_level!=b.native_out_of_world_level)return false;
     if(a.id!=b.id || a.kind!=b.kind || a.attributes!=b.attributes ||
        a.person_data!=b.person_data || a.slots!=b.slots || a.object_words!=b.object_words ||
        !(a.position==b.position) || a.generation!=b.generation || a.motives!=b.motives ||
        a.definition_words!=b.definition_words || a.unattached_slot!=b.unattached_slot ||
-       a.static_footprint!=b.static_footprint || a.ui_ghost!=b.ui_ghost ||
+       a.static_footprint!=b.static_footprint || a.ui_ghost!=b.ui_ghost || a.native_slot0!=b.native_slot0 ||
        a.kill_timeout!=b.kill_timeout || a.radian_direction!=b.radian_direction ||
        bool(a.attachment)!=bool(b.attachment) || bool(a.definition)!=bool(b.definition) ||
        bool(a.entry_points)!=bool(b.entry_points) ||
@@ -52,6 +53,28 @@ bool same(const odh::WorldSnapshot& a,const odh::WorldSnapshot& b) {
 }
 int main() {
     try {
+        {
+            odh::World constructors;
+            require(constructors.create(1,odh::EntityKind::object)&&
+                    constructors.create_runtime_object(2,123,{0,0,2,0},{}),
+                    "generic and actual resource construction");
+            require(!constructors.find(1)->native_slot0&&constructors.native_slot0({2,constructors.find(2)->generation})==odh::WorldEntityReference{},
+                    "actual native factory owns knownempty backing; generic state stays unknown");
+            odh::World resumed;
+            require(resumed.restore_snapshot(constructors.snapshot())&&
+                    same(constructors.snapshot(),resumed.snapshot()),
+                    "native constructor backing survives owned snapshot restore");
+        }
+        {
+            odh::World mixed;
+            require(mixed.create(1,odh::EntityKind::object,{0,0,1,0})&&mixed.create(2,odh::EntityKind::object,{0,0,1,0})&&
+                mixed.declare_object_word(2,14,0)&&mixed.declare_object_word(2,26,1),"mixed hierarchy fixture");
+            const odh::WorldEntityReference a{1,mixed.find(1)->generation},b{2,mixed.find(2)->generation};
+            require(mixed.publish_native_slot0(a,b)&&!mixed.attach(2,0,1)&&!mixed.prepare_move_to_slot(2,0,1),
+                "both physical mutation paths reject mixed native hierarchy cycles");
+            require(!mixed.attach(1,0,2)&&!mixed.prepare_move_to_slot(1,0,2),
+                "physical slot cannot silently steal existing native slot-zero child");
+        }
         odh::World source({},odh::AttributePolicy::ts1_bounded);
         std::array<std::int16_t,68> raw{}; raw[1]=7; raw[3]=19;
         std::array<std::int16_t,5> extras{-1,2,-3,4,-5};

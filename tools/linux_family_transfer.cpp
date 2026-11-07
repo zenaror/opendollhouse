@@ -28,14 +28,14 @@ std::array<std::uint8_t,32> fingerprint_transfer_resource(const std::filesystem:
 }
 std::vector<odh::HouseholdTransferIdentity> identify_transfer_household(
         const odh::SessionEntry& session,const std::filesystem::path& game,
-        const std::filesystem::path& player_root){
+        const std::filesystem::path& player_root,LinuxNeighborhoodStorage storage){
     std::vector<odh::HouseholdTransferIdentity> result;
     for(const auto& member:session.members){
         const auto filename=std::filesystem::path(member.character_asset);
         if(filename.empty()||filename.has_parent_path()||filename.is_absolute())
             throw odh::FormatError("family transfer character must be a flat catalog asset");
         std::filesystem::path root;
-        if(member.character_source=="UserData/Characters")root=game/"UserData"/"Characters";
+        if(member.character_source=="UserData/Characters")root=game/storage.user_data_name()/"Characters";
         else if(member.character_source=="PlayerData/Characters"&&!player_root.empty())root=player_root;
         else throw odh::FormatError("unknown family transfer character source");
         if(std::filesystem::is_symlink(std::filesystem::symlink_status(root)))
@@ -52,7 +52,8 @@ std::vector<odh::HouseholdTransferIdentity> identify_transfer_household(
 std::optional<odh::PreparedHouseholdTransfer> load_family_transfer(
         const odh::NeighborhoodFamilySource& source,const odh::FamilyOverlay& overlay,
         std::uint16_t id,const std::vector<odh::HouseholdTransferIdentity>& members,
-        const std::filesystem::path& neighborhood_iff){
+        const std::filesystem::path& neighborhood_iff,LinuxNeighborhoodStorage storage){
+    storage.verify_neighborhood_source(neighborhood_iff);
     const auto replay=odh::replay_family_overlay(source.families,source.identity,overlay);
     const auto state=std::find_if(replay.states.begin(),replay.states.end(),
         [&](const auto& s){return s.family_chunk_id==id;});
@@ -71,7 +72,7 @@ std::optional<odh::PreparedHouseholdTransfer> load_family_transfer(
     ticket.source_lease={source.identity,state->family_identity,state->checkpoint_epoch,id};
     ticket.source_house=state->checkpoint_house;ticket.family_number=family->family.family_number;
     ticket.checkpoint_budget=*state->checkpoint_budget;ticket.archive_sha256=*state->checkpoint_sha256;
-    const auto directory=linux_family_overlay_path(source.identity).parent_path()/"sessions"/hex(source.identity);
+    const auto directory=linux_family_overlay_path(source.identity,storage).parent_path()/"sessions"/hex(source.identity);
     const auto archive=read_session_archive(directory/(hex(ticket.archive_sha256)+".odhs"));
     auto prepared=odh::prepare_household_transfer(odh::encode_session_archive(archive),ticket,members);
     // Prove compatibility with the fresh inheritance baseline before eviction,

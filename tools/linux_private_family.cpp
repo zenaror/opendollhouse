@@ -59,6 +59,37 @@ void rollback(const std::vector<CreatedPrivateCharacter>& created) {
 }
 } // namespace
 
+odh::FamilyOverlay rename_linux_private_family(
+        const std::filesystem::path& neighborhood_iff,
+        const std::filesystem::path& overlay_path,
+        const std::array<std::uint8_t, 32>& expected_neighborhood_identity,
+        const std::optional<odh::FamilyOverlay>& expected_overlay,
+        std::uint16_t family_chunk_id, const std::string& family_name_utf8,
+        std::uint8_t language) {
+    if (overlay_path.empty() || overlay_path.filename().empty())
+        throw std::invalid_argument("family overlay path must name a file");
+    const auto name = utf8_to_legacy_text(family_name_utf8, language, 1024);
+    if (legacy_text_to_utf8(name, language) != family_name_utf8)
+        throw std::invalid_argument("family name cannot roundtrip exactly in the selected game language");
+    const auto source = read_creation_source(neighborhood_iff);
+    if (source.identity != expected_neighborhood_identity)
+        throw odh::FormatError("Neighborhood.iff changed since the family editor was opened");
+    auto replacement = odh::plan_family_name_overlay(source.families, source.identity,
+        expected_overlay ? &*expected_overlay : nullptr, family_chunk_id, name, language);
+    // Validate the complete shared sidecar, including retained source records.
+    (void)odh::apply_neighbor_overlay(source.neighbors, source.identity, replacement);
+    if (linux_neighborhood_identity(neighborhood_iff) != source.identity)
+        throw odh::FormatError("Neighborhood.iff changed before family rename was saved");
+    try {
+        compare_exchange_linux_family_overlay_atomic(overlay_path, expected_overlay, replacement);
+    } catch (const std::runtime_error&) {
+        // A post-rename durability error may have published this exact result.
+        // Do not retry against or overwrite a newer player's update.
+        if (!same_overlay(read_linux_family_overlay(overlay_path), replacement)) throw;
+    }
+    return replacement;
+}
+
 CreatedLinuxPrivateFamily create_linux_private_family(
         const std::vector<std::uint8_t>& template_iff,
         const std::filesystem::path& installed_characters,

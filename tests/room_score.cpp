@@ -32,6 +32,14 @@ int main() {
             {0,0,1,20}, {0,0,2,16}
         };
         auto map = map_with_rooms();
+        for(const auto& row:std::vector<std::pair<std::int32_t,std::int16_t>>{
+            {32768,-100},{65534,-12},{65536,-10},{-32768,-100},{-32769,100},{-65536,-10}})
+            require(odh::source_room_score(row.first,12,false)==row.second,
+                "shared room-score math narrows after float division then subtracts baseline as int");
+        require(odh::source_room_score(65534,100,false)==100&&odh::source_room_score(900,100,true)==15&&
+            odh::source_room_score(0,0,false)==-10,"shared source arithmetic preserves area divisor, outside scale and empty-room baseline");
+        const auto wrapped=odh::calculate_room_score(map,{{0,0,1,32767},{0,0,2,32767}},0,0,2);
+        require(wrapped&&wrapped->score==-12,"geometric score path uses shared signed16 conversion rather than rejecting a large sum");
         auto result = odh::calculate_room_score(map, impacts, 0, 0, 2);
         require(result && result->updated && result->room == 2 && result->light_base_room == 1 &&
                 result->score == 26,

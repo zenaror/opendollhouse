@@ -78,7 +78,7 @@ RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
 
 CompositeFrame composite_sprites(const RasterFrame& base,
                                 const std::vector<SpriteLayer>& layers,
-                                CompositorLimits limits, bool record_owners) {
+                                CompositorLimits limits, bool record_owners, bool record_sprite_rgba) {
     if(base.width == 0 || base.height == 0 || base.width > limits.width ||
        base.height > limits.height)
         throw FormatError("compositor base dimensions exceed limits or are zero");
@@ -97,6 +97,8 @@ CompositeFrame composite_sprites(const RasterFrame& base,
     std::uint64_t tested_samples = 0, sprite_pixels = 0;
     for(const auto& layer : layers) {
         if(!layer.frame) throw FormatError("compositor sprite frame is null");
+        for(const auto value:layer.linear_light)if(!std::isfinite(value)||value<0||value>1)
+            throw FormatError("compositor linear light outside [0,1]");
         const auto& sprite = *layer.frame;
         if((sprite.flags & 3U) != 3U || (sprite.flags & ~7U) != 0)
             throw FormatError("compositor requires pixel and Z flags without unknown flags");
@@ -117,9 +119,12 @@ CompositeFrame composite_sprites(const RasterFrame& base,
 
     CompositeFrame result{base, tested_samples, 0, 0, 0, {}};
     if(record_owners)result.owner_ids.assign(static_cast<std::size_t>(count),0);
+    if(record_sprite_rgba)result.sprite_rgba.assign(static_cast<std::size_t>(count),{0,0,0,0});
     for(const auto& layer : layers) {
         const auto& sprite = *layer.frame;
         const auto box = bounds(layer, base);
+        std::array<double,3> light;
+        for(unsigned c=0;c<3;++c)light[c]=std::pow(double(layer.linear_light[c]),1.0/2.2);
         for(auto y = box.y0; y < box.y1; ++y)
             for(auto x = box.x0; x < box.x1; ++x) {
                 auto sx = static_cast<std::uint64_t>(x-std::int64_t{layer.x});
@@ -137,10 +142,30 @@ CompositeFrame composite_sprites(const RasterFrame& base,
                 }
                 auto& output = result.image.pixels[destination];
                 const auto alpha = std::uint32_t{pixel[3]};
-                for(unsigned channel = 0; channel < 3; ++channel)
-                    output[channel] = static_cast<std::uint8_t>(
+                const auto gray=0.2989*pixel[0]+0.5870*pixel[1]+0.1140*pixel[2];
+                for(unsigned channel = 0; channel < 3; ++channel){
+                    if(layer.linear_light[channel]==1&&!layer.grayscale&&!layer.invert)output[channel] = static_cast<std::uint8_t>(
                         (std::uint32_t{pixel[channel]}*alpha +
                          std::uint32_t{output[channel]}*(255-alpha) + 127)/255);
+                    else {
+                        const auto lit=layer.invert?255.0-double(pixel[channel]):layer.grayscale?gray:double(pixel[channel])*light[channel];
+                        output[channel]=static_cast<std::uint8_t>(std::clamp(std::floor(
+                            (lit*alpha+double(output[channel])*(255-alpha))/255.0+0.5),0.0,255.0));
+                    }
+                }
+                if(record_sprite_rgba){
+                    auto& rgba=result.sprite_rgba[destination];
+                    const auto old_alpha=std::uint32_t{rgba[3]};
+                    const auto combined=alpha*255+old_alpha*(255-alpha);
+                    for(unsigned channel=0;channel<3;++channel){
+                        const auto lit=layer.invert?255.0-double(pixel[channel]):layer.grayscale?gray:
+                            double(pixel[channel])*light[channel];
+                        const auto source=static_cast<std::uint32_t>(std::clamp(std::floor(lit+0.5),0.0,255.0));
+                        rgba[channel]=static_cast<std::uint8_t>((source*alpha*255+
+                            std::uint32_t{rgba[channel]}*old_alpha*(255-alpha)+combined/2)/combined);
+                    }
+                    rgba[3]=static_cast<std::uint8_t>((combined+127)/255);
+                }
                 output[3] = 255;
                 result.image.depth[destination] = z;
                 if(!result.image.owner_ids.empty())result.image.owner_ids[destination]=0;

@@ -107,6 +107,23 @@ with tempfile.TemporaryDirectory(prefix='odh-map-cli-') as folder:
     optional_pixels=without_layer.read_bytes().split(b'\n',3)[3]
     check(optional_pixels[:3]==bytes((32,36,44)))
 
+    # The Complete installation presents Home with the Unleashed map and its
+    # matching lot coordinates. The session identity in the receipt stays 1.
+    expanded=solid_bmp(800,600,(11,33,55))
+    expanded_locations=struct.pack('<hH',-3,1)+b'\1'+b'7,200,200\0\0'
+    (root/'UIGraphics.far').write_bytes(far1([
+        ('Nbhd\\NScreen.BMP',base),('Community\\NScreen_unleashed.bmp',expanded)]))
+    (root/'LotLocations.iff').write_bytes(iff([
+        chunk(b'STR#',1,lot_locations),chunk(b'STR#',4,expanded_locations)]))
+    expanded_file=root/'expanded-home.ppm'
+    result=run(*args,'--mode','1','--export-frame',str(expanded_file))
+    check(result.returncode==0 and json.loads(result.stdout)['mode']==1)
+    pixels=expanded_file.read_bytes().split(b'\n',3)[3]
+    check(pixels[(100*800+100)*3:(100*800+100)*3+3]==bytes((11,33,55)))
+    check(pixels[(200*800+200)*3:(200*800+200)*3+3]==bytes((40,220,120)))
+    (root/'LotLocations.iff').write_bytes(iff([
+        chunk(b'STR#',1,lot_locations),chunk(b'STR#',3,lot_locations),chunk(b'STR#',7,lot_locations)]))
+
     # The three Vacation Island layers stack in source order, and magenta in a
     # later layer leaves the earlier layer visible at that pixel.
     red=solid_bmp(4,1,(200,10,10))

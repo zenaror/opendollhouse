@@ -25,6 +25,9 @@ struct HouseholdTransferMember {
     std::array<std::int16_t, 16> motives{};
     std::vector<std::int16_t> attributes;
     std::vector<std::string> bound_appearances;
+    // Authenticated from the source archive's World v6. Absent in legacy
+    // archives; never synthesize it from the raw CurrentOutfit number alone.
+    std::optional<AvatarAppearanceState> avatar_appearance;
     Ts1MotiveSnapshot decay;
 };
 class PreparedHouseholdTransfer;
@@ -55,6 +58,12 @@ private:
 // Receipt and staged result are inseparable; all fields are privately owned.
 // Inputs stay untouched on failure. Host publishes only after occupancy CAS
 // validation; World snapshots never authorize persistent journal publication.
+// Publish only the authenticated personal projection, atomically, into the
+// same live World. A changed identity/baseline rejects before any member write.
+// Relationships/decay remain explicit host-owned receipts and are not World
+// snapshot publication. Use before scheduler/frame/journal admission.
+bool publish_household_transfer_state(World&,const AppliedHouseholdTransfer&);
+
 class AppliedHouseholdTransfer {
 public:
     const HouseholdTransferTicket& ticket() const { return ticket_; }
@@ -71,6 +80,8 @@ private:
     WorldSnapshot world_;
     RelationshipSnapshot relationships_;
     std::vector<SessionAvatarMotiveState> decays_;
+    std::vector<AvatarPersonalStateChange> personal_changes_;
+    friend bool publish_household_transfer_state(World&,const AppliedHouseholdTransfer&);
     friend AppliedHouseholdTransfer apply_household_transfer(const PreparedHouseholdTransfer&,
         const WorldSnapshot&, const RelationshipSnapshot&, const SessionFamilyLease&,
         const std::vector<HouseholdTransferIdentity>&, const Ts1ClockSnapshot&);

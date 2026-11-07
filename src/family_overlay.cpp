@@ -48,8 +48,14 @@ Family creation_family(const FamilyOverlayCreation& creation) {
     std::string raw(creation.fami_payload.begin(), creation.fami_payload.end());
     std::istringstream stream(raw); View view(stream, raw.size());
     auto family = read_fami(view, FamiLimits{88, 8});
-    family.remaining_bytes = 0;
-    if (encode_simitone_create_family_fami(family, FamiLimits{88, 8}) != creation.fami_payload ||
+    // This record is a NEW creation in the explicit zero-suffix Simitone
+    // profile. Reconstruct that canonical payload from a prefix-only COPY for
+    // comparison; retain the parsed suffix/typed state on the returned family.
+    auto canonical_family = family;
+    canonical_family.remaining_bytes = 0;
+    canonical_family.tail_bytes.clear();
+    canonical_family.original_v9_extension.reset();
+    if (encode_simitone_create_family_fami(canonical_family, FamiLimits{88, 8}) != creation.fami_payload ||
         family.budget < 0 || family.family_number < 0 || family.member_guids.size() != creation.members.size())
         throw FormatError("created family does not match explicit FAMI profile or roster");
     std::set<std::uint32_t> guids;
@@ -106,14 +112,63 @@ std::int32_t signed32(std::uint32_t value) {
     return static_cast<std::int32_t>(value < 0x80000000U ? static_cast<std::int64_t>(value) :
         static_cast<std::int64_t>(value) - 0x100000000LL);
 }
+constexpr std::size_t removal_state_size = 52;
+void validate_removal_state(const std::optional<FamilyOverlayRemovalState>& state,
+        bool has_history) {
+    if (state.has_value() != has_history)
+        throw FormatError("family removal history requires an exact terminal state");
+    if (state && (state->budget < 0 || state->value_in_arch < 0 ||
+            (state->checkpoint_sha256 && zero_digest(*state->checkpoint_sha256))))
+        throw FormatError("invalid family removal terminal state");
+}
+void encode_removal_state(std::vector<std::uint8_t>& out,
+        const FamilyOverlayRemovalState& state) {
+    put64(out, state.occupancy_epoch);
+    put32(out, static_cast<std::uint32_t>(state.budget));
+    put32(out, static_cast<std::uint32_t>(state.value_in_arch));
+    put32(out, state.checkpoint_sha256 ? 1 : 0);
+    const auto digest = state.checkpoint_sha256.value_or(std::array<std::uint8_t, 32>{});
+    out.insert(out.end(), digest.begin(), digest.end());
+}
+FamilyOverlayRemovalState decode_removal_state(const std::vector<std::uint8_t>& in,
+        std::size_t at) {
+    FamilyOverlayRemovalState result;
+    result.occupancy_epoch = get64(in, at);
+    result.budget = signed32(get32(in, at + 8));
+    result.value_in_arch = signed32(get32(in, at + 12));
+    const auto flags = get32(in, at + 16);
+    if (flags > 1) throw FormatError("invalid family removal terminal flags");
+    std::array<std::uint8_t, 32> digest{};
+    std::copy_n(in.begin() + static_cast<std::ptrdiff_t>(at + 20), 32, digest.begin());
+    if (flags) result.checkpoint_sha256 = digest;
+    else if (!zero_digest(digest)) throw FormatError("absent terminal checkpoint digest must be zero");
+    return result;
+}
 void validate_overlay(const FamilyOverlay& overlay) {
     if (overlay.assignments.size() > max_assignments ||
         overlay.creations.size() > max_assignments - overlay.assignments.size() ||
         overlay.archives.size() > max_assignments - overlay.assignments.size() -
             overlay.creations.size() ||
         overlay.deletions.size() > max_assignments - overlay.assignments.size() -
-            overlay.creations.size() - overlay.archives.size())
+            overlay.creations.size() - overlay.archives.size() ||
+        overlay.names.size() > max_assignments - overlay.assignments.size() -
+            overlay.creations.size() - overlay.archives.size() - overlay.deletions.size())
         throw FormatError("family overlay exceeds assignment limit");
+    if(overlay.type_attributes) {
+        if(!overlay.type_attributes->revision)throw FormatError("neighborhood type attribute revision must be positive");
+        (void)encode_type_attributes_snapshot(overlay.type_attributes->state);
+        if(overlay.assignments.size()+overlay.creations.size()+overlay.archives.size()+overlay.deletions.size()+overlay.names.size()>=max_assignments)
+            throw FormatError("family overlay has no room for shared type attributes");
+    }
+    std::set<std::uint16_t> named_ids;
+    for (const auto& name : overlay.names) {
+        if (!named_ids.insert(name.family_chunk_id).second || name.family_name.empty() ||
+            name.family_name.size() > 256 || name.language < 1 || name.language > 20 ||
+            std::any_of(name.family_name.begin(), name.family_name.end(),
+                [](unsigned char ch) { return ch < 32 || ch == 127; }) ||
+            name.family_name.find_first_not_of(' ') == std::string::npos)
+            throw FormatError("invalid or duplicate family name override");
+    }
     std::set<std::uint16_t> created_ids;
     std::set<std::uint32_t> created_guids;
     std::set<std::int16_t> neighbor_ids;
@@ -183,8 +238,10 @@ void validate_overlay(const FamilyOverlay& overlay) {
         const FamilyEntry entry{creation->family_chunk_id, family, creation->family_name};
         if (family_overlay_identity(entry) != archive.family_identity)
             throw FormatError("family archive identity does not match its creation record");
-        if (families.count(archive.family_chunk_id))
-            throw FormatError("family with move history cannot be archived");
+        validate_removal_state(archive.final_state, families.count(archive.family_chunk_id) != 0);
+        if (families.count(archive.family_chunk_id) &&
+                families.at(archive.family_chunk_id) != archive.family_identity)
+            throw FormatError("family archive history identity is stale");
     }
     std::set<std::uint16_t> deleted_ids;
     std::set<std::uint32_t> deleted_guids;
@@ -195,8 +252,10 @@ void validate_overlay(const FamilyOverlay& overlay) {
             throw FormatError("family overlay deletes the same family more than once");
         if (deletion.members.empty() || deletion.members.size() > 8)
             throw FormatError("family deletion roster is empty or exceeds the eight-member limit");
-        if (families.count(deletion.family_chunk_id))
-            throw FormatError("family with move history cannot be deleted");
+        validate_removal_state(deletion.final_state, families.count(deletion.family_chunk_id) != 0);
+        if (families.count(deletion.family_chunk_id) &&
+                families.at(deletion.family_chunk_id) != deletion.family_identity)
+            throw FormatError("family deletion history identity is stale");
         for (const auto& member : deletion.members) {
             if (!member.guid || member.neighbor_id <= 0 ||
                 !deleted_guids.insert(member.guid).second ||
@@ -205,6 +264,28 @@ void validate_overlay(const FamilyOverlay& overlay) {
         }
     }
 }
+}
+
+std::vector<FamilyOverlayDeletedMember> retired_family_members(const FamilyOverlay& overlay) {
+    validate_overlay(overlay);
+    std::vector<FamilyOverlayDeletedMember> result;
+    std::set<std::uint32_t> guids;
+    std::set<std::int16_t> neighbor_ids;
+    const auto append = [&](std::uint32_t guid, std::int16_t neighbor_id) {
+        if (!guid || neighbor_id <= 0 || !guids.insert(guid).second ||
+                !neighbor_ids.insert(neighbor_id).second)
+            throw FormatError("retired family member identity is ambiguous");
+        result.push_back({guid, neighbor_id});
+    };
+    for (const auto& archive : overlay.archives) {
+        const auto creation = std::find_if(overlay.creations.begin(), overlay.creations.end(),
+            [&](const auto& value) { return value.family_chunk_id == archive.family_chunk_id; });
+        // validate_overlay already establishes that the immutable creation exists.
+        for (const auto& member : creation->members) append(member.guid, member.neighbor_id);
+    }
+    for (const auto& deletion : overlay.deletions)
+        for (const auto& member : deletion.members) append(member.guid, member.neighbor_id);
+    return result;
 }
 
 std::array<std::uint8_t, 32> family_overlay_identity(const FamilyEntry& entry) {
@@ -319,16 +400,20 @@ FamilyOverlay plan_family_move_out_overlay(const std::vector<FamilyEntry>& sourc
 
 std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
     validate_overlay(overlay);
+    const bool terminal = std::any_of(overlay.archives.begin(), overlay.archives.end(),
+        [](const auto& value) { return value.final_state.has_value(); }) ||
+        std::any_of(overlay.deletions.begin(), overlay.deletions.end(),
+        [](const auto& value) { return value.final_state.has_value(); });
     const bool managed = std::any_of(overlay.assignments.begin(), overlay.assignments.end(),
         [](const auto& operation) { return operation.state.has_value(); });
-    if (managed || !overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
-        const auto version = managed ? 6U : !overlay.deletions.empty() ? 5U :
+    if (overlay.type_attributes || !overlay.names.empty() || managed || !overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
+        const auto version = terminal ? 9U : overlay.type_attributes ? 8U : !overlay.names.empty() ? 7U : managed ? 6U : !overlay.deletions.empty() ? 5U :
             (overlay.archives.empty() ? 3U : 4U);
         std::vector<std::uint8_t> out{'O','D','H','F'};
         put16(out, static_cast<std::uint16_t>(version)); put16(out, 0);
         out.insert(out.end(), overlay.neighborhood_identity.begin(), overlay.neighborhood_identity.end());
         put32(out, static_cast<std::uint32_t>(overlay.creations.size() +
-            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size()));
+            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size() + overlay.names.size() + (overlay.type_attributes?1U:0U)));
         const auto append = [&](std::uint16_t tag, const std::vector<std::uint8_t>& payload) {
             if (tag == 2 && payload.size() > max_creation_bytes)
                 throw FormatError("family creation record exceeds byte limit");
@@ -373,7 +458,8 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
             std::vector<std::uint8_t> payload;
             put16(payload, archive.family_chunk_id);
             payload.insert(payload.end(), archive.family_identity.begin(), archive.family_identity.end());
-            append(3, payload);
+            if (archive.final_state) encode_removal_state(payload, *archive.final_state);
+            append(archive.final_state ? 8 : 3, payload);
         }
         for (const auto& deletion : overlay.deletions) {
             std::vector<std::uint8_t> payload;
@@ -384,7 +470,21 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
                 put32(payload, member.guid);
                 put16(payload, static_cast<std::uint16_t>(member.neighbor_id));
             }
-            append(4, payload);
+            if (deletion.final_state) encode_removal_state(payload, *deletion.final_state);
+            append(deletion.final_state ? 9 : 4, payload);
+        }
+        for (const auto& name : overlay.names) {
+            std::vector<std::uint8_t> payload;
+            put16(payload, name.family_chunk_id);
+            payload.insert(payload.end(), name.family_identity.begin(), name.family_identity.end());
+            payload.push_back(name.language);
+            payload.insert(payload.end(), name.family_name.begin(), name.family_name.end());
+            append(6, payload);
+        }
+        if(overlay.type_attributes) {
+            std::vector<std::uint8_t> payload;put64(payload,overlay.type_attributes->revision);
+            const auto state=encode_type_attributes_snapshot(overlay.type_attributes->state);
+            payload.insert(payload.end(),state.begin(),state.end());append(7,payload);
         }
         return out;
     }
@@ -411,7 +511,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
     if (bytes[0] != 'O' || bytes[1] != 'D' || bytes[2] != 'H' || bytes[3] != 'F')
         throw FormatError("invalid family overlay signature");
     const auto version = get16(bytes, 4);
-    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6) || get16(bytes, 6) != 0)
+    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9) || get16(bytes, 6) != 0)
         throw FormatError("unsupported family overlay version or flags");
     const auto count = get32(bytes, 40);
     if (count > max_assignments || ((version == 1 || version == 2) &&
@@ -419,18 +519,22 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
         throw FormatError("family overlay record count or extent is invalid");
     FamilyOverlay result;
     std::copy_n(bytes.begin() + 8, result.neighborhood_identity.size(), result.neighborhood_identity.begin());
-    if (version == 3 || version == 4 || version == 5 || version == 6) {
+    if (version >= 3 && version <= 9) {
         std::size_t at = header_size;
         bool saw_assignment = false;
         bool saw_archive = false;
         bool saw_deletion = false;
+        bool saw_name = false;
+        bool saw_terminal = false;
         for (std::uint32_t i = 0; i < count; ++i) {
             if (bytes.size() - at < 6) throw FormatError("truncated tagged family overlay record header");
             const auto tag = get16(bytes, at);
             const auto length = get32(bytes, at + 2); at += 6;
             if (length > bytes.size() - at) throw FormatError("truncated tagged family overlay record");
             const auto end = at + length;
-            if (tag == 1 || (tag == 5 && version == 6)) {
+            if(result.type_attributes)throw FormatError("shared type attributes must be the final overlay record");
+            if (saw_name && tag != 6 && tag != 7) throw FormatError("family names must follow the family operation records");
+            if (tag == 1 || (tag == 5 && version >= 6)) {
                 if (saw_archive || saw_deletion) throw FormatError("family assignments must precede archives and deletions");
                 if (length != (tag == 5 ? managed_record_size : record_size)) throw FormatError("invalid family operation extent");
                 saw_assignment = true;
@@ -484,15 +588,19 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                     creation.members.push_back(*entry.record);
                 }
                 result.creations.push_back(std::move(creation));
-            } else if (tag == 3 && (version == 4 || version == 5 || version == 6)) {
-                if (saw_deletion || length != 34) throw FormatError("invalid family archive ordering or extent");
+            } else if ((tag == 3 && version >= 4) || (tag == 8 && version == 9)) {
+                if (saw_deletion || length != 34 + (tag == 8 ? removal_state_size : 0)) throw FormatError("invalid family archive ordering or extent");
                 saw_archive = true;
                 FamilyOverlayArchive archive;
                 archive.family_chunk_id = get16(bytes, at);
                 std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(at + 2),
                     archive.family_identity.size(), archive.family_identity.begin());
+                if (tag == 8) {
+                    archive.final_state = decode_removal_state(bytes, at + 34);
+                    saw_terminal = true;
+                }
                 result.archives.push_back(archive);
-            } else if (tag == 4 && (version == 5 || version == 6)) {
+            } else if ((tag == 4 && version >= 5) || (tag == 9 && version == 9)) {
                 if (length < 36) throw FormatError("truncated v5 family deletion");
                 saw_deletion = true;
                 FamilyOverlayDeletion deletion;
@@ -500,18 +608,42 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                 std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(at + 2),
                     deletion.family_identity.size(), deletion.family_identity.begin());
                 const auto member_count = get16(bytes, at + 34);
-                if (member_count > 8 || length != 36 + static_cast<std::size_t>(member_count) * 6)
+                if (member_count > 8 || length != 36 + static_cast<std::size_t>(member_count) * 6 +
+                        (tag == 9 ? removal_state_size : 0))
                     throw FormatError("invalid v5 family deletion member extent");
                 deletion.members.reserve(member_count);
                 std::size_t member_at = at + 36;
                 for (std::uint16_t member = 0; member < member_count; ++member, member_at += 6)
                     deletion.members.push_back({get32(bytes, member_at),
                         static_cast<std::int16_t>(get16(bytes, member_at + 4))});
+                if (tag == 9) {
+                    deletion.final_state = decode_removal_state(bytes, member_at);
+                    saw_terminal = true;
+                }
                 result.deletions.push_back(std::move(deletion));
+            } else if (tag == 6 && version >= 7) {
+                if (length < 36 || length > 291) throw FormatError("invalid family name extent");
+                saw_name = true;
+                FamilyOverlayName name;
+                name.family_chunk_id = get16(bytes, at);
+                std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(at + 2), 32,
+                    name.family_identity.begin());
+                name.language = bytes[at + 34];
+                name.family_name.assign(bytes.begin() + static_cast<std::ptrdiff_t>(at + 35),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(end));
+                result.names.push_back(std::move(name));
+            } else if(tag==7&&version>=8) {
+                if(length<16)throw FormatError("truncated neighborhood type attribute record");
+                NeighborhoodTypeAttributes shared;shared.revision=get64(bytes,at);
+                shared.state=decode_type_attributes_snapshot(std::vector<std::uint8_t>(
+                    bytes.begin()+static_cast<std::ptrdiff_t>(at+8),bytes.begin()+static_cast<std::ptrdiff_t>(end)));
+                result.type_attributes=std::move(shared);
             } else throw FormatError("unknown v3 record tag");
             at = end;
         }
         if (at != bytes.size()) throw FormatError("trailing v3 bytes");
+        if(version==8&&!result.type_attributes)throw FormatError("v8 overlay lacks its neighborhood type attribute record");
+        if (version == 9 && !saw_terminal) throw FormatError("v9 overlay lacks terminal removal state");
         validate_overlay(result);
         return result;
     }
@@ -625,10 +757,10 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
             move_out_supported[assignment.family_chunk_id] = false;
         } else if (assignment.action == FamilyOverlayAction::checkpoint) {
             if (!assignment.state || current_house == 0 || current_house > 98 ||
-                assignment.house_number != current_house ||
-                assignment.state->value_in_arch_after != family.value_in_arch)
-                throw FormatError("family checkpoint must retain current occupancy and ValueInArch");
+                assignment.house_number != current_house)
+                throw FormatError("family checkpoint must retain current occupancy");
             family.budget = assignment.budget_after_purchase;
+            family.value_in_arch = assignment.state->value_in_arch_after;
             state.checkpoint_sha256 = assignment.state->session_sha256;
             state.checkpoint_house = current_house;
             state.checkpoint_epoch = state.occupancy_epoch;
@@ -657,9 +789,31 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
         state.budget = family.budget;
         state.value_in_arch = family.value_in_arch;
     }
+    for (const auto& name : overlay.names) {
+        const auto found = by_id.find(name.family_chunk_id);
+        if (found == by_id.end() || states[found->second].family_identity != name.family_identity)
+            throw FormatError("family name identity is stale");
+        result[found->second].display_name = name.family_name;
+    }
+    const auto check_removal = [&](std::uint16_t id, const std::array<std::uint8_t, 32>& identity,
+            const std::optional<FamilyOverlayRemovalState>& terminal) {
+        const auto found = by_id.find(id);
+        if (found == by_id.end()) throw FormatError("removed family is absent from replay");
+        const auto& state = states[found->second];
+        if (state.family_identity != identity || state.house_number != 0)
+            throw FormatError("family removal requires the matching unhoused household");
+        if (terminal && (terminal->occupancy_epoch != state.occupancy_epoch ||
+                terminal->budget != state.budget || terminal->value_in_arch != state.value_in_arch ||
+                terminal->checkpoint_sha256 != state.checkpoint_sha256))
+            throw FormatError("family removal terminal state is stale");
+    };
     std::set<std::uint16_t> archived_ids;
-    for (const auto& archive : overlay.archives) archived_ids.insert(archive.family_chunk_id);
+    for (const auto& archive : overlay.archives) {
+        check_removal(archive.family_chunk_id, archive.family_identity, archive.final_state);
+        archived_ids.insert(archive.family_chunk_id);
+    }
     for (const auto& deletion : overlay.deletions) {
+        check_removal(deletion.family_chunk_id, deletion.family_identity, deletion.final_state);
         const auto original = std::find_if(source.begin(), source.end(), [&](const auto& entry) {
             return entry.chunk_id == deletion.family_chunk_id;
         });
@@ -682,6 +836,61 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
     return {std::move(result), std::move(states)};
 }
 
+FamilyOverlay plan_family_name_overlay(const std::vector<FamilyEntry>& source,
+        const std::array<std::uint8_t, 32>& identity, const FamilyOverlay* current,
+        std::uint16_t family_chunk_id, const std::string& family_name, std::uint8_t language) {
+    FamilyOverlay result = current ? *current : FamilyOverlay{identity, {}};
+    const auto replay = replay_family_overlay(source, identity, result);
+    const auto found = std::find_if(replay.states.begin(), replay.states.end(),
+        [&](const auto& state) { return state.family_chunk_id == family_chunk_id; });
+    if (found == replay.states.end()) throw FormatError("cannot rename a missing or removed family");
+    const auto family = std::find_if(replay.families.begin(), replay.families.end(),
+        [&](const auto& entry) { return entry.chunk_id == family_chunk_id; });
+    if (family->family.family_number < 0 || family->family.member_guids.empty() ||
+        family->family.member_guids.size() > 8)
+        throw FormatError("only playable households can be renamed");
+    const FamilyOverlayName name{family_chunk_id, found->family_identity, family_name, language};
+    const auto existing = std::find_if(result.names.begin(), result.names.end(),
+        [&](const auto& value) { return value.family_chunk_id == family_chunk_id; });
+    if (existing == result.names.end()) result.names.push_back(name);
+    else *existing = name;
+    (void)replay_family_overlay(source, identity, result);
+    return result;
+}
+
+NeighborhoodTypeAttributesSelection select_neighborhood_type_attributes(
+        const std::array<std::uint8_t,32>& identity,const TypeAttributesSnapshot& seed,
+        const std::optional<TypeAttributesSnapshot>& saved,const FamilyOverlay* current) {
+    (void)encode_type_attributes_snapshot(seed);
+    if(saved)(void)encode_type_attributes_snapshot(*saved);
+    if(current) {
+        if(current->neighborhood_identity!=identity)throw FormatError("shared type attributes belong to another neighborhood");
+        (void)encode_family_overlay(*current);
+        if(current->type_attributes) {
+            const auto& head=*current->type_attributes;
+            return {head.state,head.revision,NeighborhoodTypeAttributesSource::private_overlay,
+                saved&&encode_type_attributes_snapshot(*saved)!=encode_type_attributes_snapshot(head.state)};
+        }
+    }
+    return {saved?*saved:seed,0,saved?NeighborhoodTypeAttributesSource::session_snapshot:
+        NeighborhoodTypeAttributesSource::immutable_seed,false};
+}
+FamilyOverlay plan_neighborhood_type_attributes_overlay(
+        const std::array<std::uint8_t,32>& identity,const FamilyOverlay* current,
+        const TypeAttributesSnapshot& replacement) {
+    const auto encoded=encode_type_attributes_snapshot(replacement);
+    if(current&&current->neighborhood_identity!=identity)throw FormatError("shared type attribute publication has another neighborhood identity");
+    if(current)(void)encode_family_overlay(*current);
+    FamilyOverlay result=current?*current:FamilyOverlay{identity,{}};
+    if(result.type_attributes) {
+        if(encode_type_attributes_snapshot(result.type_attributes->state)==encoded)return result;
+        if(result.type_attributes->revision==std::numeric_limits<std::uint64_t>::max())
+            throw FormatError("neighborhood type attribute revision exhausted");
+        ++result.type_attributes->revision;result.type_attributes->state=replacement;
+    } else result.type_attributes=NeighborhoodTypeAttributes{1,replacement};
+    (void)encode_family_overlay(result);return result;
+}
+
 std::vector<FamilyEntry> apply_family_overlay(const std::vector<FamilyEntry>& source,
         const std::array<std::uint8_t, 32>& identity, const FamilyOverlay& overlay) {
     return replay_family_overlay(source, identity, overlay).families;
@@ -693,7 +902,10 @@ FamilyOverlay append_managed_operation(const std::vector<FamilyEntry>& source,
         std::uint16_t family_id, FamilyOverlayAction action, std::uint16_t house,
         std::int32_t price, std::optional<std::int32_t> budget,
         std::optional<std::pair<std::uint16_t, std::uint64_t>> expected,
-        std::optional<std::array<std::uint8_t, 32>> digest) {
+        std::optional<std::array<std::uint8_t, 32>> digest,
+        std::optional<std::int32_t> property_value = std::nullopt) {
+    if(property_value&&(action!=FamilyOverlayAction::checkpoint||*property_value<0))
+        throw FormatError("property value requires a nonnegative same-occupancy checkpoint");
     FamilyOverlay result = current ? *current : FamilyOverlay{identity, {}};
     const auto replay = replay_family_overlay(source, identity, result);
     const auto found = std::find_if(replay.states.begin(), replay.states.end(),
@@ -712,11 +924,33 @@ FamilyOverlay append_managed_operation(const std::vector<FamilyEntry>& source,
         static_cast<std::int32_t>(after), action, std::nullopt};
     operation.state = FamilyOverlayOperationState{found->house_number, found->occupancy_epoch,
         found->budget, found->value_in_arch,
-        action == FamilyOverlayAction::move_out ? 0 : found->value_in_arch, digest};
+        action == FamilyOverlayAction::move_out ? 0 : property_value.value_or(found->value_in_arch), digest};
     result.assignments.push_back(std::move(operation));
     (void)replay_family_overlay(source, identity, result);
     return result;
 }
+}
+FamilyOverlay plan_family_original_adoption_overlay(const std::vector<FamilyEntry>& source,
+        const std::array<std::uint8_t,32>& identity,const FamilyOverlay* current,
+        std::uint16_t family_id,std::uint16_t house,std::int32_t budget,
+        const std::array<std::uint8_t,32>& digest,std::optional<std::int32_t> property_value) {
+    const FamilyContext originals(source);
+    const auto* original=originals.by_id(family_id);
+    if(!original||original->family.member_guids.empty()||original->family.family_number<0||
+       house==0||house>98||original->family.house_number!=house)
+        throw FormatError("original adoption requires the occupied commercial source family");
+    if(current&&std::any_of(current->assignments.begin(),current->assignments.end(),
+            [&](const auto& operation){return operation.family_chunk_id==family_id;}))
+        throw FormatError("original adoption cannot replace existing family operation history");
+    const auto baseline=current?*current:FamilyOverlay{identity,{}};
+    const auto replay=replay_family_overlay(source,identity,baseline);
+    const auto state=std::find_if(replay.states.begin(),replay.states.end(),
+        [&](const auto& value){return value.family_chunk_id==family_id;});
+    if(state==replay.states.end()||state->managed||state->house_number!=house||
+       state->occupancy_epoch!=1||state->family_identity!=family_overlay_identity(*original))
+        throw FormatError("original adoption occupancy is unavailable or changed");
+    return append_managed_operation(source,identity,current,family_id,FamilyOverlayAction::checkpoint,
+        house,0,budget,std::make_pair(house,state->occupancy_epoch),digest,property_value);
 }
 FamilyOverlay plan_family_managed_move_in_overlay(const std::vector<FamilyEntry>& source,
         const std::array<std::uint8_t, 32>& identity, const FamilyOverlay* current,
@@ -732,9 +966,10 @@ FamilyOverlay plan_family_managed_move_out_overlay(const std::vector<FamilyEntry
 FamilyOverlay plan_family_checkpoint_overlay(const std::vector<FamilyEntry>& source,
         const std::array<std::uint8_t, 32>& identity, const FamilyOverlay* current,
         std::uint16_t family_id, std::uint16_t expected_house, std::uint64_t expected_epoch,
-        std::int32_t budget_after, const std::array<std::uint8_t, 32>& digest) {
+        std::int32_t budget_after, const std::array<std::uint8_t, 32>& digest,
+        std::optional<std::int32_t> property_value) {
     return append_managed_operation(source, identity, current, family_id, FamilyOverlayAction::checkpoint,
-        expected_house, 0, budget_after, std::make_pair(expected_house, expected_epoch), digest);
+        expected_house, 0, budget_after, std::make_pair(expected_house, expected_epoch), digest,property_value);
 }
 
 Nbrs apply_neighbor_overlay(const Nbrs& source,
@@ -778,14 +1013,11 @@ Nbrs apply_neighbor_overlay(const Nbrs& source,
             result.entries.push_back({1, member});
         }
     std::set<std::uint32_t> archived_guids;
-    for (const auto& archive : overlay.archives) {
-        const auto creation = std::find_if(overlay.creations.begin(), overlay.creations.end(),
-            [&](const auto& value) { return value.family_chunk_id == archive.family_chunk_id; });
-        if (creation == overlay.creations.end())
-            throw FormatError("family archive lost its player-created records");
-        for (const auto& member : creation->members) archived_guids.insert(member.guid);
-    }
     std::set<std::int16_t> deleted_neighbor_ids;
+    for (const auto& member : retired_family_members(overlay)) {
+        archived_guids.insert(member.guid);
+        deleted_neighbor_ids.insert(member.neighbor_id);
+    }
     for (const auto& deletion : overlay.deletions) {
         for (const auto& member : deletion.members) {
             const auto found = std::find_if(source.entries.begin(), source.entries.end(),
@@ -802,8 +1034,6 @@ Nbrs apply_neighbor_overlay(const Nbrs& source,
                 });
             if (duplicates != 1)
                 throw FormatError("family deletion member is ambiguous in source NBRS");
-            archived_guids.insert(member.guid);
-            deleted_neighbor_ids.insert(member.neighbor_id);
         }
     }
     result.entries.erase(std::remove_if(result.entries.begin(), result.entries.end(),
@@ -861,10 +1091,8 @@ FamilyOverlay plan_family_archive_overlay(const std::vector<FamilyEntry>& source
     if (std::any_of(current_overlay->archives.begin(), current_overlay->archives.end(),
         [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
         throw FormatError("family is already archived");
-    if (std::any_of(current_overlay->assignments.begin(), current_overlay->assignments.end(),
-        [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
-        throw FormatError("family with move history cannot be archived");
-    const auto effective = apply_family_overlay(source, neighborhood_identity, *current_overlay);
+    const auto replay = replay_family_overlay(source, neighborhood_identity, *current_overlay);
+    const auto& effective = replay.families;
     const auto found = std::find_if(effective.begin(), effective.end(), [&](const auto& entry) {
         return entry.chunk_id == family_chunk_id;
     });
@@ -874,7 +1102,15 @@ FamilyOverlay plan_family_archive_overlay(const std::vector<FamilyEntry>& source
     if (house != 0) throw FormatError("only an unhoused family can be archived");
 
     FamilyOverlay result = *current_overlay;
-    result.archives.push_back({family_chunk_id, family_overlay_identity(*found)});
+    const auto state = std::find_if(replay.states.begin(), replay.states.end(),
+        [&](const auto& value) { return value.family_chunk_id == family_chunk_id; });
+    if (state == replay.states.end()) throw FormatError("archived family lost its replay state");
+    FamilyOverlayArchive archive{family_chunk_id, state->family_identity};
+    if (std::any_of(result.assignments.begin(), result.assignments.end(),
+            [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
+        archive.final_state = FamilyOverlayRemovalState{state->occupancy_epoch, state->budget,
+            state->value_in_arch, state->checkpoint_sha256};
+    result.archives.push_back(std::move(archive));
     (void)apply_family_overlay(source, neighborhood_identity, result);
     (void)apply_neighbor_overlay(neighbors, neighborhood_identity, result);
     return result;
@@ -893,9 +1129,6 @@ FamilyOverlay plan_family_delete_overlay(const std::vector<FamilyEntry>& source,
         if (std::any_of(current_overlay->deletions.begin(), current_overlay->deletions.end(),
             [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
             throw FormatError("family is already deleted");
-        if (std::any_of(current_overlay->assignments.begin(), current_overlay->assignments.end(),
-            [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
-            throw FormatError("family with move history cannot be deleted");
         if (std::any_of(current_overlay->creations.begin(), current_overlay->creations.end(),
             [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
             throw FormatError("player-created families must use the archive operation");
@@ -938,6 +1171,15 @@ FamilyOverlay plan_family_delete_overlay(const std::vector<FamilyEntry>& source,
 
     FamilyOverlay result = current_overlay ? *current_overlay :
         FamilyOverlay{neighborhood_identity, {}, {}, {}};
+    if (std::any_of(result.assignments.begin(), result.assignments.end(),
+            [&](const auto& value) { return value.family_chunk_id == family_chunk_id; })) {
+        const auto replay = replay_family_overlay(source, neighborhood_identity, result);
+        const auto state = std::find_if(replay.states.begin(), replay.states.end(),
+            [&](const auto& value) { return value.family_chunk_id == family_chunk_id; });
+        if (state == replay.states.end()) throw FormatError("deleted family lost its replay state");
+        deletion.final_state = FamilyOverlayRemovalState{state->occupancy_epoch, state->budget,
+            state->value_in_arch, state->checkpoint_sha256};
+    }
     result.deletions.push_back(std::move(deletion));
     (void)apply_family_overlay(source, neighborhood_identity, result);
     (void)apply_neighbor_overlay(neighbors, neighborhood_identity, result);

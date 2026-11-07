@@ -193,6 +193,11 @@ void selectors(){
             r.write->bank==(scope==9?odh::VmFrameBank::arguments:odh::VmFrameBank::locals)&&!r.temp_write&&!r.stack_object_write,"frame output staged");
         if(scope==10)require(r.stack_object_write&&r.stack_object_write->value==15&&!r.temp_write&&!r.write,"stack identity staged");
     }
+    auto local_temps=temps;local_temps[0]=1;
+    const auto local_output=dispatch(odh::entity_next_primitive(w),f,next(40,0),local_temps);
+    require(local_output.disposition==odh::PrimitiveDisposition::goto_true&&local_output.write&&
+        local_output.write->bank==odh::VmFrameBank::locals&&local_output.write->index==1&&local_output.write->value==15,
+        "LocalByTemp enumeration reads and stages the selected local without external memory");
     require(seen==4&&f.context.stack_object==11&&f.arguments[1]==11&&f.locals[1]==11&&temps[1]==11,"dispatch retains native banks before VM publication");
     const auto legacy=dispatch(odh::entity_next_primitive(w),f,next(8,255,4),temps);
     require(legacy.stack_object_write&&legacy.stack_object_write->value==15,"legacy operands force stack scope/index");
@@ -205,7 +210,7 @@ void selectors(){
         require(r.disposition==odh::PrimitiveDisposition::unsupported&&no_output(r),"unreadable selector rejects");
     }
     auto wrong=next();wrong.opcode=30;
-    for(const auto i:{wrong,next(10,0,133),next(10,0,138),next(10,0,255)}){
+    for(const auto i:{wrong,next(10,0,133),next(10,0,255)}){
         const auto r=dispatch(odh::entity_next_primitive(w),f,i);
         require(r.disposition==odh::PrimitiveDisposition::unsupported&&r.diagnostic.empty()&&no_output(r),"unhandled opcodes/modes leave dispatcher unsupported");
     }
@@ -340,6 +345,30 @@ void kinds(){
     require(w.remove(5)&&w.create(5,odh::EntityKind::avatar)&&w.next_entity(3,odh::EntityKind::avatar)==5,
         "ID reused as untyped avatar immediately participates");
 }
+void career_and_house(){
+    odh::World world;auto source=frame(3);unsigned calls=0;
+    const auto primitive=odh::entity_next_primitive(world,{}, {},{},[&](std::int16_t cursor)->std::optional<std::int16_t>{
+        ++calls;return cursor<17?17:-1;
+    });
+    for(const auto scope:{8U,9U,10U,25U}){
+        auto current=source;current.arguments[1]=3;current.locals[1]=3;odh::Ts1Temps temps{};temps[1]=3;
+        const auto found=dispatch(primitive,current,next(scope,scope==10?0:1,138),temps);
+        require(found.disposition==odh::PrimitiveDisposition::goto_true&&
+            (scope==8?found.temp_write&&found.temp_write->value==17:
+             scope==10?found.stack_object_write&&found.stack_object_write->value==17:found.write&&found.write->value==17),
+            "career enumeration publishes the selected authored target without requiring any World entity");
+    }
+    const auto ended=dispatch(primitive,frame(17),next(10,0,138));
+    require(ended.disposition==odh::PrimitiveDisposition::goto_false&&no_output(ended),"career end is false without output");
+    const auto absent=dispatch(odh::entity_next_primitive(world),source,next(10,0,138));
+    require(absent.disposition==odh::PrimitiveDisposition::unsupported,"career provider absence is not an empty job catalog");
+    const auto unavailable=dispatch(odh::entity_next_primitive(world,{}, {},{},[](auto)->std::optional<std::int16_t>{return {};}),source,next(10,0,138));
+    require(unavailable.disposition==odh::PrimitiveDisposition::unsupported,"unavailable authenticated career backend remains unsupported");
+    const auto before=calls;const auto house=dispatch(primitive,source,next(10,0,139));
+    require(house.disposition==odh::PrimitiveDisposition::goto_false&&no_output(house)&&calls==before,
+        "TS1 ClosestHouse returns source false without writing or consulting a career backend");
 }
-int main(){try{live_query();category_query();same_tile_query();adjacent_local_query();multitile_query();family_member_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
+
+}
+int main(){try{career_and_house();live_query();category_query();same_tile_query();adjacent_local_query();multitile_query();family_member_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
     catch(const std::exception& e){std::cerr<<"entity-next failure: "<<e.what()<<'\n';return 1;}}

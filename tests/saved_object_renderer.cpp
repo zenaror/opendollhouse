@@ -32,6 +32,11 @@ int main(){try{
  odh::RasterFrame base{128,128,std::vector<std::array<std::uint8_t,4>>(16384,{255,255,255,255}),std::vector<float>(16384,std::numeric_limits<float>::infinity())};
  SavedObjectVisual visual{1,123,0,0,{0,0,0},{1}};
  auto rendered=renderer.render({visual},camera,base);check(rendered.layers==2);check(rendered.records.size()==1&&rendered.records[0].omitted_dynamic_layers==0);check(rendered.cached_assets==1&&rendered.cached_groups==1&&rendered.cached_frames==2);check(rendered.cached_pixels==2&&rendered.cached_frame_bytes==12);check(rendered.composite.shaded_samples==2);check(base.pixels[0]==std::array<std::uint8_t,4>{255,255,255,255});
+ check(rendered.composite.sprite_rgba.empty());
+ const auto rgba=renderer.render({visual},camera,base,true,true);
+ check(rgba.composite.sprite_rgba.size()==base.pixels.size()&&rgba.composite.image.pixels==rendered.composite.image.pixels);
+ std::size_t opaque_rgba=0;for(const auto& pixel:rgba.composite.sprite_rgba)if(pixel[3]){++opaque_rgba;check(pixel==std::array<std::uint8_t,4>{10,20,30,255});}
+ check(opaque_rgba==2&&rgba.clipped_layers==0);
  const auto first=rendered.composite.image.pixels;rendered=renderer.render({visual},camera,base);check(rendered.composite.image.pixels==first&&rendered.cached_frames==2&&rendered.cached_pixels==2);
  const auto picked=renderer.render({visual},camera,base,true);check(picked.composite.owner_ids.size()==base.pixels.size());
  std::size_t owned=0;bool valid_owners=true;for(auto id:picked.composite.owner_ids){valid_owners=valid_owners&&(id==0||id==1);if(id)++owned;}check(valid_owners&&owned==2);
@@ -42,24 +47,82 @@ int main(){try{
  for(unsigned flags:{1U,2U,11U}){const auto p=tmp.p/("flags"+std::to_string(flags)+".iff");write(p,iff(flags));odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);rejects([&]{r.render({visual},camera,base);});}
  {const auto p=tmp.p/"duplicate.iff";write(p,iff(3,true));odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);rejects([&]{r.render({visual},camera,base);});}
  {const auto p=tmp.p/"spr1.iff";write(p,iff(3,false,true));odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);rejects([&]{r.render({visual},camera,base);});}
- {const auto p=tmp.p/"empty.iff";write(p,iff(3,false,false,true));odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);const auto result=r.render({visual},camera,base);check(result.layers==1&&result.records[0].omitted_empty_layers==1);check(result.cached_frames==2&&result.cached_pixels==1&&result.composite.shaded_samples==1);}
+ {const auto p=tmp.p/"empty.iff";write(p,iff(3,false,false,true));odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);const auto result=r.render({visual},camera,base);check(result.layers==1&&result.records[0].omitted_empty_layers==1);check(result.cached_frames==1&&result.cached_pixels==1&&result.composite.shaded_samples==1);}
  {const auto p=tmp.p/"nographics.iff";auto b=iff();set(b,64+76+8,0,2);write(p,b);odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);
   check(r.render({visual},camera,base).layers==2);auto missing=visual;missing.graphic=2;auto result=r.render({missing},camera,base);
   check(result.records[0].no_graphics&&result.layers==0&&result.composite.image.pixels==base.pixels);}
+ // MailBox-style footprint part: BaseGraphic0, NumGraphics8, multi-tile
+ // subindex0. Presence on the lot does not create initial artwork authority.
+ {const auto p=tmp.p/"footprint-part.iff";auto b=iff();
+  set(b,64+76+6,0,2);set(b,64+76+8,8,2);set(b,64+76+20,1,2);set(b,64+76+22,0,2);write(p,b);
+  auto definition=candidate(p);definition.definition.master_id=1;definition.definition.sub_index=0;definition.definition.is_multitile=true;
+  odh::DefinitionIndex defs({definition});SavedObjectRenderer r(defs);auto initial=visual;initial.graphic=0;
+  const auto empty=r.render({initial},camera,base,true);
+  check(empty.records.size()==1&&empty.records[0].no_graphics&&empty.records[0].dgrp_id==0&&
+        empty.layers==0&&empty.cached_groups==0&&empty.cached_frames==0&&empty.composite.image.pixels==base.pixels);
+  // An explicit offset with actual artwork still renders this same part.
+  auto selected=initial;selected.graphic=10;const auto art=r.render({selected},camera,base);
+  check(!art.records[0].no_graphics&&art.records[0].dgrp_id==10&&art.layers==2);
+  auto invalid=initial;invalid.graphic=1;rejects([&]{r.render({invalid},camera,base);});
+ }
+ // A real DGRP0 remains authoritative even for zero base/count metadata.
+ {const auto p=tmp.p/"explicit-zero-group.iff";auto b=iff();
+  set(b,64+76+6,0,2);set(b,64+76+8,8,2);set(b,b.find("DGRP")+8,0,2,true);write(p,b);
+  odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);auto selected=visual;selected.graphic=0;
+  const auto art=r.render({selected},camera,base);check(!art.records[0].no_graphics&&art.records[0].dgrp_id==0&&art.layers==2);
+ }
  for(bool negative:{false,true}){const auto p=tmp.p/(negative?"negative-wrap.iff":"positive-wrap.iff");auto b=iff();
   set(b,64+76+6,negative?0:65535,2);set(b,b.find("DGRP")+8,negative?65535:0,2,true);write(p,b);
   odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);auto v=visual;v.graphic=negative?-1:1;
   const auto result=r.render({v},camera,base);check(result.layers==2&&result.records[0].dgrp_id==(negative?65535:0));}
  {const auto p=tmp.p/"repeated.iff";auto b=iff();auto start=b.find("SPR2");b.resize(start);b+=chunk("SPR2",5,large_sprite());b+=chunk("SPR2",6,large_sprite());write(p,b);odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);
   std::vector<SavedObjectVisual> offscreen;for(std::int16_t i=1;i<=40;++i){auto v=visual;v.id=i;v.tile_position={10000,10000,0};offscreen.push_back(v);}
-  const auto culled=r.render(offscreen,camera,base);check(culled.layers==0&&culled.offscreen_layers==80&&culled.cached_pixels==131072);
+  const auto clipped=r.render({visual},camera,base,true,true);check(clipped.clipped_layers==2);
+  const auto culled=r.render(offscreen,camera,base);check(culled.layers==0&&culled.offscreen_layers==80&&culled.cached_pixels==0);
   check(culled.composite.tested_samples==0&&culled.composite.image.pixels==base.pixels&&culled.records[0].offscreen_layers==2);
   std::vector<SavedObjectVisual> visible;for(std::int16_t i=1;i<=32;++i){auto v=visual;v.id=i;v.tile_position={0,0,0};visible.push_back(v);}
   const auto result=r.render(visible,camera,base);check(result.layers==64&&result.offscreen_layers==0&&result.cached_pixels==131072);
   check(result.composite.tested_samples>0&&result.composite.shaded_samples>0);
   auto v=visual;v.id=33;v.tile_position={0,0,0};visible.push_back(v);rejects([&]{r.render(visible,camera,base);});}
- {const auto p=tmp.p/"rotation-cache.iff";write(p,rotation_iff());odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);auto v=visual;v.tile_position={10000,10000,0};camera.rotation=0;auto a=r.render({v},camera,base);check(a.cached_frames==1&&a.cached_pixels==1048576);camera.rotation=1;auto b=r.render({v},camera,base);check(b.cached_frames==1&&b.cached_pixels==1048576);camera.rotation=0;auto c=r.render({v},camera,base);check(c.cached_frames==1&&c.cached_pixels==1048576);auto v2=v;v2.id=2;v2.direction=2;auto two_frames=r.render({v,v2},camera,base);check(two_frames.cached_frames==2&&two_frames.cached_pixels==2*1048576&&two_frames.cached_frame_bytes==12*1048576);camera.rotation=0;SavedObjectRenderer capped(defs);auto v3=v;v3.id=3;v3.direction=4;rejects([&]{capped.render({v,v2,v3},camera,base);});check(capped.render({},camera,base).cached_pixels==0);}
+ {const auto p=tmp.p/"rotation-cache.iff";write(p,rotation_iff());odh::DefinitionIndex defs({candidate(p)});
+  SavedObjectRenderer r(defs);auto v=visual;v.tile_position={10000,10000,0};camera.rotation=0;
+  auto v2=v;v2.id=2;v2.direction=2;auto v3=v;v3.id=3;v3.direction=4;
+  // Three distinct valid 1M images are outside the camera. They add no
+  // decoded pixels even though their combined extent exceeds the 2M cap.
+  const auto outside=r.render({v,v2,v3},camera,base);
+  check(outside.offscreen_layers==3&&outside.cached_frames==0&&outside.cached_pixels==0);
+  v.tile_position=v2.tile_position={0,0,0};
+  const auto seen=r.render({v,v3,v2},camera,base);
+  check(seen.layers==2&&seen.offscreen_layers==1&&seen.cached_pixels==2*1048576);
+  camera.rotation=1;
+  const auto rotated=r.render({v,v3},camera,base);
+  check(rotated.layers==1&&rotated.cached_frames==1&&rotated.cached_pixels==1048576);
+  camera.rotation=0;
+  v3.tile_position={0,0,0};rejects([&]{r.render({v,v2,v3},camera,base);});
+  check(r.render({},camera,base).cached_pixels==0);
+ }
+ // Culled images still validate the actual RLE, including unknown commands.
+ {const auto p=tmp.p/"offscreen-invalid.iff";auto bytes=iff();
+  const auto sprite_pos=bytes.find("SPR2");set(bytes,sprite_pos+76+32,7<<13,2);write(p,bytes);
+  odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);auto off=visual;
+  off.tile_position={10000,10000,0};rejects([&]{r.render({off},camera,base);});}
+
  {const auto p=tmp.p/"changed.iff";auto entry=candidate(p);auto b=iff();set(b,64+76+28,999);write(p,b);odh::DefinitionIndex defs({entry});SavedObjectRenderer r(defs);rejects([&]{r.render({visual},camera,base);});}
+ {
+  // A positioned artwork request with invalid DGRP remains a strict failure.
+  // Context identifies the actual owner instead of classifying controllers by
+  // name/GUID or suppressing a visible object's missing resource.
+  auto invalid=visual;invalid.id=73;invalid.graphic=1;invalid.tile_position={3,4,1};
+  bool contextual=false;
+  try{renderer.render({invalid},camera,base);}
+  catch(const odh::FormatError& error){const std::string message=error.what();
+   contextual=message.find("missing saved object DGRP chunk")!=std::string::npos&&
+    message.find("id=73 guid=123")!=std::string::npos&&message.find("source="+path.string())!=std::string::npos&&
+    message.find("objd=1 graphic=1 base_graphic=10 num_graphics=1 dgrp=11")!=std::string::npos&&
+    message.find("tile=3.000000,4.000000,1.000000")!=std::string::npos;}
+  check(contextual);
+  check(renderer.render({visual},camera,base).records.size()==1);
+ }
  SavedObjectRenderer moved(std::move(renderer));rejects([&]{renderer.render({visual},camera,base);});check(moved.render({visual},camera,base).cached_pixels==2);
  check(moved.render({},camera,base).composite.image.pixels==base.pixels);
  std::cout<<checks<<" saved object renderer checks passed (synthetic only)\n";

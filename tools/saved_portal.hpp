@@ -109,28 +109,31 @@ inline SavedGlobalCodeBank load_saved_global_code_bank(
 }
 
 inline SavedSemiglobalCodeBank load_saved_semiglobal_code_bank(
-    const std::string& archive,const std::string& entry) {
+    const std::string& archive,const std::string& logical_entry) {
+    const auto entry=resolve_saved_semiglobal_entry(archive,logical_entry);
     const auto filename=std::filesystem::path(entry).filename().string();
-    if(filename!=entry||filename.size()<5||filename.substr(filename.size()-4)!=".iff")
+    if(filename!=entry||filename.size()<5||!saved_semiglobal_name_equal(filename.substr(filename.size()-4),".iff"))
         throw odh::FormatError("semiglobal entry must be a flat .iff resource name");
     SavedSemiglobalCodeBank result{archive,entry,filename.substr(0,filename.size()-4),{},{}};
     std::size_t instructions=0;
     with_far_entry(archive,entry,[&](const odh::View& view){
         odh::Limits limits;limits.iff_chunks=4096;
         odh::iff_chunks(view,[&](const odh::Chunk& chunk){
-            if(chunk.type!="BHAV"||odh::routine_key(chunk.id).scope!=odh::RoutineScope::semiglobal)return;
-            if(result.routines.size()>=512)throw odh::FormatError("semiglobal BHAV bank exceeds routine budget");
-            auto routine=odh::read_bhav(chunk.payload);
-            if(routine.instructions.size()>16384-instructions)
-                throw odh::FormatError("semiglobal BHAV bank exceeds instruction budget");
-            instructions+=routine.instructions.size();
-            if(!result.routines.emplace(odh::routine_key(chunk.id),std::move(routine)).second)
-                throw odh::FormatError("duplicate semiglobal BHAV in linked resource");
+            if(chunk.type!="BHAV")return;
             auto label=chunk.label.substr(0,chunk.label.find('\0'));
-            if(!label.empty())result.named_routines.emplace(std::move(label),chunk.id);
+            result.named_routines.emplace(std::move(label),chunk.id);
+            if(odh::routine_key(chunk.id).scope!=odh::RoutineScope::semiglobal)return;
+            if(!result.routines.count(odh::routine_key(chunk.id))&&result.routines.size()>=saved_resource_routine_limit)
+                throw odh::FormatError("semiglobal BHAV routine budget exceeded resource="+archive+" :: "+entry+
+                    " id="+std::to_string(chunk.id)+" limit="+std::to_string(saved_resource_routine_limit));
+            auto routine=odh::read_bhav(chunk.payload);
+            if(routine.instructions.size()>saved_resource_instruction_limit-instructions)
+                throw odh::FormatError("semiglobal BHAV decoded-instruction budget exceeded resource="+archive+" :: "+entry+
+                    " id="+std::to_string(chunk.id)+" limit="+std::to_string(saved_resource_instruction_limit));
+            instructions+=routine.instructions.size();
+            result.routines.insert_or_assign(odh::routine_key(chunk.id),std::move(routine));
         },limits);
     });
-    if(result.routines.empty())throw odh::FormatError("linked semiglobal contains no routines");
     return result;
 }
 
@@ -198,11 +201,11 @@ inline SavedPortalVmCallPlan saved_avatar_entry_point_vm_call_plan(
     } else if(key.scope==odh::RoutineScope::semiglobal) {
         if(!function.semiglobal_name||!semiglobal)
             throw odh::FormatError("semiglobal entry-point root requires its explicit linked bank");
-        auto expected=*function.semiglobal_name+".iff";
-        auto actual=std::filesystem::path(semiglobal->entry).filename().string();
-        auto fold_ascii=[](std::string value){for(auto& c:value)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return value;};
-        if(fold_ascii(expected)!=fold_ascii(actual)||semiglobal->name.empty()||
-           fold_ascii(semiglobal->name)!=fold_ascii(*function.semiglobal_name))
+        const auto expected=*function.semiglobal_name+".iff";
+        const auto actual=std::filesystem::path(semiglobal->entry).filename().string();
+        if(actual!=semiglobal->entry||actual.size()<5||semiglobal->name!=actual.substr(0,actual.size()-4)||
+           !saved_semiglobal_name_equal(expected,actual)||
+           !saved_semiglobal_name_equal(semiglobal->name,*function.semiglobal_name))
             throw odh::FormatError("explicit semiglobal resource does not match the object GLOB link");
         const auto root=semiglobal->routines.find(key);
         if(root==semiglobal->routines.end())
@@ -240,11 +243,11 @@ inline SavedPortalVmCallPlan saved_avatar_entry_point_vm_call_plan(
             throw odh::FormatError("entry-point action has semiglobal calls but its GLOB link is absent");
         if(!semiglobal)
             throw odh::FormatError("entry-point action requires its explicitly linked semiglobal bank");
-        auto expected=*function.semiglobal_name+".iff";
-        auto actual=std::filesystem::path(semiglobal->entry).filename().string();
-        auto fold_ascii=[](std::string value){for(auto& c:value)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return value;};
-        if(fold_ascii(expected)!=fold_ascii(actual)||semiglobal->name.empty()||
-           fold_ascii(semiglobal->name)!=fold_ascii(*function.semiglobal_name))
+        const auto expected=*function.semiglobal_name+".iff";
+        const auto actual=std::filesystem::path(semiglobal->entry).filename().string();
+        if(actual!=semiglobal->entry||actual.size()<5||semiglobal->name!=actual.substr(0,actual.size()-4)||
+           !saved_semiglobal_name_equal(expected,actual)||
+           !saved_semiglobal_name_equal(semiglobal->name,*function.semiglobal_name))
             throw odh::FormatError("explicit semiglobal resource does not match the object GLOB link");
         const auto key=odh::routine_key(id);
         const auto found=semiglobal->routines.find(key);

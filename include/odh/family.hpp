@@ -8,20 +8,32 @@ struct FamiLimits {
     std::uint64_t payload_bytes = 64 * 1024;
     std::uint32_t members = 256;
 };
+// Proven original FAMI9 suffix, after member GUIDs. Six signed words are
+// family spell state; the preceding DWORD retains its unknown meaning.
+struct FamilyV9Extension {
+    std::uint32_t extension_dword=0;
+    std::array<std::int16_t,6> spell_words{};
+};
 // Raw FAMI metadata and GUIDs. FamilyNumber is not the runtime family ID.
 struct Family {
     std::uint32_t reserved = 0, version = 0;
     std::int32_t house_number = 0, family_number = 0, budget = 0;
     std::int32_t value_in_arch = 0, family_friends = 0, unknown = 0;
     std::vector<std::uint32_t> member_guids;
-    std::uint64_t remaining_bytes = 0; // Unknown tail extent, without invented defaults.
+    std::uint64_t remaining_bytes = 0; // TOTAL tail extent, including known fields.
+    std::vector<std::uint8_t> tail_bytes; // Complete immutable-input suffix, including unknown trailing bytes.
+    std::optional<FamilyV9Extension> original_v9_extension; // Only version9 with a complete >=16-byte suffix.
 };
 // Fixed IMAF prefix and signed member count. Versions remain structural metadata.
-// The reference's optional 3/4-word tail is deliberately not required or decoded.
+// Tails remain optional structurally; incomplete v9 data never invents spell words.
 Family read_fami(const View&, const FamiLimits& = {});
-// Encodes only a complete, tail-free payload. Unknown tails are not preserved
-// by Family and must be rejected rather than silently discarded.
+// Encodes only a complete, tail-free payload. Use encode_preserved_fami for
+// a decoded suffix; this default path rejects rather than discarding it.
 std::vector<std::uint8_t> encode_fami(const Family&, const FamiLimits& = {});
+// Explicit preservation path. Encodes the structural prefix and original raw
+// suffix, patching the typed v9 fields if present. Requires exact tail extent;
+// unknown bytes are retained. The default tail-free encoder stays unchanged.
+std::vector<std::uint8_t> encode_preserved_fami(const Family&, const FamiLimits& = {});
 // Explicit Simitone CreateFamily reference profile: appends four zero dwords
 // after the member GUIDs. This documents that reference's output only; it does
 // not establish that the same profile is valid for the original TS1 executable.
