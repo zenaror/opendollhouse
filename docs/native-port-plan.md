@@ -21,13 +21,21 @@ necessário aperfeiçoar todos os objetos de uma casa antes de integrar viagens.
 ## Ordem de integração
 
 1. Fechar o percurso compartilhado de viagem ao Centro e de volta, reutilizando
-   as partes existentes e conferindo todos os familiares participantes.
+   as partes existentes e conferindo familiares e convidados pelas regras de
+   controle próprias de cada um. Preservar necessidades e progresso pessoal
+   desde a saída, incluindo relações, habilidades, profissão, roupas e fama.
 2. Em paralelo, fechar o percurso integrado de criação de família e edição do
    lote, aproveitando os serviços de propriedade e transação existentes.
 3. Aplicar a base de viagem a Férias, Cidade Velha, Cidade Estúdio e Cidade Mágica;
    registrar diferenças reais de cada destino e os recursos próprios das expansões.
 4. Completar as demais lacunas residenciais, animais, interface, áudio e conteúdo
    personalizado; reunir tudo em uma candidata com aceitação conjunta.
+
+O progresso pessoal precisa de um serviço compartilhado pela leitura e gravação
+dos dados, criação e retirada de personagens e viagens. Ajustar esses consumidores
+juntos, com formatos de salvamento explícitos e retomada segura, em vez de copiar
+dados somente no retorno de uma viagem. Diferenças entre a referência e o original
+continuam como requisitos a resolver.
 
 ## Método
 
