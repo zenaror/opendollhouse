@@ -634,13 +634,28 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     const bool residential_property_arrival=session_context&&static_cast<bool>(session_context->property_lot);
     std::optional<odh::SessionBundle> residential_components;
     bool residential_lifetime_restored=false,residential_household_activated=false;
+    std::function<void()> validate_residential_incoming_home;
+    const auto residential_incoming_origin=session_context?session_context->travel_state:std::nullopt;
     if(residential_property_arrival){
         if(!session_context->property_lot->objects||!session_context->property_lot_reference||
            !session_context->property_release_source||session_context->property_lot_source_archive.empty()||
            !session_context->restore_archive.empty()||session_context->prepare_property_release||
-           session_context->single_resident_session||session_context->travel_state||session_context->temporary_travel_arrival||
+           session_context->single_resident_session||session_context->temporary_travel_arrival||session_context->travel_return||
+           !session_context->suspended_home.empty()||!session_context->travel_departure_archive.empty()||
            session_context->occupancy_retirement)
             throw odh::FormatError("vacant property activation requires its exact isolated document/reference/source profile");
+        // A HOME capability seed is not a visited runtime. Full incoming
+        // identity/party validation follows once character resources are pinned.
+        if(residential_incoming_origin){
+            odh::validate_ts1_travel_state(*residential_incoming_origin);
+            const auto& origin=*residential_incoming_origin;
+            if(origin.pending||origin.family_activated||origin.transit_info!=0||
+               origin.current_house!=origin.home_house||origin.current_mode!=origin.home_mode)
+                throw odh::FormatError("vacant property activation cannot import an active or transitioning trip");
+        }
+        const auto old_source=odh::decode_session_bundle(session_context->property_lot_source_archive);
+        if(old_source.travel||old_source.travel_visited_session||old_source.travel_home_session)
+            throw odh::FormatError("vacant property release source contains TRIP/TVIS/THOM");
         odh::validate_actorless_object_trade_state(*session_context->property_lot->objects);
         if(!session_context->property_lot->objects->clock||!session_context->property_lot->objects->object_state||
            !session_context->property_lot->objects->object_state->position_registry||
@@ -2523,7 +2538,27 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         runtime_avatar_id=selected->id;
     }
     std::optional<odh::WorldSnapshot> session_baseline;
-    if(session_context&&saved_world_main&&restored_world)session_baseline=restored_world->world->snapshot();
+    std::unique_ptr<odh::SavedWorld> property_scene_import;
+    if(session_context&&saved_world_main&&restored_world){
+        session_baseline=restored_world->world->snapshot();
+        if(session_context->prepare_property_release||residential_property_arrival){
+            // Scene admission compares against the immutable IMPORT lifetime,
+            // never the restored runtime that Delete/constructors will mutate.
+            // Capture metadata now too: runtime group ordering/render records
+            // can change after this boundary. This owner grants no execution.
+            if(!restored_world->relationships)throw odh::FormatError("property scene import lacks original relationship metadata");
+            property_scene_import=std::make_unique<odh::SavedWorld>();
+            property_scene_import->world=std::make_unique<odh::World>(odh::actorless_object_trade_limits().world.world,
+                session_baseline->attribute_policy);
+            const auto original_relationships=restored_world->relationships->snapshot();
+            property_scene_import->relationships=std::make_unique<odh::RelationshipState>(original_relationships.limits);
+            if(!property_scene_import->world->restore_snapshot(*session_baseline)||
+               !property_scene_import->relationships->restore_snapshot(original_relationships))
+                throw odh::FormatError("property scene immutable import snapshot could not bind its actual metadata");
+            property_scene_import->records=restored_world->records;
+            property_scene_import->multitile_groups=restored_world->multitile_groups;
+        }
+    }
     const auto capture_household_roster=[&](bool verify_current=false) {
         std::vector<odh::SessionHouseholdMember> roster;
         if(!session_context||session_context->single_resident_session)return roster;
@@ -2760,13 +2795,65 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
            session_context->property_lot->identity.lot_sha256!=odh_host::fingerprint_transfer_resource(*lot_path)||
            odh::encode_session_resource_identity(residential_components->resources)!=odh::encode_session_resource_identity(*session_context->resources))
             throw odh::FormatError("vacant property input differs from its selected installed lot/resources/pending occupancy");
-        session_context->family_journal->verify_current();
+        validate_residential_incoming_home=[&]{
+            const auto& ctx=*session_context;auto& journal=*ctx.family_journal;
+            if(!journal.pending_purchase()||!journal.runtime_overlay()||!ctx.resources||
+               ctx.temporary_travel_arrival||ctx.travel_return||!ctx.suspended_home.empty()||!ctx.travel_departure_archive.empty()||
+               ctx.travel_state.has_value()!=residential_incoming_origin.has_value()||
+               (ctx.travel_state&&odh::encode_ts1_travel_state(*ctx.travel_state)!=odh::encode_ts1_travel_state(*residential_incoming_origin)))
+                throw odh::FormatError("vacant property incoming HOME context changed or is not a pending residence");
+            journal.verify_current();const auto lease=journal.lease();const auto& source=*ctx.property_release_source;
+            const auto pending=odh::replay_family_overlay(source.families,source.identity,*journal.runtime_overlay());
+            const auto state=std::find_if(pending.states.begin(),pending.states.end(),[&](const auto& v){return v.family_chunk_id==ctx.family_chunk_id;});
+            const auto family=std::find_if(pending.families.begin(),pending.families.end(),[&](const auto& v){return v.chunk_id==ctx.family_chunk_id;});
+            if(state==pending.states.end()||family==pending.families.end()||!state->managed||
+               state->house_number!=ctx.house_number||family->family.family_number!=ctx.family_number||
+               lease.family_chunk_id!=ctx.family_chunk_id||lease.occupancy_epoch!=state->occupancy_epoch||
+               lease.family_identity!=state->family_identity||lease.neighborhood_identity!=source.identity||
+               ctx.house_number!=ctx.property_lot_reference->house||
+               odh::encode_session_resource_identity(*ctx.resources)!=odh::encode_session_resource_identity(ctx.property_lot->objects->resources))
+                throw odh::FormatError("vacant property incoming family differs from the pending lease/FAMI/resources");
+            std::set<std::uint32_t> configured;
+            bool caller=false;
+            for(const auto& member:ctx.household_members){
+                if(!configured.insert(member.guid).second)throw odh::FormatError("incoming residence repeats a member GUID");
+                const auto pinned=pinned_characters.find(std::filesystem::canonical(member.character_path));
+                if(pinned==pinned_characters.end()||pinned->second.fingerprint!=odh_host::fingerprint_transfer_resource(member.character_path))
+                    throw odh::FormatError("incoming residence character differs from its pinned resource");
+                caller|=member.guid==ctx.resident_guid&&member.neighbor_id==ctx.resident_neighbor_id;
+                if(ctx.travel_state){
+                    const auto& origin=*ctx.travel_state;
+                    const auto permanent=std::find_if(origin.permanent_roster.begin(),origin.permanent_roster.end(),[&](const auto& v){return v.guid==member.guid;});
+                    const auto traveler=std::find_if(origin.travelers.begin(),origin.travelers.end(),[&](const auto& v){return v.guid==member.guid;});
+                    if(permanent==origin.permanent_roster.end()||traveler==origin.travelers.end()||
+                       !odh::same_ts1_travel_member(*permanent,*traveler)||permanent->neighbor_id!=member.neighbor_id||
+                       permanent->definition_chunk_id!=member.object_definition_id||permanent->character_asset!=member.character_asset||
+                       permanent->character_fingerprint!=pinned->second.fingerprint)
+                        throw odh::FormatError("incoming HOME seed party differs from its pending family and pinned characters");
+                }
+            }
+            if(!caller||configured.empty()||configured!=std::set<std::uint32_t>(family->family.member_guids.begin(),family->family.member_guids.end())||
+               configured.size()!=family->family.member_guids.size())
+                throw odh::FormatError("incoming residence caller/roster differs from its pending FAMI");
+            if(ctx.travel_state){const auto& origin=*ctx.travel_state;
+                if(origin.home_house!=ctx.house_number||origin.current_house!=origin.home_house||
+                   origin.home_mode!=ctx.neighborhood_mode||origin.current_mode!=origin.home_mode||
+                   origin.family_chunk_id!=lease.family_chunk_id||origin.family_number!=ctx.family_number||
+                   origin.occupancy_epoch!=lease.occupancy_epoch||origin.family_identity!=lease.family_identity||
+                   origin.neighborhood_identity!=lease.neighborhood_identity||origin.pending||origin.family_activated||origin.transit_info!=0||
+                   origin.caller_guid!=ctx.resident_guid||origin.caller_neighbor_id!=ctx.resident_neighbor_id||
+                   origin.permanent_roster.size()!=configured.size()||origin.travelers.size()!=configured.size())
+                    throw odh::FormatError("incoming HOME seed differs from the pending residence lease");
+            }
+        };
+        validate_residential_incoming_home();
         const auto proof=odh_host::restore_residential_property_retirement(*session_context->property_release_source,
             *session_context->family_journal->expected_overlay(),*session_context->property_lot_reference,
             session_context->property_lot_source_archive,*session_context->property_lot,*definition_index,
             resolve_npc_avatar,resolve_retired_household_avatar);
         odh_host::ObjectTradeResourceLibrary resources(session_context->game_root,*definition_index,globals->archive,globals->entry);
-        auto scene=odh_host::prepare_community_object_scene(*restored_world,*session_context->property_lot->objects,
+        if(!property_scene_import)throw odh::FormatError("residential restore lost its immutable commercial import owner");
+        auto scene=odh_host::prepare_community_object_scene(*property_scene_import,*session_context->property_lot->objects,
             *definition_index,resources,proof);
         // session_baseline remains the immutable installed cohort for future
         // HHRD/retirement verification; no aliases have bound the candidate yet.
@@ -18949,7 +19036,8 @@ struct PlacementCandidateProbe {
             const auto proof=odh_host::prepare_residential_property_retirement(*session_context->property_release_source,
                 *session_context->family_journal->expected_overlay(),session_context->family_chunk_id,
                 source_bytes,document,*definition_index,resolve_npc_avatar,resolve_retired_household_avatar);
-            (void)odh_host::prepare_community_object_scene(*restored_world,*document.objects,*definition_index,resources,proof);
+            if(!property_scene_import)throw odh::FormatError("property release lost its immutable commercial import owner");
+            (void)odh_host::prepare_community_object_scene(*property_scene_import,*document.objects,*definition_index,resources,proof);
         };
         auto prepared=odh_host::prepare_property_release_session(*session_context->property_release_source,
             *session_context->family_journal->expected_overlay(),session_context->family_chunk_id,
@@ -19339,6 +19427,13 @@ struct PlacementCandidateProbe {
                 [](const auto& pending){return !pending.defer_until_unreferenced||pending.vm||pending.ticket||pending.source_end_frame||
                 (pending.native&&pending.native->hierarchy&&pending.native->hierarchy->effects_started());}))
             throw odh::FormatError("household preparation left unfinished object services before purchase");
+        if(residential_property_arrival){
+            if(!validate_residential_incoming_home||temporary_travel||pending_travel_activation||
+               travel_state.has_value()!=session_context->travel_state.has_value()||
+               (travel_state&&odh::encode_ts1_travel_state(*travel_state)!=odh::encode_ts1_travel_state(*session_context->travel_state)))
+                throw odh::FormatError("new residence started or changed a trip before purchase publication");
+            validate_residential_incoming_home();
+        }
         (void)capture_household_roster(true);
         if(!neighborhood_path||odh_host::linux_neighborhood_identity(*neighborhood_path)!=
             session_context->family_journal->lease().neighborhood_identity)

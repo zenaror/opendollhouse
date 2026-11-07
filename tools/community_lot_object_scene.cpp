@@ -55,8 +55,11 @@ static CommunityObjectScene prepare_object_scene_impl(const SavedWorld& original
     for(const auto& e:state.world.entities)current.emplace(e.id,&e);
     std::map<std::int16_t,const SessionCreatedObject*> created;
     for(const auto& origin:state.created_objects){
-        need(origin.generation>original_snapshot.generation_sequence,
-            "community created identity borrows an original generation");
+        if(origin.generation<=original_snapshot.generation_sequence)
+            throw FormatError("community created identity borrows an original generation: id="+std::to_string(origin.id)+
+                " generation="+std::to_string(origin.generation)+" guid="+std::to_string(origin.guid)+
+                " original_sequence="+std::to_string(original_snapshot.generation_sequence)+
+                " runtime_sequence="+std::to_string(state.world.generation_sequence));
         authenticate_origin(origin,resources);created.emplace(origin.id,&origin);
         const auto* actual=definitions.unique(origin.guid);
         const auto* resource_definition=resources.definitions().unique(origin.guid);
@@ -67,8 +70,11 @@ static CommunityObjectScene prepare_object_scene_impl(const SavedWorld& original
             "community created render definition unavailable, ambiguous or differs from resource library");
     }
     for(const auto& origin:state.history.retired_created_objects){
-        need(origin.generation>original_snapshot.generation_sequence,
-            "community retired creation borrows an original generation");
+        if(origin.generation<=original_snapshot.generation_sequence)
+            throw FormatError("community retired creation borrows an original generation: id="+std::to_string(origin.id)+
+                " generation="+std::to_string(origin.generation)+" guid="+std::to_string(origin.guid)+
+                " original_sequence="+std::to_string(original_snapshot.generation_sequence)+
+                " runtime_sequence="+std::to_string(state.world.generation_sequence));
         authenticate_origin(origin,resources);
     }
     // No visitor creation is available in this editor profile. Their saved

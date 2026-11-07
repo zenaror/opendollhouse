@@ -208,6 +208,16 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
     std::cout<<R"(],"retained_entities":[)";comma=false;
     for(const auto& body:bundle.world.retained_entities){if(comma)std::cout<<',';comma=true;
         std::cout<<R"({"id":)"<<body.id<<R"(,"generation":)"<<body.generation<<R"(,"guid":)"<<(body.definition?body.definition->guid:0)<<'}';}
+    std::cout<<R"(],"object_thread_provenance":[)";comma=false;
+    for(const auto& thread:bundle.object_threads){if(comma)std::cout<<',';comma=true;
+        std::cout<<R"({"id":)"<<thread.id<<R"(,"generation":)"<<thread.generation<<R"(,"guid":)"<<thread.guid
+            <<R"(,"primary_owner":)"<<thread.primary_owner<<R"(,"code_owner_count":)"<<thread.code_owners.size()
+            <<R"(,"resource_owner_count":)"<<thread.resource_owners.size()<<R"(,"resource_owners":[)";bool owners=false;
+        for(const auto& owner:thread.resource_owners){if(owners)std::cout<<',';owners=true;
+            std::cout<<R"({"owner":)"<<owner.owner<<R"(,"resource_guid":)"<<owner.resource_guid
+                <<R"(,"source":)"<<json_string(owner.source)<<R"(,"asset":)"<<json_string(owner.asset)
+                <<R"(,"definition_chunk_id":)"<<owner.definition_chunk_id<<R"(,"root_routine":)"<<owner.root_routine<<'}';}
+        std::cout<<"]}";}
     std::cout<<R"(],"architecture":)";
     if(bundle.architecture){
         const auto& prepared=bundle.architecture->prepared;

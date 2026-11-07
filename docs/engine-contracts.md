@@ -42,6 +42,12 @@ selecionados precisam ser interpretados, inclusive botões não visíveis naquel
 variante. Valor monetário literal não é uma macro desconhecida. Uma resposta
 pertence à janela e ao pedido corretos, sem aceitar qualquer aviso pendente.
 
+A lista de contatos do telefone usa as relações atuais do personagem e nomes
+dos recursos de personagem no idioma escolhido. Mostrar uma pessoa nessa lista
+não significa que ela aceitará um convite. O [provedor de contatos](../tools/phonebook_choices.hpp)
+recebe esses dados como serviços separados; ele deve informar quando não consegue
+montar a lista, sem inventar nomes ou esconder contatos silenciosamente.
+
 ## Persistência e publicação
 
 O conjunto de sessão guarda entidades, referências, scripts, filas e serviços.
@@ -53,6 +59,18 @@ Mudanças de propriedade, compra e construção trabalham sobre um estado candid
 Conferir identidade, custo, recursos e restrições antes de publicá-lo. A operação
 não pode sobrescrever uma gravação mais recente ou deixar uma alteração parcial
 como sucesso. Perfil completo inclui o registro de ocupação, além do save.
+
+Ao conferir uma casa desocupada, mantenha uma cópia independente da importação
+original, incluindo os dados dos objetos e seus grupos. Comparar a casa editada
+com ela mesma pode fazer um objeto criado legitimamente parecer inválido.
+Essa referência é usada tanto na saída quanto na entrada de outra família.
+
+Por exemplo: se um sofá foi retirado na mudança, carregar a casa para o próximo
+morador não pode recriá-lo. Primeiro restaure os objetos que ficaram, o relógio
+e suas ações salvas; depois crie os novos moradores. O preço da compra deve vir
+da avaliação da casa após a retirada, com a cobrança publicada uma única vez.
+Os [serviços de propriedade residencial](../tools/residential_property_scene.hpp)
+conferem a origem desses dados antes de admitir o novo estado.
 
 ## Viagem temporária
 
