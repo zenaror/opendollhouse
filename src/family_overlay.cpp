@@ -163,7 +163,7 @@ void validate_overlay(const FamilyOverlay& overlay) {
         if(release.assignment_index>=overlay.assignments.size()||
            (have_release&&release.assignment_index<=prior_release)||release.house<1||release.house>98||
            release.neighborhood<1||release.neighborhood>8||(release.mode!=1&&release.mode!=4)||
-           release.policy!=1||release.vacant_purchase_value<0||release.cash_after_cleanup<0||!release.occupancy_epoch||release.expected_revision==UINT64_MAX||
+           (release.policy!=1&&release.policy!=2)||release.vacant_purchase_value<0||release.cash_after_cleanup<0||!release.occupancy_epoch||release.expected_revision==UINT64_MAX||
            zero_digest(release.family_identity)||zero_digest(release.source_checkpoint_sha256)||
            zero_digest(release.installed_lot_sha256)||zero_digest(release.head)||
            (release.expected_revision==0)!=(!release.expected_head)||

@@ -183,16 +183,53 @@ struct SessionNpcAvatarOrigin {
     std::uint16_t object_definition_id = 0;
     std::array<std::uint8_t,32> character_fingerprint{};
 };
+// HOST v2 requires this complete, portable HHRD v1 roster. HOST v1 is legacy.
+struct SessionHouseholdMember {
+    std::int16_t id = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t guid = 0;
+    std::int16_t neighbor_id = 0;
+    std::uint16_t object_definition_id = 0;
+    // Stable catalog identity: UserData/Characters/... or PlayerData/Characters/...
+    std::string character_asset;
+    std::array<std::uint8_t,32> character_fingerprint{};
+};
+bool same_session_household_roster(const std::vector<SessionHouseholdMember>&,
+    const std::vector<SessionHouseholdMember>&);
+
+// Immutable family/source identity plus the active occupancy generation.
+struct SessionFamilyLease {
+    std::array<std::uint8_t,32> neighborhood_identity{};
+    std::array<std::uint8_t,32> family_identity{};
+    std::uint64_t occupancy_epoch = 0;
+    std::uint16_t family_chunk_id = 0;
+};
+
+// Historical family-avatar provenance. It grants no current household,
+// scheduler, player control or NPC role. The exact source archive must remain
+// authenticated through its neighborhood release/lease before a host resolves it.
+struct SessionRetiredHouseholdAvatar {
+    SessionHouseholdMember member;
+    SessionFamilyLease source_lease;
+    std::array<std::uint8_t,32> source_checkpoint_sha256{};
+};
+using SessionRetiredHouseholdAvatarResolver=std::function<Entity(const SessionRetiredHouseholdAvatar&)>;
+bool same_session_retired_household_avatar(const SessionRetiredHouseholdAvatar&,const SessionRetiredHouseholdAvatar&);
+// Checks exact SHA, FAML, HHRD and avatar identity in immutable source bytes.
+// The caller separately authenticates that historical head through the overlay.
+void validate_retired_household_avatar_source(const SessionRetiredHouseholdAvatar&,const std::vector<std::uint8_t>&);
 // OHST v1 preserves the legacy permanently reserved-ID policy. V2 records
 // reusable identities and retained visitor provenance. V3 permits resource-only
 // visitors; V4 adds exact retired construction masters and an explicit reuse
 // policy. Incomplete coverage is never promoted merely by loading/saving it.
+// V5 adds separately authenticated historical household-avatar provenance.
 struct SessionObjectHistory {
     bool complete = false;
     std::vector<SessionCreatedObject> retired_created_objects; // Lexicographic (id,generation).
     std::vector<std::int16_t> reserved_entity_ids; // Legacy reservations only.
     bool reusable_entity_ids = false;
     std::vector<SessionNpcAvatarOrigin> retired_npc_avatars; // Lexicographic (id,generation).
+    std::vector<SessionRetiredHouseholdAvatar> retired_household_avatars; // OHST5; exact historical HHRD, sorted identity.
 };
 struct SessionNpcAvatar {
     SessionNpcAvatarOrigin origin;
@@ -246,20 +283,6 @@ struct SessionSeatedContinuation {
     std::vector<SessionActionCodeOwner> code_owners; // Strictly ascending owner IDs.
 };
 
-// HOST v2 requires this complete, portable HHRD v1 roster. HOST v1 is legacy.
-struct SessionHouseholdMember {
-    std::int16_t id = 0;
-    std::uint64_t generation = 0;
-    std::uint32_t guid = 0;
-    std::int16_t neighbor_id = 0;
-    std::uint16_t object_definition_id = 0;
-    // Stable catalog identity: UserData/Characters/... or PlayerData/Characters/...
-    std::string character_asset;
-    std::array<std::uint8_t,32> character_fingerprint{};
-};
-bool same_session_household_roster(const std::vector<SessionHouseholdMember>&,
-    const std::vector<SessionHouseholdMember>&);
-
 struct SessionAvatarMotiveState {
     std::int16_t id=0;
     Ts1MotiveSnapshot decay;
@@ -267,14 +290,6 @@ struct SessionAvatarMotiveState {
 struct SessionSimulationState {
     Ts1ClockSnapshot clock;
     std::vector<SessionAvatarMotiveState> avatars; // Strictly ascending runtime IDs.
-};
-
-// Immutable family/source identity plus the active occupancy generation.
-struct SessionFamilyLease {
-    std::array<std::uint8_t,32> neighborhood_identity{};
-    std::array<std::uint8_t,32> family_identity{};
-    std::uint64_t occupancy_epoch = 0;
-    std::uint16_t family_chunk_id = 0;
 };
 
 // Optional presentation selection; it grants no simulation/family authority.

@@ -22,6 +22,9 @@ PreparedPropertyRelease prepare_property_release_session(const odh::Neighborhood
         const odh::FamilyOverlay& expected,std::uint16_t family,const std::vector<std::uint8_t>& bytes,
         const odh::SessionResourceIdentity& resources,const CommunityLotIdentity& identity,
         PropertyReleaseRuntime runtime,std::uint64_t budget){
+    need(runtime.profile==PropertyReleaseTraversalProfile::original_linked_head||
+        runtime.profile==PropertyReleaseTraversalProfile::pinned_vm_id_order,
+        "property release traversal profile is unknown or unsupported");
     need(runtime.source_still_matches&&runtime.first&&runtime.next&&runtime.delete_entity&&runtime.valuation&&
         runtime.current_cash&&runtime.export_objects&&runtime.export_architecture&&runtime.validate_reopen,
         "property release actual runtime owners are incomplete");
@@ -100,7 +103,7 @@ PreparedPropertyRelease prepare_property_release_session(const odh::Neighborhood
     auto candidate=expected;
     if(state->value_in_arch!=result.refund_)candidate=odh::plan_family_checkpoint_overlay(source.families,source.identity,
         &candidate,family,state->house_number,state->occupancy_epoch,state->budget,digest,result.refund_);
-    auto& release=result.release_;release.assignment_index=static_cast<std::uint32_t>(candidate.assignments.size());
+    auto& release=result.release_;release.policy=static_cast<std::uint16_t>(runtime.profile);release.assignment_index=static_cast<std::uint32_t>(candidate.assignments.size());
     release.house=identity.house;release.family_chunk_id=family;release.neighborhood=identity.neighborhood;release.mode=identity.mode;
     release.family_identity=state->family_identity;release.occupancy_epoch=state->occupancy_epoch;
     release.source_checkpoint_sha256=digest;release.installed_lot_sha256=identity.lot_sha256;

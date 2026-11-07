@@ -399,13 +399,16 @@ def integrated_family_lot(args, game, runner, person):
                 moved=run('second-move-out',common+['--house',str(current['house']),
                     '--resident-id',str(created['neighbor_id']),'--headless-move-out-family',
                     str(created['family_chunk_id']),'--headless-ticks','0'])
-                checked(moved=={'status':'moved_out','family_chunk_id':created['family_chunk_id']},
+                checked(isinstance(moved,dict) and moved.get('status')=='moved_out' and
+                        moved.get('family_chunk_id')==created['family_chunk_id'],
                         'real move-out command did not complete')
                 history['move_out_receipt']=moved;publish()
                 state=run('second-unhoused-family',[runner,'--inspect-family-state',game,
                     str(created['family_chunk_id']),str(destination)])
             else:
-                checked(history.get('move_out_receipt')=={'status':'moved_out','family_chunk_id':created['family_chunk_id']} and
+                checked(isinstance(history.get('move_out_receipt'),dict) and
+                        history['move_out_receipt'].get('status')=='moved_out' and
+                        history['move_out_receipt'].get('family_chunk_id')==created['family_chunk_id'] and
                         history.get('source_family_state') and history.get('runtime_property_valuation',{}).get('status')=='resolved',
                         'post-eviction continuation lacks its actual pre-effect quote and move-out receipt')
                 quote=history['quote_before_effects']

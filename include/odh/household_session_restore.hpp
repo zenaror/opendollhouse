@@ -52,7 +52,8 @@ public:
         const SessionCreatedObjectResolver& created_objects = {},
         const SessionNpcAvatarResolver& npc_avatars = {},
         std::optional<Ts1TravelState> expected_travel = std::nullopt,
-        const SessionTravelAvatarResolver& travel_avatars = {});
+        const SessionTravelAvatarResolver& travel_avatars = {},
+        const SessionRetiredHouseholdAvatarResolver& retired_household_avatars = {});
 
     World& world() {
         if(!world_)throw FormatError("candidate World ownership was transferred to the host");

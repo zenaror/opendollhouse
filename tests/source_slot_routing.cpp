@@ -607,6 +607,64 @@ odh::PreRankedSlotGoal range_goal(const odh::SlotTable& table,const odh::EntityP
     }
     throw std::runtime_error("test range goal is outside source geometry");
 }
+// A source CurRoute is selected before AttemptWalk. NoPath retains the
+// last attempted destination while failure398 runs; it is not a motion path.
+void failed_attempt_retains_curroute(){
+    for(unsigned mode=0;mode<5;++mode){
+        const auto operation=mode==1?std::optional<odh::Instruction>{{27,1,255,{5,0,254,254,0,0,0,0}}}:std::nullopt;
+        Fixture live(true,1,0,{},operation);live.grid=odh::RouteGrid{160,160};
+        require(live.world.set_position(9,{64,64,1,0}),"failed route target across complete source barrier");
+        if(mode==2)live.table=full_circle_table();
+        if(mode==3)live.table=range_table();
+        if(mode==4){live.table=range_table();live.table.records[8].proximity=std::array<std::int32_t,3>{16,64,32};}
+        live.obstruct_plans=true;float heading=0;install_sparse_services(live,heading);
+        odh::RandomState random(81);
+        if(mode==2||mode==3)live.route.set_authenticated_range_slot_goal_provider(
+            [&](const auto& table,auto index,const auto& actor,const auto& target,float radians,const auto&){
+                return odh::AuthenticatedRangeSlotGoals{odh::rank_reference_range_slot(table,index,actor,target,random,
+                    false,[](auto){return true;},{},{},{},radians,[](auto){return odh::ReferenceSlotVerification::eligible;}),0,0,0};});
+        if(mode==4)live.route.set_authenticated_slot_goal_provider([](const auto&,auto,const auto&,const auto&,float,const auto&){
+            odh::AuthenticatedRangeSlotGoals result;result.failure_code=0;
+            result.semantic_goals={{{64,80},1,4,3.14159274f,false,{},1},{{80,80},1,4,3.14159274f,false,{},1}};
+            result.goals={{{64,80},1,4,{},{},3.14159274f},{{80,80},1,4,{},{},3.14159274f}};return result;});
+        live.start();std::string why;
+        require(!live.planned_goals.empty(),"NoPath comes from actual source planner attempts");
+        const auto last=live.planned_goals.back();
+        const auto saved=live.route.capture_session_route_stack(owner,&why);
+        if(!saved)throw std::runtime_error("capture failed selected source destination: "+why);
+        const auto& job=saved->jobs.back();
+        require(job.failure_pending&&job.source_choices&&job.source_choices->selected.position==last&&
+            job.source_choices->remaining.empty()&&!job.source_sparse&&job.path==std::vector<odh::RoutePoint>{{4,12}}&&
+            live.motion_publishes==0&&live.placement_calls==0,"failed attempt keeps exact last CurRoute without fabricated motion");
+        if(mode==4)require(live.planned_goals.size()==2&&last==odh::RoutePoint{80,80}&&
+            live.route.intersects_destination({64,80})==std::optional<bool>{false},"exhausted choices retain last attempt, not first candidate");
+        for(const auto dx:{-7,-6,-5,0,5,6,7})for(const auto dy:{-7,-6,-5,0,5,6,7})
+            require(live.route.intersects_destination({last.x+dx,last.y+dy})==std::optional<bool>{std::abs(dx)<=6&&std::abs(dy)<=6},
+                "failed CurRoute uses exact inclusive source rectangle, including diagonals");
+        require(!live.route.capture_local_session_route(owner,&why),"failure continuation cannot flatten into local-only snapshot");
+        Fixture restored(false,1,0,{},operation);restored.table=live.table;restored.grid=odh::RouteGrid{160,160};
+        require(restored.world.restore_snapshot(live.world.snapshot())&&restored.vm.restore_snapshot(live.vm.snapshot()),"failed selection restores exact World and VM");
+        float restored_heading=0;install_sparse_services(restored,restored_heading);
+        auto malformed=*saved;malformed.jobs.back().source_choices->remaining.push_back(job.source_choices->selected);
+        require(!restored.route.restore_session_route_stack(malformed,owner,&why),"failed choice cannot retain unattempted candidate roster");
+        malformed=*saved;malformed.jobs.back().source_choices.reset();malformed.jobs.back().path.clear();
+        require(!restored.route.restore_session_route_stack(malformed,owner,&why),"old empty failed route without selected manifest remains inadmissible, never assumed free");
+        require(restored.route.restore_session_route_stack(*saved,owner,&why),why.c_str());
+        require(restored.route.intersects_destination(last)==std::optional<bool>{true}&&restored.plan_calls==0&&restored.motion_publishes==0,
+            "restored failure consults retained CurRoute without reranking or walking");
+        require(live.route.tick(1)&&live.route.external_frame_active(),"failed attempt invokes actual source failure398");
+        const auto child=live.route.capture_session_route_stack(owner,&why);
+        if(!child)throw std::runtime_error("capture failed selected destination during398: "+why);
+        require(child->jobs.back().failure_tree_invoked&&live.route.intersects_destination(last)==std::optional<bool>{true},
+            "CurRoute remains consultable inside genuine failure child");
+        Fixture childcopy(false,1,0,{},operation);childcopy.table=live.table;childcopy.grid=odh::RouteGrid{160,160};
+        require(childcopy.world.restore_snapshot(live.world.snapshot())&&childcopy.vm.restore_snapshot(live.vm.snapshot()),"restore exact failure398 child ancestry");
+        float child_heading=0;install_sparse_services(childcopy,child_heading);
+        require(childcopy.route.restore_session_route_stack(*child,owner,&why)&&
+            childcopy.route.intersects_destination(last)==std::optional<bool>{true}&&childcopy.plan_calls==0,
+            "genuine failure398 child keeps last CurRoute across full-stack restore");
+    }
+}
 void immediate_routing_service(){
     const auto child_owner=owner+1;
     for(const auto opcode:{22,27,45})for(const bool child_route:{false,true}){
@@ -1435,6 +1493,10 @@ void general_slot_source_choices(){
         if(resumed_status!=odh::VmStatus::yielded)throw std::runtime_error("fresh chair child status "+std::string(odh::vm_status_name(resumed_status))+": "+resumed.vm.diagnostic());
         if(!resumed.route.tick(2))throw std::runtime_error("fresh chair return tick: "+resumed.route.diagnostic()+"; VM "+resumed.vm.diagnostic());
         require(live.route.intersects_destination({20,32},11)==std::optional<bool>{true},"generic chair destination consultation uses exact chair and semantic position");
+        require(live.route.intersects_destination({1000,1000},11)==std::optional<bool>{true}&&
+            live.route.intersects_destination({26,38})==std::optional<bool>{true}&&
+            live.route.intersects_destination({27,38})==std::optional<bool>{false},
+            "matching source chair wins independently of position; other candidates use inclusive rectangle");
         require(live.route.tick(1)&&live.vm.stack().back().key.id==4100&&live.plan_calls==0&&live.vm.stack().back().arguments==std::vector<std::int16_t>{0,0},
             "EP26 owns the actor before walking, using exact source argument extent");
         require(!live.route.capture_local_session_route(owner,&why)&&why.find("stack-aware")!=std::string::npos,
@@ -1689,5 +1751,5 @@ void architecture_room_invalidation(){
 }
 
 }
-int main(){try{authenticated_slot_between_floors();architecture_room_portal_restore();architecture_room_invalidation();source_standing_before_walking();general_slot_source_choices();immediate_routing_interruption();immediate_routing_service();authenticated_transient_relative_routes();deferred_relative_facing();parked_collision_failure_tree();ordinary_go_here_sparse();authenticated_circle_routes();face_anywhere_live_range_continuation();source_soft_failure_room_graph();source_soft_failure_alternatives();authenticated_range_routes();range_retry_and_replay();range_callback_boundaries();range_failure_metadata();source_circle_routes();generic_ranked_sparse_choices();geometry_tests();collision_routes();execution_tests();self_anchor_tests();sparse_point_uses_complete_room_plan();std::cout<<checks<<" source exact SLOT routing checks passed\n";return 0;}
+int main(){try{failed_attempt_retains_curroute();authenticated_slot_between_floors();architecture_room_portal_restore();architecture_room_invalidation();source_standing_before_walking();general_slot_source_choices();immediate_routing_interruption();immediate_routing_service();authenticated_transient_relative_routes();deferred_relative_facing();parked_collision_failure_tree();ordinary_go_here_sparse();authenticated_circle_routes();face_anywhere_live_range_continuation();source_soft_failure_room_graph();source_soft_failure_alternatives();authenticated_range_routes();range_retry_and_replay();range_callback_boundaries();range_failure_metadata();source_circle_routes();generic_ranked_sparse_choices();geometry_tests();collision_routes();execution_tests();self_anchor_tests();sparse_point_uses_complete_room_plan();std::cout<<checks<<" source exact SLOT routing checks passed\n";return 0;}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

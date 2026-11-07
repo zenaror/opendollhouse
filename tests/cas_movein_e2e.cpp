@@ -12,6 +12,7 @@
 #include "odh/session_entry.hpp"
 #include "odh/session_bundle.hpp"
 #include "odh/animation.hpp"
+#include "odh/sha256.hpp"
 
 #include <filesystem>
 #include <cstdlib>
@@ -169,6 +170,26 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
             }std::cout<<"]}";
         }std::cout<<"]}";
     }else std::cout<<"null";
+    std::cout<<R"(,"neighbor_inventory":)";
+    if(!active.neighbor_inventory)std::cout<<"null";
+    else{const auto& inventory=*active.neighbor_inventory;std::size_t neighbors=0,items=0;
+        std::cout<<R"({"neighbor_count":)"<<inventory.inventory_by_id.size()<<R"(,"neighbors_truncated":)"<<(inventory.inventory_by_id.size()>4096?"true":"false")<<R"(,"entries":[)";
+        for(const auto& row:inventory.inventory_by_id){
+            if(neighbors==4096)break;if(neighbors++)std::cout<<',';
+            std::cout<<R"({"neighbor_id":)"<<row.first<<R"(,"item_count":)"<<row.second.size()<<R"(,"items":[)";
+            std::size_t shown=0;for(const auto& item:row.second){if(items==65536)break;if(shown++)std::cout<<',';++items;
+                std::cout<<R"({"type":)"<<item.type<<R"(,"guid":)"<<item.guid<<R"(,"count":)"<<item.count<<'}';}
+            std::cout<<R"(],"items_truncated":)"<<(shown<row.second.size()?"true":"false")<<'}';
+        }std::cout<<"]}";
+    }
+    std::cout<<R"(,"type_attributes":)";
+    if(!active.type_attributes)std::cout<<"null";
+    else{const auto bytes=odh::encode_type_attributes_snapshot(*active.type_attributes);const auto digest=odh::sha256(bytes.data(),bytes.size());
+        static constexpr char hex[]="0123456789abcdef";std::string text;text.reserve(64);
+        for(const auto b:digest){text.push_back(hex[b>>4]);text.push_back(hex[b&15]);}
+        std::cout<<R"({"row_count":)"<<active.type_attributes->by_guid.size()<<R"(,"canonical_codec_bytes":)"<<bytes.size()
+            <<R"(,"canonical_codec_sha256":)"<<json_string(text)<<'}';
+    }
     std::cout<<R"(,"blocking_dialog":)";
     if(active.dialog){
         const auto& dialog=*active.dialog;

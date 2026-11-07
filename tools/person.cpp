@@ -164,6 +164,8 @@
 #include "saved_portal.hpp"
 #include "saved_lot_renderer.hpp"
 #include "person_runtime.hpp"
+#include "property_release_session.hpp"
+#include "residential_property_scene.hpp"
 #include "imported_object_values.hpp"
 #include "odh/object_value_registry.hpp"
 #include "odh/dynamic_object_groups.hpp"
@@ -623,6 +625,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
  try {
     const odh_host::NeighborhoodStorage neighborhood_storage(session_context?session_context->neighborhood_number:1);
     auto player_preferences=session_context?session_context->preferences:odh_host::PlayerPreferences{};
+    // Only the private property operation retains its authenticated input after
+    // ordinary HOME preparation transfers World. This is archive data, never
+    // an execution root or a second live World.
+    std::vector<std::uint8_t> private_property_source_archive;
+    const auto property_source_bytes=[&]()->const std::vector<std::uint8_t>&{
+        return !private_property_source_archive.empty()?private_property_source_archive:
+            session_context?session_context->restore_archive:private_property_source_archive;
+    };
     const bool profile_startup=std::getenv("ODH_PROFILE_STARTUP")!=nullptr;
     const auto profile_started=std::chrono::steady_clock::now();
     auto profile_previous=profile_started;
@@ -1360,6 +1370,37 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto digest=odh::sha256(bytes->data(),bytes->size());remaining-=size;
             if(!pinned_characters.emplace(path,PinnedCharacter{bytes,digest}).second)
                 throw odh::FormatError("duplicate household character resource");
+        }
+        if(!session_context->restore_archive.empty()){
+            const auto archive=odh::decode_session_bundle(session_context->restore_archive);
+            if(archive.object_history)for(const auto& origin:archive.object_history->retired_household_avatars){
+                const auto& member=origin.member;const std::filesystem::path logical(member.character_asset);
+                const auto parent=logical.parent_path().generic_string();std::filesystem::path root;
+                if(parent=="PlayerData/Characters")root=session_context->player_character_root;
+                else if(parent=="UserData/Characters")root=session_context->installed_user_data/"Characters";
+                else throw odh::FormatError("historical household character source is unsupported");
+                if(root.empty())throw odh::FormatError("historical household catalog is unavailable");
+                const auto path=std::filesystem::canonical(root/logical.filename());
+                if(path.parent_path()!=std::filesystem::canonical(root)||std::filesystem::is_symlink(root)||std::filesystem::is_symlink(root/logical.filename()))
+                    throw odh::FormatError("historical household character escaped its source catalog");
+                auto existing=pinned_characters.find(path);
+                if(existing==pinned_characters.end()){
+                    const auto size=std::filesystem::file_size(path);
+                    if(!std::filesystem::is_regular_file(path)||size>remaining)
+                        throw odh::FormatError("historical household exceeds the shared loaded character byte budget");
+                    auto bytes=std::make_shared<std::string>(static_cast<std::size_t>(size),'\0');
+                    std::ifstream input(path,std::ios::binary);input.read(bytes->data(),static_cast<std::streamsize>(size));
+                    if(!input||input.peek()!=std::char_traits<char>::eof())throw odh::FormatError("historical household character changed while loading");
+                    const auto digest=odh::sha256(bytes->data(),bytes->size());remaining-=size;
+                    existing=pinned_characters.emplace(path,PinnedCharacter{bytes,digest}).first;
+                }
+                if(existing->second.fingerprint!=member.character_fingerprint)
+                    throw odh::FormatError("historical household character fingerprint differs");
+                if(std::find(character_definition_sources.begin(),character_definition_sources.end(),path.string())==character_definition_sources.end()){
+                    if(character_definition_sources.size()>=4096)throw odh::FormatError("historical character discovery budget exceeded");
+                    character_definition_sources.push_back(path.string());
+                }
+            }
         }
         const auto primary=pinned_characters.find(std::filesystem::canonical(avatar->archive));
         if(primary==pinned_characters.end())throw odh::FormatError("primary character is absent from the complete household");
@@ -2582,6 +2623,60 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         odh::inherit_neighbor(metadata,member.id,*neighbor,session_context->family_chunk_id);
         auto entity=*metadata.find(member.id);entity.generation=member.generation;return entity;
     };
+    const odh::SessionRetiredHouseholdAvatarResolver resolve_retired_household_avatar=[&](const odh::SessionRetiredHouseholdAvatar& origin)->odh::Entity{
+#ifdef __linux__
+        if(!session_context||!session_context->family_journal||!session_context->family_journal->expected_overlay())
+            throw odh::FormatError("retired household needs its historical neighborhood authority");
+        session_context->family_journal->verify_current();
+        const auto& overlay=*session_context->family_journal->expected_overlay();const auto& lease=origin.source_lease;
+        bool authorized=overlay.neighborhood_identity==lease.neighborhood_identity&&std::any_of(
+            overlay.property_releases.begin(),overlay.property_releases.end(),[&](const auto& release){
+                return release.source_checkpoint_sha256==origin.source_checkpoint_sha256&&release.family_identity==lease.family_identity&&
+                    release.occupancy_epoch==lease.occupancy_epoch&&release.family_chunk_id==lease.family_chunk_id;});
+        if(!authorized&&session_context->prepare_property_release){
+            const auto current=session_context->family_journal->lease();
+            authorized=current.neighborhood_identity==lease.neighborhood_identity&&current.family_identity==lease.family_identity&&
+                current.occupancy_epoch==lease.occupancy_epoch&&current.family_chunk_id==lease.family_chunk_id&&
+                odh::sha256(property_source_bytes().data(),property_source_bytes().size())==origin.source_checkpoint_sha256;
+        }
+        if(!authorized)throw odh::FormatError("retired household head/lease has no exact committed historical release");
+        std::string head;constexpr char hex[]="0123456789abcdef";for(const auto byte:origin.source_checkpoint_sha256){head+=hex[byte>>4];head+=hex[byte&15];}
+        const auto archive=session_context->family_journal->archive_directory()/(head+".odhs");
+        const auto bytes=odh::encode_session_archive(odh_host::read_session_archive(archive));
+        odh::validate_retired_household_avatar_source(origin,bytes);
+        const auto& member=origin.member;
+        const std::filesystem::path logical(member.character_asset);
+        const auto parent=logical.parent_path().generic_string();
+        std::filesystem::path root;
+        if(parent=="PlayerData/Characters")root=session_context->player_character_root;
+        else if(parent=="UserData/Characters")root=session_context->installed_user_data/"Characters";
+        else throw odh::FormatError("historical household character has an unsupported catalog identity");
+        if(root.empty())throw odh::FormatError("historical household character catalog is unavailable");
+        const auto path=std::filesystem::canonical(root/logical.filename());
+        if(path.parent_path()!=std::filesystem::canonical(root)||std::filesystem::is_symlink(root)||std::filesystem::is_symlink(root/logical.filename()))
+            throw odh::FormatError("historical household character escaped its exact catalog");
+        const auto pinned=pinned_characters.find(path);
+        if(pinned==pinned_characters.end()||pinned->second.fingerprint!=member.character_fingerprint||
+           odh_host::fingerprint_transfer_resource(path)!=member.character_fingerprint)
+            throw odh::FormatError("historical household resource differs from its immutable pinned character bytes");
+        const Resource resource{path.string(),{},true,pinned->second.bytes};
+        const auto data=load(resource,odh::RoutineScope::private_object,member.object_definition_id,true);
+        std::optional<odh::ObjectDefinition> definition;
+        with_resource(resource,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+            if(chunk.type!="OBJD"||chunk.id!=member.object_definition_id)return;
+            if(definition)throw odh::FormatError("historical household OBJD is ambiguous");definition=odh::read_object_definition(chunk.payload);
+        });});
+        odh::World metadata;
+        if(!definition||definition->guid!=member.guid||!data.entry_points||
+           !odh::materialize_npc_avatar_base(metadata,member.id,*definition,*data.entry_points)||
+           !metadata.set_person_data(member.id,31,member.neighbor_id)||
+           !metadata.set_person_data(member.id,61,signed_word(lease.family_chunk_id)))
+            throw odh::FormatError("historical household resource cannot reconstruct exact avatar metadata");
+        auto entity=*metadata.find(member.id);entity.generation=member.generation;return entity;
+#else
+        (void)origin;throw odh::FormatError("historical household storage provider is unavailable on this host");
+#endif
+    };
     std::unique_ptr<odh::SingleResidentSessionRestore> session_restore;
     std::unique_ptr<odh::HouseholdSessionRestore> household_restore;
     if(session_context&&!session_context->restore_archive.empty()){
@@ -2645,7 +2740,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }else{
             household_restore=odh::HouseholdSessionRestore::prepare(session_context->restore_archive,
                 *session_context->resources,selection,capture_household_roster(),*session_baseline,*lot,*bootstrap_globals,family_global,{},resolve_created_object,resolve_npc_avatar,
-                session_context->temporary_travel_enabled&&restored_travel_present?session_context->travel_state:std::nullopt,resolve_household_avatar);
+                session_context->temporary_travel_enabled&&restored_travel_present?session_context->travel_state:std::nullopt,resolve_household_avatar,resolve_retired_household_avatar);
             // Transfer only the matched, explicitly admitted trip authority
             // before restoring any of its entity VM continuations below.
             if(auto admitted_travel=household_restore->consume_travel())
@@ -2662,6 +2757,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             // complete resource/world validation. Preserve legitimate ID reuse.
             restored_world->world=std::move(candidate);
         }
+        if(session_context->prepare_property_release)private_property_source_archive=std::move(session_context->restore_archive);
         std::vector<std::uint8_t>{}.swap(session_context->restore_archive); // Release encoded input.
     }
     const bool restoring_session=bool(session_restore)||bool(household_restore);
@@ -2807,7 +2903,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto* candidate=definition_index->unique(guid);
             if(!candidate)return nullptr;
             std::optional<std::vector<std::int16_t>> words;
-            with_resource(Resource{candidate->source,candidate->asset,candidate->asset.empty()},[&](const auto& view){
+            Resource resource{candidate->source,candidate->asset,candidate->asset.empty()};
+            if(resource.standalone){const auto pinned=pinned_characters.find(std::filesystem::canonical(resource.archive));
+                if(pinned!=pinned_characters.end())resource.frozen=pinned->second.bytes;}
+            with_resource(resource,[&](const auto& view){
                 odh::iff_chunks(view,[&](const auto& chunk){
                     if(chunk.type!="OBJD" || chunk.id!=candidate->chunk_id)return;
                     if(words)throw odh::FormatError("object definition resource has duplicate selected OBJD");
@@ -2952,6 +3051,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // motor; HOME keeps lexical aliases until its actor-dependent setup moves
     // behind the same optional admission boundary used by fresh visits.
     std::unique_ptr<ActorRuntime> primary_runtime;
+    // Private eviction only. These holders keep lexical borrowed aliases alive
+    // until the discarded bootstrap returns; they confer no scheduler authority.
+    bool property_release_active=false;
+    std::vector<odh::SessionHouseholdMember> property_release_source_roster;
+    std::optional<odh::SessionFamilyLease> property_release_source_lease;
+    std::array<std::uint8_t,32> property_release_source_head{};
+    std::vector<std::unique_ptr<ActorRuntime>> property_retired_actor_storage;
     std::function<void(ActorRuntime&)> ensure_actor_routing;
     if(!actorless_bootstrap()){
         primary_runtime=std::make_unique<ActorRuntime>();
@@ -3632,6 +3738,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::vector<std::string> object_main_faults;
     std::map<std::pair<std::int16_t,std::uint64_t>,odh::SessionCreatedObject> retired_created_origins;
     std::map<std::pair<std::int16_t,std::uint64_t>,odh::SessionNpcAvatarOrigin> retired_npc_origins;
+    std::map<std::pair<std::int16_t,std::uint64_t>,odh::SessionRetiredHouseholdAvatar> retired_household_origins;
     // Keep source-backed purchase values with the lot across ordinary saves.
     // They are not family carryover, and absent legacy values remain unknown.
     std::optional<odh::SessionObjectTradeLedger> runtime_object_trade;
@@ -3710,6 +3817,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         object_history_complete=history.complete;
         for(const auto& origin:history.retired_created_objects)retired_created_origins.emplace(std::make_pair(origin.id,origin.generation),origin);
         for(const auto& origin:history.retired_npc_avatars)retired_npc_origins.emplace(std::make_pair(origin.id,origin.generation),origin);
+        for(const auto& origin:history.retired_household_avatars)retired_household_origins.emplace(
+            std::make_pair(origin.member.id,origin.member.generation),origin);
     }
     const auto unschedule_execution=[&](std::int16_t id){
         if(entity_scheduler.running())return false;
@@ -5580,6 +5689,24 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
            entity->person_data[31]!=origin.neighbor_id)return nullptr;
         return actor;
     };
+    const auto owned_property_actor_for_removal=[&](std::int16_t id,std::uint64_t generation)->ActorRuntime* {
+        if(!property_release_active||!session_context||!session_context->prepare_property_release||
+           !active_family||session_context->single_resident_session||headless_second_main)return nullptr;
+        ActorRuntime* actor=primary_runtime&&primary_runtime->id==id?primary_runtime.get():nullptr;
+        if(!actor)for(const auto& member:household_runtime)if(member->id==id)actor=member.get();
+        if(!actor||actor->npc_origin||!actor->vm||!actor->data.binding)return nullptr;
+        const auto* entity=world.find(id);const auto* services=actor_services_for_vm(actor->vm.get());
+        if(!entity||entity->generation!=generation||entity->kind!=odh::EntityKind::avatar||entity->ui_ghost||
+           !entity->definition||entity->definition->guid!=actor->data.binding->guid||entity->person_data.size()<=31||
+           !services||services->actor!=actor||services->identity!=odh::WorldEntityReference{id,generation})return nullptr;
+        const auto member=std::find_if(session_context->household_members.begin(),session_context->household_members.end(),
+            [&](const auto& m){return m.guid==entity->definition->guid&&m.neighbor_id==entity->person_data[31]&&
+                definition_index&&definition_index->unique(m.guid)&&
+                m.object_definition_id==definition_index->unique(m.guid)->chunk_id;});
+        if(member==session_context->household_members.end()||std::find(active_family->family.member_guids.begin(),
+            active_family->family.member_guids.end(),member->guid)==active_family->family.member_guids.end())return nullptr;
+        return actor;
+    };
     // A menu target can be an object or an avatar whose runtime identity is
     // already owned by this session. This never grants the target player control.
     const auto supported_menu_target=[&](const odh::Entity* target){
@@ -5615,9 +5742,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 return std::nullopt;
             };
             if(object->kind==odh::EntityKind::avatar){
-                if(!owned_npc_for_removal(request.target,request.generation))
+                if(!owned_npc_for_removal(request.target,request.generation)&&
+                   !owned_property_actor_for_removal(request.target,request.generation))
                     return "avatar removal requires an exact independent NPC lifecycle";
-                if(object->attachment)return "attached NPC removal needs the source detach lifecycle";
+                if(object->attachment&&!property_release_active)return "attached NPC removal needs the source detach lifecycle";
             }else if(object->kind!=odh::EntityKind::object)return "unsupported removal entity kind";
             if(object->ui_ghost)return "UI marker removal uses its separate lifecycle";
             if(request.target==saved_phone_id && saved_phone_thread)
@@ -13024,7 +13152,7 @@ struct PlacementCandidateProbe {
             }else{
                 auto candidate=odh::HouseholdSessionRestore::prepare(encoded,bundle.resources,bundle.host,
                     capture_household_roster(true),*session_baseline,*lot,*bootstrap_globals,family_global,{},resolve_created_object,resolve_npc_avatar,
-                    session_context->temporary_travel_enabled&&bundle.travel?travel_state:std::nullopt,resolve_household_avatar);
+                    session_context->temporary_travel_enabled&&bundle.travel?travel_state:std::nullopt,resolve_household_avatar,resolve_retired_household_avatar);
             }
         }catch(const std::exception& error){
             throw odh::FormatError(std::string("this session cannot yet be restored: ")+error.what());
@@ -13045,14 +13173,15 @@ struct PlacementCandidateProbe {
         }
         for(const auto& item:runtime_object_threads)if(item.second&&!thread(item.second->vm.get()))return false;
         if(!thread(saved_phone_thread.get()))return false;
-        if(primary_routing())append(primary_routing()->strong_entity_references());
+        if((!property_release_active||actor_services_for(runtime_avatar_id))&&primary_routing())append(primary_routing()->strong_entity_references());
         for(const auto* actor:auxiliary_actors)if(actor->routing)append(actor->routing->strong_entity_references());
         const auto context=[&](const odh::VmContext& value){
             for(const auto role:{odh::VmEntityRole::caller,odh::VmEntityRole::callee,odh::VmEntityRole::stack_object}){
                 const auto ref=odh::vm_context_reference(value,role);if(ref.id>0&&ref.generation)roots.push_back(ref);
             }
         };
-        for(const auto& portal:primary_portals().contexts)if(portal.second.pending_call)context(portal.second.pending_call->context);
+        if(!property_release_active||actor_services_for(runtime_avatar_id))
+            for(const auto& portal:primary_portals().contexts)if(portal.second.pending_call)context(portal.second.pending_call->context);
         for(const auto* actor:auxiliary_actors)for(const auto& portal:actor->room_portals.contexts)
             if(portal.second.pending_call)context(portal.second.pending_call->context);
         for(const auto& pending:pending_create_objects)context(pending.source_frame.context);
@@ -13068,6 +13197,60 @@ struct PlacementCandidateProbe {
     std::function<std::optional<std::int32_t>()> capture_house_property_value;
     std::optional<std::int32_t> measured_house_property_value;
     std::string house_property_diagnostic="not measured";
+    // Shared object-only capture: full HOME saves and vacancy projection use
+    // these SAME live Thread/resource owners. No household capture is stripped.
+    const auto capture_current_object_threads=[&](bool generic_execution){
+        odh::SessionBundle bundle;
+        const auto portable_owner=[&](odh::SessionResourceCodeOwner record){
+            record.source=odh_host::generic_session_source_key(session_context->game_root,record.source);return record;
+        };
+        if(saved_phone_thread||saved_phone_sleep){
+            if(!saved_phone_thread||!saved_phone_sleep||!saved_phone_main_scheduled||
+               !saved_phone_resource||!saved_phone_code_fingerprint||saved_phone_id<=0)
+                throw odh::FormatError("PhoneLine object thread is missing its controller or exact resource identity");
+            const auto* phone=world.find(saved_phone_id);
+            if(!phone||phone->kind!=odh::EntityKind::object||phone->generation!=saved_phone_generation||
+               !phone->definition||phone->definition->guid!=2933422533U)
+                throw odh::FormatError("PhoneLine object thread no longer matches its World entity");
+            odh::SessionObjectThread object_thread;object_thread.id=saved_phone_id;
+            object_thread.generation=saved_phone_generation;object_thread.guid=phone->definition->guid;
+            odh::SessionActionCodeOwner owner;owner.owner=object_thread.guid;
+            owner.source=generic_execution?odh_host::generic_session_source_key(session_context->game_root,saved_phone_resource->archive):
+                saved_phone_resource->archive;owner.asset=saved_phone_resource->entry;
+            owner.root_routine=4096;owner.routine_fingerprint=*saved_phone_code_fingerprint;
+            object_thread.code_owners.push_back(std::move(owner));
+            object_thread.vm=saved_phone_thread->snapshot();
+            object_thread.sleep=saved_phone_sleep->snapshot();
+            bundle.object_threads.push_back(std::move(object_thread));
+        }
+        if(generic_execution)for(const auto& [id,runtime]:runtime_object_threads){
+            const auto* object=world.find(id);
+            if(!object||!object->definition||!runtime||!runtime->vm||!runtime->sleep)
+                throw odh::FormatError("runtime object continuation lacks its live identity or controller");
+            odh::SessionObjectThread state;state.id=id;state.generation=object->generation;
+            state.guid=object->definition->guid;state.primary_owner=runtime->owner;
+            state.vm=runtime->vm->snapshot();state.sleep=runtime->sleep->snapshot();
+            std::set<odh::CodeOwner> owners;
+            for(const auto& frame:state.vm.stack)if(frame.context.code_owner)owners.insert(frame.context.code_owner);
+            if(state.vm.pending&&state.vm.pending->context.code_owner)owners.insert(state.vm.pending->context.code_owner);
+            for(const auto& pending:state.vm.suspended_pending)if(pending.context.code_owner)owners.insert(pending.context.code_owner);
+            const auto installed=installed_resource_owners.find(runtime->vm.get());
+            if(installed!=installed_resource_owners.end())for(const auto owner:installed->second)
+                if(runtime->vm->shared_program_for_owner(owner))owners.insert(owner);
+            for(const auto& item:resource_owner_provenance)
+                if(runtime->vm->shared_program_for_owner(item.first))owners.insert(item.first);
+            owners.insert(runtime->owner);
+            for(const auto owner:owners){
+                const auto found=resource_owner_provenance.find(owner);
+                if(found==resource_owner_provenance.end())throw odh::FormatError("runtime object code owner provenance is absent");
+                state.resource_owners.push_back(portable_owner(found->second));
+            }
+            bundle.object_threads.push_back(std::move(state));
+        }
+        for(auto& thread:bundle.object_threads)odh::resolve_object_thread_action_tree(thread);
+        std::sort(bundle.object_threads.begin(),bundle.object_threads.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+        return bundle.object_threads;
+    };
     const auto save_live_session=[&](bool validate_only=false,odh::SessionBundle* captured=nullptr)->std::string {
 #ifdef __linux__
         if(host_failed)throw odh::FormatError("saving is disabled after an unrecoverable host failure");
@@ -13303,6 +13486,7 @@ struct PlacementCandidateProbe {
                 bundle.object_history->retired_created_objects.push_back(std::move(record));
             }
             for(const auto& item:retired_npc_origins)bundle.object_history->retired_npc_avatars.push_back(item.second);
+            for(const auto& item:retired_household_origins)bundle.object_history->retired_household_avatars.push_back(item.second);
             bundle.object_history->reserved_entity_ids=world.reserved_entity_ids();
             for(const auto& [id,origin]:created_object_origins){
                 const auto* object=world.find(id);
@@ -13575,51 +13759,7 @@ struct PlacementCandidateProbe {
         }
         std::sort(bundle.npc_avatars.begin(),bundle.npc_avatars.end(),
             [](const auto& a,const auto& b){return a.origin.id<b.origin.id;});
-        if(saved_phone_thread||saved_phone_sleep){
-            if(!saved_phone_thread||!saved_phone_sleep||!saved_phone_main_scheduled||
-               !saved_phone_resource||!saved_phone_code_fingerprint||saved_phone_id<=0)
-                throw odh::FormatError("PhoneLine object thread is missing its controller or exact resource identity");
-            const auto* phone=world.find(saved_phone_id);
-            if(!phone||phone->kind!=odh::EntityKind::object||phone->generation!=saved_phone_generation||
-               !phone->definition||phone->definition->guid!=2933422533U)
-                throw odh::FormatError("PhoneLine object thread no longer matches its World entity");
-            odh::SessionObjectThread object_thread;object_thread.id=saved_phone_id;
-            object_thread.generation=saved_phone_generation;object_thread.guid=phone->definition->guid;
-            odh::SessionActionCodeOwner owner;owner.owner=object_thread.guid;
-            owner.source=generic_execution?odh_host::generic_session_source_key(session_context->game_root,saved_phone_resource->archive):
-                saved_phone_resource->archive;owner.asset=saved_phone_resource->entry;
-            owner.root_routine=4096;owner.routine_fingerprint=*saved_phone_code_fingerprint;
-            object_thread.code_owners.push_back(std::move(owner));
-            object_thread.vm=saved_phone_thread->snapshot();
-            object_thread.sleep=saved_phone_sleep->snapshot();
-            bundle.object_threads.push_back(std::move(object_thread));
-        }
-        if(generic_execution)for(const auto& [id,runtime]:runtime_object_threads){
-            const auto* object=world.find(id);
-            if(!object||!object->definition||!runtime||!runtime->vm||!runtime->sleep)
-                throw odh::FormatError("runtime object continuation lacks its live identity or controller");
-            odh::SessionObjectThread state;state.id=id;state.generation=object->generation;
-            state.guid=object->definition->guid;state.primary_owner=runtime->owner;
-            state.vm=runtime->vm->snapshot();state.sleep=runtime->sleep->snapshot();
-            std::set<odh::CodeOwner> owners;
-            for(const auto& frame:state.vm.stack)if(frame.context.code_owner)owners.insert(frame.context.code_owner);
-            if(state.vm.pending&&state.vm.pending->context.code_owner)owners.insert(state.vm.pending->context.code_owner);
-            for(const auto& pending:state.vm.suspended_pending)if(pending.context.code_owner)owners.insert(pending.context.code_owner);
-            const auto installed=installed_resource_owners.find(runtime->vm.get());
-            if(installed!=installed_resource_owners.end())for(const auto owner:installed->second)
-                if(runtime->vm->shared_program_for_owner(owner))owners.insert(owner);
-            for(const auto& item:resource_owner_provenance)
-                if(runtime->vm->shared_program_for_owner(item.first))owners.insert(item.first);
-            owners.insert(runtime->owner);
-            for(const auto owner:owners){
-                const auto found=resource_owner_provenance.find(owner);
-                if(found==resource_owner_provenance.end())throw odh::FormatError("runtime object code owner provenance is absent");
-                state.resource_owners.push_back(portable_owner(found->second));
-            }
-            bundle.object_threads.push_back(std::move(state));
-        }
-        for(auto& thread:bundle.object_threads)odh::resolve_object_thread_action_tree(thread);
-        std::sort(bundle.object_threads.begin(),bundle.object_threads.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+        bundle.object_threads=capture_current_object_threads(generic_execution);
         bundle.scheduler=entity_scheduler.snapshot();
         const auto capture_seated_continuation=[&](const odh::SessionRuntimeEntity& runtime){
             if(generic_execution)return;
@@ -14424,7 +14564,12 @@ struct PlacementCandidateProbe {
         // FAMI/NBRS/resource-authenticated household admission also creates
         // avatars absent from the original lot. Never guess all live bodies
         // are independent singleton groups.
-        if(session_context&&!session_context->single_resident_session)
+        if(property_release_active){
+            const auto add=[&](const auto& actor){const auto* live=world.find(actor.id);
+                if(live&&owned_property_actor_for_removal(actor.id,live->generation))standalone.push_back({live->id,live->generation});};
+            if(primary_runtime)add(*primary_runtime);for(const auto& actor:household_runtime)add(*actor);
+        }
+        if(session_context&&!session_context->single_resident_session&&!property_release_active)
             for(const auto& member:capture_household_roster(true)){
                 const auto* e=world.find(member.id);const auto* own=definition_index?definition_index->unique(member.guid):nullptr;
                 if(!e||e->generation!=member.generation||!e->definition||e->definition->guid!=member.guid||
@@ -15273,7 +15418,7 @@ struct PlacementCandidateProbe {
         ++runtime_frame_captures;
     };
     const auto total_steps=[&]{
-        auto steps=startup_steps+retired_object_steps+(primary_runtime?primary_vm().steps():0)-resumed_steps+(second_main_vm?second_main_vm->steps():0);
+        auto steps=startup_steps+retired_object_steps+(primary_runtime&&(!property_release_active||actor_services_for(runtime_avatar_id))?primary_vm().steps():0)-resumed_steps+(second_main_vm?second_main_vm->steps():0);
         for(const auto* member:auxiliary_actors)steps+=member->vm->steps();
         for(const auto& [id,runtime]:runtime_object_threads){(void)id;steps+=runtime->vm->steps();}
         for(const auto& call:saved_phone_calls)steps+=call.result.steps;
@@ -16543,8 +16688,10 @@ struct PlacementCandidateProbe {
     };
     const auto retire_npc_actor=[&](std::int16_t id,std::uint64_t generation){
         auto* actor=owned_npc_for_removal(id,generation);
+        const bool family_actor=!actor;
+        if(family_actor)actor=owned_property_actor_for_removal(id,generation);
         const auto* entity=world.find(id);
-        if(!actor||!entity||entity->attachment||id==active_household_actor)
+        if(!actor||!entity||entity->attachment||(id==active_household_actor&&!family_actor))
             throw odh::FormatError("NPC retirement lost independent visitor identity");
         const auto steps=actor->vm->steps();
         if(steps>std::numeric_limits<std::uint64_t>::max()-retired_object_steps)
@@ -16563,6 +16710,16 @@ struct PlacementCandidateProbe {
         resident_interaction_threads.erase(id);
         installed_resource_owners.erase(retired_vm);
         if(actor->npc_origin)retired_npc_origins.emplace(std::make_pair(id,generation),*actor->npc_origin);
+        if(family_actor){
+            const auto member=std::find_if(property_release_source_roster.begin(),property_release_source_roster.end(),[&](const auto& value){
+                return value.id==id&&value.generation==generation;});
+            if(member==property_release_source_roster.end()||!property_release_source_lease)
+                throw odh::FormatError("retired household lacks its exact authenticated source HHRD constructor identity");
+            odh::SessionRetiredHouseholdAvatar origin{*member,*property_release_source_lease,property_release_source_head};
+            odh::validate_retired_household_avatar_source(origin,property_source_bytes());
+            if(!retired_household_origins.emplace(std::make_pair(id,generation),std::move(origin)).second)
+                throw odh::FormatError("duplicate retired household source identity");
+        }
         if(!retire_runtime_object(id))
             throw odh::FormatError("NPC World retirement failed after scheduler cleanup");
 #ifdef ODH_HAVE_SDL_AUDIO
@@ -16579,9 +16736,16 @@ struct PlacementCandidateProbe {
         actor_service_registry.erase(registered);
         auxiliary_actors.erase(std::remove(auxiliary_actors.begin(),auxiliary_actors.end(),actor),auxiliary_actors.end());
         retired_object_steps+=steps;
-        const auto owned=std::find_if(npc_runtime.begin(),npc_runtime.end(),
-            [&](const auto& entry){return entry.get()==actor;});
-        npc_runtime.erase(owned);
+        if(!family_actor){
+            const auto owned=std::find_if(npc_runtime.begin(),npc_runtime.end(),
+                [&](const auto& entry){return entry.get()==actor;});
+            npc_runtime.erase(owned);
+        }else if(actor!=primary_runtime.get()){
+            const auto owned=std::find_if(household_runtime.begin(),household_runtime.end(),
+                [&](const auto& entry){return entry.get()==actor;});
+            if(owned==household_runtime.end())throw odh::FormatError("private household retirement lost its owning holder");
+            property_retired_actor_storage.push_back(std::move(*owned));household_runtime.erase(owned);
+        }
         // Shared immutable code/resource catalogs can still be installed in
         // another VM. Retain them; owner identities are never recycled.
         return true;
@@ -16623,7 +16787,8 @@ struct PlacementCandidateProbe {
             }
             bool removed=object&&object->generation==pending.generation&&
                 (object->kind==odh::EntityKind::object||
-                 (npc&&owned_npc_for_removal(pending.object,pending.generation)));
+                 (npc&&(owned_npc_for_removal(pending.object,pending.generation)||
+                        owned_property_actor_for_removal(pending.object,pending.generation))));
             if(removed&&prepare_native_delete){
                 if(active_native_delete||!pending.native||pending.native->target!=odh::WorldEntityReference{pending.object,pending.generation}||entity_scheduler.running()){
                     host_failed=true;host_diagnostic="native Delete lacks its unique stopped-scheduler retirement boundary";return;
@@ -18401,6 +18566,150 @@ struct PlacementCandidateProbe {
             " page="+std::to_string(presentation.page)+" material="+(material?std::to_string(material->id):"none"));
 #endif
     }
+#endif
+#ifdef __linux__
+    if(session_context&&session_context->prepare_property_release){
+        const auto& source_bytes=property_source_bytes();
+        // Candidate-local source eviction: the normal renderer, scheduler loop
+        // and full HOME save must never observe the partially retired family.
+        if(!session_context->family_journal||!session_context->property_release_source||
+           !session_context->property_release_identity||!session_context->resources||
+           session_context->single_resident_session||!session_context->family_journal->expected_overlay()||
+           session_context->family_journal->pending_purchase()||travel_state||
+           session_context->temporary_travel_arrival||second_main_vm||host_failed||entity_scheduler.running()||
+           !definition_index||!restored_world||!globals||globals->standalone||!render_lot||!render_materials||
+           !runtime_globals||!relationships||!runtime_object_trade||!object_history_complete)
+            throw odh::FormatError("property release requires an authenticated whole residential runtime at a stopped source boundary");
+        const auto source_path=session_context->family_journal->checkpoint_path();
+        if(!source_path||source_bytes.empty())
+            throw odh::FormatError("property release must restore its exact occupied archive before cleanup");
+        session_context->family_journal->validate_restore(source_bytes);
+        if(!pending_create_objects.empty()||!pending_remove_objects.empty()||!pending_npc_avatars.empty()||
+           !pending_object_scheduler_admissions.empty()||active_native_delete||active_object_constructions)
+            throw odh::FormatError("property release has unsettled source constructor/deletion work");
+        const auto initial_roster=capture_household_roster(true);
+        property_release_source_roster=initial_roster;
+        const auto source_capture=odh::decode_session_bundle(source_bytes,*session_context->resources);
+        property_release_source_lease=source_capture.family_lease;
+        property_release_source_head=odh::sha256(source_bytes.data(),source_bytes.size());
+        const auto start_tick=ticks;
+        struct PrivateReleaseScope {bool& active;explicit PrivateReleaseScope(bool& value):active(value){
+            if(active)throw odh::FormatError("nested private property release");active=true;
+        }~PrivateReleaseScope(){active=false;}} private_release(property_release_active);
+        const auto authority=[&]{
+            if(!property_release_active||host_failed||entity_scheduler.running()||ticks!=start_tick)return false;
+            session_context->family_journal->verify_current();return true;
+        };
+        odh_host::ObjectTradeResourceLibrary resources(session_context->game_root,*definition_index,globals->archive,globals->entry);
+        odh_host::PropertyReleaseRuntime release{world,*definition_index};
+        release.source_still_matches=authority;
+        const auto link=[&](std::optional<std::int16_t> id){
+            if(!id)return odh_host::PropertyReleaseLink{odh_host::PropertyReleaseLinkStatus::end,{}};
+            const auto* entity=world.find(*id);
+            return entity?odh_host::PropertyReleaseLink{odh_host::PropertyReleaseLinkStatus::member,{*id,entity->generation}}:
+                odh_host::PropertyReleaseLink{};
+        };
+        // This is the pin's actual VM.Entities ID order (VM.AddToObjList),
+        // NOT proof of the EXE's linked HEAD order after an ODHS restore.
+        release.profile=odh_host::PropertyReleaseTraversalProfile::pinned_vm_id_order;
+        release.first=[&]{return link(world.next_entity(0,{},true));};
+        release.next=[&](odh::WorldEntityReference ref){
+            return world.is_live_reference(ref)?link(world.next_entity(ref.id,{},true)):odh_host::PropertyReleaseLink{};
+        };
+        release.delete_entity=[&](odh::WorldEntityReference ref,std::string& why){
+            if(!authority()||!world.is_live_reference(ref))return false;
+            const auto* body=world.find(ref.id);
+            if(body->kind==odh::EntityKind::avatar&&!owned_npc_for_removal(ref.id,ref.generation)&&
+               !owned_property_actor_for_removal(ref.id,ref.generation)){
+                why="property actor has no exact resource/household runtime owner";return false;
+            }
+            // Direct source Delete at a stopped boundary. This is not a VM
+            // opcode and does not fabricate a Thread/ticket for the resident.
+            pending_remove_objects.emplace_back(nullptr,0,ref.id,ref.generation,true,true);
+            for(unsigned boundary=0;boundary<64;++boundary){
+                process_pending_create_objects();
+                if(!host_failed)process_pending_npc_avatars();
+                if(!host_failed)process_pending_remove_objects();
+                if(host_failed){why=host_diagnostic;return false;}
+                if(pending_create_objects.empty()&&pending_remove_objects.empty()&&pending_npc_avatars.empty()&&
+                   pending_object_scheduler_admissions.empty()&&pending_lifecycle_actor_admissions.empty())
+                    return !world.is_live_reference(ref);
+            }
+            why="source Delete callback boundary exceeded its bounded constructor/deletion drain";return false;
+        };
+        release.valuation=[&]{
+            ensure_house_financial_resources();const auto standalone=house_financial_standalones();
+            return odh_host::inspect_house_property({world,*restored_world,*definition_index,dynamic_object_groups,
+                standalone,render_lot->architecture_resource().architecture,
+                render_lot->runtime_architecture_resource().architecture,*house_original_underlay,
+                *house_financial_prices,*house_property_policy});
+        };
+        release.current_cash=[&]{if(!active_family)throw odh::FormatError("property release lost actual current cash owner");
+            return active_family->family.budget;};
+        release.export_type_attributes=[&]()->std::optional<odh::TypeAttributesSnapshot>{
+            return type_attributes?std::optional<odh::TypeAttributesSnapshot>{type_attributes->snapshot()}:std::nullopt;
+        };
+        release.export_architecture=[&]{
+            if(!render_lot->prepared_architecture())throw odh::FormatError("vacant property has no actual prepared architecture");
+            return odh::bind_architecture_snapshot(*render_lot->prepared_architecture(),render_materials->catalog);
+        };
+        release.export_objects=[&]{
+            // These are owned services after REAL retirement; never a full HOME
+            // archive with resident arrays manually erased.
+            for(const auto& body:world.snapshot().entities)if(body.kind==odh::EntityKind::avatar)
+                throw odh::FormatError("retained live actor requires an executable vacant avatar profile");
+            if(!collect_dead_execution_bodies())throw odh::FormatError("vacant source collection has no stopped safe point");
+            runtime_globals->clear_selection();
+            if(!runtime_globals->write(32,1))throw odh::FormatError("vacant source Simless global owner is unavailable");
+            runtime_globals_dirty=true; // TS1GameScreen.InitializeLot: no ActiveFamily -> Global32=1.
+            odh::ActorlessObjectTradeState out;out.resources=*session_context->resources;
+            out.world=world.snapshot();out.relationships=relationships->snapshot();
+            out.random_seed=random.seed();out.tick=ticks;out.globals=runtime_globals->snapshot();
+            if(simulation_clock)out.clock=simulation_clock->snapshot();
+            out.scheduler=entity_scheduler.snapshot();out.object_threads=capture_current_object_threads(true);
+            out.next_code_owner=next_saved_code_owner;out.code_owner_ids_exhausted=saved_owner_ids_exhausted;
+            out.history.complete=object_history_complete;out.history.reusable_entity_ids=true;
+            out.history.reserved_entity_ids=world.reserved_entity_ids();
+            const auto portable=[&](odh::SessionCreatedObject value){
+                value.source=odh_host::generic_session_source_key(session_context->game_root,value.source);return value;
+            };
+            for(const auto& pair:created_object_origins){const auto* current=world.find(pair.first);
+                if(current&&current->generation==pair.second.generation)out.created_objects.push_back(portable(pair.second));}
+            for(const auto& pair:retired_created_origins)out.history.retired_created_objects.push_back(portable(pair.second));
+            for(const auto& pair:retired_npc_origins)out.history.retired_npc_avatars.push_back(pair.second);
+            for(const auto& pair:retired_household_origins)out.history.retired_household_avatars.push_back(pair.second);
+            for(const auto& original:session_baseline->entities){const auto* current=world.find(original.id);
+                if(current&&current->generation==original.generation)continue;
+                if(original.kind==odh::EntityKind::object&&original.definition)
+                    out.removed_original_objects.push_back({original.id,original.generation,original.definition->guid});
+            }
+            out.trade=*runtime_object_trade;out.object_state=architecture_object_state;
+            if(!architecture_object_state)out.object_support=architecture_object_support;
+            if(build_buy_permission_was_saved||build_buy_permission_dirty||!build_buy_permission.enabled())
+                out.build_buy_permission=build_buy_permission.snapshot();
+            odh::ObjectGroupSnapshot groups;groups.retired_native_members=live_object_group_state.retired_native_members;
+            for(const auto& group:dynamic_object_groups)if(std::any_of(group.members.begin(),group.members.end(),[&](const auto& m){
+                return world.is_live_reference({m.id,m.generation});}))groups.groups.push_back(group);
+            if(!groups.groups.empty()||!groups.retired_native_members.empty())
+                out.object_groups=odh::capture_object_group_snapshot(std::move(groups),out.world);
+            odh::validate_actorless_object_trade_state(out);return out;
+        };
+        release.validate_reopen=[&](const odh_host::CommunityLotDocument& document){
+            const auto proof=odh_host::prepare_residential_property_retirement(*session_context->property_release_source,
+                *session_context->family_journal->expected_overlay(),session_context->family_chunk_id,
+                source_bytes,document,*definition_index,resolve_npc_avatar,resolve_retired_household_avatar);
+            (void)odh_host::prepare_community_object_scene(*restored_world,*document.objects,*definition_index,resources,proof);
+        };
+        auto prepared=odh_host::prepare_property_release_session(*session_context->property_release_source,
+            *session_context->family_journal->expected_overlay(),session_context->family_chunk_id,
+            source_bytes,*session_context->resources,*session_context->property_release_identity,std::move(release));
+        odh_host::PersonRunResult result;result.prepared_property_release=
+            std::make_shared<const odh_host::PreparedPropertyRelease>(std::move(prepared));
+        result.family_journal=session_context->family_journal;return result;
+    }
+#else
+    if(session_context&&session_context->prepare_property_release)
+        throw odh::FormatError("property release storage provider is unavailable on this host");
 #endif
     capture_frame();
     const auto queue_headless_window_interaction=[&]{

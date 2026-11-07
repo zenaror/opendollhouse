@@ -1,3 +1,4 @@
+#include "odh/sha256.hpp"
 #include "odh/session_bundle.hpp"
 #include "odh/actorless_object_trade.hpp"
 #include "odh/object_value_registry.hpp"
@@ -981,13 +982,14 @@ void decode_generic_execution(const std::vector<std::uint8_t>& bytes,SessionBund
 std::vector<std::uint8_t> encode_object_history(const SessionObjectHistory& history,const SessionBundleLimits& limits) {
     const bool resource_only=std::any_of(history.retired_npc_avatars.begin(),history.retired_npc_avatars.end(),[](const auto& o){return o.neighbor_id==0;});
     const bool masters=std::any_of(history.retired_created_objects.begin(),history.retired_created_objects.end(),[](const auto& o){return o.master_guid.has_value();});
-    Writer w(limits.archive.max_section_bytes);w.u16(masters?4:resource_only?3:history.reusable_entity_ids?2:1);w.u8(history.complete?1:0);
-    if(masters)w.u8(history.reusable_entity_ids?1:0);
+    const bool household=!history.retired_household_avatars.empty();
+    Writer w(limits.archive.max_section_bytes);w.u16(household?5:masters?4:resource_only?3:history.reusable_entity_ids?2:1);w.u8(history.complete?1:0);
+    if(masters||household)w.u8(history.reusable_entity_ids?1:0);
     w.u32(static_cast<std::uint32_t>(history.retired_created_objects.size()));
     for(const auto& object:history.retired_created_objects) {
         w.i16(object.id);w.u64(object.generation);w.u32(object.guid);
         w.string(object.source);w.string(object.asset);w.u16(object.definition_chunk_id);
-        if(masters)w.u32(object.master_guid.value_or(0));
+        if(masters||household)w.u32(object.master_guid.value_or(0));
     }
     w.u32(static_cast<std::uint32_t>(history.reserved_entity_ids.size()));
     for(const auto id:history.reserved_entity_ids)w.i16(id);
@@ -999,10 +1001,19 @@ std::vector<std::uint8_t> encode_object_history(const SessionObjectHistory& hist
             w.append(o.character_fingerprint.data(),o.character_fingerprint.size());
         }
     }
+    if(household){
+        w.u32(static_cast<std::uint32_t>(history.retired_household_avatars.size()));
+        for(const auto& o:history.retired_household_avatars){const auto& m=o.member;const auto& lease=o.source_lease;
+            w.i16(m.id);w.u64(m.generation);w.u32(m.guid);w.i16(m.neighbor_id);w.u16(m.object_definition_id);
+            w.string(m.character_asset);w.append(m.character_fingerprint.data(),32);
+            w.append(lease.neighborhood_identity.data(),32);w.append(lease.family_identity.data(),32);
+            w.u64(lease.occupancy_epoch);w.u16(lease.family_chunk_id);w.append(o.source_checkpoint_sha256.data(),32);
+        }
+    }
     return w.take();
 }
 SessionObjectHistory decode_object_history(const std::vector<std::uint8_t>& bytes) {
-    Reader r(bytes);const auto version=r.u16();if(version!=1&&version!=2&&version!=3&&version!=4)throw FormatError("unsupported object history version");
+    Reader r(bytes);const auto version=r.u16();if(version!=1&&version!=2&&version!=3&&version!=4&&version!=5)throw FormatError("unsupported object history version");
     const auto complete=r.u8();if(complete>1)throw FormatError("invalid object history completeness marker");
     SessionObjectHistory result;result.complete=complete!=0;result.reusable_entity_ids=version>=2;
     if(version>=4){const auto reusable=r.u8();if(reusable>1)throw FormatError("invalid object history reuse marker");result.reusable_entity_ids=reusable!=0;}
@@ -1024,6 +1035,17 @@ SessionObjectHistory decode_object_history(const std::vector<std::uint8_t>& byte
             for(auto& byte:o.character_fingerprint)byte=r.u8();
             result.retired_npc_avatars.push_back(std::move(o));
         }
+    }
+    if(version>=5){
+        const auto count=r.u32();if(count>4096)throw FormatError("retired household history exceeds limit");
+        for(std::uint32_t n=0;n<count;++n){SessionRetiredHouseholdAvatar o;auto& m=o.member;auto& lease=o.source_lease;
+            m.id=r.i16();m.generation=r.u64();m.guid=r.u32();m.neighbor_id=r.i16();m.object_definition_id=r.u16();
+            m.character_asset=r.string();for(auto& byte:m.character_fingerprint)byte=r.u8();
+            for(auto& byte:lease.neighborhood_identity)byte=r.u8();for(auto& byte:lease.family_identity)byte=r.u8();
+            lease.occupancy_epoch=r.u64();lease.family_chunk_id=r.u16();for(auto& byte:o.source_checkpoint_sha256)byte=r.u8();
+            result.retired_household_avatars.push_back(std::move(o));
+        }
+        if(result.retired_household_avatars.empty())throw FormatError("OHST5 requires explicit retired household provenance");
     }
     if(!r.done())throw FormatError("object history has trailing data");
     return result;
@@ -1445,7 +1467,7 @@ void validate_carried_route_value(const LocalRouteSnapshot& route,const SessionB
 }
 void validate_local_route_links(const SessionRuntimeEntity& entity,const Entity& actor,
                                 const std::vector<Entity>& world,const SessionBundleLimits& limits,
-                                bool check_pose=true,bool deferred=false,bool nested_request=false,bool external_frame_active=false,bool parked_failure_tree=false,bool external_standing=false) {
+                                bool check_pose=true,bool deferred=false,bool nested_request=false,bool external_frame_active=false,bool parked_failure_tree=false,bool external_standing=false,bool failed_selected_attempt=false) {
     const auto& vm=entity.vm;
     const auto* pending_instruction=vm.pending?&vm.pending->instruction.instruction:nullptr;
     const bool legacy_go_here=pending_instruction&&
@@ -1618,7 +1640,7 @@ void validate_local_route_links(const SessionRuntimeEntity& entity,const Entity&
             throw FormatError("deferred room route has invalid traversal state");
         return;
     }
-    const bool standing_before_walk=is_source_standing_before_walk(route);
+    const bool standing_before_walk=!failed_selected_attempt&&is_source_standing_before_walk(route);
     if(standing_before_walk&&((route.frame.state==RouteFrameState::stand_func&&!external_standing)||
        (route.frame.state==RouteFrameState::initial&&(actor.person_data.empty()||actor.person_data[0]!=1))))
         throw FormatError("source standing phase has no actual posture or external EP27");
@@ -1885,6 +1907,18 @@ void validate_route_links(const SessionRuntimeEntity& entity,const Entity& actor
         }
         if(job.source_choices){
             const auto& choices=*job.source_choices;const auto& selected=choices.selected;
+            if(job.failure_pending){
+                const auto& instruction=job.pending.instruction.instruction;
+                const auto relative=instruction.opcode==27?decode_source_goto_relative_position(instruction):std::nullopt;
+                const bool failure_policy=instruction.opcode==27?relative&&!relative->no_failure_trees:
+                    instruction.opcode==45&&(instruction.operands[4]&1U)==0;
+                if(!job.call_failure_trees||!failure_policy||job.failure_tree_invoked||job.external_frame_active||
+                   job.deferred_room_route||job.room_context_open||job.source_sparse||job.walking_started||
+                   job.frame.state!=RouteFrameState::initial||job.failure_code<=0||job.failure_reason.empty()||
+                   choices.chair_attempted||!choices.remaining.empty()||job.path.size()!=1||job.next!=1||
+                   !(job.path.front()==RoutePoint{job.expected.x,job.expected.y}))
+                    throw FormatError("source selected failed attempt lacks its unstarted pending/failure policy");
+            }
             const auto selected_id=selected.chair?std::optional<std::int16_t>{selected.chair->id}:std::nullopt;
             if((job.failure_tree_invoked&&!is_source_failure_tree_continuation(job))||
                job.selected_sitting_object!=selected_id||choices.remaining.size()!=job.fallback_goals.size()||
@@ -1953,7 +1987,7 @@ void validate_route_links(const SessionRuntimeEntity& entity,const Entity& actor
         auto request=entity;request.route_stack.reset();request.route=static_cast<const LocalRouteSnapshot&>(job);
         request.vm.pending=job.pending;request.vm.stack.resize(depth);request.vm.status=VmStatus::waiting;
         request.vm.suspended_pending.clear();request.vm.external_frame_return.reset();
-        validate_local_route_links(request,actor,world,limits,active&&!immediate_parent&&!job.external_frame_active,job.deferred_room_route,i!=0,job.external_frame_active,is_source_failure_tree_continuation(job),standing);
+        validate_local_route_links(request,actor,world,limits,active&&!immediate_parent&&!job.external_frame_active,job.deferred_room_route,i!=0,job.external_frame_active,is_source_failure_tree_continuation(job),standing,job.failure_pending&&job.source_choices.has_value());
     }
     std::set<std::uint64_t> expected_suspended;
     for(const auto& job:stack.jobs)if(job.external_frame_active&&
@@ -2551,9 +2585,9 @@ void validate_object_history(const SessionBundle& bundle) {
     }
     if(!bundle.generic_execution)throw FormatError("object history requires GEXP profile");
     const auto& history=*bundle.object_history;
-    if(history.retired_created_objects.size()>4096||history.retired_npc_avatars.size()>4096||history.reserved_entity_ids.size()>4096)
+    if(history.retired_created_objects.size()>4096||history.retired_npc_avatars.size()>4096||history.retired_household_avatars.size()>4096||history.reserved_entity_ids.size()>4096)
         throw FormatError("object history exceeds identity limits");
-    if(!history.reusable_entity_ids&&(!bundle.world.retained_entities.empty()||!history.retired_npc_avatars.empty()))
+    if(!history.reusable_entity_ids&&(!bundle.world.retained_entities.empty()||!history.retired_npc_avatars.empty()||!history.retired_household_avatars.empty()))
         throw FormatError("legacy object history cannot describe retained bodies or visitors");
     using Identity=std::pair<std::int16_t,std::uint64_t>;
     std::set<std::int16_t> live_ids,legacy_origin_ids;std::set<Identity> live,origins;
@@ -2594,6 +2628,18 @@ void validate_object_history(const SessionBundle& bundle) {
             throw FormatError("retired NPC provenance is invalid or aliases another identity");
         previous=identity;
     }
+    previous={};
+    for(const auto& record:history.retired_household_avatars){const auto& origin=record.member;const auto& lease=record.source_lease;
+        const Identity identity{origin.id,origin.generation};
+        if(origin.id<=0||identity<=previous||!origin.generation||origin.generation>bundle.world.generation_sequence||
+           !origin.guid||origin.neighbor_id<=0||!origin.object_definition_id||!canonical_npc_path(origin.character_asset)||
+           !nonzero_digest(origin.character_fingerprint)||!nonzero_digest(record.source_checkpoint_sha256)||
+           !nonzero_digest(lease.neighborhood_identity)||!nonzero_digest(lease.family_identity)||
+           !lease.occupancy_epoch||live.count(identity)||
+           !origins.insert(identity).second||!generations.insert(origin.generation).second)
+            throw FormatError("retired household provenance is invalid or aliases another identity");
+        previous=identity;
+    }
     for(const auto& body:bundle.world.retained_entities){
         if(!origins.count({body.id,body.generation})||!body.definition)
             throw FormatError("retained body has no exact origin history");
@@ -2603,11 +2649,14 @@ void validate_object_history(const SessionBundle& bundle) {
             [&](const auto& o){return o.id==body.id&&o.generation==body.generation;});
         const auto original=std::find_if(bundle.removed_original_objects.begin(),bundle.removed_original_objects.end(),
             [&](const auto& o){return o.id==body.id&&o.generation==body.generation;});
+        const auto household=std::find_if(history.retired_household_avatars.begin(),history.retired_household_avatars.end(),
+            [&](const auto& o){return o.member.id==body.id&&o.member.generation==body.generation;});
         const auto guid=created!=history.retired_created_objects.end()?created->guid:
-            npc!=history.retired_npc_avatars.end()?npc->guid:original!=bundle.removed_original_objects.end()?original->guid:0;
+            npc!=history.retired_npc_avatars.end()?npc->guid:household!=history.retired_household_avatars.end()?household->member.guid:
+            original!=bundle.removed_original_objects.end()?original->guid:0;
         if(body.definition->guid!=guid||
            (created!=history.retired_created_objects.end()&&body.definition->master_guid!=created->master_guid)||
-           (npc!=history.retired_npc_avatars.end()?body.kind!=EntityKind::avatar:body.kind!=EntityKind::object))
+           ((npc!=history.retired_npc_avatars.end()||household!=history.retired_household_avatars.end())?body.kind!=EntityKind::avatar:body.kind!=EntityKind::object))
             throw FormatError("retained body differs from its exact resource origin");
     }
 }
@@ -3745,6 +3794,30 @@ std::vector<SessionNpcAvatar> decode_npc_avatars(const std::vector<std::uint8_t>
 
 }
 
+bool same_session_retired_household_avatar(const SessionRetiredHouseholdAvatar& a,const SessionRetiredHouseholdAvatar& b){
+    return same_session_household_roster({a.member},{b.member})&&a.source_checkpoint_sha256==b.source_checkpoint_sha256&&
+        a.source_lease.neighborhood_identity==b.source_lease.neighborhood_identity&&a.source_lease.family_identity==b.source_lease.family_identity&&
+        a.source_lease.occupancy_epoch==b.source_lease.occupancy_epoch&&a.source_lease.family_chunk_id==b.source_lease.family_chunk_id;
+}
+void validate_retired_household_avatar_source(const SessionRetiredHouseholdAvatar& origin,const std::vector<std::uint8_t>& bytes){
+    if(sha256(bytes.data(),bytes.size())!=origin.source_checkpoint_sha256)
+        throw FormatError("retired household source archive digest differs");
+    const auto source=decode_session_bundle(bytes);
+    const auto& lease=origin.source_lease;
+    if(!source.family_lease||source.family_lease->neighborhood_identity!=lease.neighborhood_identity||
+       source.family_lease->family_identity!=lease.family_identity||source.family_lease->occupancy_epoch!=lease.occupancy_epoch||
+       source.family_lease->family_chunk_id!=lease.family_chunk_id||source.host.family_chunk_id!=lease.family_chunk_id)
+        throw FormatError("retired household source lease differs");
+    const auto member=std::find_if(source.household_roster.begin(),source.household_roster.end(),[&](const auto& value){
+        return same_session_household_roster({value},{origin.member});});
+    if(member==source.household_roster.end())throw FormatError("retired household source HHRD differs");
+    const auto body=std::find_if(source.world.entities.begin(),source.world.entities.end(),[&](const auto& value){
+        return value.id==member->id&&value.generation==member->generation;});
+    if(body==source.world.entities.end()||body->kind!=EntityKind::avatar||!body->definition||body->definition->guid!=member->guid||
+       body->person_data.size()<=61||body->person_data[31]!=member->neighbor_id||
+       static_cast<std::uint16_t>(body->person_data[61])!=lease.family_chunk_id)
+        throw FormatError("retired household source avatar differs from HHRD/lease");
+}
 bool same_session_household_roster(const std::vector<SessionHouseholdMember>& a,
     const std::vector<SessionHouseholdMember>& b) {
     return a.size()==b.size()&&std::equal(a.begin(),a.end(),b.begin(),[](const auto& x,const auto& y){

@@ -20,6 +20,7 @@ namespace odh {
 class PreparedHouseholdTransfer;
 class InstalledOccupancyRetirement;
 class PreparedTs1TravelReturn;
+struct NeighborhoodFamilySource;
 struct ArchitectureSnapshot;
 }
 
@@ -28,6 +29,8 @@ class LinuxWindow;
 class OriginalCursorPresentation;
 class LinuxSessionLog;
 class FamilySessionJournal;
+class PreparedPropertyRelease;
+struct CommunityLotIdentity;
 using NeighborhoodResumeCallback = std::function<std::optional<NeighborhoodMapRequest>()>;
 
 struct NeighborhoodTransitionRequest {
@@ -58,6 +61,7 @@ struct PersonRunResult {
     bool return_to_neighborhood=false;
     // Host presentation selection only; not part of the save or travel state.
     std::optional<std::uint8_t> presentation_speed;
+    std::shared_ptr<const PreparedPropertyRelease> prepared_property_release;
 };
 
 // Stable launch identity retained by the Linux runtime for save metadata.
@@ -83,6 +87,11 @@ struct SessionObjectCommand {
 };
 struct IntegratedSessionContext {
     std::shared_ptr<const odh::ArchitectureSnapshot> community_architecture;
+    // Authenticated launcher-owned request. Runtime prepares only, without
+    // scheduler ticks, presentation capture, normal saves or publication.
+    bool prepare_property_release=false;
+    std::shared_ptr<const odh::NeighborhoodFamilySource> property_release_source;
+    std::shared_ptr<const CommunityLotIdentity> property_release_identity;
     // Separate from residence/transfer: a visit retains the permanent family
     // and exact suspended home while the active session describes another lot.
     std::optional<odh::Ts1TravelState> travel_state;

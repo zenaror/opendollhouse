@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "community_lot_object_scene.hpp"
+#include "residential_property_scene.hpp"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -40,11 +41,12 @@ ActorlessObjectTradeState make_community_object_baseline(const SavedWorld& origi
     validate_actorless_object_trade_state(state);return state;
 }
 
-CommunityObjectScene prepare_community_object_scene(const SavedWorld& original,
+static CommunityObjectScene prepare_object_scene_impl(const SavedWorld& original,
         const ActorlessObjectTradeState& state,const DefinitionIndex& definitions,
-        ObjectTradeResourceLibrary& resources){
+        ObjectTradeResourceLibrary& resources,const ResidentialPropertyRetirementProof* retirement){
     need(original.world&&original.relationships,"community scene original World/relationships unavailable");
     validate_actorless_object_trade_state(state);
+    if(retirement)need(retirement->matches(state),"residential property changed after its retirement proof");
     const auto original_snapshot=original.world->snapshot();
     need(state.world.generation_sequence>=original_snapshot.generation_sequence,
         "community scene lifetime sequence predates original import");
@@ -72,7 +74,13 @@ CommunityObjectScene prepare_community_object_scene(const SavedWorld& original,
     // No visitor creation is available in this editor profile. Their saved
     // original entities may remain, but new identities need a future actor
     // loader and authenticated character provenance, not generic object art.
-    need(state.history.retired_npc_avatars.empty(),"community scene contains unsupported created visitor history");
+    if(retirement){
+        for(const auto& origin:state.history.retired_npc_avatars)
+            need(retirement->retired_npc(origin),"residential visitor retirement differs from authenticated provenance");
+        for(const auto& origin:state.history.retired_household_avatars)
+            need(retirement->retired_household(origin),"residential household retirement differs from authenticated provenance");
+    }else need(state.history.retired_npc_avatars.empty()&&state.history.retired_household_avatars.empty(),
+        "community scene contains unsupported created visitor or household history");
     std::set<std::int16_t> removed;
     for(const auto& origin:state.removed_original_objects){
         const auto old=initial.find(origin.id);
@@ -86,7 +94,8 @@ CommunityObjectScene prepare_community_object_scene(const SavedWorld& original,
         const auto live=current.find(id);
         if(live!=current.end()&&same_identity(*old,*live->second)){
             need(!removed.count(id),"community surviving original also marked removed");
-        }else need(removed.count(id),"community original identity missing without exact removal provenance");
+        }else need(removed.count(id)||(retirement&&retirement->retired_original_avatar(*old)),
+            "community original identity missing without exact removal provenance");
     }
     for(const auto& [id,live]:current){
         const auto old=initial.find(id);
@@ -164,6 +173,25 @@ CommunityObjectScene prepare_community_object_scene(const SavedWorld& original,
             scene.runtime_groups.push_back(group);scene.physical_groups.push_back(std::move(physical));
             continue;
         }
+        const bool imported=retirement&&std::all_of(group.members.begin(),group.members.end(),[&](const auto& part){
+            const auto before=initial.find(part.id),now=current.find(part.id);
+            return before!=initial.end()&&now!=current.end()&&!created.count(part.id)&&
+                now->second->generation==part.generation&&same_identity(*before->second,*now->second);
+        });
+        if(imported){
+            ObjectTradeGroup physical;physical.complete=true;
+            for(const auto& part:group.members){
+                need(grouped.insert(part.id).second,"residential imported membership overlaps");
+                const auto* own=definitions.unique(current.at(part.id)->definition->guid);
+                need(own,"residential imported member lacks its exact resource");
+                if(group.multitile){const auto* master=definitions.unique_master(*own);
+                    need(master&&master->definition.guid==group.definition_guid,"residential imported master differs");}
+                else need(own->definition.guid==group.definition_guid&&!own->definition.is_multitile,
+                    "residential imported singleton resource differs");
+                physical.members.push_back({part.id,part.generation});
+            }
+            scene.runtime_groups.push_back(group);scene.physical_groups.push_back(std::move(physical));continue;
+        }
         const auto resource=resources.load_group(group.definition_guid);
         need(resource.group&&resource.group->parts.size()==group.members.size()&&
             resource.group->multitile==group.multitile&&resource.group->base_index<group.members.size()&&
@@ -217,4 +245,14 @@ CommunityObjectScene prepare_community_object_scene(const SavedWorld& original,
     }
     return scene;
 }
+CommunityObjectScene prepare_community_object_scene(const SavedWorld& original,
+        const ActorlessObjectTradeState& state,const DefinitionIndex& definitions,ObjectTradeResourceLibrary& resources){
+    return prepare_object_scene_impl(original,state,definitions,resources,nullptr);
+}
+CommunityObjectScene prepare_community_object_scene(const SavedWorld& original,
+        const ActorlessObjectTradeState& state,const DefinitionIndex& definitions,ObjectTradeResourceLibrary& resources,
+        const ResidentialPropertyRetirementProof& retirement){
+    return prepare_object_scene_impl(original,state,definitions,resources,&retirement);
+}
+
 }

@@ -3032,6 +3032,38 @@ void retained_reference_archive_cases(){
         rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},
             "legacy OHST2 must not reinterpret retired resource-only NPC NeighborID zero");
     }
+    {
+        auto household=guest;household.object_history->retired_npc_avatars.clear();
+        odh::SessionRetiredHouseholdAvatar retired;retired.member={guest_origin.id,guest_origin.generation,guest_origin.guid,
+            guest_origin.neighbor_id,guest_origin.object_definition_id,"PlayerData/Characters/User3.iff",guest_origin.character_fingerprint};
+        retired.source_lease.neighborhood_identity.fill(1);retired.source_lease.family_identity.fill(2);
+        retired.source_lease.occupancy_epoch=3;retired.source_lease.family_chunk_id=21;retired.source_checkpoint_sha256.fill(4);
+        household.object_history->retired_household_avatars={retired};
+        const auto encoded=odh::encode_session_bundle(household);const auto decoded=odh::decode_session_bundle(encoded);
+        const auto archive=odh::decode_session_archive(encoded);
+        const auto section=std::find_if(archive.sections.begin(),archive.sections.end(),[](const auto& item){return item.id==std::array<char,4>{{'O','H','S','T'}};});
+        require(section!=archive.sections.end()&&section->data.front()==5&&decoded.object_history->retired_npc_avatars.empty()&&
+            decoded.world.retained_entities.size()==1&&decoded.object_history->retired_household_avatars.size()==1&&
+            odh::same_session_retired_household_avatar(retired,decoded.object_history->retired_household_avatars.front())&&
+            odh::encode_session_bundle(decoded)==encoded,"OHST5 preserves distinct retired household role and live foreign Thread reference");
+        {auto original_family_zero=household;original_family_zero.object_history->retired_household_avatars.front().source_lease.family_chunk_id=0;
+            require(odh::decode_session_bundle(odh::encode_session_bundle(original_family_zero)).object_history->retired_household_avatars.front().source_lease.family_chunk_id==0,
+                "original FAMI chunk zero remains a real historical identity");}
+        for(unsigned scenario=0;scenario<10;++scenario){auto bad=household;auto& value=bad.object_history->retired_household_avatars.front();
+            switch(scenario){case 0:value.source_lease.occupancy_epoch=0;break;
+            case 1:value.source_lease.family_identity.fill(0);break;case 2:value.source_checkpoint_sha256.fill(0);break;
+            case 3:value.member.character_asset="../User3.iff";break;
+            case 4:bad.object_history->retired_household_avatars.push_back(value);break;
+            case 5:bad.object_history->retired_npc_avatars={guest_origin};break;
+            case 6:++value.member.guid;break;case 7:value.member.generation=UINT64_MAX;break;
+            case 8:value.member.character_fingerprint.fill(0);break;case 9:value.member.id=1;break;}
+            rejects([&]{odh::encode_session_bundle(bad);},"malformed/aliased retired household provenance accepted");
+        }
+        auto wire=archive;auto& bytes=wire.sections.at(static_cast<std::size_t>(section-archive.sections.begin())).data;
+        bytes.pop_back();rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(wire));},"truncated household history accepted");
+        household.object_history->retired_household_avatars.clear();household.object_history->retired_npc_avatars={guest_origin};
+        require(odh::encode_session_bundle(household)==guest_bytes,"absence of household origins preserves exact legacy OHST bytes");
+    }
     auto legacy=fixture();require(world.bind_context_live(frame.context),"existing bound context unchanged");
     legacy.runtime_entities.front().vm.stack={frame};legacy.runtime_entities.front().vm.stack.front().context={1,1,30000,0};
     rejects([&]{odh::bind_legacy_session_entity_references(legacy,world);},"native legacy missing body must not be silently invented as nil");

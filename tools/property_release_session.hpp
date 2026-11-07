@@ -7,6 +7,7 @@
 #include <functional>
 
 namespace odh_host {
+enum class PropertyReleaseTraversalProfile : std::uint16_t { unknown=0, original_linked_head=1, pinned_vm_id_order=2 };
 enum class PropertyReleaseLinkStatus { member,end,unavailable };
 struct PropertyReleaseLink {
     PropertyReleaseLinkStatus status=PropertyReleaseLinkStatus::unavailable;
@@ -40,6 +41,7 @@ struct PropertyReleaseRuntime {
     // Real resource reconstruction/activation validation of the entire document,
     // including actor retirement provenance. No UI/old resident VM is reused.
     std::function<void(const CommunityLotDocument&)> validate_reopen;
+    PropertyReleaseTraversalProfile profile=PropertyReleaseTraversalProfile::unknown;
 };
 class PreparedPropertyRelease {
 public:

@@ -11,6 +11,9 @@
 #include <set>
 #include <algorithm>
 #include <sstream>
+#include <cstdlib>
+#include <iostream>
+#include <string_view>
 namespace odh_host {
 struct HouseholdPlacementResource {
     std::string source,entry;
@@ -174,15 +177,39 @@ inline odh::HouseholdPlacementBindings make_household_placement_bindings(std::sh
         return std::move(edges.edges);
     };
     bindings.wall_diagnostic=[wall_diagnostic]{return *wall_diagnostic;};
-    bindings.destination_conflict=[state](const auto& inv,auto caller,const odh::Ts1PlacementGoal& goal)->std::optional<bool>{
-        if(!state->vm_for||!state->routing_for||!inv.source_still_matches())return {};
+    const bool trace_slot_destination=[](){const auto* value=std::getenv("ODH_TRACE_SLOT_DESTINATION");return value&&std::string_view(value)=="1";}();
+    const auto destination_unknowns=std::make_shared<std::size_t>(0);
+    bindings.destination_conflict=[state,trace_slot_destination,destination_unknowns](const auto& inv,auto caller,const odh::Ts1PlacementGoal& goal)->std::optional<bool>{
+        const auto unknown=[&](const std::string& why,std::int16_t avatar=0,const odh::Vm* vm=nullptr)->std::optional<bool>{
+            if(trace_slot_destination&&*destination_unknowns<=32){
+                const auto index=(*destination_unknowns)++;
+                if(index==32)std::cerr<<"SLOT destination unknown diagnostics truncated\n";
+                else{
+                    const auto* body=state->world.find(avatar);
+                    std::cerr<<"SLOT destination unknown caller="<<caller.id<<'/'<<caller.generation
+                        <<" avatar="<<avatar<<" avatar_generation="<<(body?std::to_string(body->generation):"none")
+                        <<" owner="<<inv.frame.context.code_owner<<" routine="<<inv.frame.key.id<<" pc="<<inv.frame.pc
+                        <<" candidate="<<goal.position.x<<','<<goal.position.y<<','<<goal.position.level
+                        <<" reason="<<why;
+                    if(vm){std::cerr<<" vm_run="<<vm->run_generation()<<" vm_status="<<odh::vm_status_name(vm->status())
+                        <<" stack_depth="<<vm->stack().size();
+                        if(vm->pending())std::cerr<<" pending_opcode="<<vm->pending()->instruction.instruction.opcode
+                            <<" pending_ticket="<<vm->pending()->ticket;
+                        else std::cerr<<" pending=none";
+                    }std::cerr<<'\n';
+                }
+            }return {};
+        };
+        if(!state->vm_for||!state->routing_for||!inv.source_still_matches())return unknown("missing resolver or stale source invocation");
         for(std::int16_t cursor=0;;){const auto next=state->world.next_entity(cursor,odh::EntityKind::avatar);if(!next)break;cursor=*next;
             if(cursor==caller.id)continue;auto* vm=state->vm_for(cursor);auto* routing=state->routing_for(cursor);
-            if(!vm)return {}; // Native avatars have threads; absence is not no route.
-            if(routing){const auto intersects=routing->intersects_destination({goal.position.x,goal.position.y},goal.chair.id?std::optional<std::int16_t>{goal.chair.id}:std::nullopt);
-                if(!intersects)return {};if(*intersects)return true;}
-            else{for(const auto& frame:vm->stack())if(frame.return_mode==odh::VmCallReturnMode::external_frame_next_tick)return {};
-                if(vm->pending()&&(vm->pending()->instruction.instruction.opcode==27||vm->pending()->instruction.instruction.opcode==45))return {};}}
+            if(!vm)return unknown("avatar VM owner is unavailable",cursor); // Never invent no-route.
+            if(routing){std::string why;const auto intersects=routing->intersects_destination({goal.position.x,goal.position.y},goal.chair.id?std::optional<std::int16_t>{goal.chair.id}:std::nullopt,&why);
+                if(!intersects)return unknown("route destination unresolved: "+why,cursor,vm);if(*intersects)return true;}
+            else{for(const auto& frame:vm->stack())if(frame.return_mode==odh::VmCallReturnMode::external_frame_next_tick)
+                    return unknown("external routing frame has no routing owner",cursor,vm);
+                if(vm->pending()&&(vm->pending()->instruction.instruction.opcode==27||vm->pending()->instruction.instruction.opcode==45))
+                    return unknown("pending routing primitive has no routing owner",cursor,vm);}}
         return false;};
     bindings.random=[state](const auto& inv,std::uint64_t limit)->std::optional<std::uint64_t>{
         if(!limit||!inv.source_still_matches())return {};return state->random.next(limit);};

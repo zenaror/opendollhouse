@@ -1,4 +1,6 @@
 #include "person_runtime.hpp"
+#include "property_release_session.hpp"
+#include "residential_property_scene.hpp"
 #include "simulation_speed.hpp"
 #ifdef ODH_HAVE_X11
 #include "original_cursor_presentation.hpp"
@@ -1369,10 +1371,11 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             if (!journal.checkpoint_path() || !prepare_lot_transfer(source, *family_overlay, id,
                     static_cast<std::uint16_t>(*options.house)))
                 throw odh::FormatError("managed move-out requires a current transferable checkpoint");
-            const auto next = odh::plan_family_managed_move_out_overlay(source.families, source.identity, &*family_overlay, id);
-            odh_host::compare_exchange_linux_family_overlay_atomic(odh_host::linux_family_overlay_path(source.identity,storage), family_overlay, next);
-            std::cout << "{\"status\":\"moved_out\",\"family_chunk_id\":" << id << "}\n";
-            return 0;
+            // Validate the portable household before preparing real filtering.
+            // Actual money/vacancy/head publication occurs only after the same
+            // integrated runtime returns its typed prepared release below.
+            options.load_session=journal.checkpoint_path();
+            options.load_session_advisory=false;
         }
         if (options.headless_move_in_family) {
             const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
@@ -2596,6 +2599,16 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 };
 #endif
                 session_context.family_journal = std::move(family_journal);
+                if(options.headless_move_out_family){
+                    if(!session_context.family_journal||session.family_chunk_id!=*options.headless_move_out_family||
+                       temporary_trip||options.single_resident_session)
+                        throw odh::FormatError("property release selection differs from its current occupied family");
+                    session_context.prepare_property_release=true;
+                    session_context.property_release_source=std::make_shared<const odh::NeighborhoodFamilySource>(
+                        odh::load_neighborhood_family_source(userdata/"Neighborhood.iff"));
+                    session_context.property_release_identity=std::make_shared<const odh_host::CommunityLotIdentity>(
+                        odh_host::community_lot_identity(community_lot_store_options(game,userdata,storage,options.mode,house)));
+                }
                 session_context.family_transfer = std::move(family_transfer);
                 session_context.occupancy_retirement = std::move(occupancy_retirement);
                 options.restore_bundle.reset(); // Runtime revalidates its candidate independently.
@@ -2705,6 +2718,23 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     if (!rollback_options) return result.exit_code;
                     throw odh::FormatError("destination runtime failed with exit code " + std::to_string(result.exit_code));
                 }
+                if(options.headless_move_out_family){
+                    if(!result.prepared_property_release||result.transition||result.temporary_travel)
+                        throw odh::FormatError("property runtime did not return its unique prepared release");
+                    const auto& prepared=*result.prepared_property_release;
+                    const auto source=odh::load_neighborhood_family_source(userdata/"Neighborhood.iff");
+                    const auto publication=odh_host::publish_property_release_session(source,
+                        community_lot_store_options(game,userdata,storage,options.mode,house),prepared);
+                    // This runtime has retired its residents. Whether durability
+                    // is confirmed or uncertain, never run it or refund again.
+                    std::cout<<"{\"status\":\"moved_out\",\"family_chunk_id\":"<<*options.headless_move_out_family
+                        <<",\"refund\":"<<prepared.refund()<<",\"vacant_purchase_value\":"<<prepared.release().vacant_purchase_value
+                        <<",\"deleted_roots\":"<<prepared.deleted_roots()<<",\"durability_uncertain\":"
+                        <<(publication.durability_uncertain?"true":"false")<<"}\n";
+                    return 0;
+                }
+                if(result.prepared_property_release)
+                    throw odh::FormatError("unexpected property release without a launcher-owned request");
                 if(result.presentation_speed){
                     if(!odh_host::valid_simulation_speed(*result.presentation_speed))
                         throw odh::FormatError("runtime returned an invalid presentation speed");

@@ -10,7 +10,7 @@ parcial. Ainda não há uma versão completa jogável publicada.
 | Escola e carreira | Retorno de escola/trabalho, promoção, salário e bônus observados. | Ampliar carreiras, horários e progressão. |
 | Salvamento | Partidas delimitadas salvam e reabrem preservando o estado. | Continuidade também após viagens, edição e gestão de famílias. |
 | Famílias e lotes | Percurso sem janela: criar adulto e criança com §20.000, comprar casa e sofá, editar piso, salvar e reabrir. Depois, avaliar a propriedade, mudar para outro lote com saldo de §16.498 e reabrir preservando o arquivo salvo inteiro, identidades e necessidades conferidas. | Preservação correta da casa desocupada, avaliação obrigatória em todas as entradas de mudança, demais dados pessoais, renomear, excluir e cancelamentos; conferir o conjunto pelas telas do jogo. |
-| Expansões | Viagem ao Centro, atividade com aumento de Diversão e reabertura no destino. O retorno já publica um salvamento em casa, mas a chegada ainda apresenta uma falha de posicionamento do táxi. | Concluir chegada, transferência do progresso do Sim, reabertura em casa e acompanhantes; cobrir as regras próprias das sete expansões. Nenhuma expansão aceita como completa. |
+| Expansões | Percurso sem janela: Centro, atividade com efeito em Diversão, salvar/reabrir no destino e voltar para casa. As necessidades do viajante são restauradas e o salvamento em casa reabre idêntico. | A continuação ainda falha ao retirar o táxi. Concluir essa chegada, conferir acompanhantes e cobrir as regras próprias das sete expansões. Nenhuma expansão aceita como completa. |
 | Personagens e animais | Peças compartilhadas de aparência e comportamento. | Animais, bebês e demais ciclos ainda sem cobertura completa. |
 | Interface e áudio | Implementação nativa e reconstrução parcial da interface original. | Todas as telas, acabamento, animação, iluminação e áudio. |
 | Idiomas e conteúdo personalizado | Leitura de textos e partes do suporte a conteúdo clássico. | Conferência representativa dentro dos percursos completos e uso/salvamento de conteúdo personalizado. |
@@ -19,7 +19,7 @@ parcial. Ainda não há uma versão completa jogável publicada.
 Os resultados acima vêm de cenários e revisões diferentes. Não são uma prova de
 que todos os recursos já funcionam juntos na revisão atual.
 
-As próximas entregas são **viajar ao Centro e voltar** e **completar mudanças e
-gestão de família, incluindo a casa deixada vazia após a mudança**. Veja os critérios no [plano](native-port-plan.md).
+As próximas entregas são **concluir a chegada do Centro sem interromper a partida**
+e **completar a gestão de famílias e a preservação da casa desocupada**. Veja os critérios no [plano](native-port-plan.md).
 Atualizar esta página quando mudar uma entrega ou limitação relevante, sem
 transformá-la em diário de tentativas. Não medir conclusão por arquivos ou testes.

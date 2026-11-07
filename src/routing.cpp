@@ -1104,7 +1104,8 @@ bool is_source_standing_before_walk(const LocalRouteSnapshot& route) noexcept {
 bool Routing::validate_source_slot_choices(const Job& job,std::string* why) const {
     const auto reject=[&](const char* text){if(why)*why=text;return false;};
     if(!job.source_choices)return true;
-    if(!vm_||!general_slot_provider_)return reject("source choices require the general provider");
+    if(!vm_||(!general_slot_provider_&&!job.failure_pending&&!job.failure_tree_invoked))
+        return reject("source choices require the general provider or a retained failed attempt");
     const auto& choices=*job.source_choices;
     if(job.source_circle||job.source_range||job.look_towards||choices.slot.type!=3||choices.slot_version<4||choices.slot_version>10||
        choices.slot_index>65535||choices.remaining.size()>4095||!std::isfinite(choices.target_radian_direction))return reject("source choice manifest metadata is invalid");
@@ -1124,6 +1125,22 @@ bool Routing::validate_source_slot_choices(const Job& job,std::string* why) cons
             if(scope==0){if(index>=frame.arguments.size()||frame.arguments[index]<0)return reject("source choice argument slot index is invalid");index=static_cast<std::size_t>(frame.arguments[index]);}}
         else return reject("source choices have an invalid routing scope");
     }else return reject("source choices do not belong to Route45 or source27");
+    if(job.failure_pending){
+        const auto relative_request=instruction.opcode==27?decode_source_goto_relative_position(instruction):std::nullopt;
+        const bool failure_policy=instruction.opcode==27?relative_request&&!relative_request->no_failure_trees:
+            instruction.opcode==45&&(instruction.operands[4]&1U)==0;
+        if(!job.call_failure_trees||!failure_policy||job.failure_tree_invoked||job.external_frame_active||
+           job.deferred_room_route||job.room_context_open||job.source_sparse||job.source_motion||job.walking_started||
+           job.frame.state!=RouteFrameState::initial||job.failure_code<=0||job.failure_reason.empty()||
+           choices.chair_attempted||!choices.remaining.empty()||job.path.size()!=1||job.next!=1||
+           !(job.path.front()==RoutePoint{job.expected.x,job.expected.y})||
+           frame.context.caller!=job.actor||frame.context.stack_object!=job.target||
+           !vm_context_equal(frame.context,pending->context)||
+           pending->instruction.code_owner!=frame.context.code_owner||
+           pending->instruction.key.scope!=frame.key.scope||pending->instruction.key.id!=frame.key.id||
+           pending->instruction.pc!=frame.pc)
+            return reject("failed source choice lacks its exact unstarted failure/pending authority");
+    }
     const auto* slot=table?slot_of_type(*table,3,index):nullptr;
     if(!table||table->version!=choices.slot_version||index!=choices.slot_index||!slot||!same_slot_record(*slot,choices.slot))
         return reject("source choice resource does not match the exact installed SLOT");
@@ -1164,7 +1181,7 @@ bool Routing::validate_source_slot_choices(const Job& job,std::string* why) cons
         if(!job.source_sparse||job.path.empty()||!(job.path.back()==choices.selected.position)||(choices.chair_attempted&&!choices.selected.chair))
             return reject("source standing choice has no matching AttemptWalk continuation");
     }
-    if(is_source_standing_before_walk(local_snapshot(job))){
+    if(!job.failure_pending&&!job.failure_tree_invoked&&is_source_standing_before_walk(local_snapshot(job))){
         const auto* actor=world_.find(job.actor);
         const bool active=job.external_frame_purpose==RouteExternalFramePurpose::standing;
         if(!actor||actor->person_data.empty()||(!active&&actor->person_data[0]!=1)||
@@ -1182,6 +1199,7 @@ bool Routing::valid_local_session_job(const Job& job,std::optional<CodeOwner> ve
     if(rejection_reason)rejection_reason->clear();
     if(!vm_)return reject("route controller is not bound to a VM");
     if(executing_)return reject("route callback is still running");
+    if(job.failure_pending||job.failure_tree_invoked)return reject("failed source route requires its full pending/failure-tree stack");
     if(job.look_towards)return valid_look_towards_job(job,verified_dynamic_owner,rejection_reason);
     if(job.room_route_replan_active)return reject("architecture room replan requires the full route stack");
     if(job.source_choices){
@@ -2476,8 +2494,26 @@ std::optional<bool> Routing::intersects_destination(RoutePoint point,
     if(!job_)return false;
     std::string unknown;
     const auto test=[&](const Job& job){
-        const auto reject=[&](const char* why){
-            if(unknown.empty())unknown="route ticket "+std::to_string(job.ticket)+": "+why;
+        const auto reject=[&](const std::string& why){
+            if(unknown.empty()){
+                unknown="route ticket "+std::to_string(job.ticket)+": "+why+
+                    " state="+std::to_string(static_cast<unsigned>(job.frame.state))+
+                    " paths="+std::to_string(job.path.size())+" next="+std::to_string(job.next)+
+                    " failure_pending="+std::to_string(job.failure_pending)+
+                    " failure_tree="+std::to_string(job.failure_tree_invoked)+
+                    " failure_code="+std::to_string(job.failure_code)+
+                    " deferred="+std::to_string(job.deferred_room_route)+
+                    " external="+std::to_string(job.external_frame_active)+
+                    " source_choices="+std::to_string(job.source_choices.has_value())+
+                    " source_circle="+std::to_string(job.source_circle.has_value())+
+                    " source_range="+std::to_string(job.source_range.has_value())+
+                    " source_sparse="+std::to_string(job.source_sparse.has_value())+
+                    " look_towards="+std::to_string(job.look_towards.has_value())+
+                    " restored="+std::to_string(job.diagnostic_restored)+
+                    " actor="+std::to_string(job.actor)+"/"+std::to_string(job.actor_generation)+
+                    " target="+std::to_string(job.target)+"/"+std::to_string(job.target_generation)+
+                    " failure_reason="+job.failure_reason;
+            }
             return false;
         };
         if(!vm_||job.run_generation!=vm_->run_generation())return reject("VM generation is stale");
@@ -2509,17 +2545,21 @@ std::optional<bool> Routing::intersects_destination(RoutePoint point,
             // evidence; emptiness of a coarse path is not sufficient proof.
             return reject("deferred route has no proven SLOT pre-selection state");
         }
-        if(job.path.empty()||!job.next||job.next>job.path.size())
-            return reject("selected destination path is unavailable");
         if(job.source_circle&&job.source_range)return reject("selected destination kinds overlap");
         if(job.source_choices){
+            if(job.failure_pending){std::string why;if(!validate_source_slot_choices(job,&why))
+                return reject("failed selected destination manifest is not authenticated: "+why);}
             const auto& selected=job.source_choices->selected;
             if(selected.chair){const auto* chair=world_.find(selected.chair->id);
                 if(!chair||chair->generation!=selected.chair->generation)return reject("selected chair identity is stale");
                 if(candidate_chair==std::optional<std::int16_t>{selected.chair->id})return true;}
             const auto dx=static_cast<std::int64_t>(point.x)-selected.position.x,dy=static_cast<std::int64_t>(point.y)-selected.position.y;
-            return dx*dx+dy*dy<64;
+            // CurRoute survives failed AttemptWalk. Its source occupancy is
+            // the inclusive VMObstacle rectangle, independent of a motion path.
+            return dx>=-6&&dx<=6&&dy>=-6&&dy<=6;
         }
+        if(job.path.empty()||!job.next||job.next>job.path.size())
+            return reject("selected destination path is unavailable");
         if(candidate_chair&&job.selected_sitting_object==candidate_chair){
             // The common direct-chair request carries the selected chair's
             // generation as its target identity. Other sitting discoveries
@@ -2932,6 +2972,15 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(immediate){immediate->actor={actor->id,actor->generation};immediate->target={target->id,target->generation};
         immediate->actor_position=actor->position;immediate->target_position=target->position;
         immediate->nested_depth=suspended_jobs_.size()+(nested_request?1U:0U);}
+    // CurRoute is selected before AttemptWalk. A rejected walk does not erase
+    // that source destination: other avatars still consult it during failure398.
+    std::optional<SourceSlotChoicesSnapshot> last_attempted_choice;
+    const auto remember_attempt=[&](const SourceSlotChoiceGoal& goal){
+        if(!slot||!selected_slots||selected_slots->version<4||selected_slots->version>10||slot->type!=3)return;
+        SourceSlotChoicesSnapshot choice;choice.slot_version=selected_slots->version;
+        choice.slot_index=slot_index;choice.slot=*slot;choice.target_radian_direction=source_slot_object_radians(*target);
+        choice.selected=goal;last_attempted_choice=std::move(choice);
+    };
     const auto fail_route=[&](std::int16_t code,const std::string& reason,std::int16_t blocker=0) -> PrimitiveOutcome {
         report_goal_selection("failed",reason);
         diagnostic_=reason;
@@ -2951,6 +3000,14 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         failed.run_generation=vm_->run_generation();
         failed.call_failure_trees=true;failed.failure_pending=true;
         failed.failure_code=code;failed.failure_blocker=blocker;failed.failure_reason=reason;
+        if(last_attempted_choice){
+            const auto& choice=last_attempted_choice->selected;
+            failed.path={{actor->position->x,actor->position->y}}; // Unstarted, not a motion path.
+            failed.entry_flags=choice.entry_flags;failed.facing=choice.facing;failed.face_anywhere=choice.face_anywhere;
+            failed.arrival_radian_direction=choice.radian_direction;
+            failed.selected_sitting_object=choice.chair?std::optional<std::int16_t>{choice.chair->id}:std::nullopt;
+            failed.source_choices=std::move(last_attempted_choice);
+        }
         job_=std::move(failed);
         return {PrimitiveDisposition::wait,reason};
     };
@@ -3010,16 +3067,17 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             if(!source_sparse_services_.place||!source_sparse_services_.begin_locomotion||
                !source_sparse_services_.end_locomotion||!source_sparse_services_.publish_motion)
                 return unsupported("source sparse routing requires placement, locomotion and feedback services");
-            if(!check_attempt_walk(goal)){
-                if(execution_callback_error)return unsupported(*execution_callback_error);
-                return fail_route(7,"GotoRelativePosition target rejected by source AttemptWalk");
-            }
-            WalkMotionProfile profile{};std::vector<LiveAttemptWalkIdentity> considered;
             const bool face_anywhere=i.operands[3]==255;
             const auto arrival=face_anywhere?actor->position->direction:
                 i.operands[3]==254?std::uint8_t{4}:
                 static_cast<std::uint8_t>((target->position->direction+i.operands[3])&7U);
             const auto radians=static_cast<float>(static_cast<double>(arrival)*(source_pi/4.0));
+            remember_attempt({goal,0,arrival,radians,face_anywhere,{},actor->position->level});
+            if(!check_attempt_walk(goal)){
+                if(execution_callback_error)return unsupported(*execution_callback_error);
+                return fail_route(7,"GotoRelativePosition target rejected by source AttemptWalk");
+            }
+            WalkMotionProfile profile{};std::vector<LiveAttemptWalkIdentity> considered;
             auto plan=source_sparse_plan(frame,i,dispatch,actor->id,actor->generation,target->id,target->generation,
                 *actor->position,*target->position,goal,0,face_anywhere?std::nullopt:std::optional<float>{radians},
                 captured_sparse_consideration,profile,considered);
@@ -3212,6 +3270,9 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
                 if(general_source_slot&&source_range_result->semantic_goals[n].level!=actor_position.level)
                     return unsupported("source SLOT goal changes floor without an admitted inter-floor route");
                 if(general_source_slot&&(accepted[n].sitting_object||source_stand_before_walk)){chosen=n;break;}
+                if(general_source_slot)remember_attempt(source_range_result->semantic_goals[n]);
+                else if(accepted[n].radian_direction)remember_attempt({accepted[n].position,accepted[n].entry_flags,
+                    accepted[n].facing,*accepted[n].radian_direction,slot->facing==-3,{},actor_position.level});
                 if(general_source_slot&&!check_attempt_walk(accepted[n].position)){
                     if(execution_callback_error)return unsupported(*execution_callback_error);
                     continue;}
@@ -3307,6 +3368,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             if(!source_sparse_services_.place||!source_sparse_services_.begin_locomotion||
                !source_sparse_services_.end_locomotion||!source_sparse_services_.publish_motion)
                 return unsupported("source sparse routing requires placement, locomotion and feedback services");
+            remember_attempt({goal,0,source_point_candidate->facing,source_point_candidate->radian_direction,
+                source_point_candidate->face_anywhere,{},source_point_candidate->position.level});
             if(!check_attempt_walk(goal)){
                 if(execution_callback_error)return unsupported(*execution_callback_error);
                 return fail_route(7,"source exact SLOT point rejected by source AttemptWalk");

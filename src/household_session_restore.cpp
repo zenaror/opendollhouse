@@ -64,7 +64,7 @@ const SessionRuntimeEntity* dynamic_route_resident(const SessionBundle& bundle) 
 }
 WorldSnapshot session_restore_baseline(const SessionBundle& bundle,const WorldSnapshot& original,
         const SessionCreatedObjectResolver& resolve,const SessionNpcAvatarResolver& resolve_npc,
-        const SessionTravelAvatarResolver& resolve_traveler) {
+        const SessionTravelAvatarResolver& resolve_traveler,const SessionRetiredHouseholdAvatarResolver& resolve_retired_household) {
     auto expected=original;
     if(!bundle.generic_execution)return expected;
     for(const auto& removed:bundle.removed_original_objects){
@@ -86,6 +86,29 @@ WorldSnapshot session_restore_baseline(const SessionBundle& bundle,const WorldSn
                !metadata.definition||metadata.definition->guid!=origin.guid||metadata.ui_ghost||metadata.attachment||metadata.position)
                 throw FormatError("retained created resource constructor returned incompatible metadata");
             expected.retained_entities.push_back(std::move(metadata));
+        }
+        for(const auto& origin:bundle.object_history->retired_household_avatars){const auto& member=origin.member;
+            // Every historical record needs its sealed source/resource owner,
+            // even after its body was legitimately collected. No active-FAMI
+            // membership or NPC constructor is borrowed for the previous family.
+            if(!resolve_retired_household)throw FormatError("retired household history lacks its historical source/resource resolver");
+            auto metadata=resolve_retired_household(origin);
+            if(metadata.id!=member.id||metadata.generation!=member.generation||metadata.kind!=EntityKind::avatar||
+               !metadata.definition||metadata.definition->guid!=member.guid||metadata.ui_ghost||metadata.dead||
+               metadata.attachment||metadata.position||metadata.person_data.size()<=61||
+               metadata.person_data[31]!=member.neighbor_id||
+               static_cast<std::uint16_t>(metadata.person_data[61])!=origin.source_lease.family_chunk_id)
+                throw FormatError("retired household resource constructor returned incompatible metadata");
+            const auto old=std::find_if(expected.entities.begin(),expected.entities.end(),[&](const auto& value){
+                return value.id==member.id&&value.generation==member.generation;});
+            if(old!=expected.entities.end()){
+                if(old->kind!=EntityKind::avatar||!old->definition||old->definition->guid!=member.guid)
+                    throw FormatError("retired household origin aliases an incompatible original identity");
+                metadata=*old;expected.entities.erase(old);
+            }else if(member.generation<=original.generation_sequence)
+                throw FormatError("retired household identity borrows an unknown original generation");
+            if(std::any_of(bundle.world.retained_entities.begin(),bundle.world.retained_entities.end(),[&](const auto& e){
+                    return e.id==member.id&&e.generation==member.generation;}))expected.retained_entities.push_back(std::move(metadata));
         }
         for(const auto& origin:bundle.object_history->retired_npc_avatars){
             if(std::none_of(bundle.world.retained_entities.begin(),bundle.world.retained_entities.end(),[&](const auto& e){return e.id==origin.id&&e.generation==origin.generation;}))continue;
@@ -153,8 +176,8 @@ WorldSnapshot session_restore_baseline(const SessionBundle& bundle,const WorldSn
 }
 void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original,
         const SessionCreatedObjectResolver& created_objects,const SessionNpcAvatarResolver& npc_avatars,
-        const SessionTravelAvatarResolver& travel_avatars) {
-    const auto expected=session_restore_baseline(bundle,original,created_objects,npc_avatars,travel_avatars);
+        const SessionTravelAvatarResolver& travel_avatars,const SessionRetiredHouseholdAvatarResolver& retired_household_avatars) {
+    const auto expected=session_restore_baseline(bundle,original,created_objects,npc_avatars,travel_avatars,retired_household_avatars);
     if(bundle.world.attribute_policy!=original.attribute_policy)
         throw FormatError("session World attribute policy differs from the original lot");
     if(expected.retained_entities.size()!=bundle.world.retained_entities.size())throw FormatError("retained body provenance is incomplete");
@@ -407,7 +430,8 @@ std::unique_ptr<HouseholdSessionRestore> HouseholdSessionRestore::prepare(
     const WorldSnapshot& original,const LotContext& globals,
     const Ts1BootstrapGlobals& bootstrap,std::optional<std::int16_t> family,SessionBundleLimits limits,
     const SessionCreatedObjectResolver& created_objects,const SessionNpcAvatarResolver& npc_avatars,
-    std::optional<Ts1TravelState> expected_travel,const SessionTravelAvatarResolver& travel_avatars) {
+    std::optional<Ts1TravelState> expected_travel,const SessionTravelAvatarResolver& travel_avatars,
+    const SessionRetiredHouseholdAvatarResolver& retired_household_avatars) {
     auto bundle=decode_session_bundle(archive,resources,limits);
     if(bundle.travel_visited_session)throw FormatError("travel envelope must be reopened through the travel checkpoint adapter");
     if(bundle.travel.has_value()!=expected_travel.has_value()||
@@ -421,7 +445,7 @@ std::unique_ptr<HouseholdSessionRestore> HouseholdSessionRestore::prepare(
        host.resident_guid!=selection.resident_guid||host.resident_neighbor_id!=selection.resident_neighbor_id||
        host.runtime_avatar_id!=selection.runtime_avatar_id)
         throw FormatError("session selection differs from the explicitly selected lot and resident");
-    validate_baseline(bundle,original,created_objects,npc_avatars,travel_avatars);validate_runtime(bundle);
+    validate_baseline(bundle,original,created_objects,npc_avatars,travel_avatars,retired_household_avatars);validate_runtime(bundle);
     std::optional<Ts1Clock> simulation_clock;
     if(bundle.simulation){simulation_clock.emplace();
         if(!simulation_clock->restore(bundle.simulation->clock))throw FormatError("invalid restored clock");}

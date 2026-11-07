@@ -1,3 +1,4 @@
+#include "odh/sha256.hpp"
 #include "saved_avatar_containment_fixture.hpp"
 #include "odh/avatar_person_data.hpp"
 #include "odh/world_snapshot_codec.hpp"
@@ -886,7 +887,58 @@ void offworld_resident_restore_tests(){
             "offworld presence never bypasses exact household/resource roster authentication");
     }
 }
+void retired_household_source_tests(){
+    Fixture f;for(const auto& member:f.roster)require(f.world.set_person_data(member.id,31,member.neighbor_id)&&
+        f.world.set_person_data(member.id,61,21),"source household actual personal identity");
+    f.baseline=f.world.snapshot();f.start();
+    require(f.first->controllers.join_at(f.tick)&&f.second->controllers.join_at(f.tick),
+        "actual prepared household Main/service generations join before first capture");
+    auto source=f.snapshot();source.generic_execution=true;
+    odh::SessionFamilyLease lease;lease.neighborhood_identity.fill(0x51);lease.family_identity.fill(0x52);
+    lease.occupancy_epoch=7;lease.family_chunk_id=21;source.family_lease=lease;
+    const auto bytes=odh::encode_session_bundle(source);const auto member=f.roster.at(1);
+    const odh::SessionRetiredHouseholdAvatar origin{member,lease,odh::sha256(bytes.data(),bytes.size())};
+    odh::validate_retired_household_avatar_source(origin,bytes);
+    for(unsigned scenario=0;scenario<4;++scenario){auto bad=origin;
+        if(scenario==0)++bad.member.neighbor_id;else if(scenario==1)++bad.source_lease.occupancy_epoch;
+        else if(scenario==2)bad.member.character_fingerprint[0]^=1;else bad.source_checkpoint_sha256[0]^=1;
+        rejects([&]{odh::validate_retired_household_avatar_source(bad,bytes);},"historical source mismatch accepted");
+    }
+    auto candidate=source;odh::World live;odh::RelationshipState relationships;
+    require(live.restore_snapshot(source.world)&&relationships.restore_snapshot(source.relationships)&&
+        live.mark_dead({member.id,member.generation})&&relationships.remove_inbound_object_references(live,member.id,member.generation)&&
+        live.remove_retaining_body({member.id,member.generation}),"actual retained household body and inbound relation cleanup");
+    candidate.world=live.snapshot();candidate.relationships=relationships.snapshot();candidate.household_roster.resize(1);candidate.runtime_entities.resize(1);
+    candidate.scheduler.entities.resize(1);candidate.object_history=odh::SessionObjectHistory{};
+    candidate.object_history->complete=true;candidate.object_history->reusable_entity_ids=true;
+    candidate.object_history->retired_household_avatars={origin};
+    auto& frame=candidate.runtime_entities.front().vm.stack.front();
+    require(odh::vm_context_set_reference(frame.context,odh::VmEntityRole::stack_object,{member.id,member.generation}),
+        "foreign active Main owns exact retired household reference");
+    const auto encoded=odh::encode_session_bundle(candidate);unsigned calls=0;
+    const odh::SessionRetiredHouseholdAvatarResolver resolve=[&](const auto& request){
+        ++calls;odh::validate_retired_household_avatar_source(request,bytes);
+        const auto body=std::find_if(source.world.entities.begin(),source.world.entities.end(),[&](const auto& e){
+            return e.id==request.member.id&&e.generation==request.member.generation;});
+        require(body!=source.world.entities.end(),"exact resource metadata fixture");return *body;
+    };
+    const auto run=[&](const auto& archive,const odh::SessionRetiredHouseholdAvatarResolver& resolver){
+        return odh::HouseholdSessionRestore::prepare(archive,f.resources,f.selection,candidate.household_roster,
+            f.baseline,f.lot,f.bootstrap,21,{}, {}, {},std::nullopt,{},resolver);};
+    rejects([&]{run(encoded,{});},"retired household lacks historical resolver");
+    const auto restored=run(encoded,resolve);
+    require(calls==1&&restored->world().snapshot().retained_entities.size()==1&&restored->world().find(1)&&
+        !restored->world().find(2),"historically proven original household retires independently of active family roster");
+    rejects([&]{run(encoded,[&](const auto& request){auto value=resolve(request);++value.generation;return value;});},
+        "historical resolver replaced generation accepted");
+    auto collected=candidate;collected.runtime_entities.front().vm.stack.front().context=source.runtime_entities.front().vm.stack.front().context;
+    require(live.collect_retained_bodies({})&&relationships.forget_object_source(member.id,member.generation),"real unreferenced household body/source collection");collected.world=live.snapshot();collected.relationships=relationships.snapshot();
+    const auto collected_bytes=odh::encode_session_bundle(collected);
+    const auto reopened=run(collected_bytes,resolve);
+    require(reopened->world().snapshot().retained_entities.empty(),"historical original retirement remains proven after actual body collection");
+}
 void tests(){
+    retired_household_source_tests();
     offworld_resident_restore_tests();
     traveling_avatar_resource_restore_tests();
     travel_restore_authority_tests();

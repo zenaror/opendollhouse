@@ -112,6 +112,7 @@ struct NeighborhoodTypeAttributes {
 
 // One immutable vacant-lot document committed by the exact managed move-out.
 // Mode is blob provenance only: residential modes1/4 share the HOUSE key.
+// Policy1 preserves original linked HEAD; policy2 uses pinned VM ID order.
 struct FamilyPropertyRelease {
     std::uint32_t assignment_index=0;
     std::uint16_t house=0,family_chunk_id=0,policy=1;
