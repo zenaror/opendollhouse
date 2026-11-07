@@ -11,7 +11,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Necessidades e autonomia | Parcial | Dia residencial completo, sem ações falhando silenciosamente. |
 | Relações e serviços | Parcial | Perfis sociais e serviços além dos casos já observados. |
 | Carreiras e habilidades | Parcial | Seleção, horários, pagamento, promoção e progressão mais amplos. |
-| Famílias e vizinhança | Parcial | Criar/editar/renomear/excluir e mudar mantendo o progresso. |
+| Famílias e vizinhança | Parcial | Completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. Criação de rascunho, renomeação, exclusão elegível e cancelamentos já observados em percurso delimitado. |
 | Compra e venda | Parcial | Grupos de várias peças, posicionamento, cancelamento e orçamento. |
 | Construção | Parcial | Ferramentas completas, pisos superiores, custo e atualização da circulação. |
 | Salvamento | Parcial | Estados ativos e transições de família/lote/destino do conjunto completo. |

@@ -118,6 +118,7 @@ std::vector<std::uint8_t> encode_nbrs(const Nbrs& source, const NbrsLimits& limi
         if(entry.marker!=1||!entry.record)throw FormatError("inconsistent NBRS entry marker/record");
         const auto& r=*entry.record;
         if(r.version!=4&&r.version!=10)throw FormatError("unsupported NBRS record version");
+        if(r.native_personal)throw FormatError("mutable personal projection requires NPER, not immutable NBRS encoding");
         if(r.unknown3.has_value()!=(r.version==10))throw FormatError("inconsistent NBRS version extension");
         if(r.name.size()>limits.name_bytes||r.name.find('\0')!=std::string::npos)
             throw FormatError("NBRS name exceeds limit or contains NUL");

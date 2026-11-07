@@ -17,6 +17,13 @@ struct NeighborRelationship {
     std::int32_t key;
     std::vector<std::int32_t> values; // Preserve disk int32; never narrow to short.
 };
+// Runtime-only selective personal overlay. Never encoded as NBRS container data.
+struct NativePersonalProjection {
+    std::uint8_t profile=1; // Original6e598 selective v9, legacy travel tokens unchanged.
+    std::uint8_t schema_version=9;
+    std::array<std::uint8_t,88> present{};
+    std::array<std::int16_t,88> values{};
+};
 struct NeighborRecord {
     std::int32_t version;
     std::optional<std::int32_t> unknown3;
@@ -29,6 +36,7 @@ struct NeighborRecord {
     std::uint32_t guid;
     std::int32_t unknown_neg_one;
     std::vector<NeighborRelationship> relationships;
+    std::optional<NativePersonalProjection> native_personal; // Mutable owner read projection only.
 };
 struct NeighborEntry {
     std::int32_t marker;

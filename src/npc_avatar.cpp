@@ -8,6 +8,7 @@ NeighborRecord inheritance_record(const NeighborRecord& source) {
     NeighborRecord result{};
     result.version=source.version;result.neighbor_id=source.neighbor_id;result.guid=source.guid;
     result.person_mode=source.person_mode;result.person_data=source.person_data;
+    result.native_personal=source.native_personal;
     return result;
 }
 bool valid_neighbor(const NeighborRecord& n,std::uint32_t guid) {

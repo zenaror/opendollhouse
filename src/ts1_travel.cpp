@@ -143,6 +143,8 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
   auto active=decode_session_bundle(*b.travel_visited_session,std::nullopt,limits);auto original=decode_session_bundle(*b.travel_home_session,std::nullopt,limits);
   if(!active.travel||encode_ts1_travel_state(*active.travel)!=encode_ts1_travel_state(s)||active.host.house_number==s.home_house||active.host.family_budget!=b.host.family_budget||!active.neighbor_inventory||!b.neighbor_inventory)throw FormatError("travel envelope active state mismatch");
   if(original.family_spells&&!active.family_spells)throw FormatError("travel active state dropped its originating family spell carrier");
+  if(original.personal_state&&!active.personal_state)throw FormatError("travel active state dropped personal records");
+  if(original.personal_state&&active.personal_state)validate_native_personal_successor(*original.personal_state,*active.personal_state);
   if(original.type_attributes&&!active.type_attributes)throw FormatError("travel active state dropped its originating type attributes");
   if(original.family_spells&&active.family_spells&&
      (original.family_spells->loaded_presence!=active.family_spells->loaded_presence||
@@ -151,8 +153,8 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
   NeighborInventory ai(Ngbh{}),bi(Ngbh{});ai.restore(*active.neighbor_inventory);bi.restore(*b.neighbor_inventory);
   // Compare through the existing canonical bundle codec, preserving unknown
   // inventory item order/duplicates rather than normalizing semantic keys.
-  auto normalized=b;normalized.travel.reset();normalized.travel_visited_session.reset();normalized.travel_home_session.reset();normalized.host.family_budget=original.host.family_budget;normalized.neighbor_inventory=original.neighbor_inventory;normalized.family_spells=original.family_spells;normalized.type_attributes=original.type_attributes;
-  auto active_check=active;active_check.travel.reset();active_check.neighbor_inventory=b.neighbor_inventory;active_check.family_spells=b.family_spells;active_check.type_attributes=b.type_attributes;
+  auto normalized=b;normalized.travel.reset();normalized.travel_visited_session.reset();normalized.travel_home_session.reset();normalized.host.family_budget=original.host.family_budget;normalized.neighbor_inventory=original.neighbor_inventory;normalized.family_spells=original.family_spells;normalized.type_attributes=original.type_attributes;normalized.personal_state=original.personal_state;
+  auto active_check=active;active_check.travel.reset();active_check.neighbor_inventory=b.neighbor_inventory;active_check.family_spells=b.family_spells;active_check.type_attributes=b.type_attributes;active_check.personal_state=b.personal_state;
   auto active_original=active;active_original.travel.reset();
   original.travel.reset();
   if(original.host.house_number!=s.home_house||original.host.neighborhood_mode!=s.home_mode||encode_session_bundle(normalized,limits)!=encode_session_bundle(original,limits)||encode_session_bundle(active_check,limits)!=encode_session_bundle(active_original,limits))throw FormatError("suspended home bytes or authoritative family/inventory carrier changed");

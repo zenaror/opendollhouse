@@ -3,6 +3,7 @@
 #include "odh/family.hpp"
 #include "odh/neighborhood.hpp"
 #include "odh/type_attributes.hpp"
+#include "odh/native_personal_state.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -139,6 +140,8 @@ struct FamilyOverlay {
     std::vector<FamilyOverlayName> names{}; // One current override per stable family ID.
     std::optional<NeighborhoodTypeAttributes> type_attributes;
     std::vector<FamilyPropertyRelease> property_releases{}; // Chronological v10 records.
+    std::optional<NativePersonalSnapshot> personal_state; // v11, shared neighborhood authority.
+
 };
 
 enum class NeighborhoodTypeAttributesSource { immutable_seed,session_snapshot,private_overlay };
@@ -159,6 +162,11 @@ NeighborhoodTypeAttributesSelection select_neighborhood_type_attributes(
 FamilyOverlay plan_neighborhood_type_attributes_overlay(
     const std::array<std::uint8_t,32>& neighborhood_identity,
     const FamilyOverlay* current,const TypeAttributesSnapshot& replacement);
+
+// Whole-overlay CAS remains mandatory. Existing record revisions cannot go
+// backward, disappear or change identity; new writer revisions may advance.
+FamilyOverlay plan_neighborhood_personal_overlay(const std::array<std::uint8_t,32>&,
+    const FamilyOverlay*,const NativePersonalSnapshot&);
 
 // Epoch counts occupancy periods, including legacy move-ins. A retained ticket
 // is a full-resume candidate only when its house and epoch match current occupancy;

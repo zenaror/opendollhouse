@@ -20,6 +20,7 @@
 #include "odh/dialog.hpp"
 #include "odh/ts1_travel.hpp"
 #include "odh/neighbor_inventory.hpp"
+#include "odh/native_personal_state.hpp"
 #include "odh/build_buy_permission.hpp"
 #include "odh/family_spells.hpp"
 #include "odh/type_attributes.hpp"
@@ -304,6 +305,9 @@ struct SessionUiState {
 struct SessionBundle {
     // Required NINV/TRIP profiles. Legacy nontravel archives omit both unchanged.
     std::optional<NeighborInventorySnapshot> neighbor_inventory;
+    // NPER1 required when present. Legacy absence stays absent until a proven
+    // selective writer runs; this does not upgrade NINV/TRIP semantics.
+    std::optional<NativePersonalSnapshot> personal_state;
     std::optional<Ts1TravelState> travel;
     // Required TVIS: journal-published permanent-home envelope, with one active
     // visited bundle. Nested envelopes are forbidden. Home World/VM stay intact.

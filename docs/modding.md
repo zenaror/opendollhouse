@@ -91,6 +91,11 @@ Não confunda “ação concluída” com “necessidade chegou ao máximo”.
 “Conversar”. São necessárias a frase traduzível, a condição para oferecê-la e a
 ação chamada. Duas opções com o mesmo texto podem representar ações diferentes.
 
+A condição que decide se a opção aparece é uma consulta. Abrir o menu não deve
+gastar dinheiro, melhorar necessidades, avançar uma ação ou alterar os próximos
+sorteios da partida. Por exemplo, verificar se o vendedor está disponível não
+deve criá-lo nem começar o atendimento. Esses efeitos pertencem à ação escolhida.
+
 A escolha e o nome mostrado na fila precisam acompanhar a ação ao salvar.
 Uma opção no menu principal exige outro ponto de integração: uma interação de
 objeto não concede acesso automático a todas as telas do jogo.
@@ -161,3 +166,35 @@ O exemplo deverá cobrir o ciclo completo: instalar, usar, interromper, salvar,
 reabrir e remover. Recursos distribuídos pelo projeto precisam de licença
 compatível; os dados comerciais continuam sendo fornecidos pelo jogador.
 O [progresso](progresso.md) distingue o que já funciona das possibilidades futuras.
+
+## Progresso dos personagens (experimental)
+
+Um personagem pode sair de uma casa e aparecer em outra. Suas habilidades,
+interesses, profissão e fama precisam acompanhá-lo. Já existe um serviço C++
+compartilhado para esses dados; seu uso integrado no jogo ainda está em validação.
+Ele é uma interface interna experimental, sem promessa de compatibilidade estável.
+
+Imagine um objeto que ensina culinária. Ao terminar a aula, ele altera a habilidade
+do participante e pede a gravação de seu progresso. A chamada clássica `Generic25`
+faz esse pedido para o personagem que executa a ação. O motor confere quem é essa
+pessoa e qual arquivo a define antes de aceitar a gravação. Retirar um personagem
+do lote e preparar uma viagem familiar usam o mesmo serviço.
+
+O registro pertence à vizinhança, para que abrir outra família não recupere uma
+versão antiga do personagem. Atualizar seu progresso preserva a posição, o objeto
+que ele segura, as ações em andamento e as necessidades atuais. Alterar quem mora
+em uma família exige o serviço próprio de mudança; gravar uma habilidade não
+transforma um visitante em morador.
+
+Esse registro tem uma lista explícita de campos suportados. Ele não transporta
+necessidades, roupas atuais ou referências a objetos de outro lote. O transporte
+desses dados tem regras próprias; a existência do serviço não comprova o retorno
+completo de acompanhantes ou a atualização visual de idade e aparência.
+
+Os dados originais instalados permanecem intactos. O progresso é gravado no perfil
+do jogador, com identificação de formato. Salvamentos antigos sem esse registro
+continuam sem ele até uma gravação necessária. Uma versão antiga do motor pode
+recusar um save que contenha um formato novo.
+
+A interface interna está em [native_personal_state.hpp](../include/odh/native_personal_state.hpp).
+A cobertura disponível continua indicada no [progresso](progresso.md).

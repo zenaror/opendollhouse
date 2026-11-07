@@ -3,6 +3,7 @@
 #include "odh/vm.hpp"
 namespace odh {
 class World;
+class NativePersonalState;
 enum class NeighborDataSource {serialized,legacy_zero_extension,missing_neighbor_zero,absent_person_data_zero};
 struct NeighborDataValue {std::int16_t neighbor,index,value;NeighborDataSource source;};
 struct NeighborNext {std::int16_t current,result;bool success;};
@@ -11,6 +12,8 @@ class NeighborContext {
 public:
     explicit NeighborContext(Nbrs);
     const Nbrs& source() const{return source_;}
+    // Owner must outlive this view; binding never changes the immutable seed.
+    void bind_personal_state(const NativePersonalState* owner) {personal_=owner;}
     std::size_t active_count() const{return active_.size();}
     const NeighborRecord* by_id(std::int16_t id) const;
     // TS1 scope24 field0 only: first live non-ghost avatar with this neighbor's
@@ -31,6 +34,7 @@ public:
 private:
     struct Ordered {std::int16_t id;std::size_t serialized_index;};
     Nbrs source_;
+    const NativePersonalState* personal_=nullptr;
     std::vector<Ordered> ordered_;
     std::map<std::int16_t,std::size_t> active_;
     std::map<std::uint32_t,std::int16_t> guids_;

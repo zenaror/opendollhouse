@@ -73,6 +73,8 @@
 #include "odh/create_object_instance.hpp"
 #include "odh/object_runtime_resources.hpp"
 #include "odh/neighbor_context.hpp"
+#include "odh/native_personal_state.hpp"
+#include "odh/native_personal_session.hpp"
 #include "odh/neighbor_info.hpp"
 #include "odh/npc_avatar.hpp"
 #include "odh/avatar_neighbor.hpp"
@@ -1551,6 +1553,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             build_buy_permission_was_saved=true;}
     }
     std::optional<odh::NeighborInventorySnapshot> restored_neighbor_inventory;
+    std::optional<odh::NativePersonalSnapshot> restored_personal_state;
+    std::optional<odh::SessionBundle> personal_restore_source;
+    std::unique_ptr<odh::NativePersonalState> personal_state;
+    bool personal_state_was_saved=false;
     std::optional<odh::TypeAttributesSnapshot> restored_type_attributes;
     std::optional<odh::TypeAttributes> type_attributes;
     bool type_attributes_was_saved=false;
@@ -1586,6 +1592,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         for(std::size_t n=0;n<expected.travelers.size();++n)if(!odh::same_ts1_travel_member(departure_members[n],expected.travelers[n]))
             throw odh::FormatError("temporary departure selected traveler identity changed");
         restored_neighbor_inventory=source.neighbor_inventory;
+        restored_personal_state=source.personal_state;
         restored_type_attributes=source.type_attributes;
         restored_family_spells=source.family_spells;
     }
@@ -1621,6 +1628,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             build_buy_permission_was_saved=true;
         }
         restored_neighbor_inventory=std::move(restored_architecture_state.neighbor_inventory);
+        restored_personal_state=restored_architecture_state.personal_state;
+        personal_restore_source.emplace();
+        personal_restore_source->personal_state=restored_architecture_state.personal_state;
+        personal_restore_source->family_lease=restored_architecture_state.family_lease;
+        personal_restore_source->travel=restored_architecture_state.travel;
+        personal_restore_source->household_roster=restored_architecture_state.household_roster;
+        for(const auto& npc:restored_architecture_state.npc_avatars){
+            odh::SessionNpcAvatar metadata;metadata.origin=npc.origin;personal_restore_source->npc_avatars.push_back(std::move(metadata));
+        }
         restored_type_attributes=std::move(restored_architecture_state.type_attributes);
         restored_family_spells=std::move(restored_architecture_state.family_spells);
         architecture_object_support=std::move(restored_architecture_state.architecture_object_support);
@@ -1967,6 +1983,51 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     };
     std::optional<odh::NeighborContext> neighbors;
     if(nbrs)neighbors.emplace(std::move(*nbrs));
+    if(neighbors&&type_attributes_neighborhood_identity){
+        personal_state=std::make_unique<odh::NativePersonalState>(neighbors->source(),*type_attributes_neighborhood_identity,retired_neighbor_ids);
+        if(type_attributes_open_overlay&&type_attributes_open_overlay->personal_state){
+            const auto& shared=*type_attributes_open_overlay->personal_state;
+            if(actorless_arrival&&restored_personal_state){
+                odh::validate_native_personal_successor(shared,*restored_personal_state);
+            }else restored_personal_state=shared;
+        }
+        if(restored_personal_state){personal_state->restore(*restored_personal_state);personal_state_was_saved=true;}
+        // Authenticate every durable record's resource, including writers whose
+        // body has retired and is absent from HHRD/NPCA in this house archive.
+        std::uint64_t remaining_personal_bytes=64u*1024u*1024u;
+        for(const auto& record:personal_state->snapshot().records){
+            if(retired_neighbor_ids.count(record.identity.neighbor_id))continue;
+            if(!session_context)throw odh::FormatError("personal record lacks selected character catalogs");
+            const std::filesystem::path logical(record.identity.character_asset);
+            const auto parent=logical.parent_path().generic_string();
+            const auto root=parent=="PlayerData/Characters"?session_context->player_character_root:
+                parent=="UserData/Characters"?std::filesystem::path(*neighborhood_path).parent_path()/"Characters":std::filesystem::path{};
+            if(root.empty()||logical.filename().empty())throw odh::FormatError("personal record has unsupported character catalog");
+            const auto path=std::filesystem::canonical(root/logical.filename());
+            if(path.parent_path()!=std::filesystem::canonical(root)||std::filesystem::is_symlink(root/logical.filename())||
+               !std::filesystem::is_regular_file(path))throw odh::FormatError("personal record character escaped authenticated catalog");
+            const auto pin=pinned_characters.find(path);
+            if(pin!=pinned_characters.end()&&pin->second.fingerprint!=record.identity.character_fingerprint)
+                throw odh::FormatError("personal projection differs from the already pinned household resource");
+            const auto size=std::filesystem::file_size(path);
+            if(size>remaining_personal_bytes)throw odh::FormatError("personal record resources exceed bounded64MiB budget");
+            remaining_personal_bytes-=size;
+            auto bytes=std::make_shared<std::string>(static_cast<std::size_t>(size),'\0');
+            std::ifstream stream(path,std::ios::binary);stream.read(bytes->data(),static_cast<std::streamsize>(size));
+            if(!stream||stream.peek()!=std::char_traits<char>::eof()||odh::sha256(bytes->data(),bytes->size())!=record.identity.character_fingerprint)
+                throw odh::FormatError("personal record character fingerprint differs");
+            std::optional<std::uint32_t> guid;
+            const Resource resource{path.string(),{},true,bytes};
+            with_resource(resource,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+                if(chunk.type=="OBJD"&&chunk.id==record.identity.definition_chunk_id){
+                    if(guid)throw odh::FormatError("personal record character definition is ambiguous");
+                    guid=odh::read_object_definition(chunk.payload).guid;
+                }
+            });});
+            if(guid!=std::optional<std::uint32_t>{record.identity.guid})throw odh::FormatError("personal record character GUID differs");
+        }
+        neighbors->bind_personal_state(personal_state.get());
+    }else if(restored_personal_state)throw odh::FormatError("personal snapshot lacks authenticated neighborhood seed");
     profile_mark("neighborhood-context");
     std::optional<odh::FamilyContext> families;
     odh::FamilyEntry* active_family=nullptr;
@@ -6262,6 +6323,38 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     odh::VmPrimitive functional_tree_handler;
     odh::VmPrimitive find_best_function_handler;
     odh::VmPrimitive generic_ts1_icon_handler;
+    const auto personal_source=[&](std::int16_t id)->odh::NativePersonalSource {
+        const auto* body=world.find(id);
+        if(!body||body->kind!=odh::EntityKind::avatar||!body->definition||body->person_data.size()<=31)
+            throw odh::FormatError("personal writer requires an exact live avatar");
+        const auto nid=body->person_data[31];
+        // Actual HHRD resource ownership, independently from control/role fields.
+        if(session_context)for(const auto& member:session_context->household_members)
+            if(member.guid==body->definition->guid&&member.neighbor_id==nid){
+                const auto pinned=pinned_characters.find(std::filesystem::canonical(member.character_path));
+                if(pinned==pinned_characters.end()||odh_host::fingerprint_transfer_resource(member.character_path)!=pinned->second.fingerprint)
+                    throw odh::FormatError("personal household character source changed");
+                const auto asset=member.character_asset.empty()?std::string("UserData/Characters/")+member.character_path.filename().string():member.character_asset;
+                return {{nid,member.guid,member.object_definition_id,asset,pinned->second.fingerprint},{id,body->generation}};
+            }
+        for(const auto* actor:auxiliary_actors)if(actor&&actor->npc_origin){const auto& origin=*actor->npc_origin;
+            if(origin.id!=id||origin.generation!=body->generation)continue;
+            if(origin.neighbor_id!=nid||origin.guid!=body->definition->guid||!actor->resource.frozen||
+               odh::sha256(actor->resource.frozen->data(),actor->resource.frozen->size())!=origin.character_fingerprint)
+                throw odh::FormatError("personal NPC source differs from construction provenance");
+            if(!origin.asset.empty()||std::filesystem::path(origin.source).parent_path().filename()!="Characters")
+                throw odh::FormatError("personal NPC writer requires a direct character IFF");
+            const auto asset=std::string(origin.source.rfind("PlayerData/",0)==0?"PlayerData/Characters/":"UserData/Characters/")+std::filesystem::path(origin.source).filename().string();
+            return {{nid,origin.guid,origin.object_definition_id,asset,origin.character_fingerprint},{id,body->generation}};
+        }
+        throw odh::FormatError("personal writer has no admitted character resource owner");
+    };
+    if(personal_state&&personal_state->changed()&&personal_restore_source){
+        if(!odh::publish_native_personal_session(world,*personal_restore_source,personal_state->snapshot()))
+            throw odh::FormatError("newer neighborhood personal state could not reconcile the restored live bodies");
+    }
+    personal_restore_source.reset();
+    const auto personal_write_handler=odh::native_personal_write_primitive(world,personal_state.get(),personal_source);
     odh::VmPrimitive generic_ts1_travel_handler;
     const auto generic_ts1_compatibility_handler=odh::generic_ts1_compatibility_primitive();
     odh::VmPrimitive special_effect_handler;
@@ -6456,6 +6549,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             // pretending to update the route footprint.
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
         }
+        if(i.opcode==1&&i.operands[0]==25)return personal_write_handler(f,i,t,d);
         if(i.opcode==1&&odh::generic_ts1_compatibility_mode(i.operands[0]))
             return generic_ts1_compatibility_handler(f,i,t,d);
         if(i.opcode==1&&i.operands[0]==28&&lot_handler)return lot_handler(f,i,t,d);
@@ -6607,6 +6701,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // report unsupported instead of approving an unchecked action.
     check_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d)
             ->odh::PrimitiveOutcome{
+        if(i.opcode==1&&i.operands[0]==25)return personal_write_handler(f,i,t,d);
         if(i.opcode==1&&odh::generic_ts1_compatibility_mode(i.operands[0]))
             return generic_ts1_compatibility_handler(f,i,t,d);
         if(i.opcode==1&&(i.operands[0]==28||i.operands[0]==10||i.operands[0]==11||i.operands[0]==43))return person_primitive(f,i,t,d);
@@ -8971,6 +9066,13 @@ struct PlacementCandidateProbe {
                 if(*request.departure_transit>=1)for(const auto& entity:world.snapshot().entities)
                     if(entity.id!=caller->id&&!entity.dead&&!entity.ui_ghost&&entity.kind==odh::EntityKind::avatar&&entity.person_data.size()>61&&
                        static_cast<std::int32_t>(entity.person_data[61])==candidate.family_chunk_id)people.push_back(entity);
+                std::optional<odh::PreparedNativePersonalCommit> personal_candidate;
+                if(*request.departure_transit>=1){
+                    if(!personal_state)return fail("family departure requires neighborhood personal authority");
+                    std::vector<odh::NativePersonalSource> sources;
+                    for(const auto& entity:people)sources.push_back(personal_source(entity.id));
+                    personal_candidate=personal_state->prepare(world,sources,odh::NativePersonalWriteSource::family17);
+                }
                 odh::NeighborInventory inventory_candidate(odh::Ngbh{});inventory_candidate.restore(neighbor_inventory->snapshot());
                 for(std::size_t p=0;p<people.size();++p){
                     const auto& entity=people[p];
@@ -8988,7 +9090,15 @@ struct PlacementCandidateProbe {
                 request.run_generation=dispatch.origin->run_generation();request.ticket=dispatch.ticket;
                 request.source_frame=frame;request.source_instruction=instruction;candidate.pending=std::move(request);
                 odh::validate_ts1_travel_state(candidate);
-                neighbor_inventory->restore(inventory_candidate.snapshot());travel_state=std::move(candidate);
+                // All allocating/validating work is complete before publication.
+                // Inventory restore can throw; hold the prepared personal state
+                // unpublished until that succeeds at this non-reentrant boundary.
+                if(personal_candidate&&!personal_state->source_current(*personal_candidate,world))
+                    return fail("family departure personal source became stale");
+                neighbor_inventory->restore(inventory_candidate.snapshot());
+                if(personal_candidate&&!personal_state->commit(std::move(*personal_candidate),world))
+                    throw odh::FormatError("family departure personal commit lost exclusive safe point");
+                travel_state=std::move(candidate);
                 return {odh::PrimitiveDisposition::goto_true_next_tick,{}};
             }
             return fail("temporary destination activation or companion construction is not yet bound");
@@ -13844,6 +13954,7 @@ struct PlacementCandidateProbe {
         const bool trip_started=travel_state&&(travel_state->pending||travel_state->current_house!=travel_state->home_house||
             !session_context->suspended_home.empty());
         if(neighbor_inventory&&(neighbor_inventory->changed()||trip_started))bundle.neighbor_inventory=neighbor_inventory->snapshot();
+        if(personal_state&&(personal_state_was_saved||personal_state->changed()))bundle.personal_state=personal_state->snapshot();
         if(type_attributes&&(type_attributes_was_saved||type_attributes->changed()||trip_started))
             bundle.type_attributes=type_attributes->snapshot();
         if(build_buy_permission_was_saved||build_buy_permission_dirty||!build_buy_permission.enabled())
@@ -14287,7 +14398,7 @@ struct PlacementCandidateProbe {
         validate_session_candidate(bundle,encoded);
         if(captured)*captured=bundle;
         if(validate_only)return {}; // Complete codec and restore validation, no filesystem publication.
-        if(!session_context->family_journal&&bundle.type_attributes&&
+        if(!session_context->family_journal&&(bundle.type_attributes||bundle.personal_state)&&
            (!bundle.travel||bundle.travel->current_house==bundle.travel->home_house)){
             if(!neighborhood_path||!type_attributes_neighborhood_identity)
                 throw odh::FormatError("shared type attributes publication requires authenticated neighborhood identity");
@@ -16937,6 +17048,18 @@ struct PlacementCandidateProbe {
                         throw odh::FormatError("deleted NPC parent ticket expired");
                     continue;
                 }
+                // A preceding queued writer can advance the shared record.
+                // Refresh only its selective projection, never the request's
+                // already authenticated NBRS identity or captured placement.
+                const auto refresh_personal=[&](odh::NeighborRecord& record){
+                    if(record.neighbor_id<=0)return;
+                    const auto* current=neighbors?neighbors->by_id(record.neighbor_id):nullptr;
+                    if(!current||current->guid!=record.guid||current->person_data!=record.person_data)
+                        throw odh::FormatError("queued NPC neighbor source changed before construction");
+                    record.native_personal=current->native_personal;
+                };
+                refresh_personal(pending.request.requested_neighbor);
+                if(pending.request.constructor_neighbor)refresh_personal(*pending.request.constructor_neighbor);
                 std::string preflight_reason;
                 const auto preflight=odh::preflight_npc_avatar_creation(pending.request,world,&preflight_reason);
                 if(preflight==odh::NpcAvatarRequestStatus::duplicate){
@@ -16976,6 +17099,22 @@ struct PlacementCandidateProbe {
                 if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
                 else ++next_saved_code_owner;
                 auto actor=load_npc_actor_resources(*definition,id,*owner);
+                if(personal_state){
+                    const auto authenticate_projection=[&](const odh::NeighborRecord& record){
+                        if(!record.native_personal)return;
+                        const auto& records=personal_state->snapshot().records;
+                        const auto found=std::find_if(records.begin(),records.end(),[&](const auto& r){return r.identity.neighbor_id==record.neighbor_id;});
+                        if(found==records.end()||!actor->npc_origin||!actor->npc_origin->asset.empty()||
+                           found->identity.guid!=actor->npc_origin->guid||found->identity.definition_chunk_id!=actor->npc_origin->object_definition_id||
+                           found->identity.character_fingerprint!=actor->npc_origin->character_fingerprint)
+                            throw odh::FormatError("NPC personal projection differs from exact character resource");
+                        const auto& origin=*actor->npc_origin;
+                        const auto asset=std::string(origin.source.rfind("PlayerData/",0)==0?"PlayerData/Characters/":"UserData/Characters/")+std::filesystem::path(origin.source).filename().string();
+                        if(asset!=found->identity.character_asset)throw odh::FormatError("NPC personal projection catalog changed");
+                    };
+                    authenticate_projection(pending.request.requested_neighbor);
+                    if(pending.request.constructor_neighbor)authenticate_projection(*pending.request.constructor_neighbor);
+                }
                 if(pending.travel_family){
                     const auto expected=std::find_if(pending_travel_activation->selected.begin(),pending_travel_activation->selected.end(),[&](const auto& member){return member.guid==definition->definition.guid;});
                     if(expected==pending_travel_activation->selected.end()||actor->npc_origin->character_fingerprint!=expected->character_fingerprint)
@@ -17324,6 +17463,13 @@ struct PlacementCandidateProbe {
                             " generation="+std::to_string(pending.generation)+": "+last_remove_object_diagnostic;return;
                     }
             }
+            std::optional<odh::PreparedNativePersonalCommit> personal_retirement;
+            if(removed&&npc&&object&&object->person_data.size()>31&&object->person_data[31]>0){
+                try {
+                    if(!personal_state)throw odh::FormatError("person retirement lacks neighborhood personal authority");
+                    personal_retirement=personal_state->prepare(world,{personal_source(pending.object)},odh::NativePersonalWriteSource::retirement);
+                }catch(const std::exception& error){host_failed=true;host_diagnostic=error.what();return;}
+            }
             const auto runtime=runtime_object_threads.find(pending.object);
             if(removed&&runtime!=runtime_object_threads.end()){
                 if(!unschedule_execution(pending.object)){
@@ -17340,8 +17486,10 @@ struct PlacementCandidateProbe {
                     forget_runtime_object_thread(pending.object);
                 }
             }
-            try {if(removed)removed=npc?retire_npc_actor(pending.object,pending.generation):
-                retire_runtime_object(pending.object);}
+            try {if(removed){
+                const auto retire_actual=[&]{return npc?retire_npc_actor(pending.object,pending.generation):retire_runtime_object(pending.object);};
+                removed=personal_retirement?personal_state->commit_retirement(std::move(*personal_retirement),world,retire_actual):retire_actual();
+            }}
             catch(const std::exception& error){
                 host_failed=true;host_diagnostic=std::string("entity retirement failed after execution cleanup; saving disabled: ")+error.what();return;
             }

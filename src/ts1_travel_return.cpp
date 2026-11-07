@@ -1,5 +1,6 @@
 #include "odh/ts1_travel_return.hpp"
 #include "odh/sha256.hpp"
+#include "odh/native_personal_session.hpp"
 #include <algorithm>
 #include <sstream>
 namespace odh {
@@ -97,6 +98,8 @@ PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionBundle& envelope,
  const auto active=decode_session_bundle(*envelope.travel_visited_session,std::nullopt,limits);
  PreparedTs1TravelReturn result;result.home_=decode_session_bundle(*envelope.travel_home_session,std::nullopt,limits);
  result.source_checkpoint_sha256_=sha256(encoded.data(),encoded.size());result.suspended_home_sha256_=sha256(envelope.travel_home_session->data(),envelope.travel_home_session->size());
+ if(result.home_.personal_state&&!active.personal_state)throw FormatError("return dropped shared personal records");
+ if(active.personal_state)project_native_personal_session(result.home_,*active.personal_state);
  NeighborInventory inventory(Ngbh{});inventory.restore(*active.neighbor_inventory);
  constexpr unsigned need_motives[7]={9,6,5,15,7,8,14}; // Type2 GUID0..6 source order.
  for(const auto& identity:ts1_travel_departure_members(state)){

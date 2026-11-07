@@ -126,6 +126,9 @@ FamilySessionJournal FamilySessionJournal::adopt_original_session(std::vector<od
         expected?&*expected:nullptr,family_id,house,*capture.host.family_budget,digest,property_value);
     if(expected&&expected->type_attributes&&!capture.type_attributes)
         throw odh::FormatError("original adoption cannot omit the current shared neighborhood type attributes");
+    if(expected&&expected->personal_state&&!capture.personal_state)
+        throw odh::FormatError("original adoption cannot omit shared personal state");
+    if(capture.personal_state)adopted=odh::plan_neighborhood_personal_overlay(identity,&adopted,*capture.personal_state);
     if(capture.type_attributes)
         adopted=odh::plan_neighborhood_type_attributes_overlay(identity,&adopted,*capture.type_attributes);
     (void)odh::encode_family_overlay(adopted); // Budget/type validation before any archive publication.
@@ -269,6 +272,9 @@ std::filesystem::path FamilySessionJournal::publish(odh::SessionBundle bundle,
         state_.family_chunk_id, state_.house_number, state_.occupancy_epoch, *bundle.host.family_budget, digest,property_value);
     if(expected_->type_attributes&&!bundle.type_attributes)
         throw odh::FormatError("checkpoint cannot omit the current shared neighborhood type attributes");
+    if(expected_->personal_state&&!bundle.personal_state)
+        throw odh::FormatError("checkpoint cannot omit shared personal state");
+    if(bundle.personal_state)replacement=odh::plan_neighborhood_personal_overlay(identity_,&replacement,*bundle.personal_state);
     if(bundle.type_attributes)
         replacement=odh::plan_neighborhood_type_attributes_overlay(identity_,&replacement,*bundle.type_attributes);
     (void)odh::encode_family_overlay(replacement); // Fail before I/O if combined checkpoint/bank cannot fit.

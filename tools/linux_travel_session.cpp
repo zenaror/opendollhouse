@@ -21,6 +21,8 @@ odh::SessionBundle make_travel_session_envelope(const std::vector<std::uint8_t>&
  if(home.travel_visited_session||home.travel_home_session||home.host.house_number!=active.travel->home_house)throw odh::FormatError("suspended home is not a residential source checkpoint");
  if(home.family_spells&&!active.family_spells)throw odh::FormatError("visited session dropped its originating family spell carrier");
  if(home.type_attributes&&!active.type_attributes)throw odh::FormatError("visited session dropped neighborhood type attributes");
+ if(home.personal_state&&!active.personal_state)throw odh::FormatError("visited session dropped neighborhood personal state");
+ home.personal_state=active.personal_state;
  home.travel=active.travel;home.neighbor_inventory=active.neighbor_inventory;home.host.family_budget=active.host.family_budget;home.family_spells=active.family_spells;home.type_attributes=active.type_attributes;
  home.travel_home_session=suspended_home;home.travel_visited_session=odh::encode_session_bundle(active,limits);
  odh::validate_ts1_travel_bundle(home,limits);return home;

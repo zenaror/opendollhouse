@@ -155,7 +155,7 @@ void validate_overlay(const FamilyOverlay& overlay) {
             overlay.creations.size() - overlay.archives.size() - overlay.deletions.size())
         throw FormatError("family overlay exceeds assignment limit");
     const auto ordinary_count=overlay.assignments.size()+overlay.creations.size()+overlay.archives.size()+
-        overlay.deletions.size()+overlay.names.size()+(overlay.type_attributes?1U:0U);
+        overlay.deletions.size()+overlay.names.size()+(overlay.type_attributes?1U:0U)+(overlay.personal_state?1U:0U);
     if(ordinary_count>max_assignments||overlay.property_releases.size()>max_assignments-ordinary_count)
         throw FormatError("family property release history exceeds record budget");
     std::uint32_t prior_release=0;bool have_release=false;
@@ -181,6 +181,11 @@ void validate_overlay(const FamilyOverlay& overlay) {
         (void)encode_type_attributes_snapshot(overlay.type_attributes->state);
         if(overlay.assignments.size()+overlay.creations.size()+overlay.archives.size()+overlay.deletions.size()+overlay.names.size()>=max_assignments)
             throw FormatError("family overlay has no room for shared type attributes");
+    }
+    if(overlay.personal_state){
+        validate_native_personal_snapshot(*overlay.personal_state);
+        if(overlay.personal_state->neighborhood_identity!=overlay.neighborhood_identity)
+            throw FormatError("personal carrier differs from neighborhood identity");
     }
     std::set<std::uint16_t> named_ids;
     for (const auto& name : overlay.names) {
@@ -428,14 +433,14 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
         [](const auto& value) { return value.final_state.has_value(); });
     const bool managed = std::any_of(overlay.assignments.begin(), overlay.assignments.end(),
         [](const auto& operation) { return operation.state.has_value(); });
-    if (!overlay.property_releases.empty() || overlay.type_attributes || !overlay.names.empty() || managed || !overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
-        const auto version = !overlay.property_releases.empty()?10U:terminal ? 9U : overlay.type_attributes ? 8U : !overlay.names.empty() ? 7U : managed ? 6U : !overlay.deletions.empty() ? 5U :
+    if (overlay.personal_state || !overlay.property_releases.empty() || overlay.type_attributes || !overlay.names.empty() || managed || !overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
+        const auto version = overlay.personal_state?11U:!overlay.property_releases.empty()?10U:terminal ? 9U : overlay.type_attributes ? 8U : !overlay.names.empty() ? 7U : managed ? 6U : !overlay.deletions.empty() ? 5U :
             (overlay.archives.empty() ? 3U : 4U);
         std::vector<std::uint8_t> out{'O','D','H','F'};
         put16(out, static_cast<std::uint16_t>(version)); put16(out, 0);
         out.insert(out.end(), overlay.neighborhood_identity.begin(), overlay.neighborhood_identity.end());
         put32(out, static_cast<std::uint32_t>(overlay.creations.size() +
-            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size() + overlay.names.size() + overlay.property_releases.size() + (overlay.type_attributes?1U:0U)));
+            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size() + overlay.names.size() + overlay.property_releases.size() + (overlay.type_attributes?1U:0U) + (overlay.personal_state?1U:0U)));
         const auto append = [&](std::uint16_t tag, const std::vector<std::uint8_t>& payload) {
             if (tag == 2 && payload.size() > max_creation_bytes)
                 throw FormatError("family creation record exceeds byte limit");
@@ -515,6 +520,7 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
             put32(payload,static_cast<std::uint32_t>(release.cash_after_cleanup));
             append(10,payload);
         }
+        if(overlay.personal_state)append(11,encode_native_personal_snapshot(*overlay.personal_state));
         if(overlay.type_attributes) {
             std::vector<std::uint8_t> payload;put64(payload,overlay.type_attributes->revision);
             const auto state=encode_type_attributes_snapshot(overlay.type_attributes->state);
@@ -545,7 +551,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
     if (bytes[0] != 'O' || bytes[1] != 'D' || bytes[2] != 'H' || bytes[3] != 'F')
         throw FormatError("invalid family overlay signature");
     const auto version = get16(bytes, 4);
-    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10) || get16(bytes, 6) != 0)
+    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 && version != 11) || get16(bytes, 6) != 0)
         throw FormatError("unsupported family overlay version or flags");
     const auto count = get32(bytes, 40);
     if (count > max_assignments || ((version == 1 || version == 2) &&
@@ -553,7 +559,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
         throw FormatError("family overlay record count or extent is invalid");
     FamilyOverlay result;
     std::copy_n(bytes.begin() + 8, result.neighborhood_identity.size(), result.neighborhood_identity.begin());
-    if (version >= 3 && version <= 10) {
+    if (version >= 3 && version <= 11) {
         std::size_t at = header_size;
         bool saw_assignment = false;
         bool saw_archive = false;
@@ -567,9 +573,10 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
             const auto length = get32(bytes, at + 2); at += 6;
             if (length > bytes.size() - at) throw FormatError("truncated tagged family overlay record");
             const auto end = at + length;
+            if(result.personal_state&&tag!=7)throw FormatError("personal state must precede only final shared type attributes");
             if(result.type_attributes)throw FormatError("shared type attributes must be the final overlay record");
-            if(saw_property&&tag!=10&&tag!=7)throw FormatError("property releases must follow family records and precede shared attributes");
-            if (saw_name && tag != 6 && tag != 7 && tag != 10) throw FormatError("family names must follow the family operation records");
+            if(saw_property&&tag!=10&&tag!=7&&tag!=11)throw FormatError("property releases must follow family records and precede shared attributes");
+            if (saw_name && tag != 6 && tag != 7 && tag != 10 && tag != 11) throw FormatError("family names must follow the family operation records");
             if (tag == 1 || (tag == 5 && version >= 6)) {
                 if (saw_archive || saw_deletion) throw FormatError("family assignments must precede archives and deletions");
                 if (length != (tag == 5 ? managed_record_size : record_size)) throw FormatError("invalid family operation extent");
@@ -668,7 +675,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                 name.family_name.assign(bytes.begin() + static_cast<std::ptrdiff_t>(at + 35),
                     bytes.begin() + static_cast<std::ptrdiff_t>(end));
                 result.names.push_back(std::move(name));
-            } else if(tag==10&&version==10){
+            } else if(tag==10&&version>=10){
                 if(length!=200||get16(bytes,at+14)!=0)throw FormatError("invalid property release extent/reserved field");
                 saw_property=true;FamilyPropertyRelease release;
                 release.assignment_index=get32(bytes,at);release.house=get16(bytes,at+4);
@@ -684,6 +691,9 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                 std::copy_n(bytes.begin()+at+160,32,release.head.begin());
                 release.vacant_purchase_value=signed32(get32(bytes,at+192));
                 release.cash_after_cleanup=signed32(get32(bytes,at+196));result.property_releases.push_back(release);
+            } else if(tag==11&&version>=11) {
+                result.personal_state=decode_native_personal_snapshot(std::vector<std::uint8_t>(
+                    bytes.begin()+static_cast<std::ptrdiff_t>(at),bytes.begin()+static_cast<std::ptrdiff_t>(end)));
             } else if(tag==7&&version>=8) {
                 if(length<16)throw FormatError("truncated neighborhood type attribute record");
                 NeighborhoodTypeAttributes shared;shared.revision=get64(bytes,at);
@@ -697,6 +707,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
         if(version==8&&!result.type_attributes)throw FormatError("v8 overlay lacks its neighborhood type attribute record");
         if (version == 9 && !saw_terminal) throw FormatError("v9 overlay lacks terminal removal state");
         if(version==10&&!saw_property)throw FormatError("v10 overlay lacks property release history");
+        if(version==11&&!result.personal_state)throw FormatError("v11 overlay lacks personal carrier");
         validate_overlay(result);
         return result;
     }
@@ -933,6 +944,17 @@ FamilyOverlay plan_family_name_overlay(const std::vector<FamilyEntry>& source,
     else *existing = name;
     (void)replay_family_overlay(source, identity, result);
     return result;
+}
+
+FamilyOverlay plan_neighborhood_personal_overlay(const std::array<std::uint8_t,32>& identity,
+        const FamilyOverlay* current,const NativePersonalSnapshot& replacement){
+    validate_native_personal_snapshot(replacement);
+    if(replacement.neighborhood_identity!=identity||(current&&current->neighborhood_identity!=identity))
+        throw FormatError("personal publication differs from neighborhood identity");
+    if(current)(void)encode_family_overlay(*current);
+    FamilyOverlay result=current?*current:FamilyOverlay{identity,{}};
+    if(result.personal_state)validate_native_personal_successor(*result.personal_state,replacement);
+    result.personal_state=replacement;(void)encode_family_overlay(result);return result;
 }
 
 NeighborhoodTypeAttributesSelection select_neighborhood_type_attributes(

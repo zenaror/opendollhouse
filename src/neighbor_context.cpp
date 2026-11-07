@@ -1,5 +1,6 @@
 #include "odh/neighbor_context.hpp"
 #include "odh/world.hpp"
+#include "odh/native_personal_state.hpp"
 #include <algorithm>
 namespace odh {
 NeighborContext::NeighborContext(Nbrs source):source_(std::move(source)) {
@@ -27,6 +28,7 @@ NeighborContext::NeighborContext(Nbrs source):source_(std::move(source)) {
 }
 const NeighborRecord* NeighborContext::by_id(std::int16_t id) const {
     const auto active=active_.find(id);
+    if(active!=active_.end()&&personal_)if(const auto* changed=personal_->by_id(id))return changed;
     return active==active_.end()?nullptr:&*source_.entries[ordered_[active->second].serialized_index].record;
 }
 std::optional<std::int16_t> NeighborContext::instance_id(const World& world,std::int16_t neighbor) const {
@@ -62,7 +64,10 @@ std::int16_t NeighborContext::next_of_guid(std::int16_t current,std::uint32_t gu
 std::optional<NeighborDataValue> NeighborContext::person_data(std::int16_t neighbor,std::int16_t index) const {
     const auto active=active_.find(neighbor);
     if(active==active_.end())return NeighborDataValue{neighbor,index,0,NeighborDataSource::missing_neighbor_zero};
-    const auto& record=*source_.entries[ordered_[active->second].serialized_index].record;
+    const auto& record=*by_id(neighbor);
+    if(record.native_personal&&index>=0&&static_cast<std::size_t>(index)<record.native_personal->present.size()&&
+       record.native_personal->present[static_cast<std::size_t>(index)])
+        return NeighborDataValue{neighbor,index,record.native_personal->values[static_cast<std::size_t>(index)],NeighborDataSource::serialized};
     if(!record.person_data)return NeighborDataValue{neighbor,index,0,NeighborDataSource::absent_person_data_zero};
     // Reference stores exactly88 runtime words, zero-extending the old80-word
     // layout and retaining only the first88 of the new256-word serialized bank.

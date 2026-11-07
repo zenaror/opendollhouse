@@ -1,4 +1,5 @@
 #include "odh/avatar_neighbor.hpp"
+#include "odh/native_personal_state.hpp"
 #include <algorithm>
 
 namespace odh {
@@ -22,13 +23,17 @@ NeighborInheritance inherit_neighbor(World& world, std::int16_t actor,
     auto projected = saved ? std::vector<std::int16_t>(88, 0) : entity->person_data;
     if (saved) std::copy_n(neighbor.person_data->begin(),
         std::min<std::size_t>(88, neighbor.person_data->size()), projected.begin());
+    // Legacy raw inheritance remains stable; the explicit v9 overlay changes
+    // only present durable fields. Roles/greeting/schedule still bind below.
+    if(neighbor.native_personal)apply_native_personal_projection(*neighbor.native_personal,projected);
     result.neighbor_family = projected[61];
     // C# promotes short to int before comparing to nullable ushort: negative
     // saved family values never match IDs32768..65535 by wrapping.
     result.selected_person_type = result.retained_person_type != 0 ? result.retained_person_type :
         (current_family && static_cast<std::int32_t>(projected[61]) ==
             static_cast<std::int32_t>(*current_family) ? 0 : 1);
-    projected[65] = result.retained_gender;
+    if(!neighbor.native_personal||!neighbor.native_personal->present[65])
+        projected[65] = result.retained_gender;
     projected[31] = neighbor.neighbor_id;
     projected[32] = result.selected_person_type;
     projected[35] = result.retained_visitor_schedule;
