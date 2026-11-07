@@ -182,6 +182,77 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
             std::cout<<R"({"value":)"<<choice.value<<R"(,"label":)"<<json_string(choice.label)<<'}';
         }std::cout<<"]}";
     }else std::cout<<"null";
+    // Read decoded values only; no live VM/controller is created or executed.
+    const auto route_pose=[](const odh::EntityPosition& p){std::cout<<'['<<p.x<<','<<p.y<<','<<p.level<<','<<unsigned(p.direction)<<']';};
+    const auto route_identity=[&](std::int16_t id,std::uint64_t generation){
+        const auto found=std::find_if(active.world.entities.begin(),active.world.entities.end(),
+            [&](const auto& e){return e.id==id&&e.generation==generation;});
+        std::cout<<R"({"id":)"<<id<<R"(,"generation":)"<<generation<<R"(,"current":)"<<(found!=active.world.entities.end()?"true":"false")<<R"(,"position":)";
+        if(found!=active.world.entities.end()&&found->position)route_pose(*found->position);else std::cout<<"null";
+        std::cout<<'}';
+    };
+    const auto route_edge=[&](const odh::RoomPortalEdge& e){
+        std::cout<<R"({"portal_id":)"<<e.portal_id<<R"(,"source_room":)"<<e.source_room<<R"(,"target_room":)"<<e.target_room<<R"(,"position":)";
+        route_pose(e.position);std::cout<<'}';
+    };
+    const auto route_job=[&](const odh::LocalRouteSnapshot& j){
+        std::cout<<R"({"ticket":)"<<j.ticket<<R"(,"run_generation":)"<<j.run_generation<<R"(,"actor":)";route_identity(j.actor,j.actor_generation);
+        std::cout<<R"(,"target":)";route_identity(j.target,j.target_generation);
+        std::cout<<R"(,"expected":)";route_pose(j.expected);std::cout<<R"(,"target_position":)";route_pose(j.target_position);
+        std::cout<<R"(,"state":)"<<unsigned(j.frame.state)<<R"(,"portal_turns":)"<<j.frame.portal_turns<<R"(,"wait_time":)";
+        if(j.frame.wait_time)std::cout<<*j.frame.wait_time;else std::cout<<"null";
+        std::cout<<R"(,"room_route_invalid":)"<<(j.room_route_invalid?"true":"false")<<R"(,"room_route_replan_active":)"<<(j.room_route_replan_active?"true":"false")
+            <<R"(,"path_points":)"<<j.path.size()<<R"(,"next_point":)"<<j.next<<R"(,"source_sparse":)";
+        if(!j.source_sparse)std::cout<<"null";
+        else{const auto& s=*j.source_sparse;const auto& m=s.motion;
+            std::cout<<R"({"room":)"<<s.room<<R"(,"lifecycle":)"<<unsigned(s.lifecycle)<<R"(,"walk_to_pending":)"<<(s.walk_to_pending?"true":"false")
+                <<R"(,"walk_to_purpose":)"<<unsigned(s.walk_to_purpose)<<R"(,"locomotion_started":)"<<(s.locomotion_started?"true":"false")
+                <<R"(,"motion":{"phase":)"<<unsigned(m.phase)<<R"(,"move_frames":)"<<m.move_frames<<R"(,"move_total_frames":)"<<m.move_total_frames
+                <<R"(,"velocity":)"<<m.velocity<<R"(,"turn_frames":)"<<m.turn_frames<<R"(,"remaining_segments":)"<<m.remaining.size()
+                <<R"(,"previous_position_hip":[)"<<m.previous_position.position.x<<','<<m.previous_position.position.y<<']'
+                <<R"(,"previous_level":)"<<m.previous_position.level<<R"(,"current_segment":)";
+            if(m.current){const auto& c=*m.current;std::cout<<R"({"kind":)"<<unsigned(c.kind)<<R"(,"a":[)"<<c.a.x<<','<<c.a.y
+                <<R"(],"d":[)"<<c.d.x<<','<<c.d.y<<"]}";}else std::cout<<"null";
+            std::cout<<R"(},"collision":)";
+            if(s.collision){const auto& c=*s.collision;std::cout<<R"({"phase":)"<<unsigned(c.phase)<<R"(,"wait_time":)"<<c.wait_time
+                <<R"(,"timeout":)"<<c.timeout<<R"(,"retries":)"<<c.retries<<'}';}else std::cout<<"null";
+            std::cout<<R"(,"considered_count":)"<<s.avatars_to_consider.size()<<R"(,"considered":[)";
+            for(std::size_t n=0;n<std::min<std::size_t>(64,s.avatars_to_consider.size());++n){if(n)std::cout<<',';route_identity(s.avatars_to_consider[n].id,s.avatars_to_consider[n].generation);}
+            std::cout<<R"(],"considered_truncated":)"<<(s.avatars_to_consider.size()>64?"true":"false")<<'}';
+        }std::cout<<'}';
+    };
+    std::cout<<R"(,"actor_routing":{"actor_count":)"<<active.runtime_entities.size()<<R"(,"actors_truncated":)"<<(active.runtime_entities.size()>64?"true":"false")<<R"(,"actors":[)";
+    for(std::size_t n=0;n<std::min<std::size_t>(64,active.runtime_entities.size());++n){
+        if(n)std::cout<<',';const auto& actor=active.runtime_entities[n];const auto& vm=actor.vm;
+        std::cout<<R"({"id":)"<<actor.id<<R"(,"generation":)"<<actor.controllers.interactions.actor_generation<<R"(,"run_generation":)"<<vm.run_generation<<R"(,"vm_status":)"<<json_string(odh::vm_status_name(vm.status))
+            <<R"(,"stack_depth":)"<<vm.stack.size()<<R"(,"frames_truncated":)"<<(vm.stack.size()>32?"true":"false")<<R"(,"frames":[)";
+        for(std::size_t k=0;k<std::min<std::size_t>(32,vm.stack.size());++k){if(k)std::cout<<',';const auto& f=vm.stack[k];
+            std::cout<<R"({"routine":)"<<f.key.id<<R"(,"pc":)"<<f.pc<<R"(,"scope":)"<<unsigned(f.key.scope)<<R"(,"owner":)"<<f.context.code_owner
+                <<R"(,"caller":)"<<f.context.caller<<R"(,"callee":)"<<f.context.callee<<R"(,"stack_object":)"<<f.context.stack_object<<'}';}
+        std::cout<<R"(],"pending":)";
+        if(vm.pending){const auto& p=*vm.pending;std::cout<<R"({"ticket":)"<<p.ticket<<R"(,"routine":)"<<p.instruction.key.id<<R"(,"pc":)"<<p.instruction.pc
+            <<R"(,"opcode":)"<<p.instruction.instruction.opcode<<R"(,"depth":)"<<p.instruction.depth<<'}';}else std::cout<<"null";
+        std::cout<<R"(,"legacy_route":)";if(actor.route)route_job(*actor.route);else std::cout<<"null";
+        std::cout<<R"(,"route_stack":)";
+        if(!actor.route_stack)std::cout<<"null";
+        else{const auto& stack=*actor.route_stack;
+            std::cout<<R"({"last_tick":)";if(stack.last_tick)std::cout<<*stack.last_tick;else std::cout<<"null";
+            std::cout<<R"(,"job_count":)"<<stack.jobs.size()<<R"(,"jobs_truncated":)"<<(stack.jobs.size()>32?"true":"false")<<R"(,"jobs":[)";
+            for(std::size_t k=0;k<std::min<std::size_t>(32,stack.jobs.size());++k){if(k)std::cout<<',';const auto& j=stack.jobs[k];
+                std::cout<<R"({"route":)";route_job(j);std::cout<<R"(,"external_frame_active":)"<<(j.external_frame_active?"true":"false")
+                    <<R"(,"external_frame_owner":)"<<j.external_frame_owner<<R"(,"room_context_open":)"<<(j.room_context_open?"true":"false")
+                    <<R"(,"failure_pending":)"<<(j.failure_pending?"true":"false")<<R"(,"failure_tree_invoked":)"<<(j.failure_tree_invoked?"true":"false")
+                    <<R"(,"failure_code":)"<<j.failure_code<<R"(,"failure_reason":)"<<json_string(j.failure_reason)<<'}';}
+            std::cout<<R"(],"portal_context_count":)"<<stack.portal_contexts.size()<<R"(,"portal_contexts_truncated":)"<<(stack.portal_contexts.size()>32?"true":"false")<<R"(,"portal_contexts":[)";
+            for(std::size_t k=0;k<std::min<std::size_t>(32,stack.portal_contexts.size());++k){if(k)std::cout<<',';const auto& c=stack.portal_contexts[k];
+                std::cout<<R"({"ticket":)"<<c.ticket<<R"(,"portal_generation":)"<<c.portal_generation<<R"(,"ignored_count":)"<<c.ignored.size()<<R"(,"pending_edge":)";
+                if(c.pending_edge)route_edge(*c.pending_edge);else std::cout<<"null";
+                std::cout<<R"(,"pending_call":)";if(c.pending_call){const auto& call=*c.pending_call;
+                    std::cout<<R"({"routine":)"<<call.key.id<<R"(,"owner":)"<<call.context.code_owner<<R"(,"caller":)"<<call.context.caller
+                        <<R"(,"callee":)"<<call.context.callee<<R"(,"stack_object":)"<<call.context.stack_object<<'}';}else std::cout<<"null";std::cout<<'}';}
+            std::cout<<R"(],"portal_planned_calls":)"<<stack.portal_planned_calls<<R"(,"portal_returns":)"<<stack.portal_returns<<R"(,"portal_transitions":)"<<stack.portal_transitions<<'}';
+        }std::cout<<'}';
+    }std::cout<<"]}";
     const auto* actual_registry=active.architecture_object_state&&active.architecture_object_state->position_registry?
         &*active.architecture_object_state->position_registry:nullptr;
     std::cout<<R"(,"registry_complete":)"<<(actual_registry?(actual_registry->complete?"true":"false"):"null");

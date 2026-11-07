@@ -53,6 +53,7 @@ def integrated_family_lot(args, game, runner, person):
     resume_document = None
     resume_step = None
     resume_notice = None
+    resume_saved = None
     source_runner = source_person = None
     resume_receipt = args.resume_run or args.resume_setup
     resume_inventory = None
@@ -123,7 +124,8 @@ def integrated_family_lot(args, game, runner, person):
             if not resume_step:
                 raise ValueError('resume run has no completed product checkpoint operation')
             command = resume_step['command']
-            source_person=command[0]
+            source_person=(resume_step.get('binary_provenance_path',command[0])
+                if resume_step.get('reused_observation') else command[0])
             source_runner=next((path for path in resumed['binaries'] if path!=source_person),None)
             if source_person not in resumed['binaries'] or source_runner is None:
                 raise ValueError('runtime engine/decoder provenance is incomplete')
@@ -140,7 +142,17 @@ def integrated_family_lot(args, game, runner, person):
                     resume_document.get('registry_first_spatial_invalidation') is not None or
                     resume_document.get('headless_dialog_ok_sent') is not False):
                 raise ValueError('resume checkpoint did not stop at a clean product boundary')
-            saved = Path(resume_document['saved_session_path']).resolve(strict=True)
+            alias=resume_step.get('reused_observation')
+            if alias:
+                if (not args.second_move or not checkpoint or
+                        checkpoint.get('relative_path')!=alias.get('archive_relative_path') or
+                        checkpoint.get('sha256')!=alias.get('archive_sha256') or
+                        Path(resume_document['saved_session_path']).stem!=alias.get('archive_sha256')):
+                    raise ValueError('invalid relocated second-move observation provenance')
+                saved=(resume_profile/alias['archive_relative_path']).resolve(strict=True)
+            else:
+                saved = Path(resume_document['saved_session_path']).resolve(strict=True)
+            resume_saved=saved
             if not inside(saved,resume_profile) or digest(saved) != saved.stem:
                 raise ValueError('saved checkpoint is not the intact content-addressed profile archive')
             resume_notice = resume_document.get('blocking_dialog')
@@ -303,98 +315,159 @@ def integrated_family_lot(args, game, runner, person):
                 evidence_scope='real_CAS_creation_only_runtime_and_transactions_not_executed',
                 gui_verified=False, private_character_count=len(private_files))
         elif args.second_move:
-            checked(resumed.get('passed') is True and resumed.get('same_file_after_return') is True,
-                    'second move requires the completed purchase/floor/new-process return receipt')
+            checked(not resumed.get('second_move_completed'), 'second move was already completed; do not perform it again')
+            phase=(resumed.get('last_checkpoint') or {}).get('logical_stage')
+            checked((resumed.get('passed') is True and resumed.get('same_file_after_return') is True) or
+                    phase in ('second-property-query','second-move-in','second-return') or resumed.get('second_move'),
+                    'second move requires a completed first chain or its own guarded continuation')
             checked(set(('move-in','buy','edit')).issubset(report['progress']),
                     'second move cannot replace an incomplete first family/lot chain')
-            old_save=Path(resume_document['saved_session_path']).resolve()
-            current_save=profile/old_save.relative_to(resume_profile)
-            current=run('second-source-inspect',[runner,'--inspect-session',current_save])
-            authenticated=run('second-source-head',[runner,'--inspect-session-head',game,
-                str(current['house']),str(created['family_chunk_id'])])
-            checked(authenticated.get('authenticated_journal_head') is True and
-                    Path(authenticated['archive_path']).resolve()==current_save.resolve() and
-                    digest(current_save)==old_save.stem and current.get('blocking_dialog') is None,
-                    'second move source is not its current unblocked authenticated home head')
-            # Fresh read-only runtime evaluation and its ordinary zero-tick
-            # save synchronize the property cache in this copied profile only.
-            query_doc,query_save,query_current=product('second-property-query',
-                ['--load-session',str(current_save)],0,logical_stage='second-property-query')
-            checked(query_current==current and digest(query_save)==digest(current_save),
-                    'property query unexpectedly changed the complete gameplay checkpoint')
-            refreshed_head=run('second-property-head',[runner,'--inspect-session-head',game,
-                str(current['house']),str(created['family_chunk_id'])])
-            checked(refreshed_head.get('authenticated_journal_head') is True and
-                    Path(refreshed_head['archive_path']).resolve()==query_save.resolve(),
-                    'fresh property query did not retain the authenticated checkpoint head')
+            _,current_save,current=previous('edit')
+            checked(current_save.stem==digest(current_save), 'first completed checkpoint is not immutable')
+            # Decoder diagnostics may grow between builds. Re-read the exact
+            # content-addressed source with this same decoder before comparing
+            # runtime projections; historical JSON shape is not archive state.
+            current=run('second-original-source-inspect',[runner,'--inspect-session',current_save])
             destination=created['second_house']
-            state=run('second-source-family',[runner,'--inspect-family-state',game,
-                str(created['family_chunk_id']),str(destination)])
-            checked(state['managed'] and state['house']==current['house'] and
-                    state['budget']==current['budget'] and
-                    sorted(state['member_guids'])==sorted(m['guid'] for m in current['members']),
-                    'family property state differs from the authenticated live household')
-            checked(state['destination_price']==created['second_purchase_price'] and
-                    state['destination_house']==destination,
-                    'destination purchase value differs from its protected original SIMI')
-            report['second_move']={'source':current,'source_family_state':state,
-                'source_receipt_sha256':resume_result_hash,'destination':destination,
-                'original_first_chain_preserved':True,'first_chain_replayed':False,
-                'runtime_property_valuation':query_doc.get('runtime_property_valuation')}
+            history=json.loads(json.dumps(resumed.get('second_move',{})))
+            report['second_move']=history
+            history.update(source=current,source_relative_path=str(current_save.relative_to(profile)),
+                destination=destination,first_chain_replayed=False,original_first_chain_preserved=True)
+            # Retain the previous actual observation, explicitly labelled as a
+            # copied receipt rather than another execution. This gives failures
+            # after eviction an authenticated historical archive anchor.
+            anchor='second-continuation-anchor'
+            shutil.copyfile(source_stdout,output/(anchor+'-stdout.json'))
+            anchor_relative=str(resume_saved.relative_to(resume_profile))
+            anchor_record={'stage':anchor,'command':resume_step['command'],'exit':0,
+                'binary_provenance_path':str(person),
+                'stdout_sha256':digest(output/(anchor+'-stdout.json')),
+                'reused_observation':{'source_receipt_sha256':resume_result_hash,
+                    'source_stage':resume_step['stage'],'archive_relative_path':anchor_relative,
+                    'archive_sha256':digest(profile/anchor_relative),
+                    'person_sha256':(resume_step.get('reused_observation') or {}).get('person_sha256',resumed['binaries'][source_person])}}
+            report['steps'].append(anchor_record)
+            report['last_checkpoint']={'logical_stage':phase,'source_stage':anchor,
+                'relative_path':anchor_relative,'sha256':digest(profile/anchor_relative),
+                'tick':resume_document['ticks'],'blocking_dialog':resume_notice}
             publish()
-            # This gate requires an independently evaluated current property
-            # value, not merely the planner repeating its stored FAMI scalar.
-            valuation=query_doc.get('runtime_property_valuation')
-            checked(valuation is not None and valuation.get('status')=='resolved',
-                    'second move requires the real current property valuation before eviction; stored FAMI ValueInArch alone is insufficient')
-            checked(valuation.get('tick')==query_doc['ticks'] and
-                    valuation['property_value']==state['value_in_arch'],
-                    'current property valuation differs from stored move-out refund; synchronize the real owner before eviction')
-            quote=state['move_out_quote_budget']
-            checked(isinstance(quote,int) and quote==current['budget']+valuation['property_value'],
-                    'source move-out quote differs from independently measured property and current cash')
-            out=run('second-move-out',common+['--house',str(current['house']),
-                '--resident-id',str(created['neighbor_id']),'--headless-move-out-family',
-                str(created['family_chunk_id']),'--headless-ticks','0'])
-            checked(out=={'status':'moved_out','family_chunk_id':created['family_chunk_id']},
-                    'real move-out command did not complete')
-            vacant=run('second-unhoused-family',[runner,'--inspect-family-state',game,
+            state=run('second-family-state',[runner,'--inspect-family-state',game,
                 str(created['family_chunk_id']),str(destination)])
-            checked(vacant['house']==0 and vacant['budget']==quote and vacant['value_in_arch']==0 and
-                    vacant['member_guids']==state['member_guids'],
-                    'move-out did not preserve family identity or its independently quoted refund')
-            report['second_move']['unhoused']=vacant;publish()
+            checked(state['managed'] and state['destination_price']==created['second_purchase_price'] and
+                    state['destination_house']==destination and
+                    sorted(state['member_guids'])==sorted(m['guid'] for m in current['members']),
+                    'current family/destination differs from its protected original identities/SIMI')
+            if state['house']==current['house']:
+                checked(not history.get('unhoused'), 'family unexpectedly returned to the old occupancy')
+                head=run('second-source-head',[runner,'--inspect-session-head',game,
+                    str(current['house']),str(created['family_chunk_id'])])
+                checked(head.get('authenticated_journal_head') is True and
+                        Path(head['archive_path']).resolve()==current_save.resolve() and
+                        state['budget']==current['budget'] and head.get('blocking_dialog') is None,
+                        'second move source is not its current unblocked authenticated home head')
+                observed_hash=anchor_record['reused_observation']['person_sha256']
+                if phase=='second-property-query' and observed_hash==digest(person):
+                    query_doc=resume_document
+                    query_current=run('second-property-observation-inspect',[runner,'--inspect-session',current_save])
+                    checked(resume_saved.stem==current_save.stem and query_current==current,
+                            'recorded property query differs from the actual unchanged checkpoint')
+                    history['query_reused_from_receipt']=resume_result_hash
+                else:
+                    query_doc,query_save,query_current=product('second-property-query',
+                        ['--load-session',str(current_save)],0,logical_stage='second-property-query')
+                    checked(query_current==current and digest(query_save)==digest(current_save),
+                            'property query unexpectedly changed the complete gameplay checkpoint')
+                valuation=query_doc.get('runtime_property_valuation')
+                checked(valuation is not None and valuation.get('status')=='resolved' and
+                        valuation.get('tick')==query_doc['ticks'],
+                        'fresh real property valuation must resolve before eviction')
+                refreshed=run('second-property-head',[runner,'--inspect-session-head',game,
+                    str(current['house']),str(created['family_chunk_id'])])
+                state=run('second-quoted-family',[runner,'--inspect-family-state',game,
+                    str(created['family_chunk_id']),str(destination)])
+                checked(refreshed.get('authenticated_journal_head') is True and
+                        Path(refreshed['archive_path']).resolve()==current_save.resolve() and
+                        state['budget']==current['budget'] and state['value_in_arch']==valuation['property_value'],
+                        'fresh quote is not the cache on this same authenticated occupancy/head')
+                quote=state['move_out_quote_budget']
+                checked(isinstance(quote,int) and quote==current['budget']+valuation['property_value'] and
+                        quote>=state['destination_price'],
+                        'independent property plus cash must fund the destination before eviction')
+                history.update(runtime_property_valuation=valuation,source_family_state=state,
+                    quote_before_effects=quote,source_receipt_sha256=resume_result_hash)
+                publish()
+                moved=run('second-move-out',common+['--house',str(current['house']),
+                    '--resident-id',str(created['neighbor_id']),'--headless-move-out-family',
+                    str(created['family_chunk_id']),'--headless-ticks','0'])
+                checked(moved=={'status':'moved_out','family_chunk_id':created['family_chunk_id']},
+                        'real move-out command did not complete')
+                history['move_out_receipt']=moved;publish()
+                state=run('second-unhoused-family',[runner,'--inspect-family-state',game,
+                    str(created['family_chunk_id']),str(destination)])
+            else:
+                checked(history.get('move_out_receipt')=={'status':'moved_out','family_chunk_id':created['family_chunk_id']} and
+                        history.get('source_family_state') and history.get('runtime_property_valuation',{}).get('status')=='resolved',
+                        'post-eviction continuation lacks its actual pre-effect quote and move-out receipt')
+                quote=history['quote_before_effects']
+                checked(quote==current['budget']+history['runtime_property_valuation']['property_value'] and
+                        quote>=state['destination_price'], 'historical source quote/affordability is inconsistent')
             selection=['--house',str(destination),'--resident-id',str(created['neighbor_id'])]
-            arrival_options=['--headless-move-in-family',str(created['family_chunk_id'])]
-            if args.recover_saved_code:arrival_options.append('--recover-saved-code')
-            arrived_doc,arrived_save,arrived=product('second-move-in',selection,0,arrival_options,
-                logical_stage='second-move-in')
+            resumed_return=None
+            if state['house']==0:
+                checked(state['budget']==quote and state['value_in_arch']==0 and
+                        state['occupancy_epoch']==current['occupancy_epoch'],
+                        'unhoused family differs from the recorded source refund/occupancy')
+                history['unhoused']=state;publish()
+                arrival_options=['--headless-move-in-family',str(created['family_chunk_id'])]
+                if args.recover_saved_code:arrival_options.append('--recover-saved-code')
+                arrived_doc,arrived_save,arrived=product('second-move-in',selection,0,arrival_options,
+                    logical_stage='second-move-in')
+            else:
+                checked(state['house']==destination and state['budget']==quote-state['destination_price'] and
+                        state['occupancy_epoch']==current['occupancy_epoch']+1 and
+                        phase in ('second-move-in','second-return'),
+                        'post-effect family is not the exact already-paid destination occupancy')
+                resumed_path=profile/resume_saved.relative_to(resume_profile)
+                arrived=run('second-destination-inspect',[runner,'--inspect-session',resumed_path])
+                head=run('second-destination-head',[runner,'--inspect-session-head',game,
+                    str(destination),str(created['family_chunk_id'])])
+                checked(head.get('authenticated_journal_head') is True and
+                        Path(head['archive_path']).resolve()==resumed_path.resolve() and
+                        arrived.get('blocking_dialog')==resume_notice==head.get('blocking_dialog'),
+                        'destination observation/modal differs from its exact current serialized head')
+                if resume_notice:
+                    answer=0 if args.observed_response_code is None else args.observed_response_code
+                    arrived_doc,arrived_save,arrived=product('second-arrival-notice',
+                        ['--load-session',str(resumed_path)],1,['--headless-dialog-response',str(answer),''],
+                        logical_stage='second-move-in',expected_answers=1)
+                else:
+                    arrived_doc,arrived_save=resume_document,resumed_path
+                    if phase=='second-return':resumed_return=(arrived_doc,arrived_save,arrived)
             checked(arrived['house']==destination and roster(arrived)==roster(current) and
                     arrived['family_chunk_id']==current['family_chunk_id'] and
                     arrived['family_number']==current['family_number'] and
-                    arrived['occupancy_epoch']!=current['occupancy_epoch'],
-                    'second move did not bind the same family into a fresh destination occupancy')
-            checked(arrived['budget']==quote-vacant['destination_price'],
+                    arrived['occupancy_epoch']==current['occupancy_epoch']+1,
+                    'second move did not bind the same family into the next destination occupancy')
+            checked(arrived['budget']==quote-state['destination_price'],
                     'second move did not debit exactly the protected destination purchase price')
             for before in current['members']:
                 after=next(m for m in arrived['members'] if m['guid']==before['guid'])
                 checked(all(after['motives'][i]==before['motives'][i] for i in (5,6,7,8,9,14,15)),
                         'second move lost portable needs for GUID '+str(before['guid']))
             remember('second-move-in',(arrived_doc,arrived_save,arrived))
-            returned_doc,returned_save,returned=product('second-return',selection,0,
+            returned_doc,returned_save,returned=resumed_return or product('second-return',selection,0,
                 logical_stage='second-return')
             checked(returned_doc.get('session_loaded') is True and returned==arrived and
                     digest(returned_save)==digest(arrived_save),
                     'new-process second-house selection did not preserve the entire arrival checkpoint')
             checked({name:digest(profile/name) for name in private_files}==private_files,
                     'second move modified immutable private character resources')
-            report['second_move'].update(arrived=arrived,returned=returned,
-                quote_before_effects=quote,first_chain_replayed=False)
+            history.update(arrived=arrived,returned=returned,quote_before_effects=quote,first_chain_replayed=False)
             report.update(status='passed',passed=True,second_move_completed=True,
                 final_checkpoint={'path':str(returned_save),'sha256':digest(returned_save)},
                 same_file_after_return=True,gui_verified=False,
                 limits=['CLI consumers and authenticated complete profiles; no GUI acceptance',
-                        'Personal transfer validation covers identity and portable needs; broader state remains separately audited'])
+                        'Personal transfer checks identity and portable needs; old-lot filtering/persistence remains a separate gate'])
         else:
             selection = ['--house',str(created['house']),'--resident-id',str(created['neighbor_id'])]
             initial_options = ['--headless-move-in-family',str(created['family_chunk_id'])]
