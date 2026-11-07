@@ -78,7 +78,12 @@ public:
     void prepare_capture() {
         if(!current())return;attach();
         if(!initialized_)full_refresh();
-        if(touched_){sync_scores();sync_visuals();}
+        if(touched_)sync_scores();
+        // Late constructor/retirement publications can change the identity
+        // cohort without issuing Refresh or running a scheduler tick. Capture
+        // must publish the same LastRoom cache that a fresh owner would expose,
+        // while preserving deferred requests and committed room colors.
+        sync_visuals();
     }
     // VM.LoadComplete repeats the full pass after asynchronous startup, without
     // consuming requests produced by those startup scripts.

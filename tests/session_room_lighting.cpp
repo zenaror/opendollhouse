@@ -107,6 +107,48 @@ int main(){try{
             odh::encode_architecture_object_state(original_cohort)==original_state&&recalculations==0,
             "restore appends only missing visual identity; prior light/colors/registry/requests stay exact");
     }
+    // A restored lot can acquire a new adult/child household after the
+    // lighting owner is created, before its first capture and without Refresh.
+    // The first saved state must already be canonical for a new process.
+    {
+        odh::World incoming_world;require(incoming_world.restore_snapshot(world.snapshot()),"incoming household source World");
+        auto incoming=reopened;incoming.position_registry->deferred_lighting={1,0};
+        unsigned recalculations=0;
+        odh_host::SessionRoomLighting before_birth(incoming_world,[&]{return &incoming;},[&]{return &map;},
+            []{return static_cast<odh::ObjectPositionRegistry*>(nullptr);},[&]()->odh::RoomLightingServices{
+                ++recalculations;throw odh::FormatError("capture must not calculate room lighting");});
+        std::vector<odh::ObjectPositionIdentity> new_members;
+        for(std::int16_t id:{3,4}){
+            require(incoming_world.create_saved_entity(id,odh::EntityKind::avatar,1000+id,{},{},{},{},{},0)&&
+                incoming_world.set_position(id,{24+16*(id-3),40,1,0}),"actual late household construction and placement");
+            odh::VmFrame actor;actor.context.caller=id;
+            require(incoming_world.write(actor,3,29,0)&&incoming_world.write(actor,3,40,0)&&incoming_world.write(actor,3,51,0),
+                "late actor has known actual room and visual classification fields");
+            new_members.push_back({id,incoming_world.find(id)->generation});
+            incoming.position_registry->rooms[1].entities.push_back(new_members.back());
+            require(!before_birth.visual_room(id,new_members.back().generation),"late birth has not been captured or processed");
+        }
+        const auto before_capture=odh::encode_architecture_object_state(incoming);
+        const auto committed=odh::encode_room_lighting_snapshot(*incoming.lighting_committed);
+        before_birth.prepare_capture();
+        for(const auto member:new_members)
+            require(before_birth.visual_room(member.id,member.generation)==std::optional<std::uint16_t>{1},
+                "first capture includes each late household visual identity");
+        auto only_previous=incoming;
+        for(const auto member:new_members)odh::erase_room_lighting_visual(*only_previous.lighting,member);
+        require(odh::encode_architecture_object_state(only_previous)==before_capture&&
+            odh::encode_room_lighting_snapshot(*incoming.lighting_committed)==committed&&
+            incoming.position_registry->deferred_lighting==std::vector<std::uint16_t>{1,0}&&recalculations==0,
+            "first capture only reconciles identity cache; colors, scores, registry and pending work remain exact");
+        const auto first_save=odh::encode_architecture_object_state(incoming);
+        auto restored=odh::decode_architecture_object_state(first_save);
+        odh_host::SessionRoomLighting next_process(incoming_world,[&]{return &restored;},[&]{return &map;},
+            []{return static_cast<odh::ObjectPositionRegistry*>(nullptr);},[&]()->odh::RoomLightingServices{
+                ++recalculations;throw odh::FormatError("zero-tick restore must not calculate lighting");});
+        next_process.prepare_capture();
+        require(odh::encode_architecture_object_state(restored)==first_save&&recalculations==0,
+            "late-household first save and fresh-owner zero-tick capture are byte identical");
+    }
     odh::VmFrame old_frame;old_frame.context.caller=old_frame.context.callee=old_frame.context.stack_object=1;
     require(world.bind_context_live(old_frame.context),"bind original caller and stack object generations");
     require(world.remove(1)&&world.create_runtime_object(1,2002,{},{}),"reuse numeric id with a new entity");

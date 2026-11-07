@@ -1,6 +1,7 @@
 #include "odh/animation.hpp"
 #include "odh/formats.hpp"
 #include "odh/template_person.hpp"
+#include "odh/object_definition.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -32,10 +33,11 @@ void chunk(std::vector<std::uint8_t>& out,const std::string& type,std::uint16_t 
     std::copy(label.begin(),label.end(),lab.begin());out.insert(out.end(),lab.begin(),lab.end());
     out.insert(out.end(),payload.begin(),payload.end());
 }
-std::vector<std::uint8_t> template_iff(bool duplicate_body=false) {
+std::vector<std::uint8_t> template_iff(bool duplicate_body=false,std::uint32_t version=138) {
     const std::string signature="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";
     std::vector<std::uint8_t> out(signature.begin(),signature.end());out.resize(64,0);
-    std::vector<std::uint8_t> objd(216,0);patch32le(objd,0,138);patch32le(objd,28,0x7FD96B54);
+    std::vector<std::uint8_t> objd(216,0);patch32le(objd,0,version);patch32le(objd,28,0x7FD96B54);
+    patch16le(objd,80,0xA55A);patch16le(objd,82,0x1234);patch16le(objd,84,0x55);
     chunk(out,"OBJD",128,0x10,"TemplatePerson",objd);
     const std::vector<std::string> body={"skin","body-old","head-old"};
     chunk(out,"STR#",200,0x10,"bodystring",strings(body));
@@ -55,6 +57,31 @@ const Seen& find(const std::vector<Seen>& chunks,const char* type,std::uint16_t 
     const auto it=std::find_if(chunks.begin(),chunks.end(),[&](const Seen& c){return c.type==type&&c.id==id;});
     if(it==chunks.end())throw std::runtime_error("expected output chunk is missing");return *it;
 }
+std::vector<std::int16_t> definition_words(const Seen& objd){
+    const std::string raw(objd.payload.begin(),objd.payload.end());std::istringstream input(raw,std::ios::in|std::ios::binary);
+    return odh::read_object_definition_words(odh::View(input,objd.payload.size()));
+}
+void catalog_roundtrip(const std::vector<std::uint8_t>& original,const std::vector<std::uint8_t>& cloned,
+        const odh::TemplatePersonRequest& request){
+    const auto source=parse(original),generated=parse(cloned);const auto& source_objd=find(source,"OBJD",128);
+    const auto& generated_objd=find(generated,"OBJD",128);const auto source_words=definition_words(source_objd);
+    const auto generated_words=definition_words(generated_objd);
+    need(generated_words.size()>42&&source_words.size()==generated_words.size(),"real OBJD reader did not decode supported profile");
+    need(generated_words[41]==2000,"real OBJD CatalogStringsID does not reference CTSS2000");
+    need(generated_words[40]==source_words[40]&&generated_words[42]==source_words[42],
+        "catalog write changed adjacent FunctionFlags or Global metadata");
+    for(std::size_t i=2;i<source_words.size();++i){
+        if(i==14||i==15||i==41)continue; // GUID and the intended CatalogStringsID.
+        need(source_words[i]==generated_words[i],"catalog clone modified an unrelated decoded OBJD field");
+    }
+    const auto& catalog=find(generated,"CTSS",static_cast<std::uint16_t>(generated_words[41]));
+    const std::string raw(catalog.payload.begin(),catalog.payload.end());std::istringstream input(raw,std::ios::in|std::ios::binary);
+    const auto table=odh::read_strings(odh::View(input,catalog.payload.size()));
+    const auto* name=odh::string_in_language(table,request.language,0);
+    const auto* bio=odh::string_in_language(table,request.language,1);
+    need(name&&bio&&name->value==request.name&&bio->value==request.biography,
+        "real OBJD catalog lookup did not round-trip character name and biography");
+}
 void rejects(const std::vector<std::uint8_t>& input,odh::TemplatePersonRequest request,const char* label) {
     try { (void)odh::clone_template_person(input,request); } catch(const odh::FormatError&) { return; }
     throw std::runtime_error(std::string("expected rejection: ")+label);
@@ -71,7 +98,10 @@ int main(int argc,char** argv) {
         need(objd.label==request.object_label,"OBJD label changed");
         need(objd.payload.size()==216,"OBJD payload extent changed");
         need(objd.payload[28]==0x78&&objd.payload[29]==0x56&&objd.payload[30]==0x34&&objd.payload[31]==0x12,"new GUID not written");
-        need(objd.payload[80]==0xD0&&objd.payload[81]==0x07,"catalog string ID not written");
+        catalog_roundtrip(input,output,request);
+        const auto input136=template_iff(false,136);
+        catalog_roundtrip(input136,odh::clone_template_person(input136,request),request);
+        rejects(template_iff(false,139),request,"unsupported OBJD layout");
         const auto& unknown=find(chunks,"ZZZZ",0xBEEF);
         need(unknown.flags==0x4321&&unknown.label=="unknown data"&&unknown.payload==std::vector<std::uint8_t>({0xDE,0xAD,0xBE,0xEF,0,0x7F}),"unknown chunk changed");
         const auto& body=find(chunks,"STR#",200);
@@ -97,6 +127,7 @@ int main(int argc,char** argv) {
             const auto source=far_view.subview(entry->offset,entry->length);std::vector<std::uint8_t> real_template(static_cast<std::size_t>(source.size()));source.read(0,real_template.data(),real_template.size());
             auto real_request=request;real_request.guid=0x12345679;real_request.object_label="user00002 - Check";
             const auto generated=odh::clone_template_person(real_template,real_request);
+            catalog_roundtrip(real_template,generated,real_request);
             const auto real_chunks=parse(generated);const auto& real_body=find(real_chunks,"STR#",200);
             std::string payload(real_body.payload.begin(),real_body.payload.end());std::istringstream payload_in(payload,std::ios::in|std::ios::binary);
             const auto real_strings=odh::read_strings(odh::View(payload_in,real_body.payload.size()));

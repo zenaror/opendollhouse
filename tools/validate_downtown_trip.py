@@ -29,6 +29,27 @@ def require(ok,message):
     if not ok:raise ValueError(message)
 
 
+def validate_acknowledgement(prompt,step):
+    """Bind a response to its complete observed prompt and actual selector offer.
+
+    PhoneBook's source cancellation is code0/text-1, rather than an offered
+    neighbor ID. This exception grants no arbitrary selector values or answers.
+    """
+    require(prompt is not None and prompt==step['expected_prompt'],'acknowledgement is not the exact pending observed dialog')
+    selected=step.get('selected_value')
+    phonebook_cancel=prompt.get('type')==10 and step.get('text','')=='-1'
+    if selected==-1 or step.get('text','')=='-1':
+        require(phonebook_cancel and step.get('code')==0 and
+                ('selected_value' not in step or selected==-1),
+                'only PhoneBook code0/text-1 may cancel outside offered choices')
+        require(isinstance(prompt.get('choices'),list),'PhoneBook cancellation requires actual observed choices')
+        return
+    if 'selected_value' in step:
+        choices=prompt.get('choices')
+        require(isinstance(choices,list) and any(c['value']==selected for c in choices),'selector value is not among actual offered choices')
+        require(step.get('text')==str(selected),'selector response must carry its actual selected value')
+
+
 def documents(raw):
     """A real launcher can emit HOME and visited-lot JSON in one invocation."""
     decoder=json.JSONDecoder(parse_constant=lambda x:(_ for _ in ()).throw(ValueError(x)))
@@ -180,11 +201,7 @@ def main():
             require(sha(args.binary)==args.binary_sha256 and all(sha(f)==h for f,h in guards.items()),'binary/source/input changed')
             if last and last.get('blocking_dialog'):require(step['kind']=='ack','pending dialog requires its exact observed acknowledgement step')
             if step['kind']=='ack':
-                require(last and last.get('blocking_dialog')==step['expected_prompt'],'acknowledgement is not the exact pending observed dialog')
-                if 'selected_value' in step:
-                    choices=last['blocking_dialog'].get('choices')
-                    require(isinstance(choices,list) and any(c['value']==step['selected_value'] for c in choices),'selector value is not among actual offered choices')
-                    require(step.get('text')==str(step['selected_value']),'selector response must carry its actual selected value')
+                validate_acknowledgement(last.get('blocking_dialog') if last else None,step)
             staged_ledger=json.loads(json.dumps(ledger))
             before_hash=sha(load);before_profile=profile_files(source_profile)
             directory=args.output/step['id'];directory.mkdir();profile=directory/'profile';shutil.copytree(source_profile,profile,symlinks=True)

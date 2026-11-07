@@ -45,6 +45,7 @@
 #include "neighborhood_portraits.hpp"
 #include "character_display_names.hpp"
 #include "phonebook_choices.hpp"
+#include "dialog_text_resources.hpp"
 #include "linux_cas_layout.hpp"
 #include "odh/resident_action_control.hpp"
 #include "session_generic_resource_path.hpp"
@@ -1648,6 +1649,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<std::vector<odh::SavedObjectPrefix>> saved_prefixes;
     std::optional<std::vector<odh::ObjmCommonState>> saved_common;
     std::optional<std::vector<std::optional<odh::ObjmTailState>>> saved_tails;
+    std::map<std::pair<std::string,std::string>,std::array<std::uint8_t,32>> dialog_metadata_fingerprints;
+    std::map<std::string,std::array<std::uint8_t,32>> dialog_archive_fingerprints;
+    const auto admit_dialog_container=[&](const Resource& resource){
+        const auto path=std::filesystem::canonical(resource.archive).string();
+        if(!dialog_archive_fingerprints.count(path))dialog_archive_fingerprints.emplace(path,odh_host::fingerprint_transfer_resource(path));
+    };
+    if(avatar)admit_dialog_container(*avatar);
+    if(semi)admit_dialog_container(*semi);
+    if(globals)admit_dialog_container(*globals);
     std::optional<odh::DefinitionIndex> definition_index;
     std::vector<odh::DefinitionCandidate> catalog_definition_candidates;
     std::vector<std::uint32_t> global_controller_guids;
@@ -1669,6 +1679,16 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::uint64_t provenance_available=1024*1024;
         const auto add_iff=[&](auto& output,const auto& view,const std::string& source,const std::string& asset){
             odh::Limits limits;limits.iff_chunks=4096;
+            if(dialog_metadata_fingerprints.size()>=8192)throw odh::FormatError("dialog metadata resource budget exceeded");
+            odh::Sha256 dialog_digest;std::array<char,65536> dialog_buffer{};
+            for(std::uint64_t offset=0;offset<view.size();){const auto count=static_cast<std::size_t>(std::min<std::uint64_t>(dialog_buffer.size(),view.size()-offset));
+                view.read(offset,dialog_buffer.data(),count);dialog_digest.update(dialog_buffer.data(),count);offset+=count;}
+            const auto dialog_key=std::make_pair(std::filesystem::canonical(source).string(),asset);
+            const auto dialog_sha=dialog_digest.finish();
+            const auto known_dialog_sha=dialog_metadata_fingerprints.emplace(dialog_key,dialog_sha);
+            if(!known_dialog_sha.second&&known_dialog_sha.first->second!=dialog_sha)
+                throw odh::FormatError("dialog metadata resource changed during admission");
+
             odh::iff_chunks(view,[&](const auto& chunk){
                 if(chunk.type!="OBJD")return;
                 if(candidates.size()+supplemental_candidates.size()>=8192)
@@ -2787,14 +2807,42 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     };
     if(residential_components){
 #ifdef __linux__
+        const auto actual_lot_sha=lot_path?std::optional<std::array<std::uint8_t,32>>{odh_host::fingerprint_transfer_resource(*lot_path)}:std::nullopt;
+        const bool resource_identity_differs=session_context->resources&&
+            odh::encode_session_resource_identity(residential_components->resources)!=odh::encode_session_resource_identity(*session_context->resources);
         if(!saved_world_main||!restored_world||!definition_index||!globals||globals->standalone||!lot_path||
            !session_context->family_journal||!session_context->family_journal->pending_purchase()||
            !session_context->family_journal->expected_overlay()||!session_context->resources||
            session_context->property_lot->identity.house!=session_context->house_number||
            session_context->property_lot_reference->house!=session_context->house_number||
-           session_context->property_lot->identity.lot_sha256!=odh_host::fingerprint_transfer_resource(*lot_path)||
-           odh::encode_session_resource_identity(residential_components->resources)!=odh::encode_session_resource_identity(*session_context->resources))
-            throw odh::FormatError("vacant property input differs from its selected installed lot/resources/pending occupancy");
+           session_context->property_lot->identity.neighborhood!=session_context->neighborhood_number||
+           (session_context->neighborhood_mode!=1&&session_context->neighborhood_mode!=4)||
+           !actual_lot_sha||session_context->property_lot->identity.lot_sha256!=*actual_lot_sha||resource_identity_differs){
+            std::string reasons;
+            const auto missing=[&](bool failed,const char* name){if(failed){if(!reasons.empty())reasons+=",";reasons+=name;}};
+            missing(!saved_world_main,"saved_world_main_disabled");missing(!restored_world,"import_missing");
+            missing(!definition_index,"definitions_missing");missing(!globals,"globals_missing");
+            missing(globals&&globals->standalone,"globals_standalone");missing(!lot_path,"selected_lot_missing");
+            missing(!session_context->family_journal,"journal_missing");
+            if(session_context->family_journal){
+                missing(!session_context->family_journal->pending_purchase(),"purchase_not_pending");
+                missing(!session_context->family_journal->expected_overlay(),"expected_overlay_missing");
+            }
+            missing(!session_context->resources,"selected_resource_identity_missing");
+            missing(session_context->property_lot->identity.house!=session_context->house_number,"document_house_differs");
+            missing(session_context->property_lot_reference->house!=session_context->house_number,"release_house_differs");
+            missing(session_context->property_lot->identity.neighborhood!=session_context->neighborhood_number,"document_neighborhood_differs");
+            missing(session_context->neighborhood_mode!=1&&session_context->neighborhood_mode!=4,"non_residential_mode");
+            missing(!actual_lot_sha||session_context->property_lot->identity.lot_sha256!=*actual_lot_sha,"installed_lot_digest_differs");
+            missing(resource_identity_differs,"resource_identity_differs");
+            const auto hex=[](const auto& bytes){constexpr char h[]="0123456789abcdef";std::string out;
+                for(auto b:bytes){out+=h[b>>4];out+=h[b&15];}return out;};
+            if(actual_lot_sha)reasons+=" actual_lot_sha="+hex(*actual_lot_sha);
+            reasons+=" doc_lot_sha="+hex(session_context->property_lot->identity.lot_sha256);
+            if(session_context->resources)reasons+=" actual_resource_sha="+hex(session_context->resources->resource_fingerprint);
+            reasons+=" doc_resource_sha="+hex(residential_components->resources.resource_fingerprint);
+            throw odh::FormatError("vacant property input prerequisites: "+reasons);
+        }
         validate_residential_incoming_home=[&]{
             const auto& ctx=*session_context;auto& journal=*ctx.family_journal;
             if(!journal.pending_purchase()||!journal.runtime_overlay()||!ctx.resources||
@@ -5502,7 +5550,72 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         (void)type;reason="destination selector requires the native resource catalog adapter";return {};
 #endif
     };
-    std::unique_ptr<odh_host::CharacterDisplayNames> phonebook_display_names;
+    const auto decode_dialog_resource=[](const std::string& bytes,std::uint8_t language){
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+        return odh_host::legacy_text_to_utf8(bytes,language,4096);
+#else
+        (void)language;return bytes;
+#endif
+    };
+    const auto freeze_dialog_resource=[&](const odh_host::DialogTextTable& key)->std::shared_ptr<const std::string>{
+        const auto canonical=std::filesystem::canonical(key.archive);
+        Resource resource{canonical.string(),key.entry,key.entry.empty()};
+        if(key.entry.empty()){
+            const auto pin=pinned_characters.find(canonical);
+            if(pin!=pinned_characters.end()){
+                if(odh::sha256(pin->second.bytes->data(),pin->second.bytes->size())!=pin->second.fingerprint)
+                    throw odh::FormatError("dialog character immutable fingerprint mismatch");
+                return pin->second.bytes;
+            }
+        }
+        for(const auto* actor:auxiliary_actors)if(actor&&actor->npc_origin&&actor->resource.frozen&&
+            actor->resource.entry==key.entry&&std::filesystem::canonical(actor->resource.archive)==canonical){
+            if(odh::sha256(actor->resource.frozen->data(),actor->resource.frozen->size())!=actor->npc_origin->character_fingerprint)
+                throw odh::FormatError("dialog NPC immutable fingerprint mismatch");
+            return actor->resource.frozen;
+        }
+        const auto identity=std::make_pair(canonical.string(),key.entry);
+        const auto admitted=dialog_metadata_fingerprints.find(identity);
+        const auto archive=dialog_archive_fingerprints.find(canonical.string());
+        if(admitted==dialog_metadata_fingerprints.end()&&archive==dialog_archive_fingerprints.end())
+            throw odh::FormatError("dialog resource has no admitted immutable authority");
+        if(archive!=dialog_archive_fingerprints.end()&&odh_host::fingerprint_transfer_resource(canonical)!=archive->second)
+            throw odh::FormatError("dialog global archive changed after resource admission");
+        const auto fingerprint=freeze_npc_resource(resource);
+        if(admitted!=dialog_metadata_fingerprints.end()&&fingerprint!=admitted->second)
+            throw odh::FormatError("dialog resource changed after definition admission");
+        if(archive!=dialog_archive_fingerprints.end()&&odh_host::fingerprint_transfer_resource(canonical)!=archive->second)
+            throw odh::FormatError("dialog global archive changed during immutable capture");
+        return resource.frozen;
+    };
+    const auto legacy_native_cas_catalog=[&](const odh::DefinitionCandidate& exact,const std::shared_ptr<const std::string>& bytes){
+        if(!neighbors||!session_context||!session_context->family_journal||!session_context->family_journal->runtime_overlay()||
+           !exact.asset.empty()||!bytes)return false;
+        const auto nid=neighbors->id_for_guid(exact.definition.guid);if(!nid)return false;
+        bool created=false;
+        for(const auto& creation:session_context->family_journal->runtime_overlay()->creations)
+            for(const auto& member:creation.members)if(member.guid==exact.definition.guid&&member.neighbor_id==*nid)created=true;
+        if(!created)return false;
+        const auto fingerprint=odh::sha256(bytes->data(),bytes->size());
+        const auto pin=pinned_characters.find(std::filesystem::canonical(exact.source));
+        // Only admitted HHRD or exact NPC construction origin grants the
+        // legacy Catalog0 compatibility; a PlayerData-looking path does not.
+        if(pin!=pinned_characters.end()&&pin->second.bytes==bytes&&pin->second.fingerprint==fingerprint)
+            for(const auto& member:capture_household_roster(true))
+                if(member.guid==exact.definition.guid&&member.neighbor_id==*nid&&member.object_definition_id==exact.chunk_id&&
+                   member.character_fingerprint==fingerprint)return true;
+        for(const auto* actor:auxiliary_actors)if(actor&&actor->npc_origin){const auto& origin=*actor->npc_origin;
+            if(origin.guid==exact.definition.guid&&origin.neighbor_id==*nid&&origin.object_definition_id==exact.chunk_id&&
+               origin.character_fingerprint==fingerprint&&actor->resource.frozen==bytes&&
+               std::filesystem::canonical(actor->resource.archive)==std::filesystem::canonical(exact.source)&&actor->resource.entry==exact.asset)return true;}
+        return false;
+    };
+    std::unique_ptr<odh_host::DialogTextResources> dialog_text_resources;
+    const auto ensure_dialog_text_resources=[&]()->odh_host::DialogTextResources*{
+        if(!dialog_text_resources&&definition_index)dialog_text_resources=std::make_unique<odh_host::DialogTextResources>(
+            *definition_index,game_language,decode_dialog_resource,freeze_dialog_resource,legacy_native_cas_catalog);
+        return dialog_text_resources.get();
+    };
     const auto selector_dialog_choices=[&](std::uint8_t type,const odh::VmFrame& source,std::string& reason)
             ->std::optional<std::vector<odh::DialogChoice>>{
         if(type!=10)return travel_dialog_choices(type,reason);
@@ -5510,11 +5623,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(!caller||!neighbors||!relationships||!session_context||session_context->installed_user_data.empty()){
             reason="phonebook requires an actual caller and current neighborhood/relationship resources";return {};
         }
-        if(!phonebook_display_names)phonebook_display_names=std::make_unique<odh_host::CharacterDisplayNames>(
-            session_context->installed_user_data/"Characters",session_context->player_character_root,game_language);
         const auto names=[&](std::int16_t nid,std::uint32_t guid)->std::optional<std::string>{
             if(retired_neighbor_ids.count(nid)||retired_neighbor_guids.count(guid))return {};
-            const auto& name=phonebook_display_names->name(guid);if(name.empty())return {};return name;
+            auto* resources=ensure_dialog_text_resources();if(!resources)return {};
+            const auto name=resources->catalog(guid,0);
+            if(name.availability!=odh_host::DialogTextAvailability::value||name.utf8.empty())return {};return name.utf8;
         };
         auto result=odh_host::phonebook_choices(world,{caller->id,caller->generation},*neighbors,*relationships,names);
         if(!result.ready){reason=result.diagnostic;return {};}
@@ -5555,51 +5668,46 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 travel_choices=selector_dialog_choices(operand.type,source,reason);
                 if(!travel_choices)return {};
             }
-            const auto resource=dialog_resource_for(scope,source);
+            auto resource=dialog_resource_for(scope,source);
+            resource.frozen=freeze_dialog_resource({resource.archive,resource.entry,301});
             const auto tables=load_strings(resource,{301});const auto table=tables.find(301);
             if(table==tables.end()||table->second.state!=odh::StringTableState::decoded)
                 throw odh::FormatError("dialog STR#301 missing or undecoded");
-            const auto entity_name=[&](const odh::Entity* entity)->std::optional<std::string>{
-                if(!entity)return {};
-                if(entity->name_override)return entity->name_override;
-                if(restored_world&&objt&&entity->definition){
-                    std::optional<std::string> name;
-                    for(const auto& record:restored_world->records){
-                        if(record.saved.object_id!=entity->id||record.saved.guid!=entity->definition->guid||!record.saved.type_id||record.saved.type_id>objt->entries.size())continue;
-                        const auto& entry=objt->entries[record.saved.type_id-1];
-                        if(entry.guid==entity->definition->guid&&!entry.name.empty())name=entry.name;
-                    }
-                    if(name){
-#ifdef ODH_HAVE_LINUX_TEXT_CODEC
-                        return odh_host::legacy_text_to_utf8(*name,game_language,256);
-#else
-                        return name;
-#endif
-                    }
-                }
-                return {};
+            auto* resources=ensure_dialog_text_resources();
+            odh_host::DialogTextProviders text_providers;
+            text_providers.entity_runtime_name=[&](const odh::Entity& entity){
+                if(entity.kind!=odh::EntityKind::avatar)return odh_host::DialogTextValue{odh_host::DialogTextAvailability::absent,{}};
+                const auto* actor=actor_runtime_for(entity.id);
+                if(!actor||actor->generation!=entity.generation||!actor->body_state)return odh_host::DialogTextValue{};
+                const auto& name=actor->body_state->selected_name;
+                // AvatarBodyStrings selects the US (0/1) source group.
+                return name?odh_host::DialogTextValue{odh_host::DialogTextAvailability::value,decode_dialog_resource(*name,1)}:
+                    odh_host::DialogTextValue{odh_host::DialogTextAvailability::absent,{}};
             };
+            text_providers.entity_catalog=[&](const odh::Entity& entity,unsigned index,odh_host::DialogEntityCatalogPolicy policy){
+                if(!entity.definition||!resources)return odh_host::DialogTextValue{};
+                return index?resources->catalog(entity.definition->guid,index,policy):resources->display(entity.definition->guid,policy);
+            };
+            text_providers.neighbor_catalog=[&](std::uint32_t guid,unsigned index){
+                if(retired_neighbor_guids.count(guid))return odh_host::DialogTextValue{odh_host::DialogTextAvailability::absent,{}};
+                return resources?resources->catalog(guid,index):odh_host::DialogTextValue{};
+            };
+            text_providers.string=[&](const auto& key,std::uint16_t index){return dialog_text_resources?dialog_text_resources->string(key,index):odh_host::DialogTextValue{};};
+            text_providers.global_table=[&](std::uint16_t id)->std::optional<odh_host::DialogTextTable>{
+                if(!globals)return {};return odh_host::DialogTextTable{globals->archive,globals->entry,id};
+            };
+            text_providers.entity_tables=[&](const odh::Entity& entity,std::uint16_t id)->std::optional<std::vector<odh_host::DialogTextTable>>{
+                const auto* exact=entity.definition&&definition_index?definition_index->unique(entity.definition->guid):nullptr;
+                if(!exact||!globals)return {};
+                std::vector<odh_host::DialogTextTable> keys;
+                const auto link=unique_saved_semiglobal_name(effective_saved_tree_catalog(*exact,&*definition_index));
+                if(link){if(globals->standalone)return {};
+                    keys.push_back({globals->archive,resolve_saved_semiglobal_entry(globals->archive,*link+".iff"),id});}
+                keys.push_back({exact->source,exact->asset,id});keys.push_back({globals->archive,globals->entry,id});return keys;
+            };
+            odh_host::DialogTextBudget text_work;
             const auto expand=[&](const std::string& raw,std::uint8_t text_language){
-                std::string utf8=raw;
-#ifndef ODH_HAVE_LINUX_TEXT_CODEC
-                (void)text_language;
-#endif
-#ifdef ODH_HAVE_LINUX_TEXT_CODEC
-                utf8=odh_host::legacy_text_to_utf8(raw,text_language,4096);
-#endif
-                return odh::expand_dialog_text(utf8,[&](std::string_view token,const auto& indexes)->std::optional<std::string>{
-                    const auto word=[&](const auto& values,std::size_t at)->std::optional<std::string>{return at<values.size()?std::optional<std::string>(std::to_string(values[at])):std::nullopt;};
-                    if(token=="Me")return entity_name(world.frame_entity(source,odh::VmEntityRole::caller));
-                    if(token=="Neighbor"){
-                        const auto* neighbor=neighbors?neighbors->by_id(source.context.stack_object):nullptr;
-                        if(!neighbor||retired_neighbor_ids.count(neighbor->neighbor_id))return {};
-#ifdef ODH_HAVE_LINUX_TEXT_CODEC
-                        return odh_host::legacy_text_to_utf8(neighbor->name,text_language,256);
-#else
-                        return neighbor->name;
-#endif
-                    }
-                    if(token=="Object"||token=="DynamicObjectName")return entity_name(world.frame_entity(source,odh::VmEntityRole::stack_object));
+                text_providers.career_time=[&](std::string_view token,const auto& indexes)->std::optional<std::string>{
                     if(token=="Job:"||token=="JobDesc:"||token=="JobOffer:"||token=="TimeLocal:"){
                         odh_host::CareerDialogBindings bindings;bindings.language=game_language;
                         if(token!="TimeLocal:"){
@@ -5617,23 +5725,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                         return value->bytes;
 #endif
                     }
-                    if(indexes.empty())return {};
-                    const auto index=indexes[0];
-                    if(token=="Local:")return word(source.locals,index);
-                    if(token=="Param:")return word(source.arguments,index);
-                    if(token=="Temp:")return dialog_source_vm?word(dialog_source_vm->temps(),index):std::nullopt;
-                    if(token=="TempXL:")return dialog_source_vm?word(dialog_source_vm->temp_xl(),index):std::nullopt;
-                    if(token=="Attribute:"){
-                        const auto value=world.read(source,1,static_cast<std::int16_t>(index));
-                        if(value)return std::to_string(*value);
-                        return {};
-                    }
-                    if(token=="NameLocal:"||token=="ObjectLocal:"){
-                        if(index>=source.locals.size())return {};
-                        return entity_name(world.find(source.locals[index]));
-                    }
                     return {};
-                });
+                };
+                const odh_host::DialogTextContext text_context{world,source,dialog_source_vm,neighbors?&*neighbors:nullptr,
+                    odh_host::DialogTextTable{resource.archive,resource.entry,301},&text_work};
+                std::string why;const auto expanded=odh_host::expand_ts1_dialog_text(
+                    decode_dialog_resource(raw,text_language),text_context,text_providers,why);
+                if(!expanded)throw odh::FormatError("dialog text expansion: "+why);return *expanded;
             };
             const auto text=[&](std::uint8_t id,bool optional){
                 if(optional&&!id)return std::string{};

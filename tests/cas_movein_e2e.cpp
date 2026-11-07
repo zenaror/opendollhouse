@@ -331,11 +331,14 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
     std::cout<<R"(,"actor_routing":{"actor_count":)"<<active.runtime_entities.size()<<R"(,"actors_truncated":)"<<(active.runtime_entities.size()>64?"true":"false")<<R"(,"actors":[)";
     for(std::size_t n=0;n<std::min<std::size_t>(64,active.runtime_entities.size());++n){
         if(n)std::cout<<',';const auto& actor=active.runtime_entities[n];const auto& vm=actor.vm;
+        const auto inspect_words=[&](const auto& words){std::cout<<'[';for(std::size_t k=0;k<words.size();++k){if(k)std::cout<<',';std::cout<<+words[k];}std::cout<<']';};
         std::cout<<R"({"id":)"<<actor.id<<R"(,"generation":)"<<actor.controllers.interactions.actor_generation<<R"(,"run_generation":)"<<vm.run_generation<<R"(,"vm_status":)"<<json_string(odh::vm_status_name(vm.status))
+            <<R"(,"temps":)";inspect_words(vm.temps);std::cout<<R"(,"temp_xl":)";inspect_words(vm.temp_xl);std::cout
             <<R"(,"stack_depth":)"<<vm.stack.size()<<R"(,"frames_truncated":)"<<(vm.stack.size()>32?"true":"false")<<R"(,"frames":[)";
         for(std::size_t k=0;k<std::min<std::size_t>(32,vm.stack.size());++k){if(k)std::cout<<',';const auto& f=vm.stack[k];
             std::cout<<R"({"routine":)"<<f.key.id<<R"(,"pc":)"<<f.pc<<R"(,"scope":)"<<unsigned(f.key.scope)<<R"(,"owner":)"<<f.context.code_owner
-                <<R"(,"caller":)"<<f.context.caller<<R"(,"callee":)"<<f.context.callee<<R"(,"stack_object":)"<<f.context.stack_object<<'}';}
+                <<R"(,"caller":)"<<f.context.caller<<R"(,"callee":)"<<f.context.callee<<R"(,"stack_object":)"<<f.context.stack_object
+                <<R"(,"arguments":)";inspect_words(f.arguments);std::cout<<R"(,"locals":)";inspect_words(f.locals);std::cout<<'}';}
         std::cout<<R"(],"pending":)";
         if(vm.pending){const auto& p=*vm.pending;std::cout<<R"({"ticket":)"<<p.ticket<<R"(,"routine":)"<<p.instruction.key.id<<R"(,"pc":)"<<p.instruction.pc
             <<R"(,"opcode":)"<<p.instruction.instruction.opcode<<R"(,"depth":)"<<p.instruction.depth<<'}';}else std::cout<<"null";

@@ -2592,6 +2592,23 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         std::to_string(action.tick)});
                 }
                 std::optional<odh::SessionResourceIdentity> verified_identity;
+#ifdef __linux__
+                if(property_lot){
+                    // Fresh reoccupation has no HOME restore_bundle. Establish
+                    // its resource authority from the ACTUAL selected plan now,
+                    // before runtime preparation; never borrow the document's META.
+                    verified_identity=odh_host::identify_session_resources(game,plan.resources,
+                        static_cast<std::uint8_t>(options.language),plan.expansion_mask);
+                    if(!property_lot->first.document.objects)
+                        throw odh::FormatError("vacant property lacks its resource-bearing object lifetime");
+                    const auto& expected=property_lot->first.document.objects->resources;
+                    if(odh::encode_session_resource_identity(*verified_identity)!=odh::encode_session_resource_identity(expected))
+                        throw odh::FormatError("vacant property selected resource identity differs: actual_language="+
+                            std::to_string(verified_identity->language_code)+" doc_language="+std::to_string(expected.language_code)+
+                            " actual_expansions="+std::to_string(verified_identity->expansion_mask)+" doc_expansions="+std::to_string(expected.expansion_mask)+
+                            " actual_sha="+digest_hex(verified_identity->resource_fingerprint)+" doc_sha="+digest_hex(expected.resource_fingerprint));
+                }
+#endif
                 if (options.restore_bundle) {
                     verified_identity = odh_host::identify_session_resources(game, plan.resources,
                         static_cast<std::uint8_t>(options.language), plan.expansion_mask);

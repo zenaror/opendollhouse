@@ -17,7 +17,10 @@ constexpr std::uint16_t kCatalogStrings = 2000;
 constexpr std::uint64_t kHeaderSize = 64;
 constexpr std::uint64_t kChunkHeaderSize = 76;
 constexpr std::uint64_t kGuidOffset = 28;
-constexpr std::uint64_t kCatalogStringsOffset = 80;
+// OBJD136/138 use a 32-bit version followed by 16-bit fields. The
+// VMOBJDVariable numbering includes both version words: CatalogStringsID41
+// is byte82; byte80 is the distinct FunctionFlags/BuyModeType40 field.
+constexpr std::uint64_t kCatalogStringsOffset = 82;
 
 struct ChunkData {
     std::string type;
@@ -162,6 +165,9 @@ std::vector<std::uint8_t> clone_template_person(const std::vector<std::uint8_t>&
     }
     if (!person || person->payload.size() < kCatalogStringsOffset + 2)
         throw FormatError("TemplatePerson OBJD 128 is missing or too short");
+    const auto version=le32(person->payload,0);
+    if(version!=136&&version!=138)
+        throw FormatError("TemplatePerson OBJD metadata version is unsupported");
     if (le32(person->payload, static_cast<std::size_t>(kGuidOffset)) != kPersonGuid)
         throw FormatError("TemplatePerson OBJD 128 has an unexpected source GUID");
     if (!body) throw FormatError("TemplatePerson STR# 200 is missing");

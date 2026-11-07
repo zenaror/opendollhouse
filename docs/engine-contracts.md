@@ -42,6 +42,12 @@ selecionados precisam ser interpretados, inclusive botões não visíveis naquel
 variante. Valor monetário literal não é uma macro desconhecida. Uma resposta
 pertence à janela e ao pedido corretos, sem aceitar qualquer aviso pendente.
 
+Um texto pode citar quem fala, um vizinho ou outro objeto. O
+[serviço de textos de diálogo](../tools/dialog_text_substitutions.hpp) recebe
+explicitamente esses donos e lê nomes de recursos autenticados da sessão.
+Nome de arquivo não substitui nome visível. Textos que incluem outros textos
+compartilham um limite de trabalho, inclusive quando o resultado final é vazio.
+
 A lista de contatos do telefone usa as relações atuais do personagem e nomes
 dos recursos de personagem no idioma escolhido. Mostrar uma pessoa nessa lista
 não significa que ela aceitará um convite. O [provedor de contatos](../tools/phonebook_choices.hpp)
