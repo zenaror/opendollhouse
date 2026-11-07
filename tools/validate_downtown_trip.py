@@ -62,6 +62,14 @@ def documents(raw):
     require(result,'application emitted no JSON');return result
 
 
+def reported_save_path(observation,exit_code,stderr_tail):
+    value=observation.get('saved_session_path')
+    if not isinstance(value,str) or not value:
+        require(exit_code==0,'launcher failed before reporting a saved session; exit='+str(exit_code)+'; stderr: '+stderr_tail)
+        raise ValueError('launcher completed without reporting a saved session path')
+    return Path(value).resolve()
+
+
 def persisted_simulation(value):
     value=json.loads(json.dumps(value))
     require(value['skipped_updates']==0,'simulation skipped updates')
@@ -244,9 +252,9 @@ def main():
                         except subprocess.TimeoutExpired:proc.kill();proc.wait(timeout=10)
                     row['pid_absent']=not Path('/proc',str(proc.pid)).exists()
             require(profile_files(source_profile)==before_profile and sha(load)==before_hash,'producer profile/input changed')
+            row['stderr_tail']=(directory/'stderr.log').read_text(errors='replace')[-2000:]
             raw=(directory/'stdout.json').read_text()
             if not raw.strip():
-                row['stderr_tail']=(directory/'stderr.log').read_text(errors='replace')[-2000:]
                 raise ValueError('application emitted no JSON; exit='+str(row['exit'])+'; stderr: '+row['stderr_tail'])
             docs=documents(raw)
             row['runtime_count']=len(docs);row['observations']=[]
@@ -254,7 +262,7 @@ def main():
                 r['observed_lots'].append(a['integrated_session_context']['house_number'])
                 row['observations'].append({'house':a['integrated_session_context']['house_number'],'tick':a['ticks'],'blocking_dialog':a['blocking_dialog'],'saved_session_path':a.get('saved_session_path')})
                 validate_observation(a)
-            observation=docs[-1];saved=Path(observation['saved_session_path']).resolve()
+            observation=docs[-1];saved=reported_save_path(observation,row['exit'],row['stderr_tail'])
             require(saved.is_relative_to(profile.resolve()) and saved.is_file(),'actual saved path escaped complete isolated profile')
             row['exit_profile_snapshot']=profile_files(profile);row['save']=str(saved);row['save_sha256']=sha(saved)
             row['forensic_observed_save']={'profile':str(profile),'path':str(saved),'sha256':sha(saved),'observation':observation,'eligible_for_resume':False}

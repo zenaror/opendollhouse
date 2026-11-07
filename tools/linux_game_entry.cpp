@@ -2951,7 +2951,11 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 house = destination;
             } catch (const std::exception& transition_error) {
 #ifdef __linux__
-                if(temporary_trip)throw odh::FormatError(std::string("temporary travel stopped; durable recovery retained at ")+temporary_trip->home_path.string()+": "+transition_error.what());
+                if(temporary_trip){
+                    const auto current=temporary_trip->journal?temporary_trip->journal->checkpoint_path():std::optional<std::filesystem::path>{};
+                    const auto& recovery=current?*current:temporary_trip->home_path;
+                    throw odh::FormatError(std::string("temporary travel stopped; durable recovery retained at ")+recovery.string()+": "+transition_error.what());
+                }
 #endif
                 if (!rollback_options) throw;
                 std::cerr << "odh-person: lot transition failed: " << transition_error.what()

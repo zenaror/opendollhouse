@@ -35,6 +35,14 @@ struct SourceShooPlanResult {
     std::optional<SourceShooPlan> plan;
     std::string diagnostic;
 };
+// Queue.Any predicate shared with VMSnap. Null callee is a known absence;
+// unresolved retained/live callee or matching-GOTO interaction number is unknown.
+struct SourceShooQueueEntry {
+    bool callee_known=false;
+    std::optional<std::uint32_t> callee_guid;
+    std::optional<std::int32_t> interaction_number;
+};
+std::optional<bool> source_queue_has_shoo(const std::vector<SourceShooQueueEntry>&);
 // ready contains exactly one typed plan. Known GetAction absence is no_action:
 // source PushUserInteraction is void and the caller still WalkInterrupts(60).
 SourceShooPlanResult plan_source_shoo(const SourceShooPlanInput&);

@@ -65,4 +65,15 @@ void rejection(){
     input.mode=static_cast<odh::SourceShooMode>(255);expect(odh::SourceShooPlanStatus::unsupported,"unknown dispatch mode is rejected");
 }
 }
-int main(){try{plans();rejection();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}
+int main(){try{plans();rejection();
+    using Entry=odh::SourceShooQueueEntry;
+    require(odh::source_queue_has_shoo({})==std::optional<bool>{false},"known empty queue permits source Snap Shoo construction");
+    require(odh::source_queue_has_shoo({Entry{true,{},{}},Entry{true,99,{}},Entry{true,0x7c4,2}})==std::optional<bool>{false},
+        "null callees, other GUIDs and other GOTO interaction numbers do not suppress source shoo");
+    require(odh::source_queue_has_shoo({Entry{true,0x7c4,3}})==std::optional<bool>{true},"exact GOTO interaction3 suppresses duplicate Destination creation");
+    require(!odh::source_queue_has_shoo({Entry{false,{},{}}})&& !odh::source_queue_has_shoo({Entry{true,0x7c4,{}}}),
+        "unknown callee or matching-GOTO action number never invents a known no-shoo queue");
+    require(odh::source_queue_has_shoo({Entry{false,{},{}},Entry{true,0x7c4,3}})==std::optional<bool>{true},
+        "one authenticated matching queued action proves Queue.Any independently of an unresolved different row");
+    require(!odh::source_queue_has_shoo(std::vector<Entry>(4097)),"oversized queue refuses bounded shoo inspection");
+std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

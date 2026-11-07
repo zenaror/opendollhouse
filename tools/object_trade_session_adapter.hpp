@@ -38,6 +38,9 @@ public:
     ObjectTradeResourceLibrary(std::filesystem::path game_root,const odh::DefinitionIndex&,
         std::filesystem::path global_archive,std::string global_entry);
     const ObjectTradeLoadedResource& load(std::uint32_t guid);
+    // A cached immutable record is readable during dispatch. First admission
+    // requires a dispatch-free boundary; the actual VM proves that state.
+    const ObjectTradeLoadedResource& creation_resource(std::uint32_t guid,const odh::Vm* source_vm);
     void preload(const odh::WorldSnapshot&);
     const ObjectTradeLoadedResource* find(std::uint32_t guid) const noexcept;
     odh::ObjectTradeResource command_resource(std::uint32_t guid);

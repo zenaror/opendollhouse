@@ -3822,6 +3822,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         construct_runtime_object;
     std::function<bool(const odh::SourceSparseMotionContext&,odh::LiveAttemptWalkIdentity,bool,
         const std::function<bool()>&,std::string*)> perform_source_shoo;
+    std::function<bool(const odh::Ts1PlacementInvocation&,odh::Ts1PlacementIdentity)> perform_snap_shoo;
+    std::uint64_t snap_shoo_calls=0,snap_shoo_duplicates=0,snap_shoo_queued_attempts=0;
+    std::string snap_shoo_diagnostic;
     std::deque<PendingCreateObject> pending_create_objects;
     std::deque<PendingNpcAvatar> pending_npc_avatars;
     std::function<void()> process_lifecycle_npc_avatars;
@@ -12058,6 +12061,11 @@ struct PlacementCandidateProbe {
         placement_resources=std::make_unique<odh_host::ObjectTradeResourceLibrary>(session_context->game_root,
             *definition_index,globals->archive,globals->entry);
         placement_resources->preload(world.snapshot());
+        // VMSnap/VMRoutingFrame may synchronously create the ordinary GOTO
+        // resource to request passage. Admit its immutable metadata now, not
+        // inside an unrelated running primitive. No World body/Init is run.
+        // Missing/ambiguous definitions remain unavailable only to that service.
+        if(definition_index->unique(0x7c4))(void)placement_resources->creation_resource(0x7c4,nullptr);
         placement_slots=std::make_unique<odh_host::HouseholdPlacementSlotCatalog>(*definition_index,
             odh_host::HouseholdPlacementResource{globals->archive,globals->entry,globals->frozen});
         placement_slots->preload(world);
@@ -12963,6 +12971,10 @@ struct PlacementCandidateProbe {
                     world.is_live_reference(*actual)&&world.detach(parent.id,slot);
             };
             return context;
+        };
+        state->shoo=[&,weak=std::weak_ptr<odh_host::HouseholdPlacementAssembly>(state)](
+                const odh::Ts1PlacementInvocation& invocation,odh::Ts1PlacementIdentity blocker){
+            return weak.lock()&&perform_snap_shoo&&perform_snap_shoo(invocation,blocker);
         };
         state->moved_self=[&,weak=std::weak_ptr<odh_host::HouseholdPlacementAssembly>(state)](const odh::Ts1PlacementInvocation& invocation,odh::Ts1PlacementIdentity id){
             const auto live=weak.lock();if(!live)return false;
@@ -16129,8 +16141,11 @@ struct PlacementCandidateProbe {
                 }
 
                 if(placement_resources){
-                    if(pending.vm&&pending.vm->dispatch_active()&&!pending.lifecycle_query)throw odh::FormatError("creation resource admission requires a dispatch-free boundary");
-                    (void)placement_resources->load(candidate->definition.guid);
+                    // Preserve the separately authenticated lifecycle-query
+                    // contract. Ordinary creators must use cached metadata in
+                    // dispatch; an unadmitted GUID still trips the same guard.
+                    if(pending.lifecycle_query)(void)placement_resources->load(candidate->definition.guid);
+                    else (void)placement_resources->creation_resource(candidate->definition.guid,pending.vm);
                 }
                 const Resource object_resource{candidate->source,candidate->asset,candidate->asset.empty()};
                 std::optional<odh::ObjectRuntimeResources> object_resources;
@@ -16592,6 +16607,80 @@ struct PlacementCandidateProbe {
                 member->ui_go_here_status="queued";member->ui_go_here_diagnostic.clear();member->go_here_trigger="session_restore";}
         }
     }
+    perform_snap_shoo=[&](const odh::Ts1PlacementInvocation& invocation,odh::Ts1PlacementIdentity blocker){
+        ++snap_shoo_calls;
+        const auto reject=[&](const std::string& why){snap_shoo_diagnostic=why;return false;};
+        if(!invocation.source_still_matches||!invocation.source_still_matches()||!invocation.dispatch.origin||!definition_index)
+            return reject("Snap Shoo lacks its actual current source dispatch");
+        const auto* caller=world.frame_entity(invocation.frame,odh::VmEntityRole::caller);
+        const auto* target=world.find(blocker.id);auto* target_vm=actor_vm_for(blocker.id);auto* queue=actor_queue_for(blocker.id);
+        if(!caller||!target||target->generation!=blocker.generation||target->kind!=odh::EntityKind::avatar||
+           !target->position||!target_vm||!queue)
+            return reject("Snap Shoo blocker lacks its actual live avatar position/Thread/queue");
+        const auto position=*target->position;const auto run=target_vm->run_generation();
+        const auto* origin=invocation.dispatch.origin;const auto origin_run=origin->run_generation();const auto caller_generation=caller->generation;
+        const auto current=[&,position,run,origin_run,caller_generation]{
+            const auto* a=world.frame_entity(invocation.frame,odh::VmEntityRole::caller);const auto* b=world.find(blocker.id);
+            return invocation.source_still_matches()&&origin->run_generation()==origin_run&&a&&a->generation==caller_generation&&
+                b&&b->generation==blocker.generation&&b->position&&*b->position==position&&
+                actor_vm_for(blocker.id)==target_vm&&target_vm->run_generation()==run&&actor_queue_for(blocker.id)==queue;
+        };
+        const auto before=queue->snapshot();
+        if(before.actor_id!=blocker.id||before.actor_generation!=blocker.generation||before.run_generation!=run)
+            return reject("Snap Shoo queue does not own the exact blocked avatar");
+        if(before.actions.size()>4096)return reject("Snap Shoo queue inspection exceeds bounded source profile");
+        std::vector<odh::SourceShooQueueEntry> entries;entries.reserve(before.actions.size());
+        for(const auto& action:before.actions){
+            odh::SourceShooQueueEntry entry;entry.interaction_number=action.interaction_number;
+            if(action.call.context.callee==0&&action.call.context.callee_generation==0)entry.callee_known=true;
+            else if(const auto* callee=context_entity(action.call.context,odh::VmEntityRole::callee);
+                    callee&&callee->generation==action.target_generation&&callee->definition){
+                entry.callee_known=true;entry.callee_guid=callee->definition->guid;
+            }
+            entries.push_back(entry);
+        }
+        const auto present=odh::source_queue_has_shoo(entries);
+        if(!present)return reject("Snap Shoo existing queue ownership/interaction number is unknown");
+        if(*present){++snap_shoo_duplicates;snap_shoo_diagnostic="existing GOTO interaction3 retained; no new Destination";return true;}
+        if(!placement_resources||!placement_resources->find(0x7c4))
+            return reject("Snap Shoo Destination resource was not admitted at its dispatch-free preparation boundary");
+        RuntimeObjectConstructionContext request;
+        request.vm=const_cast<odh::Vm*>(origin);request.source_frame=invocation.frame;
+        request.vm_generation=origin_run;request.caller_generation=caller_generation;
+        request.caller_direction=0; // VMSnap creates its Destination with explicit NORTH.
+        request.stack_object=invocation.frame.context.stack_object;
+        request.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
+        request.request.guid=0x7c4;request.request.raw_position=static_cast<std::uint8_t>(odh::CreateObjectPosition::out_of_world);
+        request.source_still_matches=current;auto destination=position;destination.direction=0;
+        request.place_initialized=[&,destination](std::int16_t object,std::string* why){const auto* e=world.find(object);
+            return e&&place_new_object_default(object,destination,
+                odh::LiveObjectCreationPlacementSource{origin,origin_run,object,e->generation,current},why);};
+        const auto created=construct_runtime_object(request);
+        if(!created||host_failed||!current())return reject("Snap Shoo Destination construction: "+last_create_object_diagnostic);
+        const auto* object=world.find(created->id);const auto program=object_owner_programs.find(created->owner);
+        if(!object||object->generation!=created->generation||!object->definition||object->definition->guid!=0x7c4||program==object_owner_programs.end())
+            return reject("Snap Shoo constructed Destination resource identity changed");
+        const auto* definition=definition_index->unique(0x7c4);if(!definition)return reject("Snap Shoo Destination definition is ambiguous");
+        const auto interactions=saved_object_interactions(*definition,*definition_index,game_language,
+            globals&&!globals->standalone?globals->archive:std::string{});
+        if(interactions.state==SavedObjectInteractions::State::no_tree_table_id||interactions.state==SavedObjectInteractions::State::missing_ttab){snap_shoo_diagnostic="constructed Destination has no source interaction table";return true;}
+        odh::SourceShooPlanInput input;input.mode=odh::SourceShooMode::queued_interaction;
+        input.actor=blocker.id;input.destination=created->id;input.owner=created->owner;
+        input.owner_program=program->second.get();input.global_program=shared_program.get();
+        input.interactions=interactions.table?&*interactions.table:nullptr;
+        const auto plan=odh::plan_source_shoo(input);
+        if(plan.status==odh::SourceShooPlanStatus::no_action){snap_shoo_diagnostic=plan.diagnostic;return true;}
+        if(plan.status!=odh::SourceShooPlanStatus::ready||!plan.plan)return reject(plan.diagnostic);
+        const auto* action=std::get_if<odh::SourceShooQueuedPlan>(&*plan.plan);
+        if(!action||!current()||!target_vm->install_shared_owner(created->owner,program->second))return reject("Snap Shoo source/owner changed before queue publication");
+        note_installed_resource_owner(*target_vm,created->owner);
+        const auto accepted=queue->enqueue_source_user(action->action,action->context,action->source_arguments,action->flags,action->check,action->interaction_number);
+        ++snap_shoo_queued_attempts;
+        // Source PushUserInteraction is void: known queue refusal leaves the
+        // constructed Destination in place and Snap still takes its FALSE path.
+        snap_shoo_diagnostic=accepted?"Snap Shoo interaction3 submitted":"Snap Shoo interaction3 not retained: "+queue->diagnostic();
+        return true;
+    };
     perform_source_shoo=[&](const odh::SourceSparseMotionContext& origin,odh::LiveAttemptWalkIdentity blocker,
             bool direct,const std::function<bool()>& source_current,std::string* error){
         ++source_shoo_calls;
@@ -21841,7 +21930,10 @@ struct PlacementCandidateProbe {
         <<",\"last_diagnostic\":"<<json_bytes(last_create_object_diagnostic)
         <<",\"source_shoo\":{\"calls\":"<<source_shoo_calls<<",\"direct\":"<<source_shoo_direct
         <<",\"queued_attempts\":"<<source_shoo_queued<<",\"last_destination\":"<<source_shoo_last_destination
-        <<",\"diagnostic\":"<<json_bytes(source_shoo_diagnostic)<<"},\"runtime_objects\":[";
+        <<",\"diagnostic\":"<<json_bytes(source_shoo_diagnostic)<<"},\"snap_shoo\":{\"calls\":"<<snap_shoo_calls
+        <<",\"duplicates_skipped\":"<<snap_shoo_duplicates<<",\"queued_attempts\":"<<snap_shoo_queued_attempts
+        <<",\"resource_admitted\":"<<((placement_resources&&placement_resources->find(0x7c4))?"true":"false")
+        <<",\"diagnostic\":"<<json_bytes(snap_shoo_diagnostic)<<"},\"runtime_objects\":[";
     bool first_runtime_object=true;
     for(const auto& [id,runtime]:runtime_object_threads){
         if(!first_runtime_object)std::cout<<',';

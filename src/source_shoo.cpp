@@ -13,6 +13,17 @@ bool valid_routine(const Bhav& routine){
     return (routine.version==0x8000||routine.version==0x8001)&&!routine.metadata;
 }
 }
+std::optional<bool> source_queue_has_shoo(const std::vector<SourceShooQueueEntry>& entries){
+    if(entries.size()>4096)return {};
+    bool unknown=false;
+    for(const auto& entry:entries){
+        if(!entry.callee_known){unknown=true;continue;}
+        if(!entry.callee_guid||*entry.callee_guid!=0x7c4)continue;
+        if(!entry.interaction_number){unknown=true;continue;}
+        if(*entry.interaction_number==3)return true;
+    }
+    return unknown?std::optional<bool>{}:std::optional<bool>{false};
+}
 SourceShooPlanResult plan_source_shoo(const SourceShooPlanInput& input){
     if(input.actor<=0||input.destination<=0||input.actor==input.destination||!input.owner)
         return unsupported("source shoo needs distinct positive participants and an authenticated resource owner");

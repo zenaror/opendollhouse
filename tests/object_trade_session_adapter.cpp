@@ -129,6 +129,28 @@ void physical_member_lifecycle(const std::filesystem::path& root){
         definitions.push_back({path.string(),"",128,read_object_definition(View(input,objd.size()))});
     }
     DefinitionIndex index(std::move(definitions));ObjectTradeResourceLibrary resources(game,index,global,"global.iff");
+    // The same real resource library is read from an actual VM primitive.
+    // Pre-admission owns metadata only: it must not allocate any World body.
+    const auto* admitted=&resources.creation_resource(0x1235,nullptr);
+    World boundary_world;require(boundary_world.create(7,EntityKind::object),"creation cache boundary actor");
+    const auto initial_world=boundary_world.snapshot();bool inspected=false;
+    Vm boundary_vm({{routine_key(4096),Bhav{0x8002,{{60,254,255,{}}},{},Bhav::Metadata{0,0,0,0}}}},boundary_world.vm_memory(),{},
+        [&](const VmFrame&,const Instruction&,const Ts1Temps&,const VmDispatch& dispatch){
+            require(dispatch.origin&&dispatch.origin->dispatch_active(),"resource admission fixture is inside an actual VM dispatch");
+            require(&resources.creation_resource(0x1235,dispatch.origin)==admitted&&resources.find(0x1235)==admitted,
+                "cached immutable creation metadata is reused during dispatch without a second admission");
+            bool rejected=false;try{(void)resources.creation_resource(0x1236,dispatch.origin);}
+            catch(const FormatError& e){rejected=std::string(e.what())=="creation resource admission requires a dispatch-free boundary";}
+            require(rejected&&!resources.find(0x1236),"new resource admission remains forbidden and absent during dispatch");
+            inspected=true;return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
+        });
+    boundary_vm.start(routine_key(4096),{7,7,7});
+    require(boundary_vm.run(1)==VmStatus::returned_true&&inspected,"creation cache test completed its genuine primitive");
+    require(boundary_world.snapshot().entities.size()==initial_world.entities.size(),"pre-admission and cache lookup create no World body");
+    const auto* newly_admitted=&resources.creation_resource(0x1236,&boundary_vm);
+    require(newly_admitted==resources.find(0x1236),
+        "same missing GUID can be admitted after the actual VM dispatch has ended");
+
     PreparedArchitecture prepared;prepared.width=prepared.height=4;prepared.buildable.assign(16,1);
     SavedArchitecture raw;raw.width=raw.height=4;raw.altitude=std::vector<std::array<std::uint8_t,4>>(16);
     for(unsigned level=0;level<2;++level){prepared.levels[level].floors.assign(16,1);prepared.levels[level].walls.resize(16);

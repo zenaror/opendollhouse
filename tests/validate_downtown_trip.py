@@ -72,10 +72,54 @@ class DriverGuards(unittest.TestCase):
         for text in ('','log prefix\n{}','{} trailing','[]','{"x":NaN}'):
             with self.subTest(text=text),self.assertRaises(ValueError):v.documents(text)
 
+    def test_failed_destination_retains_its_real_error_after_home_report(self):
+        home=v.documents('{"ticks":24448,"saved_session_path":null}')[0]
+        failure='temporary destination failed: Snap Shoo queue/creation service unavailable'
+        with self.assertRaisesRegex(ValueError,'exit=2; stderr: .*Snap Shoo'):
+            v.reported_save_path(home,2,failure)
+        with self.assertRaisesRegex(ValueError,'completed without reporting'):
+            v.reported_save_path(home,0,'')
+        # A failed process may still report forensic evidence. Its existing
+        # zero-exit acceptance gate must decide whether that file can resume.
+        self.assertEqual(v.reported_save_path({'saved_session_path':'evidence.odhs'},2,failure),
+                         Path('evidence.odhs').resolve())
+
     def test_failed_producer_cannot_be_adopted(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp);(p/'result.json').write_text('{"exit":2}')
             with self.assertRaisesRegex(ValueError,'zero-exit'):v.adopt_smoke(p,{}, {})
+
+    def test_partial_home_report_preserves_destination_failure_in_driver(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp);game=p/'game';game.mkdir();asset=game/'original';asset.write_bytes(b'fixture')
+            profile=p/'profile';profile.mkdir();source=profile/'input.odhs';source.write_bytes(b'fixture-save')
+            (profile/'occupancy.odhp').write_bytes(b'fixture-occupancy')
+            binary=p/'binary';binary.write_bytes(b'not-executed')
+            manifest=p/'manifest.json';manifest.write_text(json.dumps({'checkpoint':str(source),'profile':str(profile),'sha256':v.sha(source)}))
+            protected=p/'protected.json';protected.write_text(json.dumps({'original':v.sha(asset)}))
+            recipe=p/'recipe.json';recipe.write_text(json.dumps({'steps':[{'id':'continue','kind':'continue','ticks':1}]}))
+            output=p/'result'
+            report={'ticks':1,'saved_session_path':None,'integrated_session_context':{'house_number':5},
+                    'host_failed':False,'object_main_fault_count':0,'instruction_budget_exhausted':False,
+                    'registry_first_spatial_invalidation':None,'runtime_policy':'gameplay_per_tick_per_entity',
+                    'runtime_budget_scope':'per_tick','scheduler_budget_yields':0,
+                    'simulation':{'skipped_updates':0,'clock':{'ticks':1}},'blocking_dialog':None}
+            def failed_process(*args,**kwargs):
+                kwargs['stdout'].write(json.dumps(report));kwargs['stderr'].write('Snap Shoo service unavailable')
+                class Process:
+                    pid=2147483647
+                    def wait(self,timeout=None):return 2
+                    def poll(self):return 2
+                return Process()
+            argv=['driver','--manifest',str(manifest),'--recipe',str(recipe),'--binary',str(binary),
+                  '--binary-sha256',v.sha(binary),'--game-root',str(game),'--protected-manifest',str(protected),
+                  '--output',str(output),'--execute']
+            with patch.object(sys,'argv',argv),patch.object(v.subprocess,'Popen',failed_process),contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(v.main(),1)
+            result=json.loads((output/'result.json').read_text())
+            self.assertIn('exit=2; stderr: Snap Shoo service unavailable',result['error'])
+            self.assertTrue(result['integrity_ok']);self.assertEqual(result['latest_sha256'],v.sha(source))
+            self.assertEqual(result['executed_steps'],[])
 
     def test_live_state_does_not_hide_unknown_or_duplicate_requests(self):
         row={'actor':1,'actor_generation':2,'run_generation':3,'uid':4,'state':'active','target':5}

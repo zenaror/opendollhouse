@@ -13,6 +13,13 @@
 #include "odh/session_entry.hpp"
 #include "odh/session_bundle.hpp"
 #include "odh/animation.hpp"
+#include "odh/character_catalog.hpp"
+#ifdef ODH_HAVE_MANAGEMENT_LAYOUT
+#include "neighborhood_screen.hpp"
+#include "linux_ui_strings.hpp"
+#include "neighborhood_lot_admission.hpp"
+#include "odh/lot_context.hpp"
+#endif
 #include "odh/sha256.hpp"
 
 #include <algorithm>
@@ -94,6 +101,10 @@ std::string json_string(const std::string& input) {
     }
     return out+'"';
 }
+std::string hex_source_bytes(const std::string& bytes){
+    constexpr char digits[]="0123456789abcdef";std::string out;out.reserve(bytes.size()*2);
+    for(const unsigned char c:bytes){out+=digits[c>>4];out+=digits[c&15];}return out;
+}
 std::string hex_digest(const std::array<std::uint8_t,32>& bytes){
     static constexpr char h[]="0123456789abcdef";std::string out;
     for(auto b:bytes){out+=h[b>>4];out+=h[b&15];}return out;
@@ -172,6 +183,14 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
         std::cout<<R"(,"motives":[)";
         for(std::size_t n=0;n<body->motives.size();++n){if(n)std::cout<<',';std::cout<<body->motives[n];}
         std::cout<<"]}";
+    }
+    std::cout<<R"(],"relationship_sources":[)";comma=false;
+    for(const auto& row:bundle.relationships.sources){if(comma)std::cout<<',';comma=true;
+        odh::RelationshipSnapshot single;single.limits=bundle.relationships.limits;single.sources.push_back(row);
+        single.pair_count=row.pairs.size();for(const auto& p:row.pairs)single.value_count+=p.values.size();
+        const auto encoded=odh::encode_relationship_snapshot(single);
+        std::cout<<R"({"matrix":)"<<static_cast<unsigned>(row.matrix)<<R"(,"id":)"<<row.id<<R"(,"generation":)"<<row.generation
+            <<R"(,"pairs":)"<<row.pairs.size()<<R"(,"sha256":)"<<json_string(hex_digest(odh::sha256(encoded.data(),encoded.size())))<<'}';
     }
     std::cout<<R"(],"purchase_groups":[)";comma=false;
     if(bundle.object_trade)for(const auto& group:bundle.object_trade->groups){
@@ -363,6 +382,24 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
             std::cout<<R"(],"portal_planned_calls":)"<<stack.portal_planned_calls<<R"(,"portal_returns":)"<<stack.portal_returns<<R"(,"portal_transitions":)"<<stack.portal_transitions<<'}';
         }std::cout<<'}';
     }std::cout<<"]}";
+    // Read admitted NPC carriers separately from HHRD. A companion does not
+    // become a permanent traveler merely because its full execution is saved.
+    std::cout<<R"(,"active_npc_avatars":{"count":)"<<active.npc_avatars.size()<<R"(,"truncated":)"<<(active.npc_avatars.size()>64?"true":"false")<<R"(,"entries":[)";
+    for(std::size_t n=0;n<std::min<std::size_t>(64,active.npc_avatars.size());++n){
+        if(n)std::cout<<',';const auto& npc=active.npc_avatars[n];const auto& origin=npc.origin;
+        std::cout<<R"({"id":)"<<origin.id<<R"(,"generation":)"<<origin.generation<<R"(,"guid":)"<<origin.guid
+            <<R"(,"neighbor_id":)"<<origin.neighbor_id<<R"(,"source":)"<<json_string(origin.source)
+            <<R"(,"asset":)"<<json_string(origin.asset)<<R"(,"object_definition_id":)"<<origin.object_definition_id
+            <<R"(,"character_fingerprint":)"<<json_string(hex_digest(origin.character_fingerprint))
+            <<R"(,"primary_owner":)"<<npc.primary_owner<<R"(,"runtime_id":)"<<npc.runtime.id
+            <<R"(,"run_generation":)"<<npc.runtime.vm.run_generation<<R"(,"vm_status":)"<<json_string(odh::vm_status_name(npc.runtime.vm.status))
+            <<R"(,"frame_count":)"<<npc.runtime.vm.stack.size()<<R"(,"frames_truncated":)"<<(npc.runtime.vm.stack.size()>32?"true":"false")<<R"(,"frames":[)";
+        for(std::size_t k=0;k<std::min<std::size_t>(32,npc.runtime.vm.stack.size());++k){if(k)std::cout<<',';const auto& f=npc.runtime.vm.stack[k];
+            std::cout<<R"({"routine":)"<<f.key.id<<R"(,"pc":)"<<f.pc<<R"(,"owner":)"<<f.context.code_owner
+                <<R"(,"caller":)"<<f.context.caller<<R"(,"callee":)"<<f.context.callee<<R"(,"stack_object":)"<<f.context.stack_object<<'}';}
+        std::cout<<R"(],"selected_name_bytes_hex":)";if(npc.selected_name)std::cout<<json_string(hex_source_bytes(*npc.selected_name));else std::cout<<"null";
+        std::cout<<'}';
+    }std::cout<<"]}";
     const auto* actual_registry=active.architecture_object_state&&active.architecture_object_state->position_registry?
         &*active.architecture_object_state->position_registry:nullptr;
     std::cout<<R"(,"registry_complete":)"<<(actual_registry?(actual_registry->complete?"true":"false"):"null");
@@ -375,6 +412,11 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
         if(entity.position)std::cout<<'['<<entity.position->x<<','<<entity.position->y<<','<<entity.position->level<<','<<unsigned(entity.position->direction)<<']';else std::cout<<"null";
         std::cout<<R"(,"neighbor_id":)";
         if(entity.kind==odh::EntityKind::avatar&&entity.person_data.size()>31)std::cout<<entity.person_data[31];else std::cout<<"null";
+        if(entity.kind==odh::EntityKind::avatar){
+            std::cout<<R"(,"person_data":[)";
+            for(std::size_t n=0;n<entity.person_data.size();++n){if(n)std::cout<<',';std::cout<<entity.person_data[n];}
+            std::cout<<']';
+        }
         std::cout<<R"(,"motives":[)";
         for(std::size_t n=0;n<entity.motives.size();++n){if(n)std::cout<<',';std::cout<<entity.motives[n];}
         std::cout<<']';
@@ -486,9 +528,102 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
     std::cout<<"]}\n";return 0;
 }
 
+// Read-only observation for the existing CAS integration executable.
+int inspect_management(const fs::path& game,bool layout){
+    const auto neighborhood=game/"UserData/Neighborhood.iff";
+    const auto overlay=odh_host::read_linux_family_overlay_for_neighborhood(neighborhood);
+    if(!overlay)throw std::runtime_error("management observation requires its actual overlay");
+    const auto replay=odh::replay_family_overlay(source_families(neighborhood),odh_host::linux_neighborhood_identity(neighborhood),*overlay);
+    const auto encoded=odh::encode_family_overlay(*overlay);
+    const auto player=odh_host::linux_player_character_directory();
+    const odh::DefinitionIndex catalog(odh::read_character_catalog(player));
+    std::cout<<R"({"overlay_sha256":)"<<json_string(hex_digest(odh::sha256(encoded.data(),encoded.size())))
+        <<R"(,"assignment_count":)"<<overlay->assignments.size()<<R"(,"creation_count":)"<<overlay->creations.size()
+        <<R"(,"archive_count":)"<<overlay->archives.size()<<R"(,"families":[)";
+    bool comma=false;
+    for(const auto& entry:replay.families){if(comma)std::cout<<',';comma=true;
+        const auto state=std::find_if(replay.states.begin(),replay.states.end(),[&](const auto& s){return s.family_chunk_id==entry.chunk_id;});
+        if(state==replay.states.end())throw std::runtime_error("effective family lacks state");
+        const auto creation=std::find_if(overlay->creations.begin(),overlay->creations.end(),[&](const auto& c){return c.family_chunk_id==entry.chunk_id;});
+        std::cout<<R"({"id":)"<<entry.chunk_id<<R"(,"number":)"<<entry.family.family_number<<R"(,"house":)"<<state->house_number
+            <<R"(,"epoch":)"<<state->occupancy_epoch<<R"(,"budget":)"<<state->budget<<R"(,"value_in_arch":)"<<state->value_in_arch
+            <<R"(,"head":)"<<(state->checkpoint_sha256?json_string(hex_digest(*state->checkpoint_sha256)):"null")
+            <<R"(,"private":)"<<(creation!=overlay->creations.end()?"true":"false")<<R"(,"name":)";
+        // Only private names below are emitted as JSON text; original names may use legacy encodings.
+        if(creation!=overlay->creations.end())std::cout<<json_string(entry.display_name);else std::cout<<"null";
+        std::cout<<R"(,"guids":[)";for(std::size_t i=0;i<entry.family.member_guids.size();++i){if(i)std::cout<<',';std::cout<<entry.family.member_guids[i];}
+        std::cout<<R"(],"members":[)";
+        if(creation!=overlay->creations.end())for(std::size_t i=0;i<creation->members.size();++i){
+            const auto& member=creation->members[i];if(i)std::cout<<',';
+            const auto* candidate=catalog.unique(member.guid);if(!candidate)throw std::runtime_error("private creation lacks unique actual character");
+            const auto path=fs::canonical(fs::path(candidate->source)/candidate->asset);
+            if(path.parent_path()!=fs::canonical(player))throw std::runtime_error("private character escapes directory");
+            std::optional<unsigned> strings;std::optional<std::string> name;
+            iff(path,[&](const auto& view){odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+                if(chunk.type=="OBJD"&&chunk.id==candidate->chunk_id){const auto words=odh::read_object_definition_words(chunk.payload);
+                    if(words.size()>41)strings=static_cast<std::uint16_t>(words[41]);}
+            });if(strings&&*strings)odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+                if(chunk.type=="CTSS"&&chunk.id==*strings){if(name)throw std::runtime_error("ambiguous actual CTSS");
+                    const auto table=odh::read_strings(chunk.payload);const auto* row=odh::string_in_language_or_english(table,14,0);
+                    if(row)name=row->value;}
+            });});
+            if(!member.person_data||member.person_data->size()<=65)throw std::runtime_error("private member lacks person data");
+            const auto extent=fs::file_size(path);if(extent>64u*1024u*1024u)throw std::runtime_error("private character exceeds limit");
+            std::ifstream stream(path,std::ios::binary);std::vector<std::uint8_t> bytes(static_cast<std::size_t>(extent));
+            if(!stream.read(reinterpret_cast<char*>(bytes.data()),bytes.size()))throw std::runtime_error("private character read failed");
+            std::cout<<R"({"guid":)"<<member.guid<<R"(,"nid":)"<<member.neighbor_id<<R"(,"age":)"<<(*member.person_data)[58]
+                <<R"(,"gender":)"<<(*member.person_data)[65]<<R"(,"catalog_strings_id":)";
+            if(strings)std::cout<<*strings;else std::cout<<"null";
+            std::cout<<R"(,"given_name":)"<<(name?json_string(*name):"null")<<R"(,"asset":)"<<json_string(candidate->asset)
+                <<R"(,"sha256":)"<<json_string(hex_digest(odh::sha256(bytes.data(),bytes.size())))<<'}';
+        }
+        std::cout<<"]}";
+    }
+    std::cout<<R"(],"unhoused_order":[)";comma=false;for(const auto& f:replay.families)
+        if(f.family.house_number==0&&f.family.family_number>=0&&!f.family.member_guids.empty()&&f.family.member_guids.size()<=8){if(comma)std::cout<<',';comma=true;std::cout<<f.chunk_id;}
+    std::cout<<R"(],"ui_titles":)";
+#ifdef ODH_HAVE_MANAGEMENT_LAYOUT
+    odh_host::GameUiStrings ui(game);
+    std::cout<<R"({"map":)"<<json_string("OpenDollhouse | "+ui.get(145,1,14,"Neighborhood"))
+        <<R"(,"picker":)"<<json_string("OpenDollhouse | "+ui.get(128,8,14,"SELECT A FAMILY"))
+        <<R"(,"cas_family":)"<<json_string("OpenDollhouse | "+ui.get(129,9,14,"Create a Family"))
+        <<R"(,"cas_character":)"<<json_string("OpenDollhouse | "+ui.get(130,15,14,"Create a Sim"))
+        <<R"(,"archive":)"<<json_string("OpenDollhouse | "+ui.get(128,6,14,"Delete Family?"))<<'}';
+#else
+    std::cout<<"null";
+#endif
+    std::cout<<R"(,"vacant_click":)";
+    if(layout){
+#ifdef ODH_HAVE_MANAGEMENT_LAYOUT
+        const auto map=odh_host::prepare_neighborhood_map(game/"UserData",game/"UIGraphics/UIGraphics.far",1,&*overlay,14);
+        std::optional<odh::LotZoning> zoning;
+        iff(game/"UserData/LotZoning.iff",[&](const auto& view){odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+            if(chunk.type!="STR#"||chunk.id!=1)return;
+            if(zoning)throw std::runtime_error("ambiguous actual lot zoning");
+            zoning=odh::read_lot_zoning(odh::read_strings(chunk.payload));
+        });});
+        if(!zoning)throw std::runtime_error("actual lot zoning is unavailable");
+        bool found=false;
+        for(int y=100;y<580&&!found;y+=4)for(int x=12;x<790&&!found;x+=4){const auto selected=odh_host::pick_map_lot(map,x,y);if(!selected)continue;
+            const auto zone=zoning->find(static_cast<std::int16_t>(*selected));
+            if(odh_host::neighborhood_lot_use(*selected,zone==zoning->end()?std::nullopt:std::optional<std::int16_t>{zone->second})!=odh_host::NeighborhoodLotUse::residential)continue;
+            const auto marker=std::find_if(map.markers.begin(),map.markers.end(),[&](const auto& m){return m.location.house==*selected;});
+            if(marker!=map.markers.end()&&marker->file_exists&&!marker->occupied){std::cout<<R"({"house":)"<<*selected<<R"(,"x":)"<<x<<R"(,"y":)"<<y<<'}';found=true;}}
+        if(!found)throw std::runtime_error("no actual selectable vacant lot");
+#else
+        throw std::runtime_error("management layout requires neighborhood screen observation link");
+#endif
+    }else std::cout<<"null";
+    std::cout<<"}\n";return 0;
+}
+
 }
 
 int main(int argc, char** argv) try {
+    if((argc==3||argc==4)&&std::string(argv[1])=="--inspect-family-management"){
+        if(argc==4&&std::string(argv[3])!="--map-layout")throw std::runtime_error("invalid management observation option");
+        return inspect_management(fs::canonical(argv[2]),argc==4);
+    }
     if(argc==3&&std::string(argv[1])=="--inspect-session")return inspect_session(argv[2]);
     if((argc==4||argc==5)&&std::string(argv[1])=="--inspect-family-state"){
         const auto game=fs::canonical(argv[2]);

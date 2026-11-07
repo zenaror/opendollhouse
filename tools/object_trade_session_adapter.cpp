@@ -67,6 +67,12 @@ ObjectTradeResourceLibrary::ObjectTradeResourceLibrary(std::filesystem::path roo
 const ObjectTradeLoadedResource* ObjectTradeResourceLibrary::find(std::uint32_t guid) const noexcept {
     const auto it=objects_.find(guid);return it==objects_.end()?nullptr:&it->second;
 }
+const ObjectTradeLoadedResource& ObjectTradeResourceLibrary::creation_resource(std::uint32_t guid,const odh::Vm* source_vm){
+    if(const auto* cached=find(guid))return *cached; // No admission, I/O or cache mutation.
+    if(source_vm&&source_vm->dispatch_active())
+        throw odh::FormatError("creation resource admission requires a dispatch-free boundary");
+    return load(guid);
+}
 const ObjectTradeLoadedResource& ObjectTradeResourceLibrary::load(std::uint32_t guid){
     if(const auto* cached=find(guid))return *cached;
     const auto* definition=definitions_.unique(guid);

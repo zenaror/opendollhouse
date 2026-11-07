@@ -68,6 +68,24 @@ void snap_modes(){
     Fixture facing;facing.slots->records[0].flags=4096;
     require(facing.run(snap(3))==odh::VmStatus::returned_true&&facing.world.find(1)->radian_direction==1.57079637f,"SnapToDirection preserves continuous selected direction");
 }
+void snap_shoo_source_boundary(){
+    for(const bool flag:{false,true})for(const bool avatar:{false,true})for(const bool service_available:{false,true}){
+        Fixture f;require(f.world.create(5,avatar?odh::EntityKind::avatar:odh::EntityKind::object)&&
+            f.world.set_position(5,{120,104,1,0}),"actual live Snap blocker fixture");
+        const auto blocker=odh::Ts1PlacementIdentity{5,f.world.find(5)->generation};const auto before=f.world.find(1)->position;
+        f.services.place=[&](const auto& source,auto,auto,auto){require(source.source_still_matches(),"Snap blocked placement keeps original dispatch authority");
+            return odh::Ts1PlacementResult{odh::Ts1PlacementStatus::blocked,1,blocker,{}};};
+        f.services.shoo=[&](const auto& source,auto target){require(source.source_still_matches()&&target.id==blocker.id&&target.generation==blocker.generation,
+            "Shoo receives the exact blocked avatar epoch and live Snap source");++f.shoo;return service_available;};
+        const auto status=f.run(snap(3,0,flag?2:0));const bool requests_shoo=flag&&avatar;
+        require(f.shoo==(requests_shoo?1U:0U),"only Shoo-flagged failed Snap against an avatar requests queue/creation");
+        require(status==((requests_shoo&&!service_available)?odh::VmStatus::fault:odh::VmStatus::returned_false),
+            "known shoo execution still returns source FALSE; unavailable shoo is explicit unsupported");
+        require(f.world.find(1)->position==before,"Shoo request never fabricates a successful Snap position");
+        if(!(requests_shoo&&!service_available))require(f.world.find(1)->object_words.at(54)==5,
+            "normal blocked Snap publishes the real blocker rather than hiding it after shoo");
+    }
+}
 void lifecycle_radial_search(){
     odh::Ts1RadialPlacementServices service;
     bool active=true;unsigned calls=0,anchors=0;std::vector<odh::EntityPosition> points;
@@ -157,5 +175,5 @@ void drops_and_oow(){
     require(placement.primitive()(frame,snap(1),temps,{}).disposition==odh::PrimitiveDisposition::unsupported,"forged placement dispatch has no mutation authority");
 }
 }
-int main(){try{lifecycle_radial_search();snap_modes();location_modes();contained_position_publication();drops_and_oow();std::cout<<"TS1 shared placement mode matrix passed\n";}
+int main(){try{snap_shoo_source_boundary();lifecycle_radial_search();snap_modes();location_modes();contained_position_publication();drops_and_oow();std::cout<<"TS1 shared placement mode matrix passed\n";}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}
