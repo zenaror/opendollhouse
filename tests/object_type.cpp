@@ -28,6 +28,41 @@ int main(){try{
     require(run(instruction(0x26BFBB29,99))==odh::VmStatus::fault,"unsupported source is explicit error");
     require(world.create(3,odh::EntityKind::object)&&world.define_type(3,0xABCDEF01,0x11223344),"explicit master identity");
     require(run(instruction(0x11223344,7,3))==odh::VmStatus::returned_true&&run(instruction(0xABCDEF01,7,3))==odh::VmStatus::returned_true,"part/master both match");
+    {
+        odh::World retained;
+        require(retained.create(1,odh::EntityKind::avatar)&&retained.create(2,odh::EntityKind::object)&&
+            retained.define_type(2,0xABCDEF01,0x11223344),"retained identity setup");
+        odh::VmFrame frame{};frame.context={1,2,2};
+        require(retained.bind_context_live(frame.context),"bind original object pointer");
+        const auto old=odh::vm_context_reference(frame.context,odh::VmEntityRole::stack_object);
+        require(retained.remove_retaining_body(old)&&!retained.find(2),"retire while preserving original pointer body");
+        const auto type=odh::object_type_primitive(retained);
+        const auto inspect=[&](std::uint32_t guid,std::uint8_t scope=10){
+            return type(frame,instruction(guid,scope,scope==7?2:0),{},{}).disposition;
+        };
+        require(inspect(0xABCDEF01)==odh::PrimitiveDisposition::goto_true&&
+            inspect(0x11223344)==odh::PrimitiveDisposition::goto_true,
+            "retained stack pointer preserves own and master type");
+        require(inspect(0x26BFBB29)==odh::PrimitiveDisposition::goto_false,
+            "known retained body still performs an actual type comparison");
+        require(inspect(0xABCDEF01,7)==odh::PrimitiveDisposition::source_error,
+            "numeric lookup does not discover a retired body");
+        require(retained.create(2,odh::EntityKind::object)&&retained.define_type(2,0x26BFBB29),"reuse numeric ID with another identity");
+        require(inspect(0xABCDEF01)==odh::PrimitiveDisposition::goto_true&&
+            inspect(0x26BFBB29)==odh::PrimitiveDisposition::goto_false&&
+            inspect(0x26BFBB29,7)==odh::PrimitiveDisposition::goto_true,
+            "stack pointer keeps original generation while numeric lookup sees replacement");
+        frame.context.stack_object_generation=UINT64_MAX;
+        require(inspect(0x26BFBB29)==odh::PrimitiveDisposition::unsupported,
+            "unresolved positive stack reference is an ownership failure, never an authored negative check");
+        frame.context.entity_references_bound=false;
+        require(inspect(0x26BFBB29)==odh::PrimitiveDisposition::unsupported,
+            "invalid native context cannot become an authored ERROR");
+        frame.context.entity_references_bound=true;
+        frame.context.stack_object_generation=0;
+        require(inspect(0x26BFBB29)==odh::PrimitiveDisposition::source_error,
+            "known null stack pointer never rebinds to a reused raw ID");
+    }
     world.remove(2);world.create(2,odh::EntityKind::object);
     require(run(instruction(0x26BFBB29))==odh::VmStatus::fault,"reused ID does not inherit old GUID");
     std::string bytes(42,'\0');bytes[0]=static_cast<char>(138);bytes[20]=0x34;bytes[21]=0x12;bytes[22]=static_cast<char>(255);bytes[23]=static_cast<char>(255);

@@ -633,6 +633,74 @@ int main() {
             0,7,1,12345,ticket,std::numeric_limits<std::int32_t>::max());
         rejects([&]{odh::plan_family_managed_move_out_overlay({resident,cas},source_id,&overflowing_quote,0);},
             "a valid property cache cannot bypass later total-assets overflow checks");
+        odh::FamilyPropertyRelease release;release.assignment_index=static_cast<std::uint32_t>(quoted.assignments.size());
+        release.house=7;release.family_chunk_id=0;release.occupancy_epoch=1;
+        release.family_identity=quote_replay.states[2].family_identity;release.source_checkpoint_sha256=ticket;
+        release.installed_lot_sha256[0]=0x44;release.head[0]=0x55;release.vacant_purchase_value=4000;release.cash_after_cleanup=12345;
+        const auto released=odh::plan_family_property_release_overlay({resident,cas},source_id,quoted,0,release);
+        const auto release_bytes=odh::encode_family_overlay(released);
+        const auto released_replay=odh::replay_family_overlay({resident,cas},source_id,odh::decode_family_overlay(release_bytes));
+        require(release_bytes[4]==10&&released_replay.states[2].house_number==0&&
+            released_replay.states[2].budget==17845&&released_replay.properties.size()==1&&
+            released_replay.properties[0].head==release.head&&released_replay.properties[0].revision==1&&
+            released_replay.properties[0].vacant_purchase_value==4000,
+            "v10 binds refund and filtered document/price in one exact managed move-out operation");
+        require(odh::encode_family_overlay(quoted)==quote_bytes,
+            "planning property release leaves earlier legacy v6 bytes unchanged");
+        auto cleanup_cash=release;cleanup_cash.cash_after_cleanup=12000;
+        const auto cleanup_plan=odh::plan_family_property_release_overlay({resident,cas},source_id,quoted,0,cleanup_cash);
+        const auto cleanup_replay=odh::replay_family_overlay({resident,cas},source_id,
+            odh::decode_family_overlay(odh::encode_family_overlay(cleanup_plan)));
+        require(cleanup_replay.states[2].budget==17500&&cleanup_replay.states[2].checkpoint_budget==12345&&
+            cleanup_replay.properties[0].vacant_purchase_value==4000,
+            "actual cleanup cash affects the refund without rewriting historical carry cash or vacant purchase price");
+        cleanup_cash.cash_after_cleanup=-1;
+        rejects([&]{odh::plan_family_property_release_overlay({resident,cas},source_id,quoted,0,cleanup_cash);},
+            "negative actual cleanup cash rejects");
+        cleanup_cash.cash_after_cleanup=std::numeric_limits<std::int32_t>::max();
+        rejects([&]{odh::plan_family_property_release_overlay({resident,cas},source_id,quoted,0,cleanup_cash);},
+            "cleanup cash plus source refund cannot overflow");
+        for(unsigned bad=0;bad<7;++bad){auto broken=release;
+            switch(bad){case 0:broken.assignment_index=0;break;case 1:++broken.occupancy_epoch;break;
+            case 2:broken.source_checkpoint_sha256[0]^=1;break;case 3:broken.expected_revision=1;broken.expected_head=release.head;break;
+            case 4:broken.family_identity[0]^=1;break;case 5:broken.vacant_purchase_value=-1;break;
+            case 6:broken.expected_head=release.head;break;}
+            rejects([&]{odh::plan_family_property_release_overlay({resident,cas},source_id,quoted,0,broken);},
+                "invalid release cannot detach document authority from cash/lease/source head");
+        }
+        auto duplicate_release=released;duplicate_release.property_releases.push_back(release);
+        rejects([&]{odh::encode_family_overlay(duplicate_release);},"duplicate release operation rejects");
+        auto second_occupancy=odh::plan_family_managed_move_in_overlay({resident,cas},source_id,&released,0,7,1000);
+        auto ticket2=ticket;ticket2[0]^=0x19;
+        second_occupancy=odh::plan_family_checkpoint_overlay({resident,cas},source_id,&second_occupancy,0,7,2,16000,ticket2,6000);
+        auto successor=release;successor.assignment_index=static_cast<std::uint32_t>(second_occupancy.assignments.size());
+        successor.mode=4;successor.occupancy_epoch=2;successor.expected_revision=1;successor.expected_head=release.head;
+        successor.source_checkpoint_sha256=ticket2;successor.head[0]=0x56;successor.vacant_purchase_value=4500;successor.cash_after_cleanup=16000;
+        const auto successor_plan=odh::plan_family_property_release_overlay({resident,cas},source_id,second_occupancy,0,successor);
+        const auto successor_state=odh::replay_family_overlay({resident,cas},source_id,successor_plan);
+        require(successor_state.properties.size()==1&&successor_state.properties[0].revision==2&&
+            successor_state.properties[0].mode==4&&successor_state.properties[0].head==successor.head,
+            "residential modes1/4 advance the same installed-house property head rather than create two authorities");
+        auto stale_release=successor;stale_release.expected_head->at(0)^=1;
+        rejects([&]{odh::plan_family_property_release_overlay({resident,cas},source_id,second_occupancy,0,stale_release);},
+            "stale previous property head rejects even with current family checkpoint");
+        stale_release=successor;stale_release.installed_lot_sha256[0]^=1;
+        rejects([&]{odh::plan_family_property_release_overlay({resident,cas},source_id,second_occupancy,0,stale_release);},
+            "changed installed lot cannot replace the current property authority");
+        auto bad_wire=release_bytes;bad_wire[4]=9;
+        rejects([&]{odh::decode_family_overlay(bad_wire);},"legacy v9 cannot interpret v10 release tags");
+        std::size_t release_at=44;
+        while(release_at+6<release_bytes.size()&&!(release_bytes[release_at]==10&&release_bytes[release_at+1]==0)){
+            const auto n=std::uint32_t(release_bytes[release_at+2])|(std::uint32_t(release_bytes[release_at+3])<<8)|
+                (std::uint32_t(release_bytes[release_at+4])<<16)|(std::uint32_t(release_bytes[release_at+5])<<24);release_at+=6+n;
+        }
+        require(release_at+206==release_bytes.size(),"property record has bounded canonical extent");
+        bad_wire=release_bytes;bad_wire[release_at+6+10]=2;
+        rejects([&]{odh::decode_family_overlay(bad_wire);},"unknown property flags reject");
+        bad_wire.assign(release_bytes.begin(),release_bytes.begin()+44);
+        bad_wire.insert(bad_wire.end(),release_bytes.begin()+release_at,release_bytes.end());
+        bad_wire.insert(bad_wire.end(),release_bytes.begin()+44,release_bytes.begin()+release_at);
+        rejects([&]{odh::decode_family_overlay(bad_wire);},"property release cannot precede the family records it references");
         const auto retained_source = odh::plan_family_managed_move_out_overlay(
             {resident, cas}, source_id, nullptr, resident.chunk_id);
         require(odh::replay_family_overlay({resident, cas}, source_id, retained_source).states[0].budget == 18000,

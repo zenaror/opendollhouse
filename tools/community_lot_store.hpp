@@ -17,6 +17,10 @@ struct StoredCommunityLot {
     std::filesystem::path checkpoint;
 };
 // Document and exact immutable byte head originate from one owned read.
+// Immutable document blobs only. These never read/write the legacy editor
+// architecture.odhl HEAD; residential authority belongs to FamilyOverlay.
+StoredCommunityLot publish_community_lot_blob(const CommunityLotStoreOptions&,const CommunityLotDocument&);
+StoredCommunityLot load_community_lot_blob(const CommunityLotStoreOptions&,const std::array<std::uint8_t,32>& head);
 std::optional<StoredCommunityLot> load_private_community_lot(const CommunityLotStoreOptions&);
 StoredCommunityLot publish_private_community_lot(const CommunityLotStoreOptions&,
     const std::optional<std::array<std::uint8_t,32>>& expected_head,const CommunityLotDocument&);

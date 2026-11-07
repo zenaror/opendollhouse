@@ -1020,6 +1020,41 @@ void gosub_found_action_regressions(){
  require(fresh.run(1)==odh::VmStatus::yielded&&restored.observe()&&restored.tick(1)&&fresh.run(1)==odh::VmStatus::returned_false,
   "completion resumes original30 and no-action path returns false");
 }
+void source_error_eligibility_matrix(){
+ for(unsigned path=0;path<3;++path)for(unsigned mode=0;mode<5;++mode){
+  odh::World world;world.create(1,odh::EntityKind::avatar,{0,88,0,16});world.create(2,odh::EntityKind::object);
+  world.declare_object_word(1,8,0);world.set_person_data(1,58,25);
+  odh::InteractionQueue queue(world,1,8);std::uint64_t checked_uid=0;unsigned checked=0;bool action_ran=false;
+  const odh::VmPrimitive check_primitive=[&](const auto&,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+   ++checked;if(mode==4)throw std::runtime_error("authored absent object");
+   return {mode==0?odh::PrimitiveDisposition::source_error:mode==1?odh::PrimitiveDisposition::unsupported:
+     mode==2?odh::PrimitiveDisposition::wait:odh::PrimitiveDisposition::continue_execution,"authored absent object"};
+  };
+  queue.set_check_primitive(check_primitive);
+  const auto enqueue_checked=[&](){
+   const bool result=queue.enqueue_source_ts1(key(4097),{1,2,2,22},{},2,odh::InteractionQueueMode::normal,
+      path==2?4U:0U,false,false,key(4098),7);
+   checked_uid=queue.last_enqueued_uid();return result;
+  };
+  const odh::VmPrimitive primitive=[&](const auto& frame,const auto& ins,const auto& temps,const auto& dispatch)->odh::PrimitiveOutcome{
+   if(ins.opcode==99){require(enqueue_checked(),"nested ERROR candidate enqueues by source path");return {odh::PrimitiveDisposition::goto_true,{}};}
+   if(ins.opcode==97){action_ran=true;return {odh::PrimitiveDisposition::goto_true,{}};}
+   return queue.primitive()(frame,ins,temps,dispatch);
+  };
+  odh::Vm vm({{key(4096),bhav({{30,254,255,{}}})}},world.vm_memory(),{},primitive,
+   {{22,{{key(4097),bhav({{97,254,255,{}}})},{key(4098),bhav({{98,254,255,{}}})},
+         {key(4099),bhav({{99,1,253,{}},idle(1)})}}}});
+  require(queue.bind(vm)&&vm.start(key(4096),{1,1,1})==odh::VmStatus::running,"ERROR queue matrix has live Main");
+  if(path==1)require(queue.enqueue_source_ts1(key(4099),{1,2,2,22},{},1,odh::InteractionQueueMode::normal,0,false,false),"source parent action enqueued");
+  else require(enqueue_checked(),"ERROR candidate enqueued by normal source request");
+  bool completed=false;
+  if(path==2)completed=queue.try_run_immediate();
+  else completed=vm.run(16)!=odh::VmStatus::fault;
+  require(checked>0&&!action_ran,"every source ERROR matrix path actually checks and never runs rejected action");
+  if(mode==0)require(completed&&!queue.contains_uid(checked_uid),"known source ERROR excludes ordinary/nested/immediate candidate without host failure");
+  else require(!completed&&queue.contains_uid(checked_uid),"unsupported, async wait, budget and exceptions remain unresolved; no false eligibility decision");
+ }
+}
 void autonomous_eligibility_context_regressions(){
  unsigned advertisement_checks=0;
  const auto factory=[&](const odh::VmMemory& effective){
@@ -1260,6 +1295,7 @@ void generation_reference_tests(){
  }
 }
 int main(int argc,char** argv){try {
+ source_error_eligibility_matrix();
  generation_reference_tests();active_advertisement_regressions();named_empty_queue_idle_regressions();
  autonomous_check_regressions();autonomous_check_failure_regressions();autonomous_primitive_memory_regressions();generic_ts1_icon_tests();gosub_found_action_regressions();autonomous_eligibility_context_regressions();
  if(argc==4 && std::string(argv[1])=="--native-global") {

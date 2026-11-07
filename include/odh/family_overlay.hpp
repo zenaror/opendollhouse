@@ -110,6 +110,25 @@ struct NeighborhoodTypeAttributes {
     TypeAttributesSnapshot state;
 };
 
+// One immutable vacant-lot document committed by the exact managed move-out.
+// Mode is blob provenance only: residential modes1/4 share the HOUSE key.
+struct FamilyPropertyRelease {
+    std::uint32_t assignment_index=0;
+    std::uint16_t house=0,family_chunk_id=0,policy=1;
+    std::uint8_t neighborhood=1,mode=1;
+    std::int32_t vacant_purchase_value=0; // Measured AFTER source filtering, never the refund.
+    std::int32_t cash_after_cleanup=0; // Actual runtime cash after Delete callbacks (00427678).
+    std::uint64_t occupancy_epoch=0,expected_revision=0;
+    std::array<std::uint8_t,32> family_identity{},source_checkpoint_sha256{},installed_lot_sha256{},head{};
+    std::optional<std::array<std::uint8_t,32>> expected_head;
+};
+struct FamilyPropertyHead {
+    std::uint16_t house=0,policy=1;
+    std::uint8_t neighborhood=1,mode=1;
+    std::uint64_t revision=0;
+    std::array<std::uint8_t,32> installed_lot_sha256{},head{};
+    std::int32_t vacant_purchase_value=0;
+};
 struct FamilyOverlay {
     std::array<std::uint8_t, 32> neighborhood_identity{};
     std::vector<FamilyOverlayAssignment> assignments;
@@ -118,6 +137,7 @@ struct FamilyOverlay {
     std::vector<FamilyOverlayDeletion> deletions{}; // Source families, applied last.
     std::vector<FamilyOverlayName> names{}; // One current override per stable family ID.
     std::optional<NeighborhoodTypeAttributes> type_attributes;
+    std::vector<FamilyPropertyRelease> property_releases{}; // Chronological v10 records.
 };
 
 enum class NeighborhoodTypeAttributesSource { immutable_seed,session_snapshot,private_overlay };
@@ -158,6 +178,7 @@ struct FamilyOverlayFamilyState {
 struct FamilyOverlayReplay {
     std::vector<FamilyEntry> families;
     std::vector<FamilyOverlayFamilyState> states;
+    std::vector<FamilyPropertyHead> properties; // Keyed by house within this neighborhood identity.
 };
 FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>&,
     const std::array<std::uint8_t, 32>& neighborhood_identity, const FamilyOverlay&);
@@ -176,6 +197,11 @@ FamilyOverlay plan_family_original_adoption_overlay(const std::vector<FamilyEntr
 FamilyOverlay plan_family_managed_move_in_overlay(const std::vector<FamilyEntry>&,
     const std::array<std::uint8_t, 32>&, const FamilyOverlay*,
     std::uint16_t family_chunk_id, std::uint16_t house_number, std::int32_t purchase_price);
+// Couples this source checkpoint, already quoted cache and immutable property
+// document to the SAME managed move-out operation; never writes files itself.
+FamilyOverlay plan_family_property_release_overlay(const std::vector<FamilyEntry>&,
+    const std::array<std::uint8_t,32>& neighborhood_identity,const FamilyOverlay& current,
+    std::uint16_t family_chunk_id,const FamilyPropertyRelease&);
 FamilyOverlay plan_family_managed_move_out_overlay(const std::vector<FamilyEntry>&,
     const std::array<std::uint8_t, 32>&, const FamilyOverlay*, std::uint16_t family_chunk_id);
 // A checkpoint retains ValueInArch unless its owner supplies a current property

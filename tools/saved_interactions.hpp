@@ -727,9 +727,10 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
             if(item.state==SavedTestFunctionResult::State::ineligible)
                 item.diagnostic=hide_interaction==1?"TestFunction hid this interaction":"caller is hidden or outside the lot";
         }
-        else if(status==odh::VmStatus::returned_false){
+        else if(status==odh::VmStatus::returned_false||
+                (execution.started&&status==odh::VmStatus::fault&&execution.source_error)){
             item.state=SavedTestFunctionResult::State::ineligible;
-            if(last_trace)item.diagnostic="returned false at BHAV PC "+std::to_string(last_trace->pc)+
+            if(last_trace)item.diagnostic=std::string(execution.source_error?"source ERROR rejected check at BHAV PC ":"returned false at BHAV PC ")+std::to_string(last_trace->pc)+
                 " opcode "+std::to_string(last_trace->instruction.opcode);
         }
         else {

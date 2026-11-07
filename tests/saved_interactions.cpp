@@ -93,6 +93,27 @@ std::string far(const std::vector<std::pair<std::string,std::string>>& entries){
         put(bytes,offsets[i],4);put(bytes,static_cast<std::uint32_t>(entry.first.size()),4);bytes+=entry.first;}
     return bytes;
 }
+void source_error_menu_matrix(const std::filesystem::path& root){
+ const auto path=root/"source-error-menu.iff";write(path,iff(chunk("BHAV",4098,test_bhav(98))));
+ odh::ObjectDefinition object{};object.guid=123;object.tree_table_id=128;
+ const odh::DefinitionCandidate definition{path.string(),"",7,object};
+ odh::World world;check(world.create(1,odh::EntityKind::avatar)&&world.create(2,odh::EntityKind::object)&&
+    world.set_position(1,{16,16,1,0})&&world.define_type(2,123),"menu ERROR fixture has real caller/target identities");
+ for(unsigned mode=0;mode<5;++mode){
+  unsigned called=0;
+  const odh::VmPrimitiveFactory factory=[&](const odh::VmMemory&){return odh::VmPrimitive{
+   [&](const auto&,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+    ++called;if(mode==4)throw std::runtime_error("authored absent object");
+    return {mode==0?odh::PrimitiveDisposition::source_error:mode==1?odh::PrimitiveDisposition::unsupported:
+      mode==2?odh::PrimitiveDisposition::wait:odh::PrimitiveDisposition::continue_execution,"authored absent object"};
+   }};};
+  const auto result=evaluate_saved_test_functions(definition,world,1,2,{4098},16,16,{0,0,0,0},nullptr,{},nullptr,nullptr,
+      {},nullptr,nullptr,nullptr,std::nullopt,nullptr,false,{},factory);
+  check(result.size()==1&&called>0,"menu ERROR matrix executes actual TestFunction");
+  check(result[0].state==(mode==0?SavedTestFunctionResult::State::ineligible:SavedTestFunctionResult::State::unsupported),
+    "only known source ERROR excludes menu row; unknown implementation, wait, work bound and exception stay unsupported");
+ }
+}
 void explicit_named_check_resources(const std::filesystem::path& root){
     const auto path=root/"named-check-resource-context.iff";
     write(path,iff(chunk("BHAV",4098,test_bhav(28))));
@@ -398,6 +419,7 @@ int main(){try{
     const auto root=std::filesystem::temp_directory_path()/"odh-saved-interactions-test";
     std::filesystem::create_directories(root);const auto path=root/"object.iff";
     semiglobal_table_discovery(root);
+    source_error_menu_matrix(root);
     explicit_named_check_resources(root);
     named_dynamic_menu_owner(root);
     full_category_check_budget(root);

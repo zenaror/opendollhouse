@@ -9,6 +9,29 @@ odh::RoutineKey key(std::uint16_t id){return odh::routine_key(id);}
 odh::Bhav tree(std::initializer_list<odh::Instruction> instructions){
     return {0x8002,instructions,{},odh::Bhav::Metadata{0,4,4,0}};
 }
+void source_error_check_matrix(){
+ for(unsigned mode=0;mode<5;++mode){
+  odh::World world;world.create(1,odh::EntityKind::avatar,{0,88,3,16});world.create(2,odh::EntityKind::object);
+  world.set_person_data(1,58,25);world.declare_object_word(1,8,0);
+  const auto global=std::make_shared<const odh::VmProgram>(odh::RoutineSet{{key(4096),tree({{3,254,255,{}}})}});
+  const auto bank=std::make_shared<const odh::VmProgram>(odh::RoutineSet{{key(4100),tree({{99,254,255,{}}})},{key(4101),tree({{98,254,255,{}}})}});
+  odh::Interaction row{};row.action=4100;row.test=4101;unsigned checks=0;
+  odh::AutonomyResult<odh::AutonomyCheck> result;odh::Vm* actual=nullptr;
+  const odh::VmPrimitive checks_primitive=[&](const auto&,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+   ++checks;if(mode==4)throw std::runtime_error("authored absent object");
+   return {mode==0?odh::PrimitiveDisposition::source_error:mode==1?odh::PrimitiveDisposition::unsupported:
+      mode==2?odh::PrimitiveDisposition::wait:odh::PrimitiveDisposition::continue_execution,"authored absent object"};
+  };
+  odh::Vm vm(global,odh::ShareVmProgramTag{},world.vm_memory(),{},
+   [&](const auto&,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+    result=odh::evaluate_saved_autonomy_check(world,*actual,1,2,22,row,global,bank,world.vm_memory(),checks_primitive,{},16);
+    return {odh::PrimitiveDisposition::goto_true,{}};
+   });actual=&vm;
+  vm.start(key(4096),{1,1,1});require(vm.run(1)==odh::VmStatus::returned_true&&checks>0,"autonomy ERROR uses actual disposable Check and restores caller");
+  if(mode==0)require(result.status==odh::AutonomyStatus::ready&&!result.value.allowed,"known source ERROR makes autonomous choice ineligible");
+  else require(result.status!=odh::AutonomyStatus::ready,"autonomy does not convert unsupported/wait/budget/host exception into denied choice");
+ }
+}
 void check_advertisement_ownership(){
     for(const bool explicit_variant:{false,true}){
         odh::World world;require(world.create(1,odh::EntityKind::avatar,{0,88,3,16})&&world.create(2,odh::EntityKind::object)&&
@@ -120,5 +143,5 @@ void check_choice_handover_effect(){
         world.find(1)->motives[8]==75,"source30 resumes its real no-action branch after completion");
 }
 }
-int main(){try{check_advertisement_ownership();check_choice_handover_effect();std::cout<<"native autonomy check/choice/queue/execution passed\n";}
+int main(){try{source_error_check_matrix();check_advertisement_ownership();check_choice_handover_effect();std::cout<<"native autonomy check/choice/queue/execution passed\n";}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

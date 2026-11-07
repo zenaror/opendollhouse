@@ -969,6 +969,55 @@ void trusted_lifecycle_deletion() {
     require(denied.status==odh::VmStatus::fault&&!denied.lifecycle_deleted,
         "entry point deletion permission is explicit per invocation and never leaks");
 }
+void source_error_provenance_tests() {
+    const odh::RoutineKey named{odh::RoutineScope::named_private,4097};
+    // Identical diagnostic text must not turn an implementation gap, exception,
+    // invalid output, asynchronous wait or work bound into an authored ERROR.
+    for(int mode=0;mode<7;++mode){
+        odh::Vm* actual=nullptr;odh::VmSubroutineResult observed;bool parent_restored=false;
+        const auto operation=static_cast<std::uint16_t>(mode==6?4098:200);
+        odh::RoutineSet bank{{named,routine({{201,1,1,{}},{operation,254,255,{}}})},
+                            {key(4098),routine({{200,254,255,{}}})}};
+        const odh::VmPrimitive child=[&](const auto&,const auto& op,const auto&,const auto&)->odh::PrimitiveOutcome{
+            if(op.opcode==201){odh::PrimitiveOutcome value{odh::PrimitiveDisposition::goto_true,{}};
+                value.temp_write=odh::VmTempWrite{0,17};return value;}
+            if(mode==2)throw std::runtime_error("object absent");
+            odh::PrimitiveOutcome value{mode==1?odh::PrimitiveDisposition::unsupported:
+                mode==4?odh::PrimitiveDisposition::wait:
+                mode==5?odh::PrimitiveDisposition::continue_execution:odh::PrimitiveDisposition::source_error,"object absent"};
+            if(mode==3)value.temp_write=odh::VmTempWrite{0,99};
+            return value;
+        };
+        odh::Vm vm({{key(),routine({{28,254,255,{}}})}}, {}, {},
+            [&](const odh::VmFrame& frame,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+                auto context=frame.context;context.code_owner=77;
+                const auto generation=actual->run_generation();
+                observed=actual->run_named_in_stack(named,context,{},4,child);
+                parent_restored=actual->status()==odh::VmStatus::running&&actual->stack().size()==1&&
+                    actual->stack()[0].key.id==key().id&&actual->stack()[0].key.scope==key().scope&&
+                    actual->stack()[0].pc==0&&actual->run_generation()==generation;
+                if(mode==0||mode==6){
+                    const auto clean=actual->run_named_in_stack(named,context,{},4,
+                        [](const auto&,const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};});
+                    require(clean.started&&clean.status==odh::VmStatus::returned_true&&!clean.source_error,
+                        "source ERROR provenance never leaks into the next temporary evaluation");
+                }
+                return {odh::PrimitiveDisposition::goto_true,{}};
+            },{{77,std::move(bank)}});actual=&vm;
+        vm.start(key(),{1,2,3});
+        require(vm.run(1)==odh::VmStatus::returned_true&&parent_restored&&observed.started,
+            "temporary ERROR evaluation restores its real parent continuation");
+        require(observed.source_error==(mode==0||mode==6)&&!observed.lifecycle_deleted,
+            "only an explicit output-free source ERROR carries typed provenance, including a real child BHAV");
+        require(observed.status==(mode==5?odh::VmStatus::budget_exhausted:odh::VmStatus::fault)&&vm.temps()[0]==17,
+            "ERROR remains fault and earlier register effects survive; malformed outputs do not publish");
+    }
+    odh::Vm top({{key(),routine({{200,254,255,{}}})}}, {}, {},
+        [](const auto&,const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::source_error,"authored ERROR"};});
+    top.start(key());
+    require(top.run(1)==odh::VmStatus::fault&&top.stack().size()==1&&top.stack()[0].pc==0&&top.diagnostic()=="authored ERROR",
+        "ordinary Main source ERROR remains a fault, never a false return or PC advance");
+}
 void variable_output_tests() {
     for(const auto disposition:{odh::PrimitiveDisposition::goto_true,odh::PrimitiveDisposition::goto_false,
                                odh::PrimitiveDisposition::goto_true_next_tick}){
@@ -1039,6 +1088,7 @@ void variable_output_tests() {
 }
 int main() {
     try {
+        source_error_provenance_tests();
         variable_output_tests();
         {
             odh::Instruction missing{1,254,255,{12,0,255,17,42,1,2,3}};

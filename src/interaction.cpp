@@ -23,6 +23,15 @@ std::optional<std::int16_t> interaction_advertisement(const Ttab* table,std::int
 }
 
 namespace {
+// FreeSO7e76 EvaluateCheck92–125/CheckTS1Action931–941 rejects an authored
+// ERROR just like a false check. Unknown host/implementation faults stay fatal.
+bool source_check_false(const VmSubroutineResult& result){
+    return result.started&&(result.status==VmStatus::returned_false||
+        (result.status==VmStatus::fault&&result.source_error));
+}
+bool source_check_completed(const VmSubroutineResult& result){
+    return result.started&&(result.status==VmStatus::returned_true||source_check_false(result));
+}
 struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}};
 constexpr std::uint32_t ttab_run_immediately=1U<<2;
 constexpr std::uint32_t ttab_must_run=1U<<10;
@@ -960,11 +969,10 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                 if(candidate.check){
                     const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
                         eligibility_arguments(candidate),10000,check_primitive_,candidate.argument_mode!=InteractionArgumentMode::legacy_metadata,check_primitive_factory_);
-                    if(!result.started||(result.status!=VmStatus::returned_true&&
-                                         result.status!=VmStatus::returned_false))
+                    if(!source_check_completed(result))
                         return unsupported("nested interaction check did not return synchronously: "+result.diagnostic);
                     if(!validate())return unsupported(diagnostic_);
-                    if(result.status==VmStatus::returned_false){
+                    if(source_check_false(result)){
                         queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
                     }
                 }
@@ -1066,11 +1074,10 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         if(candidate.check){
             const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
                 eligibility_arguments(candidate),10000,check_primitive_,candidate.argument_mode!=InteractionArgumentMode::legacy_metadata,check_primitive_factory_);
-            if(!result.started || (result.status!=VmStatus::returned_true &&
-                                   result.status!=VmStatus::returned_false))
+            if(!source_check_completed(result))
                 return unsupported("interaction check did not return synchronously: "+result.diagnostic);
             if(!validate())return unsupported(diagnostic_);
-            if(result.status==VmStatus::returned_false){
+            if(source_check_false(result)){
                 queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
             }
         }
@@ -1194,11 +1201,11 @@ bool InteractionQueue::try_run_immediate(const ImmediatePendingAudit& audit,
         if(action.check){
             const auto result=vm_->evaluate_check_at_safe_point(*action.check,action.call.context,
                 eligibility_arguments(action),10000,check_primitive_,action.argument_mode!=InteractionArgumentMode::legacy_metadata,check_primitive_factory_);
-            if(!result.started||(result.status!=VmStatus::returned_true&&result.status!=VmStatus::returned_false)){
+            if(!source_check_completed(result)){
                 diagnostic_="immediate interaction check did not return synchronously: "+result.diagnostic;return false;
             }
             if(!validate())return false;
-            if(result.status==VmStatus::returned_false){
+            if(source_check_false(result)){
                 queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(index));continue;
             }
         }

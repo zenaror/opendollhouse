@@ -129,7 +129,7 @@ struct VmLimits {
     std::size_t frame_variables = 4096;
     std::size_t code_owners = 64; // Includes default owner zero.
 };
-enum class PrimitiveDisposition { goto_true, goto_false, wait, unsupported, call, goto_true_next_tick, continue_execution, continue_next_tick, lifecycle_deleted };
+enum class PrimitiveDisposition { goto_true, goto_false, wait, unsupported, call, goto_true_next_tick, continue_execution, continue_next_tick, lifecycle_deleted, source_error };
 struct VmCall {
     RoutineKey key;
     VmContext context;
@@ -260,6 +260,10 @@ struct VmSubroutineResult {
     std::string diagnostic;
     // Explicit terminal result of a trusted disposable lifecycle, not a BHAV return.
     bool lifecycle_deleted = false;
+    // Explicit authored ERROR observed in this synchronous evaluation only.
+    // Fault remains a fault; the caller decides whether its source contract
+    // maps ERROR to false. Unsupported operations and host failures never set it.
+    bool source_error = false;
 };
 
 // Host-independent, resumable instruction kernel. Owns immutable routine sets.
@@ -586,6 +590,7 @@ private:
                           const std::function<void(const VmTrace&)>&,
                           const VmPrimitive*, bool check_mode,
                           std::uint64_t* executed_steps = nullptr,
-                          bool* lifecycle_deleted = nullptr);
+                          bool* lifecycle_deleted = nullptr,
+                          bool* source_error = nullptr);
 };
 } // namespace odh

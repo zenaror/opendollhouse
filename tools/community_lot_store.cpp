@@ -4,6 +4,7 @@
 #include "neighborhood_storage.hpp"
 #include "odh/sha256.hpp"
 #include <fstream>
+#include <algorithm>
 #include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -58,6 +59,32 @@ CommunityLotIdentity community_lot_identity(const CommunityLotStoreOptions&o){
     if(o.expected_identity&&!same_community_lot(result,*o.expected_identity))
         throw odh::FormatError("community source changed while editing");
     return result;
+}
+StoredCommunityLot load_community_lot_blob(const CommunityLotStoreOptions&o,const std::array<std::uint8_t,32>& head){
+    if(std::all_of(head.begin(),head.end(),[](auto b){return b==0;}))throw odh::FormatError("property blob head is absent");
+    static constexpr char digits[]="0123456789abcdef";std::string name;
+    for(auto b:head){name.push_back(digits[b>>4]);name.push_back(digits[b&15]);}
+    const auto directory=checkpoint(o).parent_path()/"blobs";
+    if(std::filesystem::is_symlink(std::filesystem::symlink_status(directory)))throw odh::FormatError("property blob directory is a symbolic link");
+    const auto path=directory/(name+".odhs");const auto archive=read_session_archive(path,limits);
+    const auto encoded=odh::encode_session_archive(archive,limits);
+    if(odh::sha256(encoded.data(),encoded.size())!=head)throw odh::FormatError("property blob content does not match its exact head");
+    auto document=decode_community_lot_document(archive);
+    if(!same_community_lot(document.identity,community_lot_identity(o)))throw odh::FormatError("property blob belongs to another installed lot");
+    return {std::move(document),head,path};
+}
+StoredCommunityLot publish_community_lot_blob(const CommunityLotStoreOptions&o,const CommunityLotDocument& document){
+    if(!same_community_lot(document.identity,community_lot_identity(o)))throw odh::FormatError("property blob publication belongs to another installed lot");
+    const auto archive=encode_community_lot_document(document);const auto encoded=odh::encode_session_archive(archive,limits);
+    const auto head=odh::sha256(encoded.data(),encoded.size());const auto directory=checkpoint(o).parent_path()/"blobs";
+    const auto status=std::filesystem::symlink_status(directory);
+    if(std::filesystem::is_symlink(status)||(std::filesystem::exists(status)&&!std::filesystem::is_directory(status)))
+        throw odh::FormatError("property blob directory must be a real directory");
+    std::filesystem::create_directories(directory);
+    const auto path=publish_session_archive_immutable(directory,archive,limits);
+    auto reread=load_community_lot_blob(o,head);
+    if(reread.checkpoint!=path)throw odh::FormatError("property blob immutable path differs from its verified digest");
+    return reread;
 }
 std::optional<StoredCommunityLot> load_private_community_lot(const CommunityLotStoreOptions&o){return read(o);}
 std::optional<odh::ArchitectureSnapshot> load_private_community_architecture(const CommunityLotStoreOptions&o){

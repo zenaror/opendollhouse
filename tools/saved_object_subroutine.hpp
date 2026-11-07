@@ -143,6 +143,11 @@ inline odh::PrimitiveOutcome run_saved_named_tree(odh::Vm& caller,odh::Vm* targe
     report.temps_after=execution->temps();
     if(report.result.started&&report.result.status==odh::VmStatus::returned_true)return {odh::PrimitiveDisposition::goto_true,{}};
     if(report.result.started&&report.result.status==odh::VmStatus::returned_false)return {odh::PrimitiveDisposition::goto_false,{}};
+    // RunInMyStack restores its caller and reports false for an authored ERROR.
+    // Keep unsupported primitives, invalid resources, limits and host faults
+    // distinct: those are incomplete execution, not a negative check result.
+    if(destination!=2&&report.result.started&&report.result.status==odh::VmStatus::fault&&report.result.source_error)
+        return {odh::PrimitiveDisposition::goto_false,{}};
     return reject("named tree did not return synchronously: "+std::string(odh::vm_status_name(report.result.status))+"; "+report.result.diagnostic);
 }
 

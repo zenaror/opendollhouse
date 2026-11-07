@@ -20,8 +20,19 @@ VmPrimitive object_type_primitive(const World& world) {
         default:id=world.read(frame,b[6],index);break;
         }
         if(!id)return {PrimitiveDisposition::unsupported,"object type source scope/index unavailable"};
-        const auto* entity=world.find(*id);
-        if(!entity)return {PrimitiveDisposition::unsupported,"object type selected entity absent"};
+        // StackObjectID is the frame's object pointer in the reference engine,
+        // not another numeric-ID lookup. Preserve its generation and retained
+        // body across Delete and later reuse of the same numeric ID.
+        const auto* entity=b[6]==10?world.frame_entity(frame,VmEntityRole::stack_object):world.find(*id);
+        const bool known_absence=vm_context_references_valid(frame.context)&&
+            (b[6]!=10||!frame.context.entity_references_bound||frame.context.stack_object_generation==0);
+        if(!entity)return {known_absence?PrimitiveDisposition::source_error:PrimitiveDisposition::unsupported,
+            "object type selected entity absent (scope="+
+            std::to_string(b[6])+", index="+std::to_string(index)+", selected="+std::to_string(*id)+
+            ", bound="+std::to_string(frame.context.entity_references_bound)+
+            ", stack_generation="+std::to_string(frame.context.stack_object_generation)+
+            ", routine="+std::to_string(frame.key.id)+", pc="+std::to_string(frame.pc)+
+            ", owner="+std::to_string(frame.context.code_owner)+")"};
         if(!entity->definition)return {PrimitiveDisposition::unsupported,"object type identity not supplied"};
         const auto match=entity->definition->guid==guid || (entity->definition->master_guid&&*entity->definition->master_guid==guid);
         return {match?PrimitiveDisposition::goto_true:PrimitiveDisposition::goto_false,{}};

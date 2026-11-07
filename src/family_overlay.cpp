@@ -154,6 +154,28 @@ void validate_overlay(const FamilyOverlay& overlay) {
         overlay.names.size() > max_assignments - overlay.assignments.size() -
             overlay.creations.size() - overlay.archives.size() - overlay.deletions.size())
         throw FormatError("family overlay exceeds assignment limit");
+    const auto ordinary_count=overlay.assignments.size()+overlay.creations.size()+overlay.archives.size()+
+        overlay.deletions.size()+overlay.names.size()+(overlay.type_attributes?1U:0U);
+    if(ordinary_count>max_assignments||overlay.property_releases.size()>max_assignments-ordinary_count)
+        throw FormatError("family property release history exceeds record budget");
+    std::uint32_t prior_release=0;bool have_release=false;
+    for(const auto& release:overlay.property_releases){
+        if(release.assignment_index>=overlay.assignments.size()||
+           (have_release&&release.assignment_index<=prior_release)||release.house<1||release.house>98||
+           release.neighborhood<1||release.neighborhood>8||(release.mode!=1&&release.mode!=4)||
+           release.policy!=1||release.vacant_purchase_value<0||release.cash_after_cleanup<0||!release.occupancy_epoch||release.expected_revision==UINT64_MAX||
+           zero_digest(release.family_identity)||zero_digest(release.source_checkpoint_sha256)||
+           zero_digest(release.installed_lot_sha256)||zero_digest(release.head)||
+           (release.expected_revision==0)!=(!release.expected_head)||
+           (release.expected_head&&zero_digest(*release.expected_head)))
+            throw FormatError("invalid, duplicate or unordered family property release");
+        const auto& operation=overlay.assignments[release.assignment_index];
+        if(operation.action!=FamilyOverlayAction::move_out||!operation.state||
+           operation.family_chunk_id!=release.family_chunk_id||operation.family_identity!=release.family_identity||
+           operation.state->expected_house!=release.house||operation.state->expected_occupancy_epoch!=release.occupancy_epoch)
+            throw FormatError("property release does not name its exact managed move-out");
+        prior_release=release.assignment_index;have_release=true;
+    }
     if(overlay.type_attributes) {
         if(!overlay.type_attributes->revision)throw FormatError("neighborhood type attribute revision must be positive");
         (void)encode_type_attributes_snapshot(overlay.type_attributes->state);
@@ -406,14 +428,14 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
         [](const auto& value) { return value.final_state.has_value(); });
     const bool managed = std::any_of(overlay.assignments.begin(), overlay.assignments.end(),
         [](const auto& operation) { return operation.state.has_value(); });
-    if (overlay.type_attributes || !overlay.names.empty() || managed || !overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
-        const auto version = terminal ? 9U : overlay.type_attributes ? 8U : !overlay.names.empty() ? 7U : managed ? 6U : !overlay.deletions.empty() ? 5U :
+    if (!overlay.property_releases.empty() || overlay.type_attributes || !overlay.names.empty() || managed || !overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
+        const auto version = !overlay.property_releases.empty()?10U:terminal ? 9U : overlay.type_attributes ? 8U : !overlay.names.empty() ? 7U : managed ? 6U : !overlay.deletions.empty() ? 5U :
             (overlay.archives.empty() ? 3U : 4U);
         std::vector<std::uint8_t> out{'O','D','H','F'};
         put16(out, static_cast<std::uint16_t>(version)); put16(out, 0);
         out.insert(out.end(), overlay.neighborhood_identity.begin(), overlay.neighborhood_identity.end());
         put32(out, static_cast<std::uint32_t>(overlay.creations.size() +
-            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size() + overlay.names.size() + (overlay.type_attributes?1U:0U)));
+            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size() + overlay.names.size() + overlay.property_releases.size() + (overlay.type_attributes?1U:0U)));
         const auto append = [&](std::uint16_t tag, const std::vector<std::uint8_t>& payload) {
             if (tag == 2 && payload.size() > max_creation_bytes)
                 throw FormatError("family creation record exceeds byte limit");
@@ -481,6 +503,18 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
             payload.insert(payload.end(), name.family_name.begin(), name.family_name.end());
             append(6, payload);
         }
+        for(const auto& release:overlay.property_releases){
+            std::vector<std::uint8_t> payload;put32(payload,release.assignment_index);put16(payload,release.house);
+            payload.push_back(release.neighborhood);payload.push_back(release.mode);put16(payload,release.policy);
+            put16(payload,release.expected_head?1:0);put16(payload,release.family_chunk_id);put16(payload,0);
+            put64(payload,release.occupancy_epoch);put64(payload,release.expected_revision);
+            for(const auto& digest:{release.family_identity,release.source_checkpoint_sha256,release.installed_lot_sha256,
+                    release.expected_head.value_or(std::array<std::uint8_t,32>{}),release.head})
+                payload.insert(payload.end(),digest.begin(),digest.end());
+            put32(payload,static_cast<std::uint32_t>(release.vacant_purchase_value));
+            put32(payload,static_cast<std::uint32_t>(release.cash_after_cleanup));
+            append(10,payload);
+        }
         if(overlay.type_attributes) {
             std::vector<std::uint8_t> payload;put64(payload,overlay.type_attributes->revision);
             const auto state=encode_type_attributes_snapshot(overlay.type_attributes->state);
@@ -511,7 +545,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
     if (bytes[0] != 'O' || bytes[1] != 'D' || bytes[2] != 'H' || bytes[3] != 'F')
         throw FormatError("invalid family overlay signature");
     const auto version = get16(bytes, 4);
-    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9) || get16(bytes, 6) != 0)
+    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10) || get16(bytes, 6) != 0)
         throw FormatError("unsupported family overlay version or flags");
     const auto count = get32(bytes, 40);
     if (count > max_assignments || ((version == 1 || version == 2) &&
@@ -519,13 +553,14 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
         throw FormatError("family overlay record count or extent is invalid");
     FamilyOverlay result;
     std::copy_n(bytes.begin() + 8, result.neighborhood_identity.size(), result.neighborhood_identity.begin());
-    if (version >= 3 && version <= 9) {
+    if (version >= 3 && version <= 10) {
         std::size_t at = header_size;
         bool saw_assignment = false;
         bool saw_archive = false;
         bool saw_deletion = false;
         bool saw_name = false;
         bool saw_terminal = false;
+        bool saw_property = false;
         for (std::uint32_t i = 0; i < count; ++i) {
             if (bytes.size() - at < 6) throw FormatError("truncated tagged family overlay record header");
             const auto tag = get16(bytes, at);
@@ -533,7 +568,8 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
             if (length > bytes.size() - at) throw FormatError("truncated tagged family overlay record");
             const auto end = at + length;
             if(result.type_attributes)throw FormatError("shared type attributes must be the final overlay record");
-            if (saw_name && tag != 6 && tag != 7) throw FormatError("family names must follow the family operation records");
+            if(saw_property&&tag!=10&&tag!=7)throw FormatError("property releases must follow family records and precede shared attributes");
+            if (saw_name && tag != 6 && tag != 7 && tag != 10) throw FormatError("family names must follow the family operation records");
             if (tag == 1 || (tag == 5 && version >= 6)) {
                 if (saw_archive || saw_deletion) throw FormatError("family assignments must precede archives and deletions");
                 if (length != (tag == 5 ? managed_record_size : record_size)) throw FormatError("invalid family operation extent");
@@ -588,7 +624,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                     creation.members.push_back(*entry.record);
                 }
                 result.creations.push_back(std::move(creation));
-            } else if ((tag == 3 && version >= 4) || (tag == 8 && version == 9)) {
+            } else if ((tag == 3 && version >= 4) || (tag == 8 && version >= 9)) {
                 if (saw_deletion || length != 34 + (tag == 8 ? removal_state_size : 0)) throw FormatError("invalid family archive ordering or extent");
                 saw_archive = true;
                 FamilyOverlayArchive archive;
@@ -600,7 +636,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                     saw_terminal = true;
                 }
                 result.archives.push_back(archive);
-            } else if ((tag == 4 && version >= 5) || (tag == 9 && version == 9)) {
+            } else if ((tag == 4 && version >= 5) || (tag == 9 && version >= 9)) {
                 if (length < 36) throw FormatError("truncated v5 family deletion");
                 saw_deletion = true;
                 FamilyOverlayDeletion deletion;
@@ -632,6 +668,22 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                 name.family_name.assign(bytes.begin() + static_cast<std::ptrdiff_t>(at + 35),
                     bytes.begin() + static_cast<std::ptrdiff_t>(end));
                 result.names.push_back(std::move(name));
+            } else if(tag==10&&version==10){
+                if(length!=200||get16(bytes,at+14)!=0)throw FormatError("invalid property release extent/reserved field");
+                saw_property=true;FamilyPropertyRelease release;
+                release.assignment_index=get32(bytes,at);release.house=get16(bytes,at+4);
+                release.neighborhood=bytes[at+6];release.mode=bytes[at+7];release.policy=get16(bytes,at+8);
+                const auto flags=get16(bytes,at+10);if(flags>1)throw FormatError("invalid property release head flags");
+                release.family_chunk_id=get16(bytes,at+12);release.occupancy_epoch=get64(bytes,at+16);
+                release.expected_revision=get64(bytes,at+24);
+                std::copy_n(bytes.begin()+at+32,32,release.family_identity.begin());
+                std::copy_n(bytes.begin()+at+64,32,release.source_checkpoint_sha256.begin());
+                std::copy_n(bytes.begin()+at+96,32,release.installed_lot_sha256.begin());
+                std::array<std::uint8_t,32> expected{};std::copy_n(bytes.begin()+at+128,32,expected.begin());
+                if(flags)release.expected_head=expected;else if(!zero_digest(expected))throw FormatError("absent property head contains digest");
+                std::copy_n(bytes.begin()+at+160,32,release.head.begin());
+                release.vacant_purchase_value=signed32(get32(bytes,at+192));
+                release.cash_after_cleanup=signed32(get32(bytes,at+196));result.property_releases.push_back(release);
             } else if(tag==7&&version>=8) {
                 if(length<16)throw FormatError("truncated neighborhood type attribute record");
                 NeighborhoodTypeAttributes shared;shared.revision=get64(bytes,at);
@@ -644,6 +696,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
         if (at != bytes.size()) throw FormatError("trailing v3 bytes");
         if(version==8&&!result.type_attributes)throw FormatError("v8 overlay lacks its neighborhood type attribute record");
         if (version == 9 && !saw_terminal) throw FormatError("v9 overlay lacks terminal removal state");
+        if(version==10&&!saw_property)throw FormatError("v10 overlay lacks property release history");
         validate_overlay(result);
         return result;
     }
@@ -718,7 +771,13 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
             if (key >= 1 && key <= 98 && !occupied.emplace(key, result[i].chunk_id).second)
                 throw FormatError("ambiguous multiple families occupy one source house");
         }
-    for (const auto& assignment : overlay.assignments) {
+    std::map<std::uint16_t,FamilyPropertyHead> property_heads;
+    std::size_t release_cursor=0;
+    for(std::size_t assignment_index=0;assignment_index<overlay.assignments.size();++assignment_index){
+        const auto& assignment=overlay.assignments[assignment_index];
+        const auto* releasing=release_cursor<overlay.property_releases.size()&&
+            overlay.property_releases[release_cursor].assignment_index==assignment_index?
+            &overlay.property_releases[release_cursor]:nullptr;
         const auto found = by_id.find(assignment.family_chunk_id);
         if (found == by_id.end()) throw FormatError("family overlay references a missing FAMI chunk");
         auto& family = result[found->second].family;
@@ -774,7 +833,7 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
                 throw FormatError("family move-out source house is not occupied by this family");
             if (family.value_in_arch < 0 || family.budget < 0)
                 throw FormatError("family move-out has invalid refund or budget data");
-            const auto next_budget = static_cast<std::int64_t>(family.budget) + family.value_in_arch;
+            const auto next_budget = static_cast<std::int64_t>(releasing?releasing->cash_after_cleanup:family.budget) + family.value_in_arch;
             if (next_budget < 0 || next_budget > std::numeric_limits<std::int32_t>::max() ||
                 assignment.budget_after_purchase != next_budget)
                 throw FormatError("family move-out budget does not match its architecture refund");
@@ -788,6 +847,23 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
         state.house_number = static_cast<std::uint16_t>(family.house_number);
         state.budget = family.budget;
         state.value_in_arch = family.value_in_arch;
+        if(release_cursor<overlay.property_releases.size()&&
+           overlay.property_releases[release_cursor].assignment_index==assignment_index){
+            const auto& release=overlay.property_releases[release_cursor++];
+            if(!state.checkpoint_sha256||*state.checkpoint_sha256!=release.source_checkpoint_sha256||
+               state.checkpoint_house!=release.house||state.checkpoint_epoch!=release.occupancy_epoch||
+               state.checkpoint_budget!=assignment.state->budget_before)
+                throw FormatError("property release source checkpoint is not the exact departing occupancy");
+            const auto old=property_heads.find(release.house);
+            if(old==property_heads.end()){
+                if(release.expected_revision||release.expected_head)throw FormatError("property release has no expected previous head");
+            }else if(old->second.revision!=release.expected_revision||
+                release.expected_head!=std::optional<std::array<std::uint8_t,32>>{old->second.head}||
+                old->second.installed_lot_sha256!=release.installed_lot_sha256||old->second.neighborhood!=release.neighborhood)
+                throw FormatError("property release previous head/revision or installed lot is stale");
+            property_heads[release.house]={release.house,release.policy,release.neighborhood,release.mode,
+                release.expected_revision+1,release.installed_lot_sha256,release.head,release.vacant_purchase_value};
+        }
     }
     for (const auto& name : overlay.names) {
         const auto found = by_id.find(name.family_chunk_id);
@@ -833,7 +909,8 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
     states.erase(std::remove_if(states.begin(), states.end(), [&](const auto& entry) {
         return archived_ids.count(entry.family_chunk_id) != 0 || deleted_ids.count(entry.family_chunk_id) != 0;
     }), states.end());
-    return {std::move(result), std::move(states)};
+    std::vector<FamilyPropertyHead> properties;for(const auto& pair:property_heads)properties.push_back(pair.second);
+    return {std::move(result), std::move(states),std::move(properties)};
 }
 
 FamilyOverlay plan_family_name_overlay(const std::vector<FamilyEntry>& source,
@@ -962,6 +1039,24 @@ FamilyOverlay plan_family_managed_move_out_overlay(const std::vector<FamilyEntry
         const std::array<std::uint8_t, 32>& identity, const FamilyOverlay* current, std::uint16_t family_id) {
     return append_managed_operation(source, identity, current, family_id, FamilyOverlayAction::move_out,
         0, 0, {}, {}, {});
+}
+FamilyOverlay plan_family_property_release_overlay(const std::vector<FamilyEntry>& source,
+        const std::array<std::uint8_t,32>& identity,const FamilyOverlay& current,
+        std::uint16_t family_id,const FamilyPropertyRelease& release){
+    if(release.family_chunk_id!=family_id||release.assignment_index!=current.assignments.size())
+        throw FormatError("property release must append the exact next family operation");
+    const auto replay=replay_family_overlay(source,identity,current);
+    const auto state=std::find_if(replay.states.begin(),replay.states.end(),[&](const auto& v){return v.family_chunk_id==family_id;});
+    if(state==replay.states.end()||!state->house_number||!state->managed||release.cash_after_cleanup<0)
+        throw FormatError("property release requires an actual managed occupied family and current cash");
+    const auto after=std::int64_t(release.cash_after_cleanup)+state->value_in_arch;
+    if(after<0||after>INT32_MAX)throw FormatError("property release refund overflows family cash");
+    auto result=current;
+    result.assignments.push_back({family_id,state->family_identity,0,0,static_cast<std::int32_t>(after),
+        FamilyOverlayAction::move_out,FamilyOverlayOperationState{state->house_number,state->occupancy_epoch,
+            state->budget,state->value_in_arch,0,{}}});
+    result.property_releases.push_back(release);
+    (void)replay_family_overlay(source,identity,result);return result;
 }
 FamilyOverlay plan_family_checkpoint_overlay(const std::vector<FamilyEntry>& source,
         const std::array<std::uint8_t, 32>& identity, const FamilyOverlay* current,

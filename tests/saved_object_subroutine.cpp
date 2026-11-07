@@ -1,4 +1,5 @@
 #include "saved_object_subroutine.hpp"
+#include "odh/object_type.hpp"
 
 #include <iostream>
 #include <stdexcept>
@@ -310,6 +311,42 @@ void named_tree_nonreturns(){
 
 }
 int main(){try{
+    // A real primitive ERROR inside RunInMyStack is a negative check result;
+    // missing native resource support remains a fault, as does an ordinary child.
+    for(const auto destination:{std::uint8_t{0},std::uint8_t{1},std::uint8_t{2}})
+    for(const bool unknown_identity:{false,true}){
+        odh::World world;
+        require(world.create(1,odh::EntityKind::avatar)&&world.create(2,odh::EntityKind::object)&&
+            world.define_type(2,0x11223344)&&world.create(3,odh::EntityKind::object),"named error world setup");
+        const auto main=odh::routine_key(4096),named=odh::routine_key(4119);
+        const odh::Instruction source{28,254,255,{0,0,0,0,1,destination,0,0}};
+        const odh::Instruction clear_stack{2,1,253,{0,0,0,0,0,5,10,7}};
+        const odh::Instruction type{32,254,255,{0x44,0x33,0x22,0x11,
+            static_cast<std::uint8_t>(unknown_identity?3:0),0,
+            static_cast<std::uint8_t>(unknown_identity?7:10),0}};
+        auto check=odh::object_type_primitive(world);
+        const auto body=unknown_identity?named_routine({type}):named_routine({clear_stack,type});
+        const odh::RoutineOwners owners{{77,{{named,body}}}};
+        odh::Vm target({{main,named_routine({{0,254,255,{}}})}},world.vm_memory(),{},check,owners);
+        target.restore_dormant_state({{main,0,{2,2,2},{},{}}},{});
+        auto before=target.snapshot();
+        SavedObjectSubroutineReport report;odh::Vm* actual=nullptr;
+        odh::Vm caller({{main,named_routine({source})}},world.vm_memory(),{},
+            [&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+                if(instruction.opcode==32)return check(frame,instruction,temps,dispatch);
+                return run_saved_named_tree(*actual,&target,{frame,instruction,dispatch,2,77,named,destination},
+                    temps,report,check,8);
+            },owners);actual=&caller;
+        caller.start(main,{1,1,2});
+        const auto status=caller.run(16);
+        require(status==(!unknown_identity&&destination!=2?odh::VmStatus::returned_false:odh::VmStatus::fault),
+            "only known authored ERROR in a logical named check becomes false");
+        if(destination!=2)require(report.result.started&&report.result.status==odh::VmStatus::fault&&
+            report.result.source_error==!unknown_identity,
+            "named report distinguishes actual primitive ERROR from unsupported identity");
+        const auto after=target.snapshot();before.ticket_sequence=after.ticket_sequence;
+        require(same_execution(before,after),"named error preserves the target's parked execution");
+    }
     named_target_parked_entity_thread_rejects();
     explicit_named_resource_identity();
     named_tree_modes();

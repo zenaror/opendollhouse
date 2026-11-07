@@ -63,7 +63,9 @@ odh::AutonomyResult<odh::AutonomyCheck> evaluate_saved_autonomy_check(
     if(check.start(key,{actor,target,target,owner},{1,0,0,0},true)!=VmStatus::running)
         return bad("autonomous check could not start: "+check.diagnostic());
     const auto result=check.run_synchronous_check_with_registers(caller,true,budget,checks);
-    if(!result.started||(result.status!=VmStatus::returned_true&&result.status!=VmStatus::returned_false))
+    // Same authored EvaluateCheck boundary as the native queued/menu checks.
+    const bool source_false=result.started&&result.status==VmStatus::fault&&result.source_error;
+    if(!result.started||(result.status!=VmStatus::returned_true&&result.status!=VmStatus::returned_false&&!source_false))
         return bad("autonomous check did not return synchronously: "+result.diagnostic);
     if(variants.empty())variants.push_back({{},0,check.advertisement_changes()});
     return {AutonomyStatus::ready,{result.status==VmStatus::returned_true,std::move(variants)},{}};

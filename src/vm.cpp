@@ -1142,12 +1142,14 @@ VmSubroutineResult Vm::run_synchronous_check(std::uint64_t budget,const VmPrimit
     advertisement_changes_.reset();
     try{
         result.status=run_internal(budget,trace,&primitive,true,&result.steps,
-            allow_lifecycle_deletion?&result.lifecycle_deleted:nullptr);
+            allow_lifecycle_deletion?&result.lifecycle_deleted:nullptr,&result.source_error);
         result.diagnostic=diagnostic_;
         if(result.status==VmStatus::budget_exhausted)result.diagnostic="check instruction limit reached";
     }catch(const std::exception& error){
+        result.source_error=false;
         status_=VmStatus::fault;result.status=status_;result.diagnostic=error.what();
     }catch(...){
+        result.source_error=false;
         status_=VmStatus::fault;result.status=status_;result.diagnostic="synchronous check raised a non-standard exception";
     }
     return result;
@@ -1156,7 +1158,7 @@ VmSubroutineResult Vm::run_synchronous_check(std::uint64_t budget,const VmPrimit
 VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                           const std::function<void(const VmTrace&)>& trace,
                           const VmPrimitive* primitive_override,bool check_mode,
-                          std::uint64_t* executed_steps,bool* lifecycle_deleted) {
+                          std::uint64_t* executed_steps,bool* lifecycle_deleted,bool* source_error) {
     if (status_ != VmStatus::running && status_ != VmStatus::budget_exhausted) return status_;
     status_ = VmStatus::running;
     std::uint64_t used=0;
@@ -1211,6 +1213,10 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                     } active(*this,dispatch,instruction);
                     return handler ? handler(frame,instruction,register_temps(),dispatch) : PrimitiveOutcome{};
                 }();
+                if(outcome.disposition==PrimitiveDisposition::source_error&&
+                   (outcome.write||outcome.call||outcome.call_commit||outcome.temp_write||
+                    outcome.second_temp_write||outcome.stack_object_write||outcome.variable_write))
+                    throw VmError("source ERROR cannot carry primitive outputs");
                 if(check_mode && (outcome.disposition==PrimitiveDisposition::goto_true_next_tick ||
                                   outcome.disposition==PrimitiveDisposition::continue_next_tick))
                     throw VmError("check BHAV attempted to yield until the next tick");
@@ -1370,6 +1376,14 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                     }
                     pending_ = VmPending{dispatch.ticket,VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction,frame.context.code_owner},frame.context};
                     status_ = VmStatus::waiting; break;
+                case PrimitiveDisposition::source_error:
+                    // Source RunInMyStack may map an authored ERROR to false.
+                    // Keep its provenance distinct from unsupported/host faults;
+                    // do not persist it or turn an ordinary Main error into a return.
+                    diagnostic_=outcome.diagnostic.empty()?"authored primitive ERROR":outcome.diagnostic;
+                    status_=VmStatus::fault;
+                    if(source_error)*source_error=true;
+                    break;
                 case PrimitiveDisposition::unsupported:
                     if(outcome.diagnostic.empty()){
                         std::string detail="unsupported primitive "+std::to_string(instruction.opcode)+" operands=[";
@@ -1544,13 +1558,15 @@ VmSubroutineResult Vm::evaluate_temporary_stack(RoutineKey key,VmContext context
         push(key,context,arguments,VmCallReturnMode::ordinary,0,exact_arguments,inherited_action_tree);
         result.started=true;
         const auto effective_primitive=primitive_factory?primitive_factory(memory_):check_primitive;
-        result.status=run_internal(instruction_budget,{},&effective_primitive,true,&check_steps);
+        result.status=run_internal(instruction_budget,{},&effective_primitive,true,&check_steps,nullptr,&result.source_error);
         result.diagnostic=diagnostic_;
     } catch(const std::exception& error) {
+        result.source_error=false;
         result.started=!stack_.empty();
         result.status=VmStatus::fault;
         result.diagnostic=error.what();
     } catch(...) {
+        result.source_error=false;
         result.started=!stack_.empty();
         result.status=VmStatus::fault;
         result.diagnostic="Check BHAV evaluation raised a non-standard exception";
