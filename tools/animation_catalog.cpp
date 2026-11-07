@@ -79,6 +79,14 @@ AnimationCatalog::AnimationCatalog(AnimationCatalog&&) noexcept=default;
 AnimationCatalog& AnimationCatalog::operator=(AnimationCatalog&&) noexcept=default;
 AnimationCatalog::Impl& AnimationCatalog::state()const {if(!impl_)throw FormatError("moved-from animation catalog");return *impl_;}
 std::shared_ptr<const CatalogAnimation> AnimationCatalog::resolve(const std::string& name){auto& p=state();return p.cache[p.load(name)].header;}
+std::shared_ptr<const CatalogAnimation> AnimationCatalog::resolve_if_present(const std::string& name){
+    auto& p=state();const auto* selected=p.unique(p.animations,fold(name));
+    if(!selected){
+        if(p.sources.empty()||p.stats.bcf_skipped_profile)throw FormatError("animation absence lacks a complete admitted catalog profile");
+        return {};
+    }
+    return p.cache[p.load(static_cast<std::size_t>(selected-p.animations.data()))].header;
+}
 std::shared_ptr<const CatalogDecoded> AnimationCatalog::decode(const std::string& name){auto& p=state();return p.decode(p.load(name));}
 std::shared_ptr<const CatalogDecoded> AnimationCatalog::decode(const AnimationHeader& selected){auto& p=state();return p.decode(p.load(p.selected(selected)));}
 CatalogUsage AnimationCatalog::usage()const {auto& p=state();p.clean_registry();auto stats=p.stats;stats.live_headers=p.live->headers;stats.metadata_bytes=p.live->metadata;stats.cfp_samples=p.live->samples;return stats;}

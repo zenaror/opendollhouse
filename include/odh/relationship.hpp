@@ -64,6 +64,14 @@ public:
     // Invalid state returns false; allocation exceptions propagate. Both leave
     // the destination unchanged. No World or callback binding is restored.
     bool restore_snapshot(const RelationshipSnapshot&);
+    // An initialized owner can acquire neighbors added to the authenticated
+    // current catalog after its lot snapshot was captured. Add ONLY missing
+    // NBRS sources, including known-empty records; preserve every existing
+    // neighbor/object source and value. Never manufacture an unknown ID in a
+    // primitive. Caller supplies the effective catalog after logical deletions.
+    // Duplicate new targets, combined budget overflow or an uninitialized owner
+    // reject without mutation; allocation exceptions preserve the old snapshot.
+    bool admit_missing_neighbor_sources(const NeighborContext&);
     // Atomically bind saved OBJECT sources to their actual World generations.
     // Empty relations bind/count a source; empty batches succeed. Existing bound
     // generations, missing/duplicate sources, duplicate low16 target keys and

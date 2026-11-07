@@ -89,8 +89,19 @@ struct PlaybackSnapshot {
 // Sound properties are optional presentation
 // notifications: the observer decides whether to submit them. Playback owns no
 // audio resources and persists only event cursors, never active sounds.
+enum class ResetAnimationAvailability { available, absent, unavailable };
+struct ResetAnimationLookup {
+    ResetAnimationAvailability availability=ResetAnimationAvailability::unavailable;
+    std::shared_ptr<const AnimationHeader> clip;
+    std::string diagnostic;
+};
+using ResetAnimationLookupResolver=std::function<ResetAnimationLookup(const VmFrame&,std::int16_t normalized_posture)>;
 class Playback {
 public:
+    // Optional typed source authority. Legacy nullptr resolvers remain unknown,
+    // while verified authored emptiness may complete a reset without a pose.
+    void set_reset_lookup_resolver(ResetAnimationLookupResolver resolver){reset_lookup_resolver_=std::move(resolver);}
+
     Playback(World& world,AnimationResolver resolver,PlaybackLimits limits={},AnimationResetResolver reset_resolver={},RouteAnimationResolver route_resolver={},SourceWalkAnimationNameResolver walk_name_resolver={}):
         world_(world),resolver_(std::move(resolver)),limits_(limits),reset_resolver_(std::move(reset_resolver)),route_resolver_(std::move(route_resolver)),walk_name_resolver_(std::move(walk_name_resolver)) {}
     Playback(const Playback&)=delete;
@@ -242,6 +253,7 @@ private:
     bool valid_slot_context(const VmFrame&,const Vm&,std::uint64_t actor_generation,
         std::uint64_t vm_generation,std::string* error) const;
     World& world_;AnimationResolver resolver_;PlaybackLimits limits_;
+    ResetAnimationLookupResolver reset_lookup_resolver_;
     AnimationResetResolver reset_resolver_;RouteAnimationResolver route_resolver_;
     SourceWalkAnimationNameResolver walk_name_resolver_;
     Vm* vm_=nullptr;std::optional<State> state_;std::optional<Wait> wait_;

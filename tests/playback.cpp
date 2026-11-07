@@ -802,5 +802,39 @@ int main(){try{
      f.world.remove(1);f.world.create(1,odh::EntityKind::avatar,{0,88,1});require(!f.player.hands(),"removed/reused actor cannot inherit gestures");}
     {Fixture f(2);f.a->motions[0].time_properties={{{0,{{"lefthand","1"}}},{60,{{"righthand","3"}}}}};f.start();f.player.tick(1);
      require(f.player.hands()->left==odh::HandGesture::idle&&f.player.hands()->right==odh::HandGesture::none,"backwards consumes later event first");}
+    for(const bool missing_clip:{false,true}){
+        Fixture f(1);f.start();const auto before=f.player.sample()->clip;
+        f.player.set_reset_lookup_resolver([&](const auto&,auto){return odh::ResetAnimationLookup{
+            odh::ResetAnimationAvailability::available,missing_clip?std::shared_ptr<const odh::AnimationHeader>{}:f.reset_a,{}};});
+        const auto result=f.apply(0);
+        require(result.disposition==(missing_clip?odh::PrimitiveDisposition::unsupported:odh::PrimitiveDisposition::goto_true)&&
+            f.player.sample()->clip==(missing_clip?before:f.reset_a),"typed available reset requires an actual clip and retains ordinary reset preparation semantics");
+    }
+    for(const auto availability:{odh::ResetAnimationAvailability::absent,odh::ResetAnimationAvailability::unavailable}){
+        Fixture f(1);f.a->motions[0].time_properties={{{0,{{"lefthand","3"},{"righthand","1"}}}}};f.start();f.player.tick(1);
+        require(f.apply(16,1).disposition==odh::PrimitiveDisposition::goto_true,"install actual carry mode before typed posture reset");
+        f.world.set_person_data(1,42,1);const auto previous=f.player.progress();const auto carry=f.player.carry_clip();const auto hands=f.player.hands();
+        f.player.set_reset_lookup_resolver([&](const auto&,std::int16_t posture){require(posture==3,"reset retains normalized source posture");
+            return odh::ResetAnimationLookup{availability,{},"explicit source owner unavailable"};});
+        const auto result=f.apply(0);
+        if(availability==odh::ResetAnimationAvailability::unavailable){
+            require(result.disposition==odh::PrimitiveDisposition::unsupported&&f.player.progress()->name==previous->name&&
+                f.world.find(1)->person_data[42]==1,"unknown reset authority refuses without clearing current animation or changing head seek");
+        }else{
+            require(result.disposition==odh::PrimitiveDisposition::goto_true&&!f.player.progress()&&!f.player.sample_collection()&&
+                f.world.find(1)->person_data[42]==4,"authored absent reset clears primary animation and applies source head-seek transition");
+            odh::PlaybackSnapshot saved;std::string why;
+            require(f.player.capture_snapshot(saved,&why)&&!saved.state&&!saved.source_walk&&saved.carry&&saved.hands,
+                "absent primary reset captures no stale pose while retaining carry and hands");
+            Fixture resumed(1);require(resumed.vm.restore_snapshot(f.vm.snapshot()),"restore same source VM for absent animation state");
+            require(resumed.player.restore_snapshot(saved,resumed.vm,[&](const auto&){return resumed.a;},&why)&&
+                !resumed.player.progress()&&resumed.player.carry_clip(),"fresh controller restores authored absence without resurrecting a primary clip");
+            odh::PlaybackSnapshot reopened;require(resumed.player.capture_snapshot(reopened,&why)&&
+                same_primary(reopened,saved)&&reopened.carry==saved.carry,
+                "restored persisted snapshot preserves absent primary pose, exact carry key and hand state");
+        }
+        require(f.player.carry_clip()==carry&&f.player.hands()->left==hands->left&&f.player.hands()->right==hands->right,
+            "typed absent/unavailable resets preserve the independent carry and hands owners");
+    }
     std::cout<<checks<<" playback checks passed (silent synthetic resources only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Playback test failed: "<<e.what()<<'\n';return 1;}}

@@ -1,4 +1,5 @@
 #include "odh/relationship.hpp"
+#include "odh/relationship_snapshot_codec.hpp"
 #include <iostream>
 #include <algorithm>
 #include <cstdlib>
@@ -45,6 +46,55 @@ bool unsupported(const odh::PrimitiveOutcome& o) {return o.disposition==odh::Pri
 void avatar(odh::World& w,std::int16_t id,std::int16_t nid) {
     require(w.create(id,odh::EntityKind::avatar,{0,88,0}),"create avatar");
     require(w.set_person_data(id,31,nid),"set neighbor identity");
+}
+void neighbor_admission() {
+    using M=odh::RelationshipMatrix;
+    odh::RelationshipSnapshot saved;saved.sources={{M::neighbor,11,0,{{12,{55,-1,77}}}},
+        {M::object,3,90,{{12,{88}}}}};saved.pair_count=2;saved.value_count=4;
+    odh::RelationshipState state;require(state.restore_snapshot(saved),"restore old lot neighbor/object relationship owner");
+    const auto old=odh::encode_relationship_snapshot(state.snapshot());
+    odh::NeighborContext current(catalog({entry(11,{{1,12,{999}}}),entry(3),entry(4,{{1,70000,{0x1234FFFF,65536}}})}));
+    require(state.admit_missing_neighbor_sources(current),"admit actual new catalog neighbors to an existing owner");
+    require(state.source_count()==4&&state.pair_count()==3&&state.value_count()==6&&
+        state.value(11,12,0)==55&&state.value(11,12,1)==-1&&state.value(4,70000,0)==-1&&state.value(4,70000,1)==0,
+        "new sources preserve existing progress, raw target keys and source low16 values");
+    auto admitted=state.snapshot();
+    auto preserved=admitted;preserved.sources.erase(std::remove_if(preserved.sources.begin(),preserved.sources.end(),
+        [](const auto& v){return v.matrix==M::neighbor&&(v.id==3||v.id==4);}),preserved.sources.end());
+    preserved.pair_count=saved.pair_count;preserved.value_count=saved.value_count;
+    require(odh::encode_relationship_snapshot(preserved)==old,"all existing source generations, pairs and tails remain exact");
+    const auto bytes=odh::encode_relationship_snapshot(admitted);
+    require(state.admit_missing_neighbor_sources(current)&&odh::encode_relationship_snapshot(state.snapshot())==bytes,
+        "repeated catalog admission is byte-identical and never re-seeds existing pairs");
+    odh::RelationshipState reopened;require(reopened.restore_snapshot(odh::decode_relationship_snapshot(bytes)),"admitted source identities persist in existing RELA codec");
+    odh::World world;avatar(world,101,3);auto primitive=reopened.primitive(world);
+    require(yes(dispatch(primitive,instruction())),"known-empty admitted neighbor serves its first actual relationship operation");
+    require(world.set_person_data(101,31,99),"select actual unknown neighbor source for negative gate");
+    require(unsupported(dispatch(primitive,instruction())),"unregistered neighbor remains unsupported; no primitive fallback source creation");
+    auto invalid=saved;++invalid.pair_count;odh::RelationshipState failed;
+    require(!failed.restore_snapshot(invalid)&&!failed.admit_missing_neighbor_sources(current)&&failed.source_count()==0,
+        "failed restore does not establish authority for later neighbor admission");
+    for(unsigned kind=0;kind<3;++kind){
+        auto limited=saved;
+        if(kind==0)limited.limits.sources=2;
+        if(kind==1)limited.limits.pairs=2;
+        if(kind==2)limited.limits.values=4;
+        odh::RelationshipState bounded;require(bounded.restore_snapshot(limited),"restore actual bounded relationship source");
+        const auto before=odh::encode_relationship_snapshot(bounded.snapshot());
+        require(!bounded.admit_missing_neighbor_sources(current)&&odh::encode_relationship_snapshot(bounded.snapshot())==before,
+            "admission overflow rejects the whole batch without changing existing relationships");
+    }
+    odh::NeighborContext duplicate(catalog({entry(3,{{1,12,{1}},{1,12,{2}}})}));
+    odh::RelationshipState unchanged;require(unchanged.restore_snapshot(saved),"restore duplicate/exception test source");
+    require(!unchanged.admit_missing_neighbor_sources(duplicate)&&odh::encode_relationship_snapshot(unchanged.snapshot())==old,
+        "duplicate new relationship targets leave the entire old state unchanged");
+    bool threw=false;fail_allocation=true;
+    try{(void)unchanged.admit_missing_neighbor_sources(current);}catch(const std::bad_alloc&){threw=true;}
+    require(threw&&odh::encode_relationship_snapshot(unchanged.snapshot())==old,"allocation failure cannot publish a partial neighbor batch");
+    require(unchanged.retire_neighbor_identity(11),"apply explicit neighbor retirement before an updated effective catalog");
+    odh::NeighborContext filtered(catalog({entry(3),entry(4)}));
+    require(unchanged.admit_missing_neighbor_sources(filtered)&&!unchanged.value(11,12,0),
+        "effective catalog admission does not reintroduce a logically deleted neighbor");
 }
 void semantics() {
     auto tail=entry(44,{{1,70000,std::vector<std::int32_t>(300,0x1234FFFF)}});
@@ -301,6 +351,6 @@ void retire_neighbor_identity() {
 }
 }
 int main() {
-    try {source_delete_and_body_gc();semantics();variables_and_atomicity();objects_and_limits();retire_object_identity();retire_neighbor_identity();actual_vm();std::cout<<"relationship: "<<checks<<" checks passed\n";return 0;}
+    try {neighbor_admission();source_delete_and_body_gc();semantics();variables_and_atomicity();objects_and_limits();retire_object_identity();retire_neighbor_identity();actual_vm();std::cout<<"relationship: "<<checks<<" checks passed\n";return 0;}
     catch (const std::exception& e) {std::cerr<<"relationship: "<<e.what()<<'\n';return 1;}
 }

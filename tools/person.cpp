@@ -4540,9 +4540,17 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     }
     // A save may predate a deletion committed while playing another house.
     // Retire explicit deleted neighbors, retaining unrelated saved progress.
+    if(neighbors)for(const auto id:retired_neighbor_ids)
+        if(neighbors->by_id(id))throw odh::FormatError("retired neighbor remains in the effective catalog");
     if(relationships)for(const auto id:retired_neighbor_ids)
         if(!relationships->retire_neighbor_identity(id))
             throw odh::FormatError("invalid retired neighbor relationship identity");
+    // The neighborhood catalog, unlike the lot snapshot, can gain CAS/NPC
+    // identities while another household is active. Admit missing real NBRS
+    // sources before any Init/Main/relationship call, without replacing saved
+    // progress or treating a live avatar alone as neighbor authority.
+    if(relationships&&neighbors&&!relationships->admit_missing_neighbor_sources(*neighbors))
+        throw odh::FormatError("current authenticated neighbor sources exceed relationship admission limits or owner validity");
     std::vector<odh::RelationshipRecord> relationship_records;
     const odh::VmPrimitive relationship_handler=[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(!relationships)return odh::PrimitiveOutcome{};
@@ -4755,6 +4763,38 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             return std::shared_ptr<const odh::AnimationHeader>(std::move(resource),header);
         }catch(const odh::FormatError& error){animation_resolution_diagnostic=error.what();return {};}
     };
+    const auto bind_authored_reset_lookup=[&](odh::Playback& playback){
+        playback.set_reset_lookup_resolver([&](const odh::VmFrame& frame,std::int16_t posture)->odh::ResetAnimationLookup{
+            animation_resolution_diagnostic.clear();
+            try{
+                const auto* actor=world.frame_entity(frame,odh::VmEntityRole::caller);
+                if(!actor||actor->kind!=odh::EntityKind::avatar||!animation_catalog||posture<1||posture>3)
+                    throw odh::FormatError("posture reset caller/catalog authority unavailable");
+                const auto* runtime=actor_runtime_for(actor->id);
+                if(!runtime||runtime->generation!=actor->generation||!runtime->body_state)
+                    throw odh::FormatError("posture reset requires the exact caller's admitted walk descriptor");
+                const auto& name=runtime->body_state->walk.at(static_cast<std::size_t>(posture));
+                if(name.empty()){
+                    // Fixed-size descriptor slots beyond a short source table
+                    // are also empty; those are UNKNOWN, not authored blanks.
+                    const auto table=global_animation_tables.find(runtime->body_state->global_walk_id);
+                    const auto* entry=table==global_animation_tables.end()?nullptr:
+                        odh::string_in_ts1_language_set(table->second,1,static_cast<std::size_t>(posture));
+                    if(!entry||!entry->value.empty())throw odh::FormatError("empty reset descriptor lacks its exact authored global walk row");
+                    return {odh::ResetAnimationAvailability::absent,{}, {}};
+                }
+                const auto resource=animation_catalog->resolve_if_present(name);
+                if(!resource)return {odh::ResetAnimationAvailability::absent,{}, {}};
+                const auto* clip=&resource->header;
+                return {odh::ResetAnimationAvailability::available,std::shared_ptr<const odh::AnimationHeader>(resource,clip),{}};
+            }catch(const std::exception& error){
+                animation_resolution_diagnostic=error.what();
+                return {odh::ResetAnimationAvailability::unavailable,{},"posture reset source unavailable caller="+
+                    std::to_string(frame.context.caller)+" owner="+std::to_string(frame.context.code_owner)+
+                    " posture="+std::to_string(posture)+": "+error.what()};
+            }
+        });
+    };
     if(animation_catalog&&primary_runtime)primary_animation().emplace(world,
         [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
         [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);},resolve_route_animation,route_animation_name);
@@ -4765,6 +4805,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         member->playback.emplace(world,
             [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
             [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);},resolve_route_animation,route_animation_name);
+    if(primary_animation())bind_authored_reset_lookup(*primary_animation());
+    if(second_main_playback)bind_authored_reset_lookup(*second_main_playback);
+    for(auto* member:auxiliary_actors)if(member->playback)bind_authored_reset_lookup(*member->playback);
     const auto animation_handler=primary_animation()?primary_animation()->primitive():odh::VmPrimitive{};
     std::string audio_startup_error,audio_driver;
     std::uint64_t audio_drain_polls=0;
@@ -6707,6 +6750,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},
                 odh::PlaybackLimits{},[&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);},
                 resolve_route_animation,route_animation_name);
+        if(runtime->playback)bind_authored_reset_lookup(*runtime->playback);
         runtime->controllers->interactions().set_check_primitive(check_primitive);
         runtime->controllers->interactions().set_check_primitive_factory(check_primitive_factory);
         const auto member_sleep=runtime->controllers->sleep_primitive();

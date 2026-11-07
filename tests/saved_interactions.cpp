@@ -93,6 +93,50 @@ std::string far(const std::vector<std::pair<std::string,std::string>>& entries){
         put(bytes,offsets[i],4);put(bytes,static_cast<std::uint32_t>(entry.first.size()),4);bytes+=entry.first;}
     return bytes;
 }
+void relationship_host_isolation(const std::filesystem::path& root){
+    const auto path=root/"menu-relationship-host-isolation.iff";
+    odh::ObjectDefinition object{};object.guid=123;
+    const odh::DefinitionCandidate definition{path.string(),"",7,object};
+    odh::World world;
+    check(world.create(1,odh::EntityKind::avatar,{0,88,1})&&world.define_type(1,111)&&
+          world.create(2,odh::EntityKind::avatar,{0,88,1})&&world.define_type(2,123)&&
+          world.set_position(1,{16,16,1,0})&&world.set_position(2,{32,16,1,0})&&
+          world.set_person_data(1,31,34)&&world.set_person_data(2,31,33),
+          "relationship probe has actual caller/target neighbor identities");
+    odh::RelationshipSnapshot initial;initial.pair_count=1;initial.value_count=3;
+    initial.sources.push_back({odh::RelationshipMatrix::neighbor,34,0,{{33,{100,1,99}}}});
+    odh::RelationshipState live;check(live.restore_snapshot(initial),"relationship fixture restores a real short source vector");
+    unsigned host_calls=0;
+    const odh::VmPrimitiveFactory host=[&](const odh::VmMemory& memory){
+        return odh::VmPrimitive{[&,memory](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+            ++host_calls;return live.primitive(world,memory)(frame,instruction,temps,dispatch);
+        }};
+    };
+    for(const unsigned opcode:{24U,26U})for(const bool write_mode:{true,false}){
+        std::string bhav;put(bhav,0x8002,2);put(bhav,2,2);bhav.push_back(0);bhav.push_back(4);bhav.append(6,'\0');
+        put(bhav,opcode,2);bhav.push_back(1);bhav.push_back(static_cast<char>(255));
+        const std::array<std::uint8_t,8> operands=opcode==24?
+            std::array<std::uint8_t,8>{static_cast<std::uint8_t>(write_mode?1:0),3,0,0,0,0,0,0}:
+            std::array<std::uint8_t,8>{3,0,static_cast<std::uint8_t>(write_mode?4:0),0,9,0,0,0};
+        for(auto byte:operands)bhav.push_back(static_cast<char>(byte));
+        // The real read must place the zero-extended value in Param0.
+        put(bhav,2,2);bhav.push_back(static_cast<char>(254));bhav.push_back(static_cast<char>(255));
+        for(auto byte:std::array<std::uint8_t,8>{0,0,0,0,0,2,9,7})bhav.push_back(static_cast<char>(byte));
+        write(path,iff(chunk("BHAV",4098,bhav)));
+        const auto result=evaluate_saved_test_functions(definition,world,1,2,{4098},64,64,{0,0,0,0},
+            nullptr,{},&live,nullptr,{},nullptr,nullptr,nullptr,std::nullopt,nullptr,false,{},host);
+        check(result.size()==1&&result[0].state==(write_mode?SavedTestFunctionResult::State::unsupported:SavedTestFunctionResult::State::eligible),
+            "both relationship opcodes execute their read and refuse writes before a live host can intercept them");
+        const auto state=live.snapshot();const auto pairs=live.neighbor_pairs(34);
+        check(host_calls==0&&state.sources.size()==1&&state.pair_count==1&&state.value_count==3&&
+              pairs.size()==1&&pairs[0].target==33&&pairs[0].values==std::vector<std::int16_t>{100,1,99},
+              "relationship zero-extension remains in the disposable clone, never the live source or host dispatcher");
+    }
+    const auto unavailable=evaluate_saved_test_functions(definition,world,1,2,{4098},64,64,{0,0,0,0},
+        nullptr,{},nullptr,nullptr,{},nullptr,nullptr,nullptr,std::nullopt,nullptr,false,{},host);
+    check(unavailable.size()==1&&unavailable[0].state==SavedTestFunctionResult::State::unsupported&&host_calls==0,
+        "missing disposable relationship authority never falls back to mutable live host state");
+}
 void source_error_menu_matrix(const std::filesystem::path& root){
  const auto path=root/"source-error-menu.iff";write(path,iff(chunk("BHAV",4098,test_bhav(98))));
  odh::ObjectDefinition object{};object.guid=123;object.tree_table_id=128;
@@ -419,6 +463,7 @@ int main(){try{
     const auto root=std::filesystem::temp_directory_path()/"odh-saved-interactions-test";
     std::filesystem::create_directories(root);const auto path=root/"object.iff";
     semiglobal_table_discovery(root);
+    relationship_host_isolation(root);
     source_error_menu_matrix(root);
     explicit_named_check_resources(root);
     named_dynamic_menu_owner(root);

@@ -620,8 +620,21 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
             }
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
         }
-        if(host_factory){const auto host=host_factory(effective);if(host)return host(frame,instruction,temps,dispatch);}
+        // A relationship READ can extend a source vector with a zero. Keep
+        // that source behavior in the disposable clone even when the host has
+        // a complete primitive dispatcher; it must not bypass this owner.
         auto relationship=relationship_probe?relationship_probe->primitive(world,effective):odh::VmPrimitive{};
+        if(instruction.opcode==24||instruction.opcode==26){
+            const auto& operands=instruction.operands;
+            const auto set_mode=instruction.opcode==24?operands[0]:
+                static_cast<std::uint8_t>(((operands[2]>>2)&1)|((operands[2]>>4)&2));
+            if(set_mode!=0)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "TestFunction relationship writes are not supported by the read-only probe"};
+            if(!relationship)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "relationship context unavailable to read-only TestFunction probe"};
+            return relationship(frame,instruction,temps,dispatch);
+        }
+        if(host_factory){const auto host=host_factory(effective);if(host)return host(frame,instruction,temps,dispatch);}
         auto entity_next=odh::entity_next_primitive(world,effective,{},multitile_groups);
         auto neighbor=linked_neighbors?linked_neighbors->primitive(effective):odh::VmPrimitive{};
         auto budget=odh::ts1_budget_primitive(effective,[family_budget](const odh::VmFrame&){return family_budget;});
@@ -637,16 +650,6 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         if(instruction.opcode==32)return object_type(frame,instruction,temps,dispatch);
         if(instruction.opcode==51&&inventory_find)
             return inventory_find(frame,instruction,temps,dispatch);
-        if(instruction.opcode==24||instruction.opcode==26){
-            const auto& operands=instruction.operands;
-            const auto set_mode=instruction.opcode==24?operands[0]:
-                static_cast<std::uint8_t>(((operands[2]>>2)&1)|((operands[2]>>4)&2));
-            if(set_mode!=0)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "TestFunction relationship writes are not supported by the read-only probe"};
-            if(!relationship)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "relationship context unavailable to read-only TestFunction probe"};
-            return relationship(frame,instruction,temps,dispatch);
-        }
         return entity_next(frame,instruction,temps,dispatch);
     };
     auto probe_globals=std::make_shared<const odh::VmProgram>(std::move(global_routines));

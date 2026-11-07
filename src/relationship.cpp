@@ -102,6 +102,29 @@ bool RelationshipState::restore_snapshot(const RelationshipSnapshot& snapshot) {
     pairs_=pairs;values_=values;fresh_=false;
     return true;
 }
+bool RelationshipState::admit_missing_neighbor_sources(const NeighborContext& context) {
+    if(fresh_||sources_.size()>limits_.sources||pairs_>limits_.pairs||values_>limits_.values)return false;
+    std::map<Source,Pairs> additions;auto pairs=pairs_,values=values_;
+    for(const auto& entry:context.source().entries){
+        if(!entry.record)continue;
+        const auto& record=*entry.record;const Source key{RelationshipMatrix::neighbor,record.neighbor_id,0};
+        if(sources_.count(key))continue; // Saved/live progress always wins over the catalog seed.
+        if(additions.size()>=limits_.sources-sources_.size())return false;
+        Pairs added;
+        for(const auto& relation:record.relationships){
+            if(pairs>=limits_.pairs||relation.values.size()>limits_.values-values)return false;
+            std::vector<std::int16_t> words;words.reserve(relation.values.size());
+            for(const auto value:relation.values)words.push_back(low16(value));
+            if(!added.emplace(relation.key,std::move(words)).second)return false;
+            ++pairs;values+=relation.values.size();
+        }
+        if(!additions.emplace(key,std::move(added)).second)return false;
+    }
+    if(additions.empty())return true;
+    auto candidate=sources_;candidate.merge(additions);
+    sources_.swap(candidate);pairs_=pairs;values_=values;
+    return true;
+}
 bool RelationshipState::import_object_relationships(const World& world,
     const std::vector<SavedObjectRelationships>& saved) {
     if (saved.empty()) return true;
@@ -243,7 +266,7 @@ VmPrimitive RelationshipState::primitive(const World& world,VmMemory memory,std:
         const auto scope16=legacy?std::uint16_t{9}:static_cast<std::uint16_t>(b[4]|(std::uint16_t{b[5]}<<8));
         const auto var=legacy?static_cast<std::int16_t>(b[2]):low16(b[6]|(std::int32_t{b[7]}<<8));
         RelationshipRecord record; record.context=frame.context;record.index=index;record.mode=mode;record.set_mode=set_mode;
-        auto finish=[&](PrimitiveDisposition result,const char* diagnostic="")->PrimitiveOutcome {
+        auto finish=[&](PrimitiveDisposition result,const std::string& diagnostic="")->PrimitiveOutcome {
             record.success=result==PrimitiveDisposition::goto_true;
             if (observer) observer(record);
             return {result,diagnostic};
@@ -285,7 +308,8 @@ VmPrimitive RelationshipState::primitive(const World& world,VmMemory memory,std:
         record.matrix=source.matrix;record.source=source.id;record.target=target;
         const auto s=sources_.find(source);
         if (s==sources_.end() && source.matrix==RelationshipMatrix::neighbor)
-            return finish(PrimitiveDisposition::unsupported,"relationship source neighbor unavailable");
+            return finish(PrimitiveDisposition::unsupported,"relationship source neighbor unavailable: source="+
+                std::to_string(source.id)+" target="+std::to_string(target)+" mode="+std::to_string(mode));
         const auto p=s==sources_.end()?nullptr:[&]()->const std::vector<std::int16_t>* {
             const auto found=s->second.find(target);return found==s->second.end()?nullptr:&found->second;
         }();

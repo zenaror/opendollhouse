@@ -44,6 +44,9 @@ public:
     AnimationCatalog(const AnimationCatalog&)=delete;
     AnimationCatalog& operator=(const AnimationCatalog&)=delete;
     std::shared_ptr<const CatalogAnimation> resolve(const std::string& internal_name);
+    // Null means known absence from the admitted complete supported index.
+    // Missing source authority/skipped BCF profiles/ambiguity/load errors throw.
+    std::shared_ptr<const CatalogAnimation> resolve_if_present(const std::string& internal_name);
     std::shared_ptr<const CatalogDecoded> decode(const std::string& internal_name);
     // The selected header must be the live immutable object returned by this
     // catalog (including an aliasing Playback handle). Identity maps directly

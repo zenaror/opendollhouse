@@ -36,5 +36,10 @@ int main(int argc,char** argv){try{
     auto moved=std::move(catalog);rejects([&]{catalog.resolve("clip");});rejects([&]{catalog.usage();});require(moved.resolve("clip")->header.name=="Clip","source/View stable across move");AnimationCatalog assigned({missing});assigned=std::move(moved);rejects([&]{moved.decode("clip");});require(assigned.decode("clip")->planes.bits[0].size()==1,"move assignment keeps owned streams");std::shared_ptr<const CatalogDecoded> survivor;{AnimationCatalog dying({a,b});survivor=dying.decode("clip");}require(survivor->planes.bits[0].size()==1&&survivor->animation->bcf.source==a,"owned handles after catalog destruction");
     const auto fixture=bcf("Truncated");for(std::size_t n=0;n<fixture.size();++n){const auto truncated=t.write("truncated.far",far({{"clip.bcf",fixture.substr(0,n)}}));rejects([&]{AnimationCatalog c({truncated});});}
     const auto broken=t.write("broken.far",far({{"clip.bcf",bcf("Broken")},{"skill.cfp",cfp.substr(0,6)}}));AnimationCatalog trunc_cfp({broken});require(trunc_cfp.resolve("broken")->cfp.has_value(),"header resolve does not decode malformed CFP");rejects([&]{trunc_cfp.decode("broken");});require(trunc_cfp.usage().cfp_samples==0,"failed CFP decode releases ledger");
+    {const auto clean=t.write("complete-lookup.far",far({{"clip.bcf",bcf("Lookup")}}));AnimationCatalog complete({clean});
+     const auto clip=complete.resolve("Lookup");require(complete.resolve_if_present("lookup")==clip,"typed presence retains exact admitted header identity");
+     require(!complete.resolve_if_present("missing"),"complete supported index proves named animation absence without synthesizing a clip");
+     AnimationCatalog partial({a,b});rejects([&]{partial.resolve_if_present("missing");});
+     AnimationCatalog no_sources({});rejects([&]{no_sources.resolve_if_present("missing");});}
     usage(stats);std::cout<<checks<<" animation catalog checks passed (synthetic)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Animation catalog test failed: "<<e.what()<<'\n';return 1;}}

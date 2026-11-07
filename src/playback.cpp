@@ -877,13 +877,30 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
         if(actor->slots.empty())return unsupported("animation reset requires avatar hand slot zero");
         // Simitone resets posture and HeadSeekState while preserving a held object's carry loop.
         if(actor->person_data.size()<=42)return unsupported("animation reset requires Posture and HeadSeekState person data");
-        if(!reset_resolver_)return unsupported("animation reset resource resolver not supplied");
+        if(!reset_resolver_&&!reset_lookup_resolver_)return unsupported("animation reset resource resolver not supplied");
         const auto posture=actor->person_data[0];
         const auto normalized=static_cast<std::int16_t>((posture==1||posture==2)?posture:3);
-        std::string error;auto next=prepare(reset_resolver_(f,normalized),*actor,(flags&2U)!=0,true,false,error);
+        std::shared_ptr<const AnimationHeader> reset_clip;
+        if(reset_lookup_resolver_){
+            const auto lookup=reset_lookup_resolver_(f,normalized);
+            if(lookup.availability==ResetAnimationAvailability::absent){
+                if(lookup.clip)return unsupported("absent reset animation unexpectedly carries a clip");
+                // Pinned VMAnimateSim reset clears primary Animations before
+                // its missing-clip early TRUE. Hands/carry are after that exit
+                // and must retain their prior owned state; invent no pose.
+                if(actor->person_data[42]==1)world_.set_person_data(actor->id,42,4);
+                state_.reset();source_walk_.reset();
+                return {PrimitiveDisposition::goto_true,{}};
+            }
+            if(lookup.availability!=ResetAnimationAvailability::available||!lookup.clip)
+                return unsupported(lookup.diagnostic.empty()?"reset animation source authority unavailable":lookup.diagnostic);
+            reset_clip=lookup.clip;
+        }else reset_clip=reset_resolver_(f,normalized);
+        std::string error;auto next=prepare(std::move(reset_clip),*actor,(flags&2U)!=0,true,false,error);
         if(!next)return unsupported(error);
         std::shared_ptr<const AnimationHeader> next_carry;
         if(actor->slots[0]!=0&&!carry_clip_){
+            if(!reset_resolver_)return unsupported("default carry animation resource resolver unavailable");
             next_carry=reset_resolver_(f,-1);
             if(!next_carry)return unsupported("default carry animation resource not supplied");
         }
