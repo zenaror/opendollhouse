@@ -434,6 +434,9 @@ public:
     // Authenticate this active primitive before resolving only an immutable owner.
     // Does not preflight/push a child, change registers, or grant queue authority.
     bool prepare_primitive_owner(const VmFrame&,const Instruction&,const VmDispatch&,CodeOwner);
+    // Reconstruct a parked Thread's complete value state with immutable code
+    // and explicit memory authority. No scheduler/controller callbacks migrate.
+    std::unique_ptr<Vm> clone_for_check(VmMemory) const;
     VmStatus status() const { return status_; }
     // External load/check operations must not observe a register owner in the
     // middle of its instruction dispatch. This does not imply a VM status.

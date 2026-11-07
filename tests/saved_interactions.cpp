@@ -137,6 +137,46 @@ void relationship_host_isolation(const std::filesystem::path& root){
     check(unavailable.size()==1&&unavailable[0].state==SavedTestFunctionResult::State::unsupported&&host_calls==0,
         "missing disposable relationship authority never falls back to mutable live host state");
 }
+void readonly_menu_state(const std::filesystem::path& root){
+    const auto path=root/"readonly-menu-state.iff";
+    std::string code;put(code,0x8002,2);put(code,3,2);code.push_back(0);code.push_back(4);code.append(6,'\0');
+    const auto instruction=[&](std::uint16_t opcode,std::uint8_t yes,std::array<std::uint8_t,8> operands){
+        put(code,opcode,2);code.push_back(static_cast<char>(yes));code.push_back(static_cast<char>(255));
+        for(const auto value:operands)code.push_back(static_cast<char>(value));
+    };
+    instruction(8,1,{0,0,8,0,10,0,7,0}); // Temp0 <- random literal10.
+    instruction(22,2,{0,0,0,0,0,0,0,0}); // Source head seek output.
+    instruction(2,254,{41,0,2,0,0,2,18,7}); // My PersonData41 == target ID2.
+    write(path,iff(chunk("BHAV",4098,code)));
+    odh::ObjectDefinition object{};object.guid=123;
+    odh::DefinitionCandidate definition{path.string(),"",7,object};
+    odh::World world;
+    check(world.create(1,odh::EntityKind::avatar,{0,46,0,0})&&world.create(2,odh::EntityKind::object)&&
+        world.define_type(2,123)&&world.set_position(1,{16,16,1,0}),"readonly menu has complete caller and target");
+    odh::RandomState random(42);const auto seed=random.seed();unsigned host_calls=0;
+    const odh::VmPrimitiveFactory hostile=[&](const odh::VmMemory&){return odh::VmPrimitive{
+        [&](const auto&,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+            ++host_calls;random.next(10);world.set_person_data(1,41,99);
+            return {odh::PrimitiveDisposition::unsupported,"live authority must not be called"};
+        }};};
+    const auto results=evaluate_saved_test_functions(definition,world,1,2,{4098,4098},64,32,{0,0,0,0},
+        nullptr,{},nullptr,nullptr,{},nullptr,nullptr,nullptr,std::nullopt,nullptr,false,{},hostile,
+        nullptr,false,{},nullptr,nullptr,{},&random);
+    check(results.size()==2&&results[0].state==SavedTestFunctionResult::State::eligible&&
+        results[1].state==SavedTestFunctionResult::State::eligible,"source RNG and head output execute in actual menu service");
+    check(host_calls==0&&random.seed()==seed&&world.find(1)->person_data[41]==0,
+        "menu overrides live host RNG and head output without modifying authority");
+    check(world.set_lockout_count_clock(10)&&world.declare_object_word(1,25,100)&&
+        world.admit_lockout_count_state(1,world.find(1)->generation,true,20),"future lockout timestamp fixture");
+    odh::VmFrame frame{};frame.context={1,2,2};
+    auto scratch=world.clone_for_check();
+    check(scratch->read(frame,3,25)==90&&scratch->find(1)->lockout_count->timestamp==0&&
+        world.find(1)->lockout_count->timestamp==20,"World clone owns even const-read normalization effects");
+    check(world.read_only(frame,3,25)==90&&world.find(1)->lockout_count->timestamp==20,
+        "read-only lockout uses normalized source value without changing timestamp");
+    check(world.read(frame,3,25)==90&&world.find(1)->lockout_count->timestamp==0,
+        "ordinary source read retains its logical normalization effect");
+}
 void source_error_menu_matrix(const std::filesystem::path& root){
  const auto path=root/"source-error-menu.iff";write(path,iff(chunk("BHAV",4098,test_bhav(98))));
  odh::ObjectDefinition object{};object.guid=123;object.tree_table_id=128;
@@ -192,6 +232,20 @@ void explicit_named_check_resources(const std::filesystem::path& root){
         ++explicit_lookups;check(id==77,"named lookup requests exact separate immutable owner namespace");return bank;};
     const auto allowed=evaluate(resources);check(allowed.size()==1&&allowed[0].state==SavedTestFunctionResult::State::eligible&&explicit_lookups==1,
         "explicit resource context admits and executes a named condition in the real shared TestFunction consumer");
+    // A target-Thread executor shares the exact immutable code and complete
+    // parked continuation, while admissions/register writes remain local.
+    auto cloned=owner.clone_for_check(world.vm_memory());
+    check(cloned->status()==owner.status()&&cloned->steps()==owner.steps()&&
+        cloned->run_generation()==owner.run_generation()&&cloned->pending()&&
+        cloned->pending()->ticket==owner.pending()->ticket&&
+        odh::vm_frame_equal(cloned->stack().front(),owner.stack().front()),
+        "disposable named target carries the complete parked Thread value state");
+    check(cloned->install_shared_owner(77,bank)&&!owner.shared_program_for_owner(77),
+        "named bank installation belongs only to the cloned target Thread");
+    const auto named_result=cloned->run_named_in_stack(named,{1,2,2,77},{},16);
+    check(named_result.started&&named_result.status==odh::VmStatus::returned_true&&owner.pending()&&
+        owner.pending()->ticket==before.pending->ticket,"named tree executes on cloned target and preserves source continuation");
+    cloned->temps()[0]=42;check(owner.temps()[0]==9,"named target Temp writes cannot change source Thread");
     owner.temps()[0]=8;const auto denied=evaluate(resources);
     check(denied.size()==1&&denied[0].state==SavedTestFunctionResult::State::ineligible&&explicit_lookups==2,
         "named condition returns its authored false result instead of manufacturing eligibility");
@@ -464,6 +518,7 @@ int main(){try{
     std::filesystem::create_directories(root);const auto path=root/"object.iff";
     semiglobal_table_discovery(root);
     relationship_host_isolation(root);
+    readonly_menu_state(root);
     source_error_menu_matrix(root);
     explicit_named_check_resources(root);
     named_dynamic_menu_owner(root);
@@ -839,8 +894,8 @@ int main(){try{
     check(inventory_match[0].state==SavedTestFunctionResult::State::eligible,
         "read-only TestFunction sees a matching saved-neighborhood inventory token");
     {
-        // Source check mode shares neighborhood inventory while isolating
-        // external VM registers outside the scheduler's live dispatch.
+        // Menu evaluation keeps authored inventory effects in a disposable
+        // owner while preserving ordinary gameplay's shared authority.
         data=iff(chunk("BHAV",4098,inventory_effect_bhav(token_guid)));write(path,data);
         odh::NeighborInventory shared_inventory(empty_inventory);
         odh::Vm registers(odh::RoutineSet{},world.vm_memory());registers.temps()[0]=123;
@@ -848,17 +903,16 @@ int main(){try{
             4096,128,{0},nullptr,{},nullptr,nullptr,{},nullptr,nullptr,nullptr,std::nullopt,nullptr,false,
             {},{},&registers,false,{},nullptr,&shared_inventory);
         check(effects.size()==2&&effects[0].state==SavedTestFunctionResult::State::eligible&&
-            effects[1].state==SavedTestFunctionResult::State::eligible&&shared_inventory.items(7)&&
-            shared_inventory.items(7)->size()==1&&shared_inventory.items(7)->front().count==2,
-            "shared TestFunction AddToken mutates the supplied live authority once per actual check");
+            effects[1].state==SavedTestFunctionResult::State::eligible&&!shared_inventory.items(7),
+            "menu AddToken effects execute only in the disposable inventory owner");
         check(registers.temps()[0]==123,"check inventory mutation does not defeat external register isolation");
         const auto live=odh::neighbor_inventory_primitive(shared_inventory,world);
         odh::VmFrame frame{odh::routine_key(4098),0,{1,2,2,0},{},{}};
         odh::Instruction query{51,254,255,{3,7,0,0,static_cast<std::uint8_t>(token_guid),
             static_cast<std::uint8_t>(token_guid>>8),static_cast<std::uint8_t>(token_guid>>16),static_cast<std::uint8_t>(token_guid>>24)}};
         const auto seen=live(frame,query,registers.temps(),{});
-        check(seen.temp_write&&seen.temp_write->value==2,
-            "ordinary live InventoryOperations sees the exact TestFunction mutation authority");
+        check(seen.disposition==odh::PrimitiveDisposition::goto_false,
+            "ordinary live InventoryOperations cannot see disposable menu inventory writes");
     }
     data=iff(chunk("BHAV",4098,call_global_bhav(321))+chunk("BHAV",321,constant_true_bhav()));write(path,data);
     odh::RoutineSet global_bank;bool global_routine_found=false;

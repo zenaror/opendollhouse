@@ -2026,7 +2026,23 @@ bool World::remove(std::int16_t id) {
     unlink_original_load({id,entity.generation});
     entities_.erase(found);mark_spatial_change();return true;
 }
+std::unique_ptr<World> World::clone_for_check() const {
+    auto clone=std::make_unique<World>(limits_,attribute_policy_);
+    if(!clone->restore_snapshot(snapshot()))throw std::invalid_argument("read-only World clone rejected source snapshot");
+    clone->definition_word_resolver_=definition_word_resolver_;
+    clone->room_resolver_=room_resolver_;
+    clone->avatar_outfit_resolver_=avatar_outfit_resolver_;
+    clone->current_value_read_resolver_=current_value_read_resolver_;
+    return clone;
+}
+
 std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope, std::int16_t index) const {
+    return read_impl(frame,scope,index,true);
+}
+std::optional<std::int16_t> World::read_only(const VmFrame& frame,std::uint8_t scope,std::int16_t index) const {
+    return read_impl(frame,scope,index,false);
+}
+std::optional<std::int16_t> World::read_impl(const VmFrame& frame,std::uint8_t scope,std::int16_t index,bool commit_logical_reads) const {
     // FreeSO7e76 VMMemory: NeighborhoodData is an unconditional zero read,
     // including absent entities and any signed index. Original tutorial state
     // is not implemented by this reference compatibility contract.
@@ -2083,10 +2099,13 @@ std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope
     const auto field = entity->object_words.find(index);
     if(field!=entity->object_words.end()&&index==25&&lockout_count_clock_&&(scope==3||scope==4)){
         if(!entity->lockout_count||!entity->lockout_count->thread_present)return {};
-        auto& stamp=entity->lockout_count->timestamp;
+        auto stamp=entity->lockout_count->timestamp;
         if(stamp&&*stamp>*lockout_count_clock_){
             stamp=0;
-            if(!retained_entities_.count({entity->id,entity->generation})&&slot_publication_epoch_!=std::numeric_limits<std::uint64_t>::max())++slot_publication_epoch_;
+            if(commit_logical_reads){
+                entity->lockout_count->timestamp=stamp;
+                if(!retained_entities_.count({entity->id,entity->generation})&&slot_publication_epoch_!=std::numeric_limits<std::uint64_t>::max())++slot_publication_epoch_;
+            }
         }
         if(field->second<=0)return std::int16_t{0};
         if(!stamp)return {};

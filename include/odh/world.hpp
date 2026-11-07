@@ -283,6 +283,9 @@ public:
     // This bounded profile does not implement the reference's full ushort range.
     // Invalid reservation policy throws std::invalid_argument before use.
     explicit World(WorldLimits limits = {}, AttributePolicy attributes = AttributePolicy::fixed);
+    // Snapshot values plus existing pure read providers; no publication,
+    // deletion, routing or observer authority is copied into a check world.
+    std::unique_ptr<World> clone_for_check() const;
     World(const World&) = delete;
     World& operator=(const World&) = delete;
     World(World&&) = delete;
@@ -550,6 +553,8 @@ public:
     // ObjectData26 reads current containment like2; its raw writable shadow and
     // immutable imported bank remain serialized (pinned GetValue/SetValue).
     std::optional<std::int16_t> read(const VmFrame&, std::uint8_t scope, std::int16_t index) const;
+    // Same source value rules without committing logical read side effects.
+    std::optional<std::int16_t> read_only(const VmFrame&, std::uint8_t scope, std::int16_t index) const;
     // Attribute growth validates budget and allocates before publication.
     // Allocation exceptions propagate without changing state or word accounting.
     bool write(const VmFrame&, std::uint8_t scope, std::int16_t index, std::int16_t value);
@@ -567,6 +572,7 @@ public:
     // Runtime invalidation only; never serialized and never vetoes publication.
     bool set_spatial_change_observer(SpatialChangeObserver);
 private:
+    std::optional<std::int16_t> read_impl(const VmFrame&,std::uint8_t,std::int16_t,bool commit_logical_reads) const;
     struct OriginalLoadNode {WorldEntityReference previous{},next{};};
     using OriginalLoadNodes=std::map<WorldEntityReference,OriginalLoadNode>;
     struct OriginalLoadState {

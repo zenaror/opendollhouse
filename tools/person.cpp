@@ -4384,7 +4384,50 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     using NamedContextKey=std::tuple<std::uint32_t,std::string,std::string,std::uint16_t,bool>;
     std::map<NamedContextKey,ContextResourceBank> named_context_banks;
     std::size_t named_context_routines=0,named_context_instructions=0;
-    const auto resolve_named_context_resource=[&](const odh::DefinitionCandidate& candidate,odh::RoutineKey requested)->ContextResourceBank{
+    struct NamedProbeState {
+        std::unique_ptr<odh::World> world;
+        decltype(resource_owner_provenance) provenance;
+        decltype(object_owner_programs) programs;
+        decltype(saved_action_resources) resources;
+        decltype(saved_action_tuning) tuning;
+        decltype(saved_action_semiglobal_tuning) semi_tuning;
+        decltype(named_context_banks) banks;
+        decltype(saved_tree_names) tree_names;
+        odh::CodeOwner next_owner=0;bool exhausted=false;
+        std::size_t routines=0,instructions=0;
+        std::map<const odh::Vm*,std::unique_ptr<odh::Vm>> threads;
+        std::map<const odh::Vm*,odh::Vm*> borrowed_threads;
+    };
+    const auto make_named_probe=[&]{
+        auto state=std::make_shared<NamedProbeState>();state->world=world.clone_for_check();
+        state->provenance=resource_owner_provenance;state->programs=object_owner_programs;
+        state->resources=saved_action_resources;state->tuning=saved_action_tuning;
+        state->semi_tuning=saved_action_semiglobal_tuning;state->banks=named_context_banks;
+        state->tree_names=saved_tree_names;state->next_owner=next_saved_code_owner;
+        state->exhausted=saved_owner_ids_exhausted;state->routines=named_context_routines;
+        state->instructions=named_context_instructions;return state;
+    };
+    auto& live_resource_owner_provenance=resource_owner_provenance;
+    auto& live_object_owner_programs=object_owner_programs;
+    auto& live_saved_action_resources=saved_action_resources;
+    auto& live_saved_action_tuning=saved_action_tuning;
+    auto& live_saved_action_semiglobal_tuning=saved_action_semiglobal_tuning;
+    auto& live_named_context_banks=named_context_banks;
+    auto& live_next_saved_code_owner=next_saved_code_owner;
+    auto& live_saved_owner_ids_exhausted=saved_owner_ids_exhausted;
+    auto& live_named_context_routines=named_context_routines;
+    auto& live_named_context_instructions=named_context_instructions;
+    const auto resolve_named_context_resource=[&](const odh::DefinitionCandidate& candidate,odh::RoutineKey requested,NamedProbeState* probe=nullptr)->ContextResourceBank{
+        auto& resource_owner_provenance=probe?probe->provenance:live_resource_owner_provenance;
+        auto& object_owner_programs=probe?probe->programs:live_object_owner_programs;
+        auto& saved_action_resources=probe?probe->resources:live_saved_action_resources;
+        auto& saved_action_tuning=probe?probe->tuning:live_saved_action_tuning;
+        auto& saved_action_semiglobal_tuning=probe?probe->semi_tuning:live_saved_action_semiglobal_tuning;
+        auto& named_context_banks=probe?probe->banks:live_named_context_banks;
+        auto& next_saved_code_owner=probe?probe->next_owner:live_next_saved_code_owner;
+        auto& saved_owner_ids_exhausted=probe?probe->exhausted:live_saved_owner_ids_exhausted;
+        auto& named_context_routines=probe?probe->routines:live_named_context_routines;
+        auto& named_context_instructions=probe?probe->instructions:live_named_context_instructions;
         const bool linked=requested.scope==odh::RoutineScope::named_semiglobal;
         if(!session_context||!definition_index||!odh::routine_key_valid(requested)||
            (requested.scope!=odh::RoutineScope::named_private&&!linked))
@@ -5878,8 +5921,23 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     odh::VmPrimitive check_primitive;
     std::map<std::string,SavedSemiglobalCodeBank> named_semiglobal_banks;
     std::set<std::uint32_t> effective_named_catalogs;
-    const odh::VmPrimitive tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
-        const std::array<std::int16_t,20>& temps,const odh::VmDispatch& dispatch)->odh::PrimitiveOutcome{
+    auto& live_saved_tree_names=saved_tree_names;
+    auto& live_named_world=world;
+    const auto make_tree_by_name_handler=[&](std::shared_ptr<NamedProbeState> probe,
+        odh::VmPrimitive nested={},odh::VmMemory readonly_memory={}) ->odh::VmPrimitive {
+        return [&,probe=std::move(probe),nested=std::move(nested),readonly_memory=std::move(readonly_memory),
+            named_semiglobal_banks=named_semiglobal_banks,effective_named_catalogs=effective_named_catalogs,
+            tree_name_local_strings=tree_name_local_strings,tree_name_local_errors=tree_name_local_errors,
+            tree_name_local_string_attempted=tree_name_local_string_attempted,tree_name_global_strings=tree_name_global_strings](const odh::VmFrame& frame,const odh::Instruction& instruction,
+        const std::array<std::int16_t,20>& temps,const odh::VmDispatch& dispatch) mutable ->odh::PrimitiveOutcome{
+        auto& world=probe?*probe->world:live_named_world;
+        auto& resource_owner_provenance=probe?probe->provenance:live_resource_owner_provenance;
+        auto& saved_action_resources=probe?probe->resources:live_saved_action_resources;
+        auto& saved_tree_names=probe?probe->tree_names:live_saved_tree_names;
+        const auto resource_for_owner=[&](odh::CodeOwner owner)->std::optional<Resource>{
+            const auto found=saved_action_resources.find(owner);
+            return found!=saved_action_resources.end()?std::optional<Resource>{found->second}:code_owner_resource(owner);
+        };
         if(instruction.opcode!=28)return {};
         const auto refuse=[](const std::string& reason){return odh::PrimitiveOutcome{
             odh::PrimitiveDisposition::unsupported,"RunTreeByName: "+reason};};
@@ -5909,7 +5967,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 auto found=tree_name_local_strings.find(key);
                 if(found==tree_name_local_strings.end()&&tree_name_local_string_attempted.insert(key).second){
                     try{
-                        const auto resource=code_owner_resource(frame.context.code_owner);
+                        const auto resource=resource_for_owner(frame.context.code_owner);
                         if(!resource)throw odh::FormatError("calling code owner has no exact scope resource");
                         std::map<std::uint16_t,odh::StringTable> loaded;
                         // Source local STR lookup from a semiglobal routine tries
@@ -5990,7 +6048,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     routine=odh::named_routine_key(tree->second,true);
             }
             if(!routine)return {odh::PrimitiveDisposition::goto_false,{}};
-            const auto bank=resolve_named_context_resource(*definition,*routine);
+            const auto bank=resolve_named_context_resource(*definition,*routine,probe.get());
             if(!bank.program||!bank.program->routines().count(*routine))return refuse("resolved named tree is absent from its exact resource bank");
             auto* caller=const_cast<odh::Vm*>(dispatch.origin);
             odh::Vm* target_thread=nullptr;
@@ -6004,13 +6062,30 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     if(found!=runtime_object_threads.end()&&found->second)target_thread=found->second->vm.get();}
                 if(!target_thread&&target->id==frame.context.caller)target_thread=caller;
                 if(!target_thread&&saved_phone_thread&&target->id==saved_phone_id)target_thread=saved_phone_thread.get();
-                if(!target_thread&&target->definition->guid==2933422533U&&ensure_saved_phone_thread){
+                if(!probe&&!target_thread&&target->definition->guid==2933422533U&&ensure_saved_phone_thread){
                     // Legacy imported PhoneLine graph, preserved while ordinary
                     // native object/avatar threads use the same dispatch above.
                     ensure_saved_phone_thread();
                     if(saved_phone_thread&&target->id==saved_phone_id)target_thread=saved_phone_thread.get();
                 }
                 if(!target_thread)return refuse("target has no reconstructed native Thread register state");
+                if(probe&&target_thread!=caller){
+                    const auto borrowed=probe->borrowed_threads.find(target_thread);
+                    if(borrowed!=probe->borrowed_threads.end())target_thread=borrowed->second;
+                    else {
+                    auto found=probe->threads.find(target_thread);
+                    if(found==probe->threads.end()){
+                        auto clone=target_thread->clone_for_check(readonly_memory);
+                        if(!clone->set_owner_resolver([weak=std::weak_ptr<NamedProbeState>{probe}](odh::CodeOwner owner){
+                            const auto state=weak.lock();if(!state)return std::shared_ptr<const odh::VmProgram>{};
+                            const auto bank=state->programs.find(owner);
+                            return bank==state->programs.end()?std::shared_ptr<const odh::VmProgram>{}:bank->second;
+                        }))return refuse("disposable target resource provider refused");
+                        found=probe->threads.emplace(target_thread,std::move(clone)).first;
+                    }
+                    target_thread=found->second.get();
+                    }
+                }
             }
             auto& execution=(destination==0||destination==2)?*caller:*target_thread;
             const auto installed=execution.shared_program_for_owner(bank.owner);
@@ -6022,16 +6097,18 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     execution.install_shared_owner(bank.owner,bank.program);
                 if(!admitted)return refuse("exact named resource cannot bind at the active execution boundary");
             }
-            note_installed_resource_owner(execution,bank.owner);
+            if(!probe)note_installed_resource_owner(execution,bank.owner);
             SavedObjectSubroutineReport report;
             auto outcome=run_saved_named_tree(*caller,target_thread,
-                {frame,instruction,dispatch,target->id,bank.owner,*routine,destination},temps,report,check_primitive,4096,
-                [&](const odh::VmMemory&){return check_primitive;});
-            if(target_thread&&target_thread==saved_phone_thread.get()&&saved_phone_calls.size()<64)
+                {frame,instruction,dispatch,target->id,bank.owner,*routine,destination},temps,report,nested?nested:check_primitive,4096,
+                [&](const odh::VmMemory&){return nested?nested:check_primitive;});
+            if(!probe&&target_thread&&target_thread==saved_phone_thread.get()&&saved_phone_calls.size()<64)
                 saved_phone_calls.push_back(std::move(report));
             return outcome;
         }catch(const std::exception& error){return refuse(error.what());}
     };
+    };
+    const auto tree_by_name_handler=make_tree_by_name_handler({});
     const auto interaction_label_origin=[&](odh::InteractionLabelKind kind,std::uint8_t language,
             const std::string& source,const std::string& asset,std::uint16_t table,std::uint32_t index)
             ->std::optional<odh::InteractionLabelOrigin>{
@@ -9443,6 +9520,8 @@ struct PlacementCandidateProbe {
         std::int16_t actor,std::int16_t target,const std::vector<std::uint16_t>& tests,
         const odh::RoutineSet* linked_semiglobal=nullptr,std::optional<std::size_t> requested_row={}){
         try {
+        auto menu_resources=make_named_probe();
+        auto& world=*menu_resources->world;
         std::vector<std::vector<std::int16_t>> groups;
         if(restored_world){groups.reserve(restored_world->multitile_groups.size());
             for(const auto& group:restored_world->multitile_groups)groups.push_back(group.members);}
@@ -9455,6 +9534,104 @@ struct PlacementCandidateProbe {
             if(bootstrap_globals)if(const auto value=bootstrap_globals->read(index))return value;
             return lot?lot->read(index):std::nullopt;
         };
+        // Own contextual resources for this complete menu/fresh-check pass.
+        // The normal AutoCheck dispatcher retains the live authorities above.
+        menu_resources->resources.insert_or_assign(static_cast<odh::CodeOwner>(target),
+            Resource{candidate.source,candidate.asset,candidate.asset.empty()});
+        odh::VmMemory menu_source_memory=memory;
+        const auto live_menu_read=memory.read;
+        menu_source_memory.read=[&,menu_resources,live_menu_read](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index)->std::optional<std::int16_t>{
+            if(scope!=26)return live_menu_read?live_menu_read(frame,scope,index):std::nullopt;
+            const auto address=odh::BconTuning::address(index);
+            const auto immutable_value=[&]()->std::optional<std::int16_t>{
+                const auto value=tuning.read(frame.context.code_owner,index);
+                return value?std::optional<std::int16_t>{value->value}:std::nullopt;
+            };
+            if(address.scope==odh::RoutineScope::global)return immutable_value();
+            auto found=menu_resources->tuning.find(frame.context.code_owner);
+            if(found==menu_resources->tuning.end()){
+                const auto resource=menu_resources->resources.find(frame.context.code_owner);
+                if(resource==menu_resources->resources.end())return immutable_value();
+                const odh::DefinitionCandidate source{resource->second.archive,resource->second.entry,0,{}};
+                found=menu_resources->tuning.emplace(frame.context.code_owner,load_saved_action_tuning(source)).first;
+            }
+            const odh::TuningTables* tables=&found->second;
+            if(address.scope==odh::RoutineScope::semiglobal){
+                auto semi=menu_resources->semi_tuning.find(frame.context.code_owner);
+                if(semi==menu_resources->semi_tuning.end()){
+                    const auto resource=menu_resources->resources.find(frame.context.code_owner);
+                    if(resource==menu_resources->resources.end())return {};
+                    const odh::DefinitionCandidate source{resource->second.archive,resource->second.entry,0,{}};
+                    const auto link=unique_saved_semiglobal_name(load_saved_tree_name_catalog(source));
+                    std::optional<odh::TuningTables> loaded;
+                    if(link){
+                        if(link->empty()||link->find_first_of("/\\:.")!=std::string::npos||
+                           link->find('\0')!=std::string::npos||!globals||globals->standalone)return {};
+                        loaded=load_saved_action_tuning(odh::DefinitionCandidate{globals->archive,
+                            resolve_saved_semiglobal_entry(globals->archive,*link+".iff"),0,{}});
+                    }
+                    semi=menu_resources->semi_tuning.emplace(frame.context.code_owner,std::move(loaded)).first;
+                }
+                if(semi->second)tables=&*semi->second;
+            }
+            const auto table=tables->find(address.table);
+            if(table==tables->end()||address.index>=table->second.constants.size())return std::int16_t{0};
+            return signed_word(table->second.constants[address.index]);
+        };
+        const odh::Vm::OwnerResolver menu_owners=[menu_resources](odh::CodeOwner owner){
+            const auto found=menu_resources->programs.find(owner);
+            return found==menu_resources->programs.end()?std::shared_ptr<const odh::VmProgram>{}:found->second;
+        };
+        std::optional<odh::VmPrimitive> menu_named;
+        bool menu_register_bound=false;
+        auto menu_build_buy=build_buy_permission;
+        auto menu_family_spells=family_spells;
+        const std::function<odh::VmPrimitive(const odh::VmMemory&,const odh::VmPrimitive&,odh::Vm*)> menu_host=
+            [&](const odh::VmMemory& effective,const odh::VmPrimitive& probe,odh::Vm* register_probe)->odh::VmPrimitive{
+            if(register_probe&&!menu_register_bound){
+                if(!register_probe->set_owner_resolver(menu_owners))throw odh::FormatError("read-only register Thread resource provider refused");
+                menu_resources->borrowed_threads.insert_or_assign(actor_vm_for(actor),register_probe);
+                menu_register_bound=true;
+            }
+            if(!menu_named)menu_named=make_tree_by_name_handler(menu_resources,probe,effective);
+            return [&,effective](const odh::VmFrame& f,const odh::Instruction& i,const odh::Ts1Temps& t,const odh::VmDispatch& d)->odh::PrimitiveOutcome{
+                if(i.opcode==28)return (*menu_named)(f,i,t,d);
+                if(i.opcode==7)return odh_host::session_refresh_primitive(world,vm_room_map)(f,i,t,d);
+                if(i.opcode==29)return odh::ts1_motive_change_primitive(world,effective)(f,i,t,d);
+                if(i.opcode==49)return odh::notify_idle_primitive(world,{}, {},true)(f,i,t,d);
+                if(i.opcode==1&&i.operands[0]==43)return odh::family_spells_primitive(world,
+                    menu_family_spells?&*menu_family_spells:nullptr,explicit_family_spell_zoning?&*explicit_family_spell_zoning:nullptr,
+                    family_spell_globals)(f,i,t,d);
+                if(i.opcode==1&&odh::generic_ts1_compatibility_mode(i.operands[0]))return generic_ts1_compatibility_handler(f,i,t,d);
+                if(i.opcode==1&&(i.operands[0]==10||i.operands[0]==11))
+                    return odh::build_buy_permission_primitive(menu_build_buy)(f,i,t,d);
+                if(i.opcode==1&&i.operands[0]==28)return lot?lot->primitive()(f,i,t,d):odh::PrimitiveOutcome{};
+                if(i.opcode==11)return odh::get_distance_to_primitive(world,effective)(f,i,t,d);
+                if(i.opcode==12)return odh::get_direction_to_primitive(world,effective)(f,i,t,d);
+                if(i.opcode==15)return {odh::PrimitiveDisposition::goto_true,{}};
+                if(i.opcode==25)return odh::ts1_budget_primitive(effective,[&](const odh::VmFrame&){
+                    return active_family?std::optional<std::int32_t>{active_family->family.budget}:std::nullopt;
+                })(f,i,t,d);
+                if(i.opcode==31){
+                    const auto mode=i.operands[4]&127U;
+                    if(mode<=4||mode==6||mode==8||mode==9||mode==10||mode==11||mode==12)
+                        return odh::entity_next_primitive(world,effective,{},groups,[&](std::int16_t cursor){
+                            return next_career?next_career(cursor):std::optional<std::int16_t>{};})(f,i,t,d);
+                    return neighbors?neighbors->primitive(effective)(f,i,t,d):odh::PrimitiveOutcome{};
+                }
+                if(i.opcode==32)return object_type_handler(f,i,t,d);
+                if(i.opcode==37)return action_query_handler(f,i,t,d);
+                if(i.opcode==10){
+                    if(!d.origin||!d.origin->matches_active_query(f,i,d))return {odh::PrimitiveDisposition::unsupported,"tutorial source query unavailable"};
+                    return {odh::PrimitiveDisposition::goto_true,{}};
+                }
+                // These services publish into controllers/queues/World beyond
+                // VmMemory. The read-only contract cannot lend those owners.
+                // Unknown remains unsupported, never fabricated eligibility.
+                return {odh::PrimitiveDisposition::unsupported,
+                    "read-only menu has no mutable session service for primitive "+std::to_string(i.opcode)};
+            };
+        };
         odh::TuningResources test_tuning_resources;
         test_tuning_resources.globals=menu_global_tuning;
         odh::TuningOwner test_owner{load_saved_action_tuning(candidate),{},odh::TuningSemiState::absent};
@@ -9464,6 +9641,9 @@ struct PlacementCandidateProbe {
             odh::set_semiglobal_tuning(test_owner,load_saved_action_tuning(
                 odh::DefinitionCandidate{bank->archive,bank->entry,0,{}}));
         }
+        menu_resources->tuning.insert_or_assign(static_cast<odh::CodeOwner>(target),test_owner.private_tables);
+        menu_resources->semi_tuning.insert_or_assign(static_cast<odh::CodeOwner>(target),
+            test_owner.semiglobal_state==odh::TuningSemiState::loaded?std::optional<odh::TuningTables>{test_owner.semiglobal_tables}:std::nullopt);
         test_tuning_resources.owners.emplace(static_cast<odh::CodeOwner>(target),std::move(test_owner));
         const SavedMenuStringResolver menu_string=[&](const odh::VmFrame& frame,const odh::Instruction& operation)->SavedMenuStringResult{
             try{
@@ -9474,7 +9654,8 @@ struct PlacementCandidateProbe {
                     // ScopeResource is the currently executing CodeOwner,
                     // which can be a named plugin even while Callee remains
                     // the selected phone and another Thread donates Temps.
-                    const auto resource=code_owner_resource(frame.context.code_owner);
+                    const auto contextual=menu_resources->resources.find(frame.context.code_owner);
+                    const auto resource=contextual!=menu_resources->resources.end()?std::optional<Resource>{contextual->second}:code_owner_resource(frame.context.code_owner);
                     if(resource)strings=*resource;
                     else if(frame.context.code_owner==static_cast<odh::CodeOwner>(target))
                         // The disposable query's initial owner is deliberately
@@ -9520,9 +9701,9 @@ struct PlacementCandidateProbe {
             globals?&shared_program->routines():nullptr,lot?&*lot:nullptr,
             neighbors?&*neighbors:nullptr,
             active_family?std::optional<std::int32_t>{active_family->family.budget}:std::nullopt,
-            &test_tuning_resources,true,menu_string,check_primitive_factory,actor_vm_for(actor),
-            entity_scheduler.running()||simulation_dispatch_running,permissions,&memory,
-            neighbor_inventory?&*neighbor_inventory:nullptr,disposable_owner_resolver);
+            &test_tuning_resources,true,menu_string,{},actor_vm_for(actor),
+            entity_scheduler.running()||simulation_dispatch_running,permissions,&menu_source_memory,
+            neighbor_inventory?&*neighbor_inventory:nullptr,menu_owners,&random,menu_host);
         } catch(const odh::FormatError& error) {
             std::vector<SavedTestFunctionResult> rejected;rejected.reserve(tests.size());
             for(const auto test:tests)rejected.push_back({SavedTestFunctionResult::State::unsupported,test,0,
@@ -19521,8 +19702,15 @@ struct PlacementCandidateProbe {
         const auto query_world_limits=odh::SessionBundleLimits{}.world;
         const auto before=odh::encode_world_snapshot(world.snapshot(),query_world_limits);const auto seed=random.seed();
         prepare_selected_object(SavedObjectSelection{target_id,target->definition->guid,target->generation,definition->definition.tree_table_id});
-        if(before!=odh::encode_world_snapshot(world.snapshot(),query_world_limits)||seed!=random.seed())
-            throw odh::FormatError("read-only menu query mutated World or source RNG");
+        const auto after=odh::encode_world_snapshot(world.snapshot(),query_world_limits);
+        if(before!=after||seed!=random.seed()){
+            const auto mismatch=std::mismatch(before.begin(),before.end(),after.begin(),after.end());
+            throw odh::FormatError("read-only menu query mutated World or source RNG: world_changed="+
+                std::to_string(before!=after)+" rng_changed="+std::to_string(seed!=random.seed())+
+                " seed_before="+std::to_string(seed)+" seed_after="+std::to_string(random.seed())+
+                " world_size_before="+std::to_string(before.size())+" world_size_after="+std::to_string(after.size())+
+                " first_world_byte="+std::to_string(std::distance(before.begin(),mismatch.first)));
+        }
         const auto name_hex=[](const std::string& name){std::string hex;hex.reserve(name.size()*2);constexpr char digits[]="0123456789abcdef";
             for(const unsigned char byte:name){hex.push_back(digits[byte>>4]);hex.push_back(digits[byte&15]);}return hex;};
         std::ostringstream out;out<<"{\"actor\":"<<actor_id<<",\"actor_generation\":"<<actor->generation

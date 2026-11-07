@@ -8,6 +8,8 @@
 #include "odh/neighbor_context.hpp"
 #include "odh/object_type.hpp"
 #include "odh/relationship.hpp"
+#include "odh/random.hpp"
+#include "odh/look_towards.hpp"
 #include "odh/ts1_budget.hpp"
 #include "odh/tuning.hpp"
 #include "odh/world.hpp"
@@ -475,10 +477,10 @@ inline std::optional<std::size_t> first_eligible_saved_interaction(
 }
 
 // Run TestFunction in a separate VM, with register isolation outside a live
-// scheduler dispatch and source-shared registers inside it. The fallback World
-// memory view restricts writes, but explicitly supplied services retain their
-// own source effect contracts: mutable neighbor inventory changes are LIVE,
-// including in check mode, as in pinned FreeSO InventoryOperations.Execute.
+// scheduler dispatch and source-shared registers inside it. An explicit
+// read-only host owns a complete cloned register Thread, contextual resources
+// and nested execution; legacy ordinary checks retain source register loans.
+// Inventory effects execute in a disposable owner shared by this menu pass.
 // Code is limited to exact private and explicitly linked shared banks. Unknown
 // primitives and exhausted budgets remain unsupported; this is not EXE parity.
 // global_tuning_loaded attests a complete selected bank, including an empty one.
@@ -499,7 +501,9 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     const SavedMenuStringResolver& resolve_string={},const odh::VmPrimitiveFactory& host_factory={},
     odh::Vm* register_owner=nullptr,bool scheduler_running_now=false,
     const std::vector<std::uint32_t>& permission_flags={},const odh::VmMemory* source_memory=nullptr,
-    odh::NeighborInventory* live_inventory=nullptr,const odh::Vm::OwnerResolver& owner_resolver={}) {
+    odh::NeighborInventory* live_inventory=nullptr,const odh::Vm::OwnerResolver& owner_resolver={},
+    const odh::RandomState* source_random=nullptr,
+    const std::function<odh::VmPrimitive(const odh::VmMemory&,const odh::VmPrimitive&,odh::Vm*)>& readonly_host_factory={}) {
     constexpr std::size_t test_limit=saved_menu_row_limit;
     if(tests.size()>test_limit||arguments.size()>256||(!permission_flags.empty()&&permission_flags.size()!=tests.size()))throw odh::FormatError("interaction test arguments/count exceed bounded probe profile");
     std::vector<SavedTestFunctionResult> result;result.reserve(tests.size());
@@ -541,13 +545,19 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         return index==50&&((scope==3&&frame.context.caller==caller)||
                           (scope==4&&frame.context.stack_object==caller));
     };
+    // A query consumes the same RNG sequence without advancing the session.
+    // All rows share this disposable stream, exactly as the source menu pass.
+    std::optional<odh::RandomState> probe_random;
+    if(source_random)probe_random=*source_random;
+    // LookTowards mode0 is a synchronous source output; retain it only here.
+    std::map<odh::WorldEntityReference,std::array<std::int16_t,5>> head_targets;
     odh::VmMemory memory;
     if(source_memory)memory.job_data=source_memory->job_data;
     memory.resolve_live_entity=[&world](std::int16_t id)->std::optional<odh::WorldEntityReference>{
         const auto* e=world.find(id);return e?std::optional<odh::WorldEntityReference>{{id,e->generation}}:std::nullopt;
     };
     memory.read=[&world,&read_global,&tuning,linked_tuning,global_tuning_loaded,source_memory,
-                 &hide_interaction,&caller_hide_field](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index){
+                 &hide_interaction,&caller_hide_field,&head_targets](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index){
         if(caller_hide_field(frame,scope,index))return std::optional<std::int16_t>{hide_interaction};
         // NeighborInStackObject uses the raw numeric neighbor ID, not an
         // entity-reference role. Reuse the host's complete fields0..9 provider.
@@ -583,7 +593,12 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
             // a proven absent semiglobal falls back to the private table bank.
             return std::optional<std::int16_t>{0};
         }
-        const auto value=world.read(frame,scope,index);
+        if((scope==18||scope==19)&&index>=41&&index<=45){
+            const auto* e=world.frame_entity(frame,scope==18?odh::VmEntityRole::caller:odh::VmEntityRole::stack_object);
+            if(e){const auto found=head_targets.find({e->id,e->generation});
+                if(found!=head_targets.end())return std::optional<std::int16_t>{found->second[index-41]};}
+        }
+        const auto value=world.read_only(frame,scope,index);
         // Simitone initializes every declared attribute to zero and reads
         // beyond the declared length as zero. Preserve that read-only rule.
         if(!value&&index>=0&&(scope==0||scope==1))return std::optional<std::int16_t>{0};
@@ -602,9 +617,16 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         if(!relationship_probe->restore_snapshot(snapshot))
             throw odh::FormatError("could not isolate relationship data for read-only TestFunction evaluation");
     }
+    std::unique_ptr<odh::Vm> register_probe;
+    if(readonly_host_factory&&register_owner){
+        register_probe=register_owner->clone_for_check(memory);
+        register_owner=register_probe.get();
+    }
     auto object_type=odh::object_type_primitive(world);
     auto lot=linked_lot?linked_lot->primitive():odh::VmPrimitive{};
-    auto inventory_find=live_inventory?odh::neighbor_inventory_primitive(*live_inventory,world):neighborhood_inventory
+    std::optional<odh::NeighborInventory> inventory_probe;
+    if(live_inventory)inventory_probe=*live_inventory;
+    auto inventory_find=inventory_probe?odh::neighbor_inventory_primitive(*inventory_probe,world):neighborhood_inventory
         ?odh::inventory_find_primitive(*neighborhood_inventory,world):odh::VmPrimitive{};
     odh::VmPrimitive primitive=[&,object_type=std::move(object_type),
         inventory_find=std::move(inventory_find),lot=std::move(lot)](
@@ -634,6 +656,31 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
                 "relationship context unavailable to read-only TestFunction probe"};
             return relationship(frame,instruction,temps,dispatch);
         }
+        if(instruction.opcode==51&&inventory_find)
+            return inventory_find(frame,instruction,temps,dispatch);
+        if(instruction.opcode==8){
+            if(!probe_random)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "source RNG snapshot unavailable to read-only TestFunction probe"};
+            return odh::random_primitive(*probe_random,effective)(frame,instruction,temps,dispatch);
+        }
+        if(instruction.opcode==22){
+            odh::VmMemory output;
+            output.write=[&](const odh::VmFrame& source,std::uint8_t scope,std::int16_t index,std::int16_t value){
+                if(scope!=18||index<41||index>45)return false;
+                const auto* avatar=world.frame_entity(source,odh::VmEntityRole::caller,true);
+                if(!avatar||avatar->person_data.size()<=45)return false;
+                const auto key=odh::WorldEntityReference{avatar->id,avatar->generation};
+                auto found=head_targets.find(key);
+                if(found==head_targets.end()){
+                    std::array<std::int16_t,5> initial{};
+                    std::copy_n(avatar->person_data.begin()+41,5,initial.begin());
+                    found=head_targets.emplace(key,initial).first;
+                }
+                found->second[index-41]=value;return true;
+            };
+            return odh::look_towards_primitive(world,std::move(output))(frame,instruction,temps,dispatch);
+        }
+        if(readonly_host_factory){const auto host=readonly_host_factory(effective,primitive,register_probe.get());if(host)return host(frame,instruction,temps,dispatch);}
         if(host_factory){const auto host=host_factory(effective);if(host)return host(frame,instruction,temps,dispatch);}
         auto entity_next=odh::entity_next_primitive(world,effective,{},multitile_groups);
         auto neighbor=linked_neighbors?linked_neighbors->primitive(effective):odh::VmPrimitive{};
@@ -695,7 +742,7 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         // Explicit immutable resource context, independent of which real Thread
         // supplies Temp registers. A missing provider retains the closed banks.
         if(!probe.set_owner_resolver(owner_resolver))throw odh::FormatError("TestFunction resource context could not bind");
-        const auto started=probe.start(key,{caller,target,target,static_cast<odh::CodeOwner>(target)},arguments,static_cast<bool>(host_factory));
+        const auto started=probe.start(key,{caller,target,target,static_cast<odh::CodeOwner>(target)},arguments,static_cast<bool>(host_factory)||static_cast<bool>(readonly_host_factory));
         std::optional<odh::VmTrace> last_trace;
         std::uint64_t category_stack_searches=0,category_cursor_rewinds=0;
         std::optional<std::int16_t> previous_category_cursor;

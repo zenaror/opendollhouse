@@ -1090,6 +1090,14 @@ bool Vm::can_release_entity_storage(std::int16_t entity,
     }catch(...){return false;}
 }
 
+std::unique_ptr<Vm> Vm::clone_for_check(VmMemory memory) const {
+    if(executing_||check_active_||entity_thread_stack_)
+        throw std::invalid_argument("cannot clone a Thread during dispatch or a logical check");
+    auto clone=std::make_unique<Vm>(program_,ShareVmProgramTag{},std::move(memory),limits_,VmPrimitive{},owners_,ShareVmOwnerProgramsTag{});
+    if(!clone->restore_snapshot(snapshot()))throw std::invalid_argument("parked Thread snapshot rejected by its immutable banks");
+    return clone;
+}
+
 bool Vm::can_start_synchronous_check(std::uint64_t budget) const {
     return !executing_&&!check_active_&&status_==VmStatus::running&&!steps_&&stack_.size()==1&&
        !stack_.front().pc&&stack_.front().return_mode==VmCallReturnMode::ordinary&&
