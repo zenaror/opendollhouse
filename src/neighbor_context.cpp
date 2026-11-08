@@ -43,7 +43,16 @@ std::optional<std::int16_t> NeighborContext::instance_id(const World& world,std:
     }
     return std::int16_t{0};
 }
+void NeighborContext::bind_native_personal_catalog(const NativePersonalCatalog& catalog){
+    validate_native_personal_catalog(catalog);std::map<std::uint32_t,std::int16_t> mapped;
+    for(std::size_t i=0;i<catalog.definitions.size();++i){const auto& d=catalog.definitions[i];const auto& b=catalog.bindings[i];const auto* n=by_id(b.neighbor_id);
+        if(!n||n->guid!=b.guid)throw FormatError("original GUID catalog differs from the hydrated neighbor source");
+        if(d.object_type==2)mapped.emplace(b.guid,b.neighbor_id);
+    }
+    original_guids_=std::move(mapped);
+}
 std::optional<std::int16_t> NeighborContext::id_for_guid(std::uint32_t guid) const {
+    if(original_guids_){const auto i=original_guids_->find(guid);return i==original_guids_->end()?std::nullopt:std::optional<std::int16_t>{i->second};}
     const auto found=guids_.find(guid);return found==guids_.end()?std::nullopt:std::optional<std::int16_t>{found->second};
 }
 std::int16_t NeighborContext::next(std::int16_t current) const {

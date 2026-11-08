@@ -29,9 +29,12 @@ public:
     std::size_t guid_count() const{return definitions_.size();}
     // Bounded owned snapshot for catalog consumers; ambiguities are retained.
     std::vector<DefinitionCandidate> snapshot_candidates() const;
+    // Actual admitted producer order; the existing sorted API is unchanged.
+    std::vector<DefinitionCandidate> provider_snapshot_candidates() const;
     std::size_t candidate_count() const{return candidates_;}
 private:
     std::map<std::uint32_t,std::vector<DefinitionCandidate>> definitions_;
     std::size_t candidates_=0;
+    std::vector<std::pair<std::uint32_t,std::size_t>> provider_order_;
 };
 }

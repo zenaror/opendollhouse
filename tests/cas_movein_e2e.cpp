@@ -111,6 +111,25 @@ std::string hex_digest(const std::array<std::uint8_t,32>& bytes){
     static constexpr char h[]="0123456789abcdef";std::string out;
     for(auto b:bytes){out+=h[b>>4];out+=h[b&15];}return out;
 }
+// Report the stored owned catalog, not a reconstructed filesystem lookup.
+// The ordinary decoder validates it; diagnostic output has the same4096-row cap.
+void print_personal_catalog(const std::optional<odh::NativePersonalCatalog>& saved){
+    if(!saved){std::cout<<"null";return;}
+    const auto& catalog=*saved;constexpr std::size_t limit=4096;
+    const auto shown=std::min(catalog.definitions.size(),limit);
+    std::cout<<"{\"version\":"<<catalog.version<<",\"neighborhood_identity\":"<<json_string(hex_digest(catalog.neighborhood_identity))
+        <<",\"definition_count\":"<<catalog.definitions.size()<<",\"binding_count\":"<<catalog.bindings.size()
+        <<",\"entries_shown\":"<<shown<<",\"truncated\":"<<(shown<catalog.definitions.size()?"true":"false")<<",\"entries\":[";
+    for(std::size_t n=0;n<shown;++n){if(n)std::cout<<',';const auto& d=catalog.definitions[n];
+        std::cout<<"{\"provider_ordinal\":"<<d.provider_ordinal<<",\"guid\":"<<d.guid<<",\"object_type\":"<<d.object_type
+            <<",\"object_definition_id\":"<<d.definition_chunk_id<<",\"source\":"<<json_string(d.source)<<",\"asset\":"<<json_string(d.asset)
+            <<",\"fingerprint\":"<<json_string(hex_digest(d.fingerprint))<<",\"binding_guid\":";
+        if(n<catalog.bindings.size())std::cout<<catalog.bindings[n].guid;else std::cout<<"null";
+        std::cout<<",\"neighbor_id\":";if(n<catalog.bindings.size())std::cout<<catalog.bindings[n].neighbor_id;else std::cout<<"null";
+        std::cout<<'}';
+    }
+    std::cout<<"]}";
+}
 std::pair<odh_host::StoredCommunityLot,odh::FamilyPropertyRelease> current_property(
         const fs::path& game,const odh::FamilyOverlay& overlay,std::uint16_t house){
     const auto neighborhood=game/"UserData/Neighborhood.iff";
@@ -300,7 +319,9 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
     std::cout<<R"(,"personal_state":)";
     if(!active.personal_state)std::cout<<"null";
     else{const auto& personal=*active.personal_state;std::size_t shown=0;
-        std::cout<<R"({"version":)"<<personal.version<<R"(,"record_count":)"<<personal.records.size()
+        std::cout<<R"({"version":)"<<personal.version<<R"(,"neighborhood_identity":)"<<json_string(hex_digest(personal.neighborhood_identity))
+            <<R"(,"catalog":)";print_personal_catalog(personal.catalog);
+        std::cout<<R"(,"record_count":)"<<personal.records.size()
             <<R"(,"truncated":)"<<(personal.records.size()>64?"true":"false")<<R"(,"entries":[)";
         for(const auto& record:personal.records){if(shown==64)break;if(shown++)std::cout<<',';
             std::cout<<R"({"neighbor_id":)"<<record.identity.neighbor_id<<R"(,"guid":)"<<record.identity.guid
@@ -576,7 +597,8 @@ int inspect_travel_return(const fs::path& path,const fs::path& neighborhood){
         const auto* old=body(home,d.member);const auto* current=body(visited,d.member);std::cout<<",\"home_body\":";if(old)std::cout<<'['<<old->id<<','<<old->generation<<']';else std::cout<<"null";std::cout<<",\"visited_body\":";if(current)std::cout<<'['<<current->id<<','<<current->generation<<']';else std::cout<<"null";std::cout<<'}';}std::cout<<']';};
     std::cout<<",\"unresolved_personal_deltas\":";deltas(prepared.unresolved_personal_deltas());std::cout<<",\"retained_runtime_deltas\":";deltas(prepared.retained_runtime_deltas());std::cout<<",\"unchanged_inherited_deltas\":";deltas(prepared.unchanged_inherited_personal_deltas());
     const auto records=[](const std::optional<odh::NativePersonalSnapshot>& state){if(!state){std::cout<<"null";return;}
-        std::cout<<"{\"version\":"<<state->version<<",\"neighborhood_sha256\":"<<json_string(hex_digest(state->neighborhood_identity))<<",\"records\":[";bool comma=false;
+        std::cout<<"{\"version\":"<<state->version<<",\"neighborhood_sha256\":"<<json_string(hex_digest(state->neighborhood_identity))<<",\"catalog\":";
+        print_personal_catalog(state->catalog);std::cout<<",\"records\":[";bool comma=false;
         for(const auto& r:state->records){if(comma)std::cout<<',';comma=true;std::cout<<"{\"neighbor_id\":"<<r.identity.neighbor_id<<",\"guid\":"<<r.identity.guid<<",\"objd\":"<<r.identity.definition_chunk_id<<",\"character_asset\":"<<json_string(r.identity.character_asset)<<",\"character_sha256\":"<<json_string(hex_digest(r.identity.character_fingerprint))<<",\"revision\":"<<r.revision<<",\"writer\":"<<unsigned(r.writer)<<",\"profile\":"<<unsigned(r.projection.profile)<<",\"schema_version\":"<<unsigned(r.projection.schema_version)<<",\"projection\":[";bool next=false;
             for(std::size_t i=0;i<r.projection.present.size();++i)if(r.projection.present[i]){if(next)std::cout<<',';next=true;std::cout<<'['<<i<<','<<r.projection.values[i]<<']';}
             std::cout<<"],\"seed_words\":";if(r.seed_words){std::cout<<'[';for(std::size_t i=0;i<r.seed_words->size();++i){if(i)std::cout<<',';std::cout<<r.seed_words->at(i);}std::cout<<']';}else std::cout<<"null";std::cout<<'}';}std::cout<<"]}";};

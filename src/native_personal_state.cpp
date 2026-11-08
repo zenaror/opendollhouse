@@ -128,17 +128,22 @@ void apply_native_personal_projection(const NativePersonalProjection& p,std::vec
  for(const auto f:fields)if(f.minimum<=p.schema_version&&p.present[f.index])bank[f.index]=p.values[f.index];
 }
 void validate_native_personal_snapshot(const NativePersonalSnapshot& s){
- if(s.version!=1||!nonzero(s.neighborhood_identity)||s.records.size()>4096)throw FormatError("personal snapshot header unsupported");
+ if((s.version!=1&&s.version!=2)||bool(s.catalog)!=(s.version==2)||!nonzero(s.neighborhood_identity)||s.records.size()>4096)throw FormatError("personal snapshot header unsupported");
+ if(s.catalog){validate_native_personal_catalog(*s.catalog);if(s.catalog->neighborhood_identity!=s.neighborhood_identity)throw FormatError("personal catalog neighborhood differs");}
  std::int16_t previous=0;
  for(const auto& r:s.records){identity(r.identity);projection(r.projection);
   if(r.identity.neighbor_id<=previous||!r.revision||static_cast<unsigned>(r.writer)<1||static_cast<unsigned>(r.writer)>4)
    throw FormatError("personal record order/revision/writer invalid");
   previous=r.identity.neighbor_id;
+  if(s.catalog)for(std::size_t i=0;i<s.catalog->bindings.size();++i)if(s.catalog->bindings[i].neighbor_id==r.identity.neighbor_id){const auto& d=s.catalog->definitions[i];
+   if(d.guid!=r.identity.guid||d.definition_chunk_id!=r.identity.definition_chunk_id||d.fingerprint!=r.identity.character_fingerprint||native_personal_resource_key(d.source,d.asset)!=r.identity.character_asset)throw FormatError("personal record differs from its owned hydrated resource binding");
+  }
   if(r.seed_words&&r.seed_words->size()!=80&&r.seed_words->size()!=256)throw FormatError("personal seed bank shape unsupported");
  }
 }
 void validate_native_personal_successor(const NativePersonalSnapshot& before,const NativePersonalSnapshot& after){
  validate_native_personal_snapshot(before);validate_native_personal_snapshot(after);
+ if(before.version==2&&(after.version!=2||encode_native_personal_catalog(*before.catalog)!=encode_native_personal_catalog(*after.catalog)))throw FormatError("personal successor changes or removes its admitted hydrated catalog");
  if(before.neighborhood_identity!=after.neighborhood_identity)throw FormatError("personal successor neighborhood changed");
  for(const auto& old:before.records){
   const auto next=std::lower_bound(after.records.begin(),after.records.end(),old.identity.neighbor_id,
@@ -153,10 +158,13 @@ void validate_native_personal_successor(const NativePersonalSnapshot& before,con
  }
 }
 NativePersonalState::NativePersonalState(const Nbrs& seed,const std::array<std::uint8_t,32>& digest,
- std::set<std::int16_t> retired):retired_(std::move(retired)){
- state_.neighborhood_identity=digest;validate_native_personal_snapshot(state_);
- if(seed.entries.size()>4096)throw FormatError("personal seed exceeds neighbor count limit");
- for(const auto& entry:seed.entries){
+ std::set<std::int16_t> retired,const NativePersonalCatalog* catalog):retired_(std::move(retired)){
+ state_.neighborhood_identity=digest;
+ if(catalog){if(catalog->neighborhood_identity!=digest)throw FormatError("personal catalog source digest differs");state_.version=2;state_.catalog=*catalog;}
+ validate_native_personal_snapshot(state_);
+ const auto owned_seed=catalog?hydrate_native_personal_neighbors(seed,*catalog,retired_):seed;
+ if(owned_seed.entries.size()>4096)throw FormatError("personal seed exceeds neighbor count limit");
+ for(const auto& entry:owned_seed.entries){
   if(entry.marker==0&&!entry.record)continue;
   if(entry.marker!=1||!entry.record)throw FormatError("personal seed marker inconsistent");
   const auto& r=*entry.record;
@@ -167,6 +175,7 @@ NativePersonalState::NativePersonalState(const Nbrs& seed,const std::array<std::
 }
 std::map<std::int16_t,NeighborRecord> NativePersonalState::materialize(const NativePersonalSnapshot& s) const {
  validate_native_personal_snapshot(s);
+ if(s.version!=state_.version||bool(s.catalog)!=bool(state_.catalog)||(s.catalog&&encode_native_personal_catalog(*s.catalog)!=encode_native_personal_catalog(*state_.catalog)))throw FormatError("personal restore catalog was not admitted before seed construction");
  if(s.neighborhood_identity!=state_.neighborhood_identity)throw FormatError("personal snapshot neighborhood differs");
  std::map<std::int16_t,NeighborRecord> out;
  for(const auto& r:s.records){const auto seed=seeds_.find(r.identity.neighbor_id);
@@ -244,6 +253,7 @@ std::vector<std::uint8_t> encode_native_personal_snapshot(const NativePersonalSn
   if(r.seed_words)for(auto word:*r.seed_words)put(static_cast<std::uint16_t>(word),2);
   for(std::size_t i=0;i<r.projection.present.size();++i){put(r.projection.present[i],1);if(r.projection.present[i])put(static_cast<std::uint16_t>(r.projection.values[i]),2);}
  }
+ if(s.version==2){const auto catalog=encode_native_personal_catalog(*s.catalog);put(catalog.size(),4);b.insert(b.end(),catalog.begin(),catalog.end());}
  return b;
 }
 NativePersonalSnapshot decode_native_personal_snapshot(const std::vector<std::uint8_t>& b){
@@ -261,6 +271,7 @@ NativePersonalSnapshot decode_native_personal_snapshot(const std::vector<std::ui
   for(std::size_t i=0;i<r.projection.present.size();++i){r.projection.present[i]=static_cast<std::uint8_t>(get(1));if(r.projection.present[i])r.projection.values[i]=signed16(static_cast<std::uint16_t>(get(2)));}
   s.records.push_back(std::move(r));
  }
+ if(s.version==2){const auto n=get(4);if(n>3u*1024u*1024u||n>b.size()-at)throw FormatError("personal catalog outside bounded snapshot");std::vector<std::uint8_t> raw(b.begin()+at,b.begin()+at+n);at+=n;s.catalog=decode_native_personal_catalog(raw);}
  if(at!=b.size())throw FormatError("personal snapshot trailing bytes");validate_native_personal_snapshot(s);return s;
 }
 VmPrimitive native_personal_write_primitive(World& world,NativePersonalState* state,NativePersonalSourceResolver resolve){

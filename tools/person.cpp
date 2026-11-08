@@ -76,6 +76,7 @@
 #include "odh/native_personal_state.hpp"
 #include "odh/native_personal_session.hpp"
 #include "odh/original_frontend_personal.hpp"
+#include "original_frontend_catalog_resources.hpp"
 #include "odh/neighbor_info.hpp"
 #include "odh/npc_avatar.hpp"
 #include "odh/avatar_constructor_metadata.hpp"
@@ -1524,6 +1525,27 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         return architecture_object_state&&architecture_object_state->position_registry?&*architecture_object_state->position_registry:nullptr;
     };
     const bool actorless_arrival=session_context&&session_context->temporary_travel_arrival;
+    std::optional<odh::NativePersonalCatalog> original_neighbor_catalog;
+    const odh_host::TrustedSessionResourceRoots character_catalog_roots{
+        session_context?session_context->game_root:std::filesystem::path{},
+        session_context?session_context->installed_user_data/"Characters":std::filesystem::path{},
+        session_context?session_context->player_character_root:std::filesystem::path{}};
+    const auto session_resource_key=[&](const std::filesystem::path& game_root,const std::string& source){
+        // Keep old game-root keys byte-stable for catalogless v1 cold states.
+        if(!original_neighbor_catalog){try{return odh_host::generic_session_source_key(game_root,source);}catch(const odh::FormatError&){}catch(const std::filesystem::filesystem_error&){}}
+        auto roots=character_catalog_roots;roots.game_root=game_root;
+        return odh_host::trusted_session_source_key(roots,source);
+    };
+    const auto exact_session_definition=[&](const odh::DefinitionIndex& definitions,std::uint32_t guid,
+        const std::string& source,const std::string& asset,std::uint16_t chunk,const std::filesystem::path& game_root)->const odh::DefinitionCandidate& {
+        odh_host::validate_generic_session_source_key(source);const auto wanted=session_resource_key(game_root,source);
+        const auto* candidates=definitions.candidates(guid);const odh::DefinitionCandidate* exact=nullptr;
+        if(candidates)for(const auto& candidate:*candidates)if(candidate.asset==asset&&candidate.chunk_id==chunk&&session_resource_key(game_root,candidate.source)==wanted){
+            if(exact)throw odh::FormatError("session resource definition is ambiguous within trusted catalogs");exact=&candidate;
+        }
+        if(!exact)throw odh::FormatError("session resource no longer matches its exact trusted definition");return *exact;
+    };
+
     bool pending_household_activation=false,pending_primary_activation=false;
     const auto actorless_bootstrap=[&]{return actorless_arrival||residential_property_arrival||pending_primary_activation;};
     if(actorless_arrival&&(!session_context->travel_state||session_context->travel_departure_archive.empty()||
@@ -1986,15 +2008,42 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         return found==work_career_strings->end()?static_cast<const odh::StringTable*>(nullptr):&found->second;
     };
     std::optional<odh::NeighborContext> neighbors;
-    if(nbrs)neighbors.emplace(std::move(*nbrs));
-    if(neighbors&&type_attributes_neighborhood_identity){
-        personal_state=std::make_unique<odh::NativePersonalState>(neighbors->source(),*type_attributes_neighborhood_identity,retired_neighbor_ids);
+    std::optional<odh::Nbrs> original_neighbor_seed;
+    // Select shared personal owner BEFORE admitting a v2 catalog. A cold v1
+    // runtime never acquires positive NPC identities through this fresh path.
+    const bool legacy_cold_personal=session_context&&!session_context->restore_archive.empty()&&(!restored_personal_state||restored_personal_state->version==1);
+    if(nbrs&&type_attributes_neighborhood_identity){
         if(type_attributes_open_overlay&&type_attributes_open_overlay->personal_state){
             const auto& shared=*type_attributes_open_overlay->personal_state;
+            if(legacy_cold_personal&&shared.catalog)throw odh::FormatError("legacy active World cannot implicitly acquire a hydrated neighbor catalog");
             if(actorless_arrival&&restored_personal_state){
                 odh::validate_native_personal_successor(shared,*restored_personal_state);
             }else restored_personal_state=shared;
         }
+    }
+    if(nbrs){
+        original_neighbor_seed=*nbrs;
+        const auto* persisted=restored_personal_state&&restored_personal_state->catalog?&*restored_personal_state->catalog:nullptr;
+        const bool fresh_original=actorless_arrival&&session_context&&session_context->travel_protocol==odh::Ts1TravelProtocol::original_6e598;
+        if(persisted||fresh_original){
+            if(!definition_index||!session_context||!type_attributes_neighborhood_identity)throw odh::FormatError("hydrated neighbor catalog lacks its admitted frontend resources");
+            original_neighbor_catalog=odh_host::admit_original_frontend_catalog_resources(*definition_index,session_context->game_root,
+                *original_neighbor_seed,*type_attributes_neighborhood_identity,retired_neighbor_ids,persisted,&character_catalog_roots);
+            *nbrs=odh::hydrate_native_personal_neighbors(*original_neighbor_seed,*original_neighbor_catalog,retired_neighbor_ids);
+            if(!persisted&&restored_personal_state){
+                // Explicit new paid pending next-load admission, before any new
+                // body/VM. Records/revisions are preserved; no old World upgrade.
+                if(!fresh_original||restored_personal_state->version!=1)throw odh::FormatError("hydrated neighbor catalog has no fresh admission");
+                restored_personal_state->version=2;restored_personal_state->catalog=*original_neighbor_catalog;
+                odh::validate_native_personal_snapshot(*restored_personal_state);
+            }
+        }
+        neighbors.emplace(std::move(*nbrs));
+        if(original_neighbor_catalog)neighbors->bind_native_personal_catalog(*original_neighbor_catalog);
+    }
+    if(neighbors&&type_attributes_neighborhood_identity){
+        personal_state=std::make_unique<odh::NativePersonalState>(*original_neighbor_seed,*type_attributes_neighborhood_identity,
+            retired_neighbor_ids,original_neighbor_catalog?&*original_neighbor_catalog:nullptr);
         if(restored_personal_state){personal_state->restore(*restored_personal_state);personal_state_was_saved=true;}
         // Authenticate every durable record's resource, including writers whose
         // body has retired and is absent from HHRD/NPCA in this house archive.
@@ -3504,7 +3553,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     throw odh::FormatError("NPC private and semiglobal routine keys overlap");
             actor->npc_semiglobal_tuning=std::move(linked.tuning);
             actor->npc_semiglobal=odh::SessionLinkedSemiglobal{entry.substr(0,entry.size()-4),
-                odh_host::generic_session_source_key(session_context->game_root,globals->archive),entry};
+                session_resource_key(session_context->game_root,globals->archive),entry};
         }
         if(actor->main<=255||!actor->data.routines.count(odh::routine_key(actor->main)))
             throw odh::FormatError("NPC Main is absent from its exact private/linked resource bank");
@@ -3521,7 +3570,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(const auto special=strings.find(150);special!=strings.end())inputs.object_walk=std::move(special->second);
         actor->npc_body_inputs=std::move(inputs);actor->sounds=load_sounds(actor->resource);
         actor->npc_origin=odh::SessionNpcAvatarOrigin{id,0,definition.definition.guid,0,
-            odh_host::generic_session_source_key(session_context->game_root,definition.source),definition.asset,
+            session_resource_key(session_context->game_root,definition.source),definition.asset,
             definition.chunk_id,fingerprint};
         return actor;
     };
@@ -4011,6 +4060,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::size_t active_object_constructions=0;
     std::uint64_t retired_object_steps=0;
     std::map<odh::CodeOwner,odh::SessionResourceCodeOwner> resource_owner_provenance;
+    // Saved aliases are retained only after exact owner/resource authentication.
+    // They preserve carried cold bytes, never grant additional file authority.
+    std::map<odh::CodeOwner,std::string> restored_resource_source_keys;
     const auto context_entity=[&](const odh::VmContext& context,odh::VmEntityRole role)->const odh::Entity*{
         auto bound=context;if(!world.bind_context_live(bound))return nullptr;
         return world.resolve_reference(odh::vm_context_reference(bound,role));
@@ -4129,7 +4181,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // never gain guessed prices or ObjectState from their raw OD41 caches.
     if(session_context&&!session_context->single_resident_session&&!restoring_object_lifetime&&restored_world&&definition_index)
         runtime_object_trade=odh_host::prepare_imported_object_values(*restored_world,*definition_index,
-            [&](const std::string& source){return odh_host::generic_session_source_key(session_context->game_root,source);});
+            [&](const std::string& source){return session_resource_key(session_context->game_root,source);});
     std::unique_ptr<odh::ObjectValueRegistry> object_values;
     const auto ensure_object_values=[&]()->odh::ObjectValueRegistry*{
         if(!session_context||session_context->single_resident_session)return nullptr;
@@ -4156,7 +4208,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(auto* values=ensure_object_values()){
             if(!definition_index)throw odh::FormatError("constructed object value definitions unavailable");
             auto state=odh_host::prepare_constructed_object_values(world,*definition_index,group,
-                [&](const std::string& source){return odh_host::generic_session_source_key(session_context->game_root,source);});
+                [&](const std::string& source){return session_resource_key(session_context->game_root,source);});
             if(!values->admit(std::move(state)))
                 throw odh::FormatError("constructed object values could not join their actual physical group");
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -6072,7 +6124,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                                 if(!globals||globals->standalone||!session_context||
                                    known.entry.size()!=known.name.size()+4||known.entry.compare(0,known.name.size(),known.name)!=0||
                                    !saved_semiglobal_name_equal(known.entry.substr(known.name.size()),".iff")||known.archive!=
-                                       odh_host::generic_session_source_key(session_context->game_root,globals->archive))
+                                       session_resource_key(session_context->game_root,globals->archive))
                                     throw odh::FormatError("calling STR semiglobal provenance differs from selected Global archive");
                                 link=known.name;bindings=1;
                             }else{
@@ -6204,7 +6256,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const std::string& source,const std::string& asset,std::uint16_t table,std::uint32_t index)
             ->std::optional<odh::InteractionLabelOrigin>{
         if(!session_context)return std::nullopt;
-        try{return odh::InteractionLabelOrigin{kind,language,odh_host::generic_session_source_key(
+        try{return odh::InteractionLabelOrigin{kind,language,session_resource_key(
             session_context->game_root,source),asset,table,index};}
         catch(const odh::FormatError&){return std::nullopt;}
         catch(const std::filesystem::filesystem_error&){return std::nullopt;}
@@ -6502,7 +6554,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 const auto pinned=pinned_characters.find(std::filesystem::canonical(member.character_path));
                 if(pinned==pinned_characters.end()||odh_host::fingerprint_transfer_resource(member.character_path)!=pinned->second.fingerprint)
                     throw odh::FormatError("personal household character source changed");
-                const auto asset=member.character_asset.empty()?std::string("UserData/Characters/")+member.character_path.filename().string():member.character_asset;
+                const auto asset=original_neighbor_catalog?session_resource_key(session_context->game_root,member.character_path.string()):
+                    (member.character_asset.empty()?std::string("UserData/Characters/")+member.character_path.filename().string():member.character_asset);
                 return {{nid,member.guid,member.object_definition_id,asset,pinned->second.fingerprint},{id,body->generation}};
             }
         for(const auto* actor:auxiliary_actors)if(actor&&actor->npc_origin){const auto& origin=*actor->npc_origin;
@@ -6817,7 +6870,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 throw odh::FormatError("saved PhoneLine thread identity or owner roster changed");
             const auto& owner=resume_state->code_owners.front();
             if(owner.owner!=phone_owner||owner.root_routine!=4096||owner.source!=(household_restore&&household_restore->generic_execution()?
-                   odh_host::generic_session_source_key(session_context->game_root,resource.archive):resource.archive)||
+                   session_resource_key(session_context->game_root,resource.archive):resource.archive)||
                owner.asset!=resource.entry||owner.routine_fingerprint!=code_fingerprint)
                 throw odh::FormatError("saved PhoneLine code provenance no longer matches its exact resource");
         }
@@ -7234,7 +7287,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         const odh::DefinitionCandidate* exact=nullptr;
         for(const auto& candidate:*candidates){
             if((household_restore&&household_restore->generic_execution()?
-                    odh_host::generic_session_source_key(session_context->game_root,candidate.source)==binding.source:
+                    session_resource_key(session_context->game_root,candidate.source)==session_resource_key(session_context->game_root,binding.source):
                     candidate.source==binding.source)&&candidate.asset==binding.asset&&
                candidate.chunk_id==binding.definition_chunk_id&&
                candidate.definition.tree_table_id==binding.tree_table_id){
@@ -7301,6 +7354,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             old_profile->second.routine_fingerprint!=profile.routine_fingerprint))
             throw odh::FormatError("dynamic action owner bank conflicts with another installed provenance");
         resource_owner_provenance.insert_or_assign(binding.owner,std::move(profile));
+        if(const auto old=restored_resource_source_keys.find(binding.owner);old!=restored_resource_source_keys.end()&&old->second!=binding.source)throw odh::FormatError("restored dynamic resource source aliases disagree");
+        restored_resource_source_keys[binding.owner]=binding.source;
         const auto plan=interactions.table&&interactions.table->status==odh::TtabStatus::decoded?
             saved_menu_action_routine_plan(*interactions.table,binding.root_routine):
             std::optional<SavedMenuActionRoutinePlan>{};
@@ -7355,6 +7410,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             existing->second.identity!=binding.identity||existing->second.linked_semiglobal!=binding.linked_semiglobal||
             existing->second.bank_kind!=binding.bank_kind||existing->second.routine_fingerprint!=binding.routine_fingerprint))
             throw odh::FormatError("resource code owner is ambiguous across execution threads");
+        if(const auto old=restored_resource_source_keys.find(binding.owner);old!=restored_resource_source_keys.end()&&old->second!=binding.source)throw odh::FormatError("restored resource source aliases disagree");
+        restored_resource_source_keys[binding.owner]=binding.source;
         auto installed=binding;installed.source=exact.source;
         resource_owner_provenance.emplace(binding.owner,std::move(installed));
         saved_action_resources.emplace(binding.owner,Resource{exact.source,exact.asset,exact.asset.empty()});
@@ -8449,7 +8506,7 @@ struct PlacementCandidateProbe {
                semi->entry.size()<=4||!saved_semiglobal_name_equal(data.glob->name+".iff",semi->entry))
                 throw odh::FormatError("Snap resident EP5 resource binding is incomplete");
             expected_link=odh::SessionLinkedSemiglobal{semi->entry.substr(0,semi->entry.size()-4),
-                odh_host::generic_session_source_key(session_context->game_root,semi->archive),semi->entry};
+                session_resource_key(session_context->game_root,semi->archive),semi->entry};
             link_known=true;
         };
         if(source.tested_entity==runtime_avatar_id){owner_resource=&*avatar;resident_link(person);}
@@ -12229,7 +12286,7 @@ struct PlacementCandidateProbe {
                identity->second.asset!=asset||identity->second.root_routine!=action)
                 throw odh::FormatError("portal owner cache differs from its exact resource key");
             validate_portal_owner(*thread,owner);
-            stack.portal_owners.push_back({odh_host::generic_session_source_key(session_context->game_root,source),asset,action,owner});
+            stack.portal_owners.push_back({session_resource_key(session_context->game_root,source),asset,action,owner});
         }
         stack.portal_planned_calls=state->planned_calls;stack.portal_returns=state->returns;stack.portal_transitions=state->transitions;
     };
@@ -12257,7 +12314,7 @@ struct PlacementCandidateProbe {
             const auto owner=resource_owner_provenance.find(binding.owner);
             if(owner==resource_owner_provenance.end()||owner->second.asset!=binding.asset||
                owner->second.root_routine!=binding.action||
-               odh_host::generic_session_source_key(session_context->game_root,owner->second.source)!=binding.source||
+               session_resource_key(session_context->game_root,owner->second.source)!=binding.source||
                !thread->has_routine(odh::routine_key(binding.action),binding.owner))
                 throw odh::FormatError("saved portal owner cache differs from its installed resource manifest");
             validate_portal_owner(*thread,binding.owner);
@@ -14267,7 +14324,7 @@ struct PlacementCandidateProbe {
     const auto capture_current_object_threads=[&](bool generic_execution){
         odh::SessionBundle bundle;
         const auto portable_owner=[&](odh::SessionResourceCodeOwner record){
-            record.source=odh_host::generic_session_source_key(session_context->game_root,record.source);return record;
+            if(const auto saved=restored_resource_source_keys.find(record.owner);saved!=restored_resource_source_keys.end())record.source=saved->second;else record.source=session_resource_key(session_context->game_root,record.source);return record;
         };
         if(saved_phone_thread||saved_phone_sleep){
             if(!saved_phone_thread||!saved_phone_sleep||!saved_phone_main_scheduled||
@@ -14280,7 +14337,7 @@ struct PlacementCandidateProbe {
             odh::SessionObjectThread object_thread;object_thread.id=saved_phone_id;
             object_thread.generation=saved_phone_generation;object_thread.guid=phone->definition->guid;
             odh::SessionActionCodeOwner owner;owner.owner=object_thread.guid;
-            owner.source=generic_execution?odh_host::generic_session_source_key(session_context->game_root,saved_phone_resource->archive):
+            owner.source=generic_execution?session_resource_key(session_context->game_root,saved_phone_resource->archive):
                 saved_phone_resource->archive;owner.asset=saved_phone_resource->entry;
             owner.root_routine=4096;owner.routine_fingerprint=*saved_phone_code_fingerprint;
             object_thread.code_owners.push_back(std::move(owner));
@@ -14543,7 +14600,7 @@ struct PlacementCandidateProbe {
             bundle.ui_state=odh::SessionUiState{selected->id,selected->generation,selected->definition->guid};
         }
         const auto portable_owner=[&](odh::SessionResourceCodeOwner record){
-            record.source=odh_host::generic_session_source_key(session_context->game_root,record.source);
+            if(const auto saved=restored_resource_source_keys.find(record.owner);saved!=restored_resource_source_keys.end())record.source=saved->second;else record.source=session_resource_key(session_context->game_root,record.source);
             return record;
         };
         if(generic_execution){
@@ -14554,7 +14611,7 @@ struct PlacementCandidateProbe {
             bundle.object_history->reusable_entity_ids=true;
             for(const auto& [id,origin]:retired_created_origins){
                 (void)id;auto record=origin;
-                record.source=odh_host::generic_session_source_key(session_context->game_root,record.source);
+                record.source=session_resource_key(session_context->game_root,record.source);
                 bundle.object_history->retired_created_objects.push_back(std::move(record));
             }
             for(const auto& item:retired_npc_origins)bundle.object_history->retired_npc_avatars.push_back(item.second);
@@ -14563,7 +14620,7 @@ struct PlacementCandidateProbe {
             for(const auto& [id,origin]:created_object_origins){
                 const auto* object=world.find(id);
                 if(object&&object->generation==origin.generation){
-                    auto record=origin;record.source=odh_host::generic_session_source_key(session_context->game_root,record.source);
+                    auto record=origin;record.source=session_resource_key(session_context->game_root,record.source);
                     bundle.created_objects.push_back(std::move(record));
                 }
             }
@@ -14792,7 +14849,8 @@ struct PlacementCandidateProbe {
                     globals,definition_index?&*definition_index:nullptr);
                 odh::SessionDynamicActionOwner record;record.owner=owner_id;record.target_id=target_id;
                 record.target_generation=target->generation;record.target_guid=target->definition->guid;
-                record.source=generic_execution?odh_host::generic_session_source_key(session_context->game_root,exact->source):exact->source;
+                record.source=generic_execution?session_resource_key(session_context->game_root,exact->source):exact->source;
+                if(generic_execution)if(const auto saved=restored_resource_source_keys.find(owner_id);saved!=restored_resource_source_keys.end())record.source=saved->second;
                 record.asset=exact->asset;record.definition_chunk_id=exact->chunk_id;
                 record.tree_table_id=exact->definition.tree_table_id;record.root_routine=root;
                 record.linked_semiglobal=source.linked_semiglobal;
@@ -14828,7 +14886,7 @@ struct PlacementCandidateProbe {
             original_constructor_metadata.validate_selected_name({origin.id,origin.generation},npc_constructor_identity(origin),
                 actor->body_state->selected_name,neighbors?neighbors->by_id(origin.neighbor_id):nullptr,actor->npc_body_inputs->body->names);
             odh::SessionNpcAvatar npc;npc.origin=origin;npc.primary_owner=actor->primary_owner;
-            npc.origin.source=odh_host::generic_session_source_key(session_context->game_root,origin.source);
+            npc.origin.source=origin.source;
             npc.runtime=capture_runtime_entity(actor->id,*actor->vm,*actor->controllers,actor->playback,actor->routing.get());
             npc.decay=motive->second.snapshot();npc.selected_name=actor->body_state->selected_name;
             bundle.npc_avatars.push_back(std::move(npc));
@@ -14860,7 +14918,7 @@ struct PlacementCandidateProbe {
             continuation.target_slot=static_cast<std::uint32_t>(actor->attachment->slot);
             continuation.action=**code_binding;continuation.completion=*completion;
             continuation.source=generic_execution?
-                odh_host::generic_session_source_key(session_context->game_root,candidate->source):candidate->source;
+                session_resource_key(session_context->game_root,candidate->source):candidate->source;
             continuation.asset=candidate->asset;
             continuation.definition_chunk_id=candidate->chunk_id;
             continuation.tree_table_id=candidate->definition.tree_table_id;
@@ -15485,7 +15543,7 @@ struct PlacementCandidateProbe {
             const auto member=std::find_if(value->members.begin(),value->members.end(),[&](const auto& part){
                 const auto& origin=part.object;
                 return origin.id==target.id&&origin.generation==target.generation&&origin.guid==candidate->definition.guid&&
-                    origin.source==odh_host::generic_session_source_key(session_context->game_root,candidate->source)&&
+                    origin.source==session_resource_key(session_context->game_root,candidate->source)&&
                     origin.asset==candidate->asset&&origin.definition_chunk_id==candidate->chunk_id&&
                     origin.master_guid==object->definition->master_guid;
             });
@@ -16273,7 +16331,7 @@ struct PlacementCandidateProbe {
                 const auto* candidate=definition_index?definition_index->unique(origin.guid):nullptr;
                 if(!candidate||candidate->asset!=origin.asset||candidate->chunk_id!=origin.definition_chunk_id||
                    (candidate->source!=origin.source&&(!session_context||
-                    odh_host::generic_session_source_key(session_context->game_root,candidate->source)!=origin.source)))
+                    session_resource_key(session_context->game_root,candidate->source)!=origin.source)))
                     throw odh::FormatError("runtime object visual no longer matches its creation resource");
                 runtime_visuals.push_back({id,origin.generation,origin.guid,
                     candidate->source,candidate->asset,candidate->chunk_id});
@@ -16857,7 +16915,7 @@ struct PlacementCandidateProbe {
                             throw odh::FormatError("created object private/semiglobal routine keys collide");
                     linked_tuning=std::move(linked.tuning);
                     linked_semiglobal=odh::SessionLinkedSemiglobal{entry.substr(0,entry.size()-4),
-                        odh_host::generic_session_source_key(session_context->game_root,globals->archive),entry};
+                        session_resource_key(session_context->game_root,globals->archive),entry};
                 }
                 if(object_resources->private_routines.empty())
                     throw odh::FormatError("created object has no executable resource bank");
@@ -17268,8 +17326,8 @@ struct PlacementCandidateProbe {
             binding.destination.interactions=saved_object_interactions(*candidate,*definition_index,game_language,
                 globals&&!globals->standalone?globals->archive:std::string{}).table;
             binding.origin=origin->second;binding.resource_owner=resource->second;
-            binding.origin.source=odh_host::generic_session_source_key(session_context->game_root,binding.origin.source);
-            binding.resource_owner.source=odh_host::generic_session_source_key(session_context->game_root,binding.resource_owner.source);
+            binding.origin.source=session_resource_key(session_context->game_root,binding.origin.source);
+            binding.resource_owner.source=session_resource_key(session_context->game_root,binding.resource_owner.source);
             session=std::make_unique<GoHereSession>(world,id,*thread,controllers,*routing);
             const bool restored=owns_route?
                 (routes&&!routes->jobs.empty()?session->restore_created(*routes,binding):session->restore_created(*local,binding)):
@@ -17654,10 +17712,69 @@ struct PlacementCandidateProbe {
                     throw odh::FormatError("NPC construction requires the selected lot architecture and definitions");
                 if(npc_runtime.size()>=64||saved_owner_ids_exhausted)
                     throw odh::FormatError("NPC actor or code-owner budget exhausted");
-                for(const auto& entity:world.snapshot().entities)
+                const auto duplicate_snapshot=world.snapshot();
+                for(const auto& entity:duplicate_snapshot.entities)
                     if(entity.kind==odh::EntityKind::avatar&&entity.definition&&
-                       entity.definition->guid==pending.request.guid())
-                        throw odh::FormatError("duplicate live NPC/household GUID needs a broader identity/save profile");
+                       entity.definition->guid==pending.request.guid()){
+                        // Additive evidence only. Keep the SAME guard, including
+                        // indexed dead/ghost bodies, until actual source identity
+                        // proves whether broader duplicate support is required.
+                        const auto hex=[](const auto& bytes){constexpr char digits[]="0123456789abcdef";std::string out;
+                            for(const auto byte:bytes){out.push_back(digits[byte>>4]);out.push_back(digits[byte&15]);}return out;};
+                        std::string detail="duplicate live NPC/household GUID needs a broader identity/save profile: tick="+
+                            std::to_string(ticks)+" requested_guid="+std::to_string(pending.request.guid())+
+                            " requested_nid="+std::to_string(pending.request.requested_neighbor.neighbor_id)+
+                            " constructor_nid="+(pending.request.constructor_neighbor?std::to_string(pending.request.constructor_neighbor->neighbor_id):"absent")+
+                            " direct_resource_guid="+std::to_string(pending.request.direct_resource_guid)+
+                            " flags="+std::to_string(pending.request.creation.flags)+
+                            " no_duplicate="+std::to_string(pending.request.creation.no_duplicate())+
+                            " use_neighbor="+std::to_string(pending.request.creation.use_neighbor())+
+                            " position_mode="+std::to_string(pending.request.creation.raw_position)+
+                            " caller="+std::to_string(pending.request.caller)+" caller_generation="+std::to_string(pending.request.caller_generation)+
+                            " ticket="+std::to_string(pending.ticket)+" original="+std::to_string(pending.request.original_semantics)+
+                            " travel_family="+std::to_string(pending.travel_family)+" travel_token="+std::to_string(pending.travel_token.has_value())+
+                            " original_companion="+std::to_string(pending.original_companion.has_value())+
+                            " lifecycle="+std::to_string(static_cast<bool>(pending.lifecycle_current));
+                        if(const auto* requested=definition_index->unique(pending.request.guid()))
+                            detail+=" requested_resource{source="+json_bytes(requested->source)+",asset="+json_bytes(requested->asset)+
+                                ",objd="+std::to_string(requested->chunk_id)+"}";
+                        else {const auto* candidates=definition_index->candidates(pending.request.guid());
+                            detail+=" requested_resource_candidates="+std::to_string(candidates?candidates->size():0);}
+                        if(pending.vm){detail+=" source_run="+std::to_string(pending.vm->run_generation());
+                            if(const auto& source=pending.vm->pending();source){
+                                detail+=" source{ticket="+std::to_string(source->ticket)+",routine="+std::to_string(source->instruction.key.id)+
+                                    ",pc="+std::to_string(source->instruction.pc)+",owner="+std::to_string(source->context.code_owner)+
+                                    ",opcode="+std::to_string(source->instruction.instruction.opcode)+",operands="+hex(source->instruction.instruction.operands)+
+                                    ",bound="+std::to_string(source->context.entity_references_bound)+",caller="+std::to_string(source->context.caller)+",caller_generation="+std::to_string(source->context.caller_generation)+
+                                    ",callee="+std::to_string(source->context.callee)+",callee_generation="+std::to_string(source->context.callee_generation)+
+                                    ",stack="+std::to_string(source->context.stack_object)+",stack_generation="+std::to_string(source->context.stack_object_generation)+"}";
+                                const auto resource=resource_owner_provenance.find(source->context.code_owner);
+                                if(resource!=resource_owner_provenance.end())detail+=" source_resource{guid="+std::to_string(resource->second.resource_guid)+
+                                    ",source="+json_bytes(resource->second.source)+",asset="+json_bytes(resource->second.asset)+
+                                    ",objd="+std::to_string(resource->second.definition_chunk_id)+"}";
+                            }
+                        }
+                        std::size_t matches=0;
+                        for(const auto& other:duplicate_snapshot.entities)if(other.kind==odh::EntityKind::avatar&&other.definition&&
+                            other.definition->guid==pending.request.guid()){
+                            if(matches++>=16)continue;
+                            detail+=" body{id="+std::to_string(other.id)+",generation="+std::to_string(other.generation)+
+                                ",guid="+std::to_string(other.definition->guid)+",nid="+
+                                (other.person_data.size()>31?std::to_string(other.person_data[31]):"absent")+
+                                ",person_words="+std::to_string(other.person_data.size())+",dead="+std::to_string(other.dead)+
+                                ",ghost="+std::to_string(other.ui_ghost)+",positioned="+std::to_string(other.position.has_value())+"}";
+                            if(const auto* runtime=actor_runtime_for(other.id);runtime&&runtime->generation==other.generation){
+                                detail+=" body_runtime{owner="+std::to_string(runtime->primary_owner)+",source="+json_bytes(runtime->resource.archive)+
+                                    ",asset="+json_bytes(runtime->resource.entry)+"}";
+                                if(runtime->npc_origin){const auto& origin=*runtime->npc_origin;
+                                    detail+=" body_npc_origin{nid="+std::to_string(origin.neighbor_id)+",guid="+std::to_string(origin.guid)+
+                                        ",source="+json_bytes(origin.source)+",asset="+json_bytes(origin.asset)+",objd="+
+                                        std::to_string(origin.object_definition_id)+",fingerprint="+hex(origin.character_fingerprint)+"}";}
+                            }
+                        }
+                        detail+=" matching_bodies="+std::to_string(matches)+" bodies_shown="+std::to_string(std::min<std::size_t>(matches,16));
+                        throw odh::FormatError(detail);
+                    }
                 const auto* definition=definition_index->unique(pending.request.guid());
                 if(!definition){
                     const auto* matches=definition_index->candidates(pending.request.guid());
@@ -17717,6 +17834,8 @@ struct PlacementCandidateProbe {
                 // immutable source identity must already name that actual NID.
                 if(pending.request.original_semantics)
                     actor->npc_origin->neighbor_id=pending.request.requested_neighbor.neighbor_id;
+                else if(original_neighbor_catalog&&pending.request.constructor_neighbor)
+                    actor->npc_origin->neighbor_id=pending.request.constructor_neighbor->neighbor_id;
                 const auto generation=world.find(id)->generation;
                 if(world.lockout_count_clock()&&!world.admit_lockout_count_state(id,generation,true,0))
                     throw odh::FormatError("NPC source Thread lockout state could not be admitted");
@@ -20111,7 +20230,7 @@ struct PlacementCandidateProbe {
             out.history.complete=object_history_complete;out.history.reusable_entity_ids=true;
             out.history.reserved_entity_ids=world.reserved_entity_ids();
             const auto portable=[&](odh::SessionCreatedObject value){
-                value.source=odh_host::generic_session_source_key(session_context->game_root,value.source);return value;
+                value.source=session_resource_key(session_context->game_root,value.source);return value;
             };
             for(const auto& pair:created_object_origins){const auto* current=world.find(pair.first);
                 if(current&&current->generation==pair.second.generation)out.created_objects.push_back(portable(pair.second));}
@@ -20634,8 +20753,9 @@ struct PlacementCandidateProbe {
                 with_iff_file(*neighborhood_path,[&](const auto& view){
                     frontend_source.emplace(odh::read_original_frontend_personal_source(view));
                 });
-                // Default lookup deliberately refuses ambiguous GUIDs rather
-                // than borrowing the legacy provider's last-GUID semantics.
+                if(!personal_state->snapshot().catalog)throw odh::FormatError("original frontend save requires an admitted hydrated catalog; legacy active saves are not upgraded");
+                // The persisted typed catalog supplies its native first-GUID
+                // mapping; no raw-hole skipping or legacy LAST map is used.
                 frontend_save.emplace(odh::prepare_original_frontend_personal_save(*frontend_source,world,*personal_state,
                     *simless,personal_source));
             }

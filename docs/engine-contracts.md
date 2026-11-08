@@ -16,6 +16,21 @@ Recurso desconhecido, ausente e presente mas vazio são situações diferentes.
 A resolução de scripts locais, semiglobais e globais preserva a origem escolhida.
 A existência de um arquivo com nome semelhante não autoriza trocar seu conteúdo.
 
+O cadastro compartilhado de definições de personagens pertence à vizinhança.
+Quando presente no formato pessoal v2, preserva a ordem do provedor, a identidade
+da definição, origem, entrada do recurso, código de conferência do conteúdo e vínculo com o
+número de vizinho. A restauração deve conferir o conjunto admitido e seus vínculos;
+ordenar novamente por identificador, escolher outra definição de mesmo nome ou
+refazer a numeração não constitui restauração equivalente. O corpo vivo continua
+identificado por número e geração, separadamente desse cadastro.
+
+Instalar, retirar ou substituir um recurso de personagem usado pelo cadastro exige uma
+migração explícita quando altera o cadastro salvo. O caminho v2 atual recusa
+essas divergências; não oferece migração automática. O caminho v1 permanece sem
+catálogo e não é promovido a v2 apenas por ser reaberto. O contrato interno
+experimental está em [native_personal_catalog.hpp](../include/odh/native_personal_catalog.hpp);
+a existência desse contrato não declara uma API pública ou paridade completa.
+
 ## Objetos, posições e retirada
 
 O estado espacial admite vários ocupantes no mesmo quadrado. A cadeia original

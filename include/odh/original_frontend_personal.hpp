@@ -10,6 +10,8 @@ constexpr std::int16_t original_frontend_playing_simless=0;
 class OriginalFrontendPersonalSource {
 public:
     const Nbrs& neighbors() const;
+    OriginalFrontendPersonalSource with_catalog(const NativePersonalCatalog&) const;
+    const NativePersonalCatalog* catalog() const;
     const std::array<std::uint8_t,32>& neighborhood_identity() const;
 private:
     struct Data;

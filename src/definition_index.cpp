@@ -9,13 +9,18 @@ DefinitionIndex::DefinitionIndex(const std::vector<DefinitionCandidate>& source,
             available-=value->size();
         }
     }
-    for(const auto& candidate:source)definitions_[candidate.definition.guid].push_back(candidate);
+    provider_order_.reserve(source.size());
+    for(const auto& candidate:source){auto& group=definitions_[candidate.definition.guid];provider_order_.push_back({candidate.definition.guid,group.size()});group.push_back(candidate);}
     candidates_=source.size();
 }
 std::vector<DefinitionCandidate> DefinitionIndex::snapshot_candidates() const {
     std::vector<DefinitionCandidate> result;result.reserve(candidates_);
     for(const auto& row:definitions_)result.insert(result.end(),row.second.begin(),row.second.end());
     return result;
+}
+std::vector<DefinitionCandidate> DefinitionIndex::provider_snapshot_candidates() const {
+    std::vector<DefinitionCandidate> out;out.reserve(provider_order_.size());
+    for(const auto& key:provider_order_)out.push_back(definitions_.at(key.first).at(key.second));return out;
 }
 const std::vector<DefinitionCandidate>* DefinitionIndex::candidates(std::uint32_t guid) const{
     const auto found=definitions_.find(guid);return found==definitions_.end()?nullptr:&found->second;

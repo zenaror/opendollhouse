@@ -67,6 +67,7 @@ testes de integração oferece comandos de leitura:
 cmake --build build/native --target odh-cas-movein-e2e --parallel 2
 ./build/native/odh-cas-movein-e2e --inspect-runtime-entity partida.odhs 42
 ./build/native/odh-cas-movein-e2e --inspect-travel-return partida.odhs "$GAME_ROOT/UserData/Neighborhood.iff"
+./build/native/odh-cas-movein-e2e --inspect-session partida.odhs
 ```
 
 O primeiro comando de inspeção aceita de 1 a 16 números internos de objetos ou
@@ -76,6 +77,15 @@ as diferenças de dados pessoais entre a casa e o destino de uma viagem, com a
 origem de cada valor. Essa prévia não publica o retorno nem altera o salvamento.
 Use o arquivo da vizinhança correspondente à partida; uma origem incompatível
 é rejeitada. A leitura do estado não comprova que uma ação funciona no jogo.
+
+`--inspect-session` também mostra o catálogo armazenado no salvamento, quando
+presente: a ordem original dos recursos, seus arquivos, identificadores e os
+números de vizinho atribuídos. O JSON inclui as contagens totais, quantas linhas
+foram mostradas e se houve corte, com limite de 4096 recursos. Salvamentos
+antigos sem esse catálogo mostram `catalog: null`. A inspeção de retorno usa o
+mesmo formato para os estados da casa, da visita e da prévia do retorno. Esses
+dados descrevem o arquivo salvo; não substituem a conferência dos arquivos do
+jogo instalado.
 
 ## Diagnóstico
 

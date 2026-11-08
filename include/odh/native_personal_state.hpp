@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 #include "odh/neighborhood.hpp"
+#include "odh/native_personal_catalog.hpp"
 #include "odh/world.hpp"
 #include <array>
 #include <map>
@@ -42,6 +43,7 @@ struct NativePersonalSnapshot {
     std::uint32_t version=1;
     std::array<std::uint8_t,32> neighborhood_identity{};
     std::vector<NativePersonalRecord> records; // Strict ascending positive NID.
+    std::optional<NativePersonalCatalog> catalog; // Present only in explicit v2.
 };
 void validate_native_personal_snapshot(const NativePersonalSnapshot&);
 void validate_native_personal_successor(const NativePersonalSnapshot&,const NativePersonalSnapshot&);
@@ -76,12 +78,12 @@ private:
 class NativePersonalState {
 public:
     NativePersonalState(const Nbrs&,const std::array<std::uint8_t,32>& neighborhood_identity,
-        std::set<std::int16_t> retired_neighbors={});
+        std::set<std::int16_t> retired_neighbors={},const NativePersonalCatalog* catalog=nullptr);
     NativePersonalState(const NativePersonalState&)=delete;
     NativePersonalState& operator=(const NativePersonalState&)=delete;
     const NeighborRecord* by_id(std::int16_t) const;
     const NativePersonalSnapshot& snapshot() const {return state_;}
-    bool changed() const {return !state_.records.empty();}
+    bool changed() const {return !state_.records.empty()||state_.catalog.has_value();}
     // Restore is transactional and authenticates all immutable seed words.
     void restore(const NativePersonalSnapshot&);
     PreparedNativePersonalCommit prepare(const World&,const std::vector<NativePersonalSource>&,

@@ -208,6 +208,34 @@ identificação a partir da origem e da entrada do pacote. O motor confere esses
 dados ao gravar e reabrir a partida; esse identificador interno ainda não é uma
 API estável para mods.
 
+### Cadastro compartilhado de NPCs (experimental)
+
+O motor mantém um cadastro de definições de personagens compartilhado pela
+vizinhança. Ele registra a ordem dos recursos, sua origem, a definição do
+personagem e um código para conferir se o conteúdo mudou, além do número de vizinho atribuído.
+Esse cadastro acompanha o salvamento; não deve ser reconstruído em outra ordem
+cada vez que uma casa é aberta. O número de um corpo presente no lote continua
+sendo temporário e não substitui essa identidade.
+
+Por exemplo, um vendedor personalizado precisa de uma definição reconhecida
+pelo motor e de sua rotina de atendimento. Registrar essa definição permite
+reconhecê-la entre visitas, mas não cria por si só a rotina, a loja ou suas regras.
+A possibilidade de haver mais de um vendedor da mesma definição também depende
+das regras de criação; o cadastro não promete esse comportamento.
+
+Salvamentos no formato pessoal v2 vinculam esse cadastro aos recursos usados.
+Instalar, remover ou substituir arquivos de personagens usados pelo cadastro pode mudar
+esses vínculos. Uma divergência é recusada; não há conversão automática nem
+comando público de migração. Essa mudança precisará de um procedimento explícito
+futuro que preserve as identidades e o progresso. Salvamentos v1 não recebem o
+cadastro automaticamente ao reabrir.
+
+Os contratos internos estão em
+[native_personal_catalog.hpp](../include/odh/native_personal_catalog.hpp) e
+[native_personal_state.hpp](../include/odh/native_personal_state.hpp).
+Eles continuam experimentais; esta descrição não constitui um kit de criação
+nem comprova compatibilidade completa com NPCs personalizados.
+
 
 ### Viagens com acompanhantes (experimental)
 

@@ -7,8 +7,15 @@ namespace odh {
 struct OriginalFrontendPersonalSource::Data {
     std::string owned;
     Nbrs neighbors;
+    std::optional<NativePersonalCatalog> catalog;
     std::array<std::uint8_t,32> identity{};
 };
+OriginalFrontendPersonalSource OriginalFrontendPersonalSource::with_catalog(const NativePersonalCatalog& catalog) const {
+    if(catalog.neighborhood_identity!=data_->identity)throw FormatError("frontend hydrated catalog neighborhood differs");
+    if(data_->catalog){if(encode_native_personal_catalog(*data_->catalog)!=encode_native_personal_catalog(catalog))throw FormatError("frontend hydrated catalog changed");return *this;}
+    auto data=std::make_shared<Data>(*data_);data->neighbors=hydrate_native_personal_neighbors(data_->neighbors,catalog);data->catalog=catalog;return OriginalFrontendPersonalSource(std::move(data));
+}
+const NativePersonalCatalog* OriginalFrontendPersonalSource::catalog() const {return data_->catalog?&*data_->catalog:nullptr;}
 const Nbrs& OriginalFrontendPersonalSource::neighbors() const {return data_->neighbors;}
 const std::array<std::uint8_t,32>& OriginalFrontendPersonalSource::neighborhood_identity() const {return data_->identity;}
 OriginalFrontendPersonalSource read_original_frontend_personal_source(const View& view){
@@ -42,6 +49,7 @@ std::vector<NativePersonalSource> cohort(const OriginalFrontendPersonalSource& s
         if(!live_guid)continue;
         const auto& candidates=indices.at(seed.guid);std::optional<std::int16_t> mapped;
         if(lookup)mapped=lookup(seed.guid);
+        else if(source.catalog())mapped=native_personal_catalog_lookup(*source.catalog(),seed.guid);
         else if(candidates.size()==1)mapped=candidates.front();
         else throw FormatError("original frontend ambiguous GUID requires its authenticated original catalog index");
         if(!mapped)continue; //Original index lookup returned absent; no body is selected.
@@ -79,8 +87,9 @@ PreparedOriginalFrontendPersonalSave prepare_original_frontend_personal_save(con
     const World& world,const NativePersonalState& state,std::int16_t simless,const NativePersonalSourceResolver& resolve,const OriginalFrontendGuidLookup& lookup){
     if(simless!=original_frontend_playing_simless)throw FormatError("original frontend personal save requires playing Global32=0");
     if(source.neighborhood_identity()!=state.snapshot().neighborhood_identity)throw FormatError("original frontend personal source neighborhood differs");
-    PreparedOriginalFrontendPersonalSave out;out.owner_=&state;out.source_=source;out.resolve_=resolve;out.lookup_=lookup;
-    out.before_=digest(state.snapshot());out.sources_=cohort(source,world,resolve,lookup);
+    const auto admitted=state.snapshot().catalog?source.with_catalog(*state.snapshot().catalog):source;
+    PreparedOriginalFrontendPersonalSave out;out.owner_=&state;out.source_=admitted;out.resolve_=resolve;out.lookup_=lookup;
+    out.before_=digest(state.snapshot());out.sources_=cohort(admitted,world,resolve,lookup);
     if(out.sources_.empty())out.preview_=state.snapshot();
     else {out.prepared_=state.prepare(world,out.sources_,NativePersonalWriteSource::frontend_save);out.preview_=out.prepared_->preview_snapshot();}
     if(!out.source_current(world,state))throw FormatError("original frontend personal preparation lost its exact sources");
