@@ -31,7 +31,7 @@ struct Fixture {
     odh::World world;
     // Deliberately blocked: a turn does not ask for path clearance.
     odh::RouteGrid grid{1,1};odh::SlotTable slots;
-    odh::Routing route{world,grid,slots};odh::Vm vm;
+    odh::Routing route{world,slots};odh::Vm vm;
     Animation animation;
     odh::SourceLookTowardsProfile profile{};
     std::optional<std::vector<odh::SourceLookTowardsGroupMember>> group;
@@ -43,6 +43,7 @@ struct Fixture {
             world.create(9,odh::EntityKind::object)&&world.set_position(7,{32,32,1,0})&&
             world.set_position(9,{48,32,1,0}),"create caller and independently moving StackObject");
         grid.block({0,0});
+        route.set_dense_grid_provider([](std::string*)->odh::RouteGrid*{throw std::runtime_error("turn-only route must never allocate dense geometry");});
         route.set_route_goal_validator([this](const auto&,auto){++geometry_calls;return false;});
         route.set_room_pair_provider([this](const auto&,const auto&)
             ->std::optional<std::pair<std::uint16_t,std::uint16_t>>{++geometry_calls;return {};});
@@ -198,6 +199,7 @@ void nested_portal_allowance(){
     for(const bool consumed:{false,true}){
         Fixture nested;
         nested.grid=odh::RouteGrid{64,64}; // Parent27 needs a real walkable grid; child22 does not.
+        require(nested.route.attach_grid(nested.grid),"only the actual legacy parent installs dense geometry");
         nested.route.set_route_goal_validator([](const auto&,auto){return true;});
         nested.route.set_room_pair_provider([](const auto&,const auto&)
             ->std::optional<std::pair<std::uint16_t,std::uint16_t>>{return std::pair<std::uint16_t,std::uint16_t>{1,1};});
@@ -241,7 +243,7 @@ void real_playback_integration(){
         std::shared_ptr<odh::AnimationHeader> ordinary=std::make_shared<odh::AnimationHeader>();
         std::shared_ptr<odh::AnimationHeader> turn=std::make_shared<odh::AnimationHeader>();
         std::shared_ptr<odh::AnimationHeader> standing=std::make_shared<odh::AnimationHeader>();
-        odh::Routing route{world,grid,slots};odh::Playback playback;
+        odh::Routing route{world,slots};odh::Playback playback;
         odh::Vm vm;bool swimming=false;std::int16_t style=0;
         unsigned route_resolutions=0,events=0;std::uint16_t selected=0;
         explicit Runtime(bool populate=true):

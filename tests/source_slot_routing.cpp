@@ -9,6 +9,7 @@
 #include <stdexcept>
 
 namespace {
+bool gridless_fixture_mode=false;
 unsigned checks=0;
 void require(bool value,const char* why){++checks;if(!value)throw std::runtime_error(why);}
 std::uint32_t bits(float value){std::uint32_t result=0;std::memcpy(&result,&value,sizeof(value));return result;}
@@ -30,7 +31,7 @@ odh::RoutineSet program(std::uint8_t scope=1,std::uint8_t flags=1,std::optional<
 struct Fixture {
     odh::World world;odh::RouteGrid grid{64,64};odh::SlotTable table=source_table();
     odh::Routing route{world,grid,table};odh::VmPrimitive extra_primitive;odh::Vm vm;
-    bool accept=true;unsigned validations=0,resources=0;
+    bool accept=true;unsigned validations=0,resources=0,dense_preparations=0;
     unsigned turn_starts=0,motion_publishes=0,source_ticks=0,velocity_publications=0,placement_calls=0;
     odh::SourceSparsePlacementStatus initial_block=odh::SourceSparsePlacementStatus::success;
     std::int16_t collision_blocker=9;
@@ -49,10 +50,13 @@ struct Fixture {
     std::int16_t target_id=9;
     Fixture(bool populate=true,std::uint8_t scope=1,std::uint8_t flags=1,
         odh::PreRankedSlotGoalProvider ranked={},std::optional<odh::Instruction> operation={}):
-        route(world,grid,table,std::move(ranked)),
+        route(world,table,odh::RouteLimits{},std::move(ranked)),
         vm({{odh::routine_key(398),{0x8002,{{2,254,255,{1,0,73,0,0,5,8,7}}},{},
             odh::Bhav::Metadata{0,4,4,0}}}},world.vm_memory(),{},[this](const auto& f,const auto& i,const auto& t,const auto& d){
             return extra_primitive&&i.opcode==99?extra_primitive(f,i,t,d):route.primitive()(f,i,t,d);},{{owner,program(scope,flags,operation)}}){
+        if(!gridless_fixture_mode)require(route.attach_grid(grid),"fixture explicitly installs its existing legacy grid");
+        route.set_dense_grid_provider([this](std::string*)->odh::RouteGrid*{
+            ++dense_preparations;if(gridless_fixture_mode)throw std::runtime_error("source lifecycle unexpectedly demanded dense geometry");return &grid;});
         if(populate)require(world.create(7,odh::EntityKind::avatar,{0,88,3,16})&&
             world.create(9,odh::EntityKind::object)&&world.set_position(7,{4,12,1,0})&&
             world.set_position(9,{20,20,1,0}),"create independent actor and arbitrary target resource");
@@ -527,7 +531,7 @@ void ordinary_go_here_sparse(){
     require(resumed.route.restore_local_session_route(*saved,owner),"ordinary counter-bearing source GoHere restores its real motion");
     live.finish(2);resumed.finish(2);require(live.world.find(7)->position==resumed.world.find(7)->position&&live.vm.steps()==resumed.vm.steps(),"ordinary GoHere save continuation reaches identical position and VM work");
     const odh::Instruction historical{27,1,255,{10,0,254,255,10,0,5,0}};
-    Fixture ghost(true,1,1,{},historical);require(ghost.world.set_ui_ghost(9,true),"historical marker remains explicitly UI-only");float ghost_heading=0;install_sparse_services(ghost,ghost_heading);ghost.start();
+    Fixture ghost(true,1,1,{},historical);require(ghost.world.set_ui_ghost(9,true),"historical marker remains explicitly UI-only");float ghost_heading=0;install_sparse_services(ghost,ghost_heading);ghost.route.set_dense_grid_provider([&](std::string*){++ghost.dense_preparations;return &ghost.grid;});ghost.start();
     const auto legacy=ghost.route.capture_local_session_route(owner);require(legacy&&!legacy->source_sparse&&ghost.plan_calls==0,"historical UI ghost stays on strict legacy path even with source services");
     // Use the original waiting VM, not the completed live continuation.
     Fixture waiting(true,1,1,{},operation);float waiting_heading=0;install_sparse_services(waiting,waiting_heading);waiting.start();auto waiting_saved=waiting.route.capture_local_session_route(owner);
@@ -1916,6 +1920,96 @@ void unplaced_child_interruption_and_placement(){
         "warm and cold FAILED continuation preserves actual later placement and child effects");
 }
 
+void gridless_source_matrix(){
+    struct Scope{Scope(){gridless_fixture_mode=true;}~Scope(){gridless_fixture_mode=false;}} scope;
+    // Exercise the existing real planner, source motion, authored child frames,
+    // exact resource validation, VM snapshots and cold resumes with NO grid.
+    sparse_point_uses_complete_room_plan();ordinary_go_here_sparse();
+    general_slot_source_choices();source_standing_before_walking();
+    architecture_room_portal_restore();architecture_room_invalidation();
+    collision_routes();source_soft_failure_room_graph();source_soft_failure_alternatives();
+    unplaced_same_run_failure_timing();unplaced_child_interruption_and_placement();
 }
-int main(){try{unplaced_same_run_failure_timing();unplaced_child_interruption_and_placement();failed_attempt_retains_curroute();authenticated_slot_between_floors();architecture_room_portal_restore();architecture_room_invalidation();source_standing_before_walking();general_slot_source_choices();immediate_routing_interruption();immediate_routing_service();authenticated_transient_relative_routes();deferred_relative_facing();parked_collision_failure_tree();ordinary_go_here_sparse();authenticated_circle_routes();face_anywhere_live_range_continuation();source_soft_failure_room_graph();source_soft_failure_alternatives();authenticated_range_routes();range_retry_and_replay();range_callback_boundaries();range_failure_metadata();source_circle_routes();generic_ranked_sparse_choices();geometry_tests();collision_routes();execution_tests();self_anchor_tests();sparse_point_uses_complete_room_plan();std::cout<<checks<<" source exact SLOT routing checks passed\n";return 0;}
+void nested_source_legacy_geometry(){
+    gridless_fixture_mode=true;Fixture live;gridless_fixture_mode=false;
+    float heading=0;install_sparse_services(live,heading);unsigned allocations=0;
+    live.route.set_dense_grid_provider([&](std::string*){++allocations;return &live.grid;});
+    live.start();require(live.route.tick(1),"finish the real source BeginTurn before admitting a portal child");
+    const auto original=live.route.capture_local_session_route(owner);
+    require(original&&original->source_sparse&&!live.route.has_grid()&&!allocations,
+        "a real sparse parent owns its history without a dense allocation");
+    constexpr odh::CodeOwner child_owner=88;
+    require(live.world.create(10,odh::EntityKind::object)&&live.world.set_position(10,{12,12,1,0})&&live.world.set_ui_ghost(10,true)&&
+        live.vm.install_owner(child_owner,{{odh::routine_key(4100),{0x8002,{{27,254,255,{10,0,254,255,10,0,5,0}}},{},odh::Bhav::Metadata{0,4,4,0}}}}),
+        "install actual historical UI-marker legacy child under a separate owner");
+    require(live.route.call_external_frame({odh::routine_key(4100),{7,10,10,child_owner},{}})&&live.vm.run(8)==odh::VmStatus::waiting,
+        "source parent suspends beneath a real child that demands legacy geometry");
+    std::string why;const auto stack=live.route.capture_session_route_stack(owner,&why);
+    if(!stack)throw std::runtime_error("mixed source/dense stack capture: "+why);
+    require(allocations==1&&live.route.has_grid()&&stack->jobs.size()==2&&stack->jobs.front().source_sparse&&
+        stack->jobs.front().ticket==original->ticket&&!odh::route_job_requires_dense_grid(stack->jobs.front())&&
+        odh::route_job_requires_dense_grid(stack->jobs.back())&&odh::route_stack_requires_dense_grid(*stack),
+        "lazy dense child preserves the exact sparse parent and classifies the whole mixed stack");
+    require(stack->jobs.back().frame.state==odh::RouteFrameState::initial&&stack->jobs.back().walking_started&&
+        stack->jobs.front().walking_started&&!live.world.find(7)->static_footprint,
+        "prewalk child inherits only the effective ancestor-owned footprint; it has not taken a child tick");
+    gridless_fixture_mode=true;Fixture cold(false);gridless_fixture_mode=false;
+    require(cold.world.restore_snapshot(live.world.snapshot())&&cold.vm.install_owner(child_owner,
+        {{odh::routine_key(4100),{0x8002,{{27,254,255,{10,0,254,255,10,0,5,0}}},{},odh::Bhav::Metadata{0,4,4,0}}}})&&cold.vm.restore_snapshot(live.vm.snapshot()),
+        "recreate actual mixed source/legacy World and VM without geometry");
+    float cold_heading=0;install_sparse_services(cold,cold_heading);
+    require(!cold.route.restore_session_route_stack(*stack,owner,&why)&&!cold.route.has_grid(),
+        "cold refuses a genuinely dense child until host supplies its actual grid");
+    require(cold.route.attach_grid(cold.grid),"cold host supplies actual legacy geometry");
+    auto broken_footprint=*stack;broken_footprint.jobs.back().walking_started=false;
+    require(!cold.route.restore_session_route_stack(broken_footprint,owner,&why),
+        "cold still rejects a prewalk child that drops the inherited effective footprint state");
+    auto broken_parent=*stack;++broken_parent.jobs.front().ticket;
+    require(!cold.route.restore_session_route_stack(broken_parent,owner,&why),
+        "inherited effective footprint cannot conceal a changed source ancestor ticket");
+    require(cold.route.restore_session_route_stack(*stack,owner,&why),
+        "cold mixed stack retains parent and child after one explicit dense resource admission");
+    gridless_fixture_mode=true;Fixture refused;gridless_fixture_mode=false;
+    float refused_heading=0;install_sparse_services(refused,refused_heading);
+    unsigned refusals=0;refused.route.set_dense_grid_provider([&](std::string* why)->odh::RouteGrid*{++refusals;if(why)*why="mixed-stack owned dense budget";return nullptr;});
+    refused.start();require(refused.route.tick(1),"refusal fixture reaches the same legitimate walking parent phase");
+    const auto original_pending=*refused.vm.pending();
+    require(refused.world.create(10,odh::EntityKind::object)&&refused.world.set_position(10,{12,12,1,0})&&refused.world.set_ui_ghost(10,true)&&
+        refused.vm.install_owner(child_owner,{{odh::routine_key(4100),{0x8002,{{27,254,255,{10,0,254,255,10,0,5,0}}},{},odh::Bhav::Metadata{0,4,4,0}}}})&&
+        refused.route.call_external_frame({odh::routine_key(4100),{7,10,10,child_owner},{}})&&refused.vm.run(8)==odh::VmStatus::fault,
+        "real nested legacy admission reports a genuine dense budget failure");
+    require(refusals==1&&!refused.route.has_grid()&&refused.route.active()&&
+        std::any_of(refused.vm.suspended_pending().begin(),refused.vm.suspended_pending().end(),[&](const auto& wait){return wait.ticket==original_pending.ticket;})&&
+        refused.route.diagnostic().find("mixed-stack owned dense budget")!=std::string::npos,
+        "refused child retains the original suspended source VM ticket and routing parent without fabricated completion");
+}
+void lazy_dense_backend(){
+    gridless_fixture_mode=true;
+    Fixture legacy;
+    gridless_fixture_mode=false;
+    require(!legacy.route.has_grid(),"legacy controller begins without eager geometry");
+    legacy.start();
+    const auto saved=legacy.route.capture_local_session_route(owner);
+    require(legacy.route.has_grid()&&legacy.dense_preparations==1&&saved&&odh::route_local_requires_dense_grid(*saved),
+        "real legacy path demands the actual owned grid once before its validator and A* run");
+    legacy.finish();
+    gridless_fixture_mode=true;Fixture refused;gridless_fixture_mode=false;
+    unsigned calls=0;refused.route.set_dense_grid_provider([&](std::string* why)->odh::RouteGrid*{
+        ++calls;if(why)*why="owned route cell budget refused real dense demand";return nullptr;});
+    const auto before=refused.world.snapshot();
+    require(refused.vm.start(odh::routine_key(4116),{7,7,9,owner},{8})==odh::VmStatus::running&&
+        refused.vm.run(8)==odh::VmStatus::fault&&calls==1&&!refused.route.has_grid()&&!refused.route.active()&&
+        refused.route.diagnostic().find("owned route cell budget")!=std::string::npos&&
+        refused.world.find(7)->position==before.entities.front().position,
+        "dense budget refusal remains explicit unsupported without a fabricated source false or movement");
+    odh::RouteStackSnapshot stack;odh::RouteJobSnapshot job;stack.jobs.push_back(job);
+    require(odh::route_stack_requires_dense_grid(stack),"unknown/legacy stack conservatively requires dense validation");
+    stack.jobs.front().deferred_room_route=true;
+    require(!odh::route_stack_requires_dense_grid(stack),"deferred portal lifecycle has no local grid demand until actual replay");
+    stack.jobs.push_back(job);
+    require(odh::route_stack_requires_dense_grid(stack),"one genuine dense parent retains geometry ownership in a mixed stack");
+}
+
+}
+int main(){try{gridless_source_matrix();lazy_dense_backend();nested_source_legacy_geometry();unplaced_same_run_failure_timing();unplaced_child_interruption_and_placement();failed_attempt_retains_curroute();authenticated_slot_between_floors();architecture_room_portal_restore();architecture_room_invalidation();source_standing_before_walking();general_slot_source_choices();immediate_routing_interruption();immediate_routing_service();authenticated_transient_relative_routes();deferred_relative_facing();parked_collision_failure_tree();ordinary_go_here_sparse();authenticated_circle_routes();face_anywhere_live_range_continuation();source_soft_failure_room_graph();source_soft_failure_alternatives();authenticated_range_routes();range_retry_and_replay();range_callback_boundaries();range_failure_metadata();source_circle_routes();generic_ranked_sparse_choices();geometry_tests();collision_routes();execution_tests();self_anchor_tests();sparse_point_uses_complete_room_plan();std::cout<<checks<<" source exact SLOT routing checks passed\n";return 0;}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

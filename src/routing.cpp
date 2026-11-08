@@ -1212,6 +1212,7 @@ bool Routing::valid_local_session_job(const Job& job,std::optional<CodeOwner> ve
            !vm_->pending()||vm_->pending()->ticket!=job.ticket||vm_->run_generation()!=job.run_generation)return reject("general source route actor or VM changed");
         return true;
     }
+    if(!job.source_sparse&&!grid_)return reject("legacy route has no actual dense grid");
     if(!job.same_room_verified&&!job.source_sparse&&!job.room_route_invalid)return reject("route has no verified same-room proof");
     if(job.external_frame_active||job.external_frame_call)
         return reject("route is inside an external BHAV call");
@@ -2159,7 +2160,7 @@ bool Routing::valid_session_route_stack(const RouteStackSnapshot& saved,bool req
             const auto* slot=table?slot_of_type(*table,3,origin.slot_index):nullptr;
             if(!slot||table->version!=origin.slot_version||!same_slot_record(*slot,origin.slot))
                 return reject("unplaced room failure lost its exact installed SLOT");
-        }else if(!grid_)return reject("spatial route stack has no actual grid");
+        }else if(route_job_requires_dense_grid(job)&&!grid_)return reject("legacy route stack has no actual dense grid");
         if(job.deferred_room_route) {
             if(!room_portal_step_||!room_pair_||!route_grid_refresh_)
                 return reject("deferred route continuation services are unavailable");
@@ -2681,6 +2682,44 @@ std::optional<bool> Routing::try_next_circle_goal() {
     job_->frame.state=job_->path.size()==1?RouteFrameState::turn_only:RouteFrameState::walking;
     diagnostic_.clear();return true;
 }
+bool route_local_requires_dense_grid(const LocalRouteSnapshot& job) noexcept {
+    return !job.source_sparse&&!job.source_choices&&!job.look_towards;
+}
+bool route_job_requires_dense_grid(const RouteJobSnapshot& job) noexcept {
+    return route_local_requires_dense_grid(job)&&!job.unplaced_room_failure&&!job.deferred_room_route;
+}
+bool route_stack_requires_dense_grid(const RouteStackSnapshot& saved) noexcept {
+    return std::any_of(saved.jobs.begin(),saved.jobs.end(),route_job_requires_dense_grid);
+}
+bool Routing::prepare_dense_grid(const VmFrame& frame,const Instruction& instruction,const VmDispatch& dispatch){
+    if(grid_)return true;
+    if(!dense_grid_provider_){diagnostic_="legacy routing requires its actual prepared dense grid";return false;}
+    if(!placement_source_matches(frame,instruction,dispatch,true)){
+        diagnostic_="dense grid preparation lacks the actual primitive or authenticated portal replay";return false;
+    }
+    const auto* actor=world_.frame_entity(frame,VmEntityRole::caller);
+    const auto* target=world_.frame_entity(frame,VmEntityRole::stack_object);
+    if(!actor||!target){diagnostic_="dense grid preparation lost its live participants";return false;}
+    const auto actor_ref=WorldEntityReference{actor->id,actor->generation},target_ref=WorldEntityReference{target->id,target->generation};
+    const auto actor_position=actor->position,target_position=target->position;
+    const auto actor_attachment=actor->attachment,target_attachment=target->attachment;
+    const auto run=vm_->run_generation();
+    RouteGrid* prepared=nullptr;std::string error;
+    try {
+        struct Guard{bool& busy;explicit Guard(bool& value):busy(value){busy=true;}~Guard(){busy=false;}} guard(executing_);
+        prepared=dense_grid_provider_(&error);
+    }catch(const std::exception& failure){diagnostic_=std::string("dense route grid preparation failed: ")+failure.what();return false;}
+    if(!prepared){diagnostic_=error.empty()?"dense route grid preparation was refused":std::move(error);return false;}
+    actor=world_.resolve_reference(actor_ref);target=world_.resolve_reference(target_ref);
+    if(!actor||!target||!(actor->position==actor_position)||!(target->position==target_position)||
+       !placement_attachment_equal(actor->attachment,actor_attachment)||!placement_attachment_equal(target->attachment,target_attachment)||
+       vm_->run_generation()!=run||!placement_source_matches(frame,instruction,dispatch,true)){
+        diagnostic_="dense grid preparation changed its actual source participants or dispatch";return false;
+    }
+    // This is additive geometry for the legacy request. Any existing parent is
+    // a gridless source lifecycle, since an admitted legacy parent owns a grid.
+    grid_=prepared;return true;
+}
 bool Routing::attach_grid(RouteGrid& value){
     if(executing_||grid_)return false;
     if(job_&&!job_->unplaced_room_failure)return false;
@@ -2778,8 +2817,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         }
     }
     diagnostic_.clear();
-    if(look_towards){if(!grid_)return unsupported("LookTowards requires its actual prepared route context");
-        return request_look_towards(frame,i,dispatch,nested_request);}
+    if(look_towards)return request_look_towards(frame,i,dispatch,nested_request);
     const auto* relative_target=goto_relative?world_.frame_entity(frame,VmEntityRole::stack_object):nullptr;
     const bool ordinary_go_here_relative=relative_target&&!relative_target->ui_ghost&&is_source_ordinary_go_here_instruction(i);
     const bool saved_go_here_relative=goto_relative&&
@@ -2952,7 +2990,6 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             return {PrimitiveDisposition::goto_false,"source InitRoutes has no room route"};
         }
     }
-    if(!grid_)return unsupported("positioned routing requires its actual prepared grid");
     if(!goto_relative||ranged_goto_relative) {
         if(!slot) return {PrimitiveDisposition::goto_false,{}};
         // Door range routing has separate explicit scoring and host validation.
@@ -3007,6 +3044,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         return unsupported("routing requires positioned free avatar and target on one level");
     if(nested_request && (actor->id!=job_->actor || actor->generation!=job_->actor_generation))
         return unsupported("nested Route45 changed the active avatar identity");
+    if(!sparse_source_requested&&!prepare_dense_grid(frame,i,dispatch))return unsupported(diagnostic_);
     std::optional<std::vector<LiveAttemptWalkIdentity>> captured_sparse_consideration;
     if(sparse_source_requested){
         if(!source_sparse_services_.capture_avatars_to_consider)
@@ -3642,6 +3680,22 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     }else if(path.points.size()==1) frame_context.state=RouteFrameState::turn_only;
     if(ordinary_go_here_relative){const auto* live_target=world_.frame_entity(frame,VmEntityRole::stack_object);
         if(!live_target||live_target->ui_ghost)return unsupported("ordinary GoHere target changed its source membership during planning");}
+    // StartWalkAnimation removes the shared avatar obstacle; only the root
+    // PreExit restores it. A child can be admitted before its own first walk
+    // tick while its exact source ancestor already owns that obstacle class.
+    bool inherited_source_footprint=false;
+    if(nested_request&&!sparse_snapshot&&!actor->static_footprint&&job_->walking_started&&
+       (job_->source_sparse||job_->source_choices)&&job_->actor==actor->id&&
+       job_->actor_generation==actor->generation&&job_->run_generation==vm_->run_generation()&&
+       placement_source_matches(frame,i,dispatch,true)){
+        std::size_t matches=0;
+        const auto owns=[&](const VmPending& wait){return wait.ticket==job_->ticket&&
+            wait.context.caller==job_->actor&&(wait.instruction.instruction.opcode==45||wait.instruction.instruction.opcode==27);};
+        for(const auto& wait:vm_->suspended_pending())if(owns(wait))++matches;
+        for(const auto& continuation:vm_->immediate_continuations())
+            if(continuation.parent_pending&&owns(*continuation.parent_pending))++matches;
+        inherited_source_footprint=matches==1;
+    }
     if(nested_request) suspended_jobs_.push_back(std::move(*job_));
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
              *actor->position,*target->position,actor->radian_direction,frame_context,
@@ -3656,7 +3710,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     job_->same_room_verified=same_room_verified;
     // BeginWalk can turn before StartWalkAnimation. A nested route inherits
     // the avatar's current obstacle class; its own locomotion is still pending.
-    if(sparse_snapshot)job_->walking_started=!actor->static_footprint;
+    if(sparse_snapshot||inherited_source_footprint)job_->walking_started=!actor->static_footprint;
     job_->source_sparse=std::move(sparse_snapshot);
     job_->source_motion=std::move(sparse_motion);
     job_->sparse_consideration=std::move(captured_sparse_consideration);

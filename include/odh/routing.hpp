@@ -372,6 +372,12 @@ struct RouteStackSnapshot {
     std::vector<RoutePortalOwnerSnapshot> portal_owners;
     std::uint64_t portal_planned_calls=0,portal_returns=0,portal_transitions=0;
 };
+// Geometry ownership is derived from the saved execution variant, not actor kind.
+// Source planning/choices, turn-only, no-room and deferred portal frames do not
+// consume dense A* cells. Resource/lifecycle validity is still checked on restore.
+bool route_local_requires_dense_grid(const LocalRouteSnapshot&) noexcept;
+bool route_job_requires_dense_grid(const RouteJobSnapshot&) noexcept;
+bool route_stack_requires_dense_grid(const RouteStackSnapshot&) noexcept;
 // Value-only source WallsChanged event; preserves all jobs and their history.
 void invalidate_session_room_routes(RouteStackSnapshot&) noexcept;
 // Explicit old-wire upgrade against the already normalized owning VM.
@@ -418,6 +424,8 @@ using RouteGoalValidator=std::function<bool(const VmFrame&,RoutePoint)>;
 using StairGotoRelativeValidator=std::function<bool(const VmFrame&,const Instruction&)>;
 // Rebuilds the active room grid after an external portal frame moved the avatar.
 using RouteGridRefresh=std::function<bool(const EntityPosition&)>;
+// Host owns the actual bounded cache. Invoked only for a real legacy/A* demand.
+using RouteDenseGridProvider=std::function<RouteGrid*(std::string*)>;
 // Recomputes the next Portal15 call after an external portal frame returns
 // false. The provider owns room-graph policy and must exclude the failed edge;
 // Routing bounds retries and still validates every VM ticket and CodeOwner.
@@ -560,10 +568,14 @@ public:
             PreRankedSlotGoalProvider goals={},RouteLimits limits={})
         :world_(world),grid_(&grid),globals_(globals),ranked_goals_(std::move(goals)),limits_(limits) {}
     // The same controller can own a pre-walk failure without allocating geometry.
-    Routing(World& world,const SlotTable& globals,RouteLimits limits={})
-        :world_(world),globals_(globals),limits_(limits) {}
+    Routing(World& world,const SlotTable& globals,RouteLimits limits={},PreRankedSlotGoalProvider goals={})
+        :world_(world),globals_(globals),ranked_goals_(std::move(goals)),limits_(limits) {}
     bool has_grid() const noexcept {return grid_!=nullptr;}
     bool attach_grid(RouteGrid&);
+    void set_dense_grid_provider(RouteDenseGridProvider provider){
+        if(executing_||job_)throw std::logic_error("cannot replace dense grid provider while routing");
+        dense_grid_provider_=std::move(provider);
+    }
     void set_unplaced_room_failure_provider(RouteUnplacedRoomFailureProvider provider){
         if(executing_||job_)throw std::logic_error("cannot replace room proof while routing");
         unplaced_room_failure_=std::move(provider);
@@ -868,6 +880,8 @@ private:
     bool finish(bool result,std::string reason);
     void cancel_chain(const std::string& reason);
     World& world_;
+    bool prepare_dense_grid(const VmFrame&,const Instruction&,const VmDispatch&);
+    RouteDenseGridProvider dense_grid_provider_;
     RouteGrid* grid_=nullptr;
     RouteGrid& grid() const {
         if(!grid_)throw std::logic_error("spatial routing has no prepared grid");
