@@ -149,6 +149,10 @@ enum class RouteExternalFramePurpose : std::uint8_t { portal=0,sitting=1,failure
 // flags/counters/tail never confer target authority. Callers must separately
 // prove the actual target is ordinary (not a historical UI-only ghost marker).
 bool is_source_ordinary_go_here_instruction(const Instruction&) noexcept;
+// Native historical UI-only marker classification requires BOTH this exact
+// request and an actual ghost target. Identical bytes on an ordinary target
+// retain the original source-relative semantics.
+bool is_legacy_ui_go_here_request(const Instruction&,bool target_is_ui_ghost) noexcept;
 // Defined source opcode27 locations/directions: -2, -1, 0..7. Other enum
 // values remain explicitly unsupported. Execute ignores both counters, the
 // eighth operand byte and all flag bits except NoFailureTrees (2).
@@ -345,8 +349,12 @@ struct RouteJobSnapshot : LocalRouteSnapshot {
     std::optional<SourceUnplacedRoomFailure> unplaced_room_failure;
 };
 // Pure structural proof; live controller restore additionally authenticates the
-// installed SLOT through its original StackObject/global resource provider.
+// installed45 SLOT through its source resource provider, or reconstructs the
+// exact transient27 SLOT from its authenticated original instruction.
 bool is_source_unplaced_room_failure(const RouteJobSnapshot&);
+// Shared operand policy: Route45 flag byte4/bit0; relative27 byte6/bit1.
+// Unknown instruction/profile has no policy, never an inferred sourceFalse.
+std::optional<bool> source_route_failure_tree_policy(const Instruction&) noexcept;
 // Host-owned room graph state. Core capture leaves this list empty; the host
 // fills and authenticates it before writing a session. Core restore validates
 // its ticket/call linkage and never performs graph discovery or EP5 calls.

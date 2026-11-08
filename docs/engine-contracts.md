@@ -44,6 +44,19 @@ Retirar um objeto com conteúdo precisa conservar sua identidade durante as
 consultas e posicionar os filhos pelos serviços reais. Criação, inicialização,
 movimento e retirada precisam atualizar os mesmos donos e registros.
 
+Na criação comum por um script, o objeto precisa existir e terminar sua
+inicialização e seu posicionamento antes de o script continuar. Apenas a próxima
+execução própria do novo objeto fica agendada. Adiar a criação até todos os
+outros objetos terminarem pode fazer várias ações pedirem algo que já deveria
+existir. As restrições de posição e de duplicação continuam sendo conferidas.
+
+Uma ação chamada logo após a criação recebe o número do novo objeto no primeiro
+argumento e no temporário 0, antes de executar. A referência de objeto do script
+que a chamou permanece preservada. Por exemplo: se a inicialização remover um
+objeto e outro reutilizar seu número, isso não autoriza executar a ação no
+substituto. Esses contratos são internos e experimentais; não definem uma nova
+API pública para mods.
+
 ## Scripts e tempo
 
 Ações, consultas e filas têm estados próprios. Uma consulta descartável não

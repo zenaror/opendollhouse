@@ -211,6 +211,9 @@ std::int32_t floor_tile(std::int32_t coordinate) {
     return quotient;
 }
 }
+bool is_legacy_ui_go_here_request(const Instruction& i,bool target_is_ui_ghost) noexcept {
+    return i.opcode==27&&target_is_ui_ghost&&i.operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0};
+}
 bool is_source_ordinary_go_here_instruction(const Instruction& i) noexcept {
     const auto request=decode_source_goto_relative_position(i);
     return request&&request->location==-2&&request->direction==-1;
@@ -2152,14 +2155,19 @@ bool Routing::valid_session_route_stack(const RouteStackSnapshot& saved,bool req
             !route_instruction_equal(*job.replay_instruction,pending.instruction.instruction))))
             return reject("deferred route replay does not match its original instruction");
         if(job.unplaced_room_failure){
-            if(!is_source_unplaced_room_failure(job)||job.call_failure_trees!=((pending.instruction.instruction.operands[4]&1U)==0&&index==0))
+            if(is_legacy_ui_go_here_request(pending.instruction.instruction,target->ui_ghost))
+                return reject("legacy UI-only marker cannot carry source unplaced relative failure");
+            const auto policy=source_route_failure_tree_policy(pending.instruction.instruction);
+            if(!policy||!is_source_unplaced_room_failure(job)||job.call_failure_trees!=(*policy&&index==0))
                 return reject("unplaced room failure lifecycle differs from its source request");
             const auto& origin=*job.unplaced_room_failure;const auto& op=pending.instruction.instruction;
-            const auto scope=op.operands[2]|(op.operands[3]<<8);
-            const SlotTable* table=scope==2?&globals_:(stack_object_slots_?stack_object_slots_(job.route_frame):nullptr);
+            const auto scope=op.operands[2]|(op.operands[3]<<8);std::optional<SlotTable> transient;
+            const SlotTable* table=nullptr;
+            if(op.opcode==27){transient=make_source_goto_relative_slot(op);if(transient)table=&*transient;}
+            else table=scope==2?&globals_:(stack_object_slots_?stack_object_slots_(job.route_frame):nullptr);
             const auto* slot=table?slot_of_type(*table,3,origin.slot_index):nullptr;
             if(!slot||table->version!=origin.slot_version||!same_slot_record(*slot,origin.slot))
-                return reject("unplaced room failure lost its exact installed SLOT");
+                return reject("unplaced room failure lost its exact source SLOT");
         }else if(route_job_requires_dense_grid(job)&&!grid_)return reject("legacy route stack has no actual dense grid");
         if(job.deferred_room_route) {
             if(!room_portal_step_||!room_pair_||!route_grid_refresh_)
@@ -2726,19 +2734,30 @@ bool Routing::attach_grid(RouteGrid& value){
     for(const auto& parent:suspended_jobs_)if(!parent.unplaced_room_failure)return false;
     grid_=&value;return true;
 }
+std::optional<bool> source_route_failure_tree_policy(const Instruction& op) noexcept {
+    if(op.opcode==27){const auto relative=decode_source_goto_relative_position(op);
+        return relative?std::optional<bool>{!relative->no_failure_trees}:std::nullopt;}
+    const auto scope=op.operands[2]|(op.operands[3]<<8);
+    if(op.opcode!=45||scope>2||(op.operands[4]&~1U)||op.operands[5]||op.operands[6]||op.operands[7])return {};
+    return (op.operands[4]&1U)==0;
+}
 bool is_source_unplaced_room_failure(const RouteJobSnapshot& job){
     if(!job.unplaced_room_failure)return false;
     const auto& origin=*job.unplaced_room_failure;const auto& op=job.pending.instruction.instruction;
-    const auto scope=op.operands[2]|(op.operands[3]<<8);
-    std::size_t index=op.operands[0]|(op.operands[1]<<8);
-    if(scope==0){if(index>=job.route_frame.arguments.size()||job.route_frame.arguments[index]<0)return false;
-        index=static_cast<std::size_t>(job.route_frame.arguments[index]);}
-    const bool policy=(op.operands[4]&1U)==0;
-    if(op.opcode!=45||scope>2||(op.operands[4]&~1U)||op.operands[5]||op.operands[6]||op.operands[7]||
-       origin.slot_version<4||origin.slot_version>10||origin.slot_index!=index||origin.slot_index>65535||
+    const auto policy=source_route_failure_tree_policy(op);if(!policy)return false;
+    std::size_t index=0;
+    if(op.opcode==27){const auto transient=make_source_goto_relative_slot(op);
+        if(!transient||origin.slot_version!=transient->version||origin.slot_index||
+           !same_slot_record(origin.slot,transient->records.front()))return false;
+    }else{
+        const auto scope=op.operands[2]|(op.operands[3]<<8);index=op.operands[0]|(op.operands[1]<<8);
+        if(scope==0){if(index>=job.route_frame.arguments.size()||job.route_frame.arguments[index]<0)return false;
+            index=static_cast<std::size_t>(job.route_frame.arguments[index]);}
+    }
+    if(origin.slot_version<4||origin.slot_version>10||origin.slot_index!=index||origin.slot_index>65535||
        origin.slot.type!=3||(origin.slot.flags&0x0800U)||!origin.target_room||
        job.failure_code!=2||job.failure_blocker||job.failure_reason.empty()||
-       (job.call_failure_trees&&!policy)||job.failure_pending==job.failure_tree_invoked||
+       (job.call_failure_trees&&!*policy)||job.failure_pending==job.failure_tree_invoked||
        (job.failure_tree_invoked&&(!job.call_failure_trees||!is_source_failure_tree_continuation(job)))||
        (job.failure_pending&&(job.external_frame_active||(job.frame.state!=RouteFrameState::initial&&job.frame.state!=RouteFrameState::failed)))||
        job.deferred_room_route||job.room_context_open||job.room_route_replan_active||
@@ -2827,8 +2846,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     // exact old raw instruction plus explicit ghost target selects that legacy
     // path, not bit4 (which the source never uses). Persisted marker ownership
     // is separately authenticated by the session/host manifest.
-    const bool legacy_ui_go_here=goto_relative&&relative_target&&relative_target->ui_ghost&&
-        i.operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0};
+    const bool legacy_ui_go_here=relative_target&&is_legacy_ui_go_here_request(i,relative_target->ui_ghost);
     const bool bounded_goto_relative=source_exact_relative(i)&&!legacy_ui_go_here;
     // Both 16-bit counters are ignored by the source Execute. Location picks
     // a sector mask or AnywhereNear; Direction independently selects facing.
@@ -2909,18 +2927,22 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const bool source_failure_trees=goto_relative?
         (relative_request&&!relative_request->no_failure_trees):
         ((source_point_slot||source_circle_slot||source_range_slot||source_generic_sparse_slot)&&(i.operands[4]&1U)==0);
-    if(!goto_relative){
-        if(!slot)return {PrimitiveDisposition::goto_false,{}};
+    if(!goto_relative||(relative_request&&!legacy_ui_go_here)){
+        // Both source primitives create the same routing frame. Relative27
+        // owns this exact transient SLOT even when no installed SLOT scorer
+        // is needed for a room search that fails before local planning.
+        const auto* unplaced_slot=goto_relative?slot_of_type(*selected_slots,3,0):slot;
+        if(!unplaced_slot)return {PrimitiveDisposition::goto_false,{}};
         const auto* actor=world_.frame_entity(frame,VmEntityRole::caller);
         const auto* target=world_.frame_entity(frame,VmEntityRole::stack_object);
         if(!target)return {PrimitiveDisposition::goto_false,{}};
         if(actor&&!actor->position){
             if(actor->kind!=EntityKind::avatar||actor->attachment||!actor->generation||actor->person_data.size()<=62||
                !target->position||target->generation==0||selected_slots->version<4||selected_slots->version>10||
-               (slot->flags&0x0800U)||!unplaced_room_failure_)
-                return unsupported("unplaced Route45 requires a free source avatar, positioned target and complete room proof");
+               (unplaced_slot->flags&0x0800U)||!unplaced_room_failure_)
+                return unsupported("unplaced source Route45/27 requires a free source avatar, positioned target and complete room proof");
             if(nested_request&&(actor->id!=job_->actor||actor->generation!=job_->actor_generation))
-                return unsupported("nested unplaced Route45 changed avatar identity");
+                return unsupported("nested unplaced source Route45/27 changed avatar identity");
             const auto actor_id=actor->id,target_id=target->id;
             const auto actor_generation=actor->generation,target_generation=target->generation;
             const auto target_position=*target->position;
@@ -2929,17 +2951,19 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             actor=world_.find(actor_id);target=world_.resolve_reference({target_id,target_generation});
             if(!room||!*room||!actor||!target||actor->generation!=actor_generation||actor->position||actor->attachment||
                !target->position||!(*target->position==target_position))
-                return unsupported("unplaced Route45 room search is unknown or participants changed");
+                return unsupported("unplaced source Route45/27 room search is unknown or participants changed");
             if(!source_sparse_services_.source_tick||!source_sparse_services_.end_locomotion)
                 return unsupported("unplaced source routing requires authenticated FAILED RNG and PreExit services");
             Job failed{};failed.ticket=dispatch.ticket;failed.actor=actor_id;failed.target=target_id;
             failed.actor_generation=actor_generation;failed.target_generation=target_generation;
             failed.run_generation=vm_->run_generation();failed.expected={-32768,-32768,1,0};
             failed.expected_radian_direction=actor->radian_direction;failed.target_position=target_position;
-            failed.call_failure_trees=(i.operands[4]&1U)==0&&!nested_request;
+            const auto failure_policy=source_route_failure_tree_policy(i);
+            if(!failure_policy)return unsupported("unplaced source routing operand policy unavailable");
+            failed.call_failure_trees=*failure_policy&&!nested_request;
             failed.failure_pending=true;failed.failure_code=2;failed.frame.state=RouteFrameState::failed;
             failed.failure_reason="source InitRoutes has no path from unplaced room 0";
-            failed.unplaced_room_failure=SourceUnplacedRoomFailure{selected_slots->version,slot_index,*slot,*room};
+            failed.unplaced_room_failure=SourceUnplacedRoomFailure{selected_slots->version,slot_index,*unplaced_slot,*room};
             if(nested_request)suspended_jobs_.push_back(std::move(*job_));
             job_=std::move(failed);
             if(job_->call_failure_trees){
@@ -3040,8 +3064,34 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const auto initial_attachment=actor?actor->attachment:std::optional<Attachment>{};
     if(!actor || !target || !actor->position || !target->position || actor->kind!=EntityKind::avatar ||
        actor->person_data.size()<=37 || (actor->attachment&&!source_stand_before_walk) ||
-       (actor->position->level!=target->position->level&&!cross_floor_room_route))
-        return unsupported("routing requires positioned free avatar and target on one level");
+       (actor->position->level!=target->position->level&&!cross_floor_room_route)) {
+        std::ostringstream detail;detail<<"routing requires positioned free avatar and target on one level";
+        detail<<"; opcode="<<i.opcode<<" operands=[";
+        for(std::size_t n=0;n<i.operands.size();++n)detail<<(n?",":"")<<unsigned(i.operands[n]);
+        detail<<"] caller_ref="<<frame.context.caller<<"/"<<frame.context.caller_generation
+              <<" stack_ref="<<frame.context.stack_object<<"/"<<frame.context.stack_object_generation
+              <<" bound="<<frame.context.entity_references_bound;
+        const auto describe=[&](const char* role,const Entity* entity){
+            detail<<"; "<<role<<"={";
+            if(!entity){detail<<"unresolved}";return;}
+            detail<<"id="<<entity->id<<",gen="<<entity->generation<<",kind="<<(entity->kind==EntityKind::avatar?"avatar":"object")
+                  <<",guid="<<(entity->definition?std::to_string(entity->definition->guid):"absent")
+                  <<",dead="<<entity->dead<<",ui_ghost="<<entity->ui_ghost<<",words="<<entity->person_data.size()
+                  <<",posture="<<(entity->person_data.empty()?"absent":std::to_string(entity->person_data[0]))<<",pose=";
+            if(entity->position)detail<<entity->position->x<<","<<entity->position->y<<","<<entity->position->level<<","<<unsigned(entity->position->direction);
+            else detail<<"absent";
+            detail<<",attachment=";
+            if(entity->attachment){const auto& a=*entity->attachment;const auto* container=world_.find(a.container);
+                detail<<a.container<<"/"<<(container?container->generation:0)<<",slot="<<a.slot<<",positioned="<<a.positioned;}
+            else detail<<"absent";
+            detail<<"}";
+        };
+        describe("actor",actor);describe("target",target);
+        detail<<"; source_relative="<<source_relative_route<<",general_slot="<<general_source_slot
+              <<",sparse="<<sparse_source_requested<<",stand_before_walk="<<source_stand_before_walk
+              <<",cross_floor_room_route="<<cross_floor_room_route;
+        return unsupported(detail.str());
+    }
     if(nested_request && (actor->id!=job_->actor || actor->generation!=job_->actor_generation))
         return unsupported("nested Route45 changed the active avatar identity");
     if(!sparse_source_requested&&!prepare_dense_grid(frame,i,dispatch))return unsupported(diagnostic_);

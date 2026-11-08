@@ -1461,6 +1461,68 @@ int main() {
         auto vm = machine(parsed); vm.start(key());
         require(vm.run(1) == odh::VmStatus::returned_true && vm.temps()[0] == 1, "parsed expression executes");
 
+        // Source Create42 callbacks observe created ID in Temp0 and Arg0,
+        // while the caller's exact StackObject remains unchanged. This is an
+        // ordinary child, not a deferred service or a reentrant completion.
+        for(const bool split_budget:{false,true}){
+            bool child_seen=false;unsigned commits=0;
+            odh::Vm callback({{key(),routine({{42,254,255,{}}})},
+                              {key(4097),routine({{50,254,255,{}}})}}, {}, {},
+                [&](const auto& frame,const auto& instruction,const auto& temps,const auto&){
+                    if(instruction.opcode==50){
+                        child_seen=true;
+                        require(temps[0]==321&&temps[19]==-17&&frame.arguments[0]==321&&
+                                frame.context.stack_object==33&&frame.context.stack_object_generation==9,
+                                "first callback instruction sees both Temps and exact unchanged StackObject");
+                        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+                    }
+                    odh::PrimitiveOutcome result{odh::PrimitiveDisposition::call,{}};
+                    result.call=odh::VmCall{key(4097),frame.context,{321,0,0,0}};
+                    result.temp_write=odh::VmTempWrite{0,321};
+                    result.second_temp_write=odh::VmTempWrite{19,-17};
+                    result.call_commit=[&]{++commits;return true;};return result;
+                });
+            odh::VmContext context{11,22,33};context.entity_references_bound=true;
+            context.caller_generation=7;context.callee_generation=8;context.stack_object_generation=9;
+            callback.start(key(),context);
+            if(split_budget){
+                require(callback.run(1)==odh::VmStatus::budget_exhausted&&!child_seen&&
+                        callback.stack().size()==2&&callback.temps()[0]==321&&!callback.pending(),
+                        "call admission uses current budget without inventing pending or running child early");
+            }
+            require(callback.run(split_budget?1:2)==odh::VmStatus::returned_true&&child_seen&&commits==1,
+                    "ordinary callback runs in same execution budget and commits exactly once");
+        }
+        // Negative admission matrix: no Temp/frame/context publication on any
+        // failure, including a second invalid output and commit exceptions.
+        for(unsigned variant=0;variant<8;++variant){
+            bool child_seen=false;
+            odh::Vm rejected({{key(),routine({{42,254,255,{}}})},
+                              {key(4097),routine({{50,254,255,{}}})}}, {}, {},
+                [&](const auto& frame,const auto& instruction,const auto&,const auto&){
+                    if(instruction.opcode==50){child_seen=true;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};}
+                    odh::PrimitiveOutcome result{odh::PrimitiveDisposition::call,{}};
+                    result.call=odh::VmCall{key(variant==0?4098:4097),frame.context,{321}};
+                    result.temp_write=odh::VmTempWrite{0,321};
+                    if(variant==1)result.second_temp_write=odh::VmTempWrite{20,77};
+                    if(variant==7)result.temp_write=odh::VmTempWrite{20,321};
+                    if(variant==2)result.call_commit=[] {return false;};
+                    if(variant==3)result.call_commit=[]()->bool {throw std::runtime_error("callback commit rejection");};
+                    if(variant==4)result.call->return_mode=odh::VmCallReturnMode::immediate;
+                    if(variant==5)result.disposition=odh::PrimitiveDisposition::suspend_and_call;
+                    if(variant==6)result.call->return_mode=odh::VmCallReturnMode::interaction_next_tick;
+                    return result;
+                });
+            rejected.start(key(),{11,22,33});rejected.temps()[0]=77;rejected.temps()[19]=88;
+            const auto before=rejected.temps();bool threw=false;
+            try{(void)rejected.run(3);}catch(const std::runtime_error&){threw=true;}
+            require(rejected.status()==odh::VmStatus::fault&&rejected.temps()==before&&!child_seen&&
+                    rejected.stack().size()==1&&rejected.stack()[0].pc==0&&
+                    rejected.stack()[0].context.stack_object==33&&!rejected.pending()&&
+                    (variant!=3||threw),
+                    "failed/forbidden callback admission preserves Temps, parent context and child absence");
+        }
+
         const odh::Instruction deferred_call{49,254,255,{}};
         odh::Vm call_commit({{key(),routine({deferred_call,expr(2,0,0)})},
                              {key(4097),routine({expr(2,0,0)})}}, {}, {},
@@ -2033,10 +2095,22 @@ int main() {
                                        odh::PrimitiveDisposition::call,
                                        odh::PrimitiveDisposition::unsupported}) {
             paired.disposition=disposition;
-            if (disposition==odh::PrimitiveDisposition::call) paired.call=odh::VmCall{key(),{},{}};
+            // Ordinary calls now accept Temps; immediate calls still refuse
+            // them and preserve all outputs atomically.
+            if (disposition==odh::PrimitiveDisposition::call)
+                paired.call=odh::VmCall{key(),{},{},odh::VmCallReturnMode::immediate};
             else paired.call.reset();
             rejects_outputs(paired);
         }
+        paired.disposition=odh::PrimitiveDisposition::call;
+        paired.call=odh::VmCall{key(),{11,22,33},{}};
+        auto ordinary_second=output_machine(paired);ordinary_second.start(key(),{11,22,33},{17});
+        ordinary_second.temps()[0]=42;
+        require(ordinary_second.run(1)==odh::VmStatus::budget_exhausted&&
+                ordinary_second.stack().size()==2&&ordinary_second.stack()[0].arguments[0]==99&&
+                ordinary_second.temps()[0]==42&&ordinary_second.temps()[19]==-7&&
+                ordinary_second.stack()[0].context.stack_object==33&&!ordinary_second.pending(),
+                "ordinary call admits second-only Temp and parent frame output before child execution");
         paired.disposition=odh::PrimitiveDisposition::goto_true; paired.call.reset();
         auto second_only=output_machine(paired); second_only.start(key(),{11,22,33},{17});
         second_only.temps()[0]=42;

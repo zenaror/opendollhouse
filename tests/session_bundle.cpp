@@ -344,6 +344,19 @@ void unplaced_room_failure_archive_tests(){
         odh::is_source_unplaced_room_failure(cold.runtime_entities.front().route_stack->jobs.front())&&
         !cold.world.entities.front().position,
         "RSTK5 round trip preserves exact pre-selection failure and true position absence");
+    // The same raw27 request has source semantics for an ordinary target;
+    // it is the historical UI path only when the actual target is a ghost.
+    auto relative=bundle;auto& rr=relative.runtime_entities.front();auto& source=rr.route_stack->jobs.front();
+    source.pending.instruction.instruction={27,254,255,{10,0,254,255,10,0,5,0}};source.call_failure_trees=true;
+    const auto transient=odh::make_source_goto_relative_slot(source.pending.instruction.instruction);require(transient.has_value(),"reconstruct ordinary same-byte relative SLOT");
+    source.unplaced_room_failure->slot_version=transient->version;source.unplaced_room_failure->slot_index=0;source.unplaced_room_failure->slot=transient->records.front();
+    rr.vm.pending=source.pending;
+    const auto relative_bytes=odh::encode_session_bundle(relative);require(odh::encode_session_bundle(odh::decode_session_bundle(relative_bytes))==relative_bytes,"ordinary target with historical-marker bytes retains exact RSTK5 source roundtrip");
+    auto ghost=relative;const auto target_id=source.target;auto target=std::find_if(ghost.world.entities.begin(),ghost.world.entities.end(),[&](const auto& e){return e.id==target_id;});require(target!=ghost.world.entities.end(),"wire fixture target exists");target->ui_ghost=true;
+    const auto refuses_legacy=[&](const auto& action){bool refused=false;try{action();}catch(const odh::FormatError& error){refused=std::string(error.what()).find("legacy UI-only marker")!=std::string::npos;}require(refused,"wire guard specifically rejects source NoRoom witness on exact legacy ghost target");};
+    refuses_legacy([&]{(void)odh::encode_session_bundle(ghost);});
+    auto forged_archive=odh::decode_session_archive(relative_bytes);bool replaced=false;for(auto& section:forged_archive.sections)if(section.id==std::array<char,4>{{'W','R','L','D'}}){section.data=odh::encode_world_snapshot(ghost.world);replaced=true;}require(replaced,"replace only exact World ghost flag in otherwise canonical positive archive");
+    refuses_legacy([&]{(void)odh::decode_session_bundle(odh::encode_session_archive(forged_archive));});
     for(unsigned field=0;field<5;++field){auto bad=bundle;auto& route=bad.runtime_entities.front().route_stack->jobs.front();
         if(field==0)route.unplaced_room_failure->slot.flags|=0x0800;
         if(field==1)route.unplaced_room_failure->slot_index++;

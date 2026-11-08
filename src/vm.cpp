@@ -1245,10 +1245,12 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                     outcome.disposition != PrimitiveDisposition::goto_false)
                     throw VmError("primitive stack-object output requires synchronous branch disposition");
                 if (outcome.temp_write || outcome.second_temp_write) {
+                    const bool ordinary_call=outcome.disposition==PrimitiveDisposition::call&&
+                        outcome.call&&outcome.call->return_mode==VmCallReturnMode::ordinary;
                     if (outcome.disposition != PrimitiveDisposition::goto_true &&
                         outcome.disposition != PrimitiveDisposition::goto_true_next_tick &&
-                        outcome.disposition != PrimitiveDisposition::goto_false)
-                        throw VmError("primitive temp output requires synchronous branch disposition");
+                        outcome.disposition != PrimitiveDisposition::goto_false&&!ordinary_call)
+                        throw VmError("primitive temp output requires synchronous branch or ordinary child call");
                     if ((outcome.temp_write && outcome.temp_write->index >= register_temps().size()) ||
                         (outcome.second_temp_write && outcome.second_temp_write->index >= register_temps().size()))
                         throw VmError("primitive temp output index outside registers");
@@ -1364,6 +1366,12 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                         stack_[parent_index].arguments.swap(immediate_parent_output->arguments);
                         stack_[parent_index].locals.swap(immediate_parent_output->locals);
                     }else if(outcome.write)*frame_output(stack_[parent_index],*outcome.write,limits_.frame_variables)=outcome.write->value;
+                    // Ordinary callbacks share caller Temps. Publish only after
+                    // child preflight/admission and authenticated commit succeed,
+                    // before its first instruction in this same run/budget.
+                    // Failed push/commit leaves the original register bank intact.
+                    if(outcome.temp_write)register_temps()[outcome.temp_write->index]=outcome.temp_write->value;
+                    if(outcome.second_temp_write)register_temps()[outcome.second_temp_write->index]=outcome.second_temp_write->value;
                     }
                     break;
                 case PrimitiveDisposition::goto_true:

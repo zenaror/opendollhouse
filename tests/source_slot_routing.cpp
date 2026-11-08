@@ -1771,11 +1771,15 @@ struct UnplacedRouteFixture {
         instructions.push_back({99,254,255,{}});
         return {{odh::routine_key(398),{0x8002,std::move(instructions),{},odh::Bhav::Metadata{0,4,4,0}}}};
     }
-    explicit UnplacedRouteFixture(std::uint8_t flags=0,bool populate=true,bool failure_available=true,bool nested=false):
+    static std::optional<odh::Instruction> operation(std::uint8_t flags,bool relative){
+        if(!relative)return {};
+        return odh::Instruction{27,1,255,{0,0,0,254,0,0,static_cast<std::uint8_t>((flags&1U)?2U:0U),0}};
+    }
+    explicit UnplacedRouteFixture(std::uint8_t flags=0,bool populate=true,bool failure_available=true,bool nested=false,bool relative=false,std::optional<odh::Instruction> exact_operation={}):
         vm(failure_program(failure_available,nested),world.vm_memory(),{},
             [this](const auto& f,const auto& i,const auto& t,const auto& d){
                 if(i.opcode==99){failure_arguments=f.arguments;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};}
-                return route.primitive()(f,i,t,d);},{{owner,program(1,flags)}}){
+                return route.primitive()(f,i,t,d);},{{owner,program(1,flags,exact_operation?exact_operation:operation(flags,relative))}}){
         if(populate)require(world.create(7,odh::EntityKind::avatar,{0,88,3,16})&&world.create(9,odh::EntityKind::object,{0,0,1})&&
             world.set_position(9,{20,20,1,0})&&world.declare_object_word(7,8,0),"unplaced avatar has actual identity, flags and a positioned target");
         route.set_stack_object_slot_table_provider([this](const auto&){return &table;});
@@ -1801,8 +1805,8 @@ struct UnplacedRouteFixture {
     odh::VmStatus start(){require(vm.start(odh::routine_key(4116),{7,7,9,owner},{8})==odh::VmStatus::running,"start exact original route owner");return vm.run(12);}
 };
 void unplaced_same_run_failure_timing(){
-    for(const bool nested:{false,true}){
-        UnplacedRouteFixture live(0,true,true,nested);const auto spatial=live.world.spatial_revision();
+    for(const bool relative:{false,true})for(const bool nested:{false,true}){
+        UnplacedRouteFixture live(0,true,true,nested,relative);const auto spatial=live.world.spatial_revision();
         const auto status=live.start();
         const bool admitted=status==odh::VmStatus::waiting&&live.route.active()&&live.route.external_frame_active()&&
             live.vm.stack().back().key.id==398&&live.route.active_frame_context()->state==odh::RouteFrameState::failed&&
@@ -1836,7 +1840,7 @@ void unplaced_same_run_failure_timing(){
         if(!nested){
             auto state=live.vm.snapshot();state.stack.resize(1);state.pending=saved->jobs.front().pending;
             state.suspended_pending.clear();state.external_frame_return.reset();state.status=odh::VmStatus::waiting;
-            UnplacedRouteFixture staged(0,false);
+            UnplacedRouteFixture staged(0,false,true,false,relative);
             require(staged.world.restore_snapshot(live.world.snapshot())&&staged.vm.restore_snapshot(state),"prepare exact staged source parent VM for static proof validation");
             auto proof=saved->jobs.front();proof.failure_pending=true;proof.failure_tree_invoked=false;
             proof.external_frame_active=false;proof.external_frame_owner=0;proof.external_frame_call.reset();
@@ -1847,15 +1851,22 @@ void unplaced_same_run_failure_timing(){
                     "static API independently rejects wrong witness ticket, run and live target generation");
             }
         }
-        UnplacedRouteFixture cold(0,false,true,nested);
+        UnplacedRouteFixture cold(0,false,true,nested,relative);
         require(cold.world.restore_snapshot(live.world.snapshot())&&cold.vm.restore_snapshot(live.vm.snapshot()),"rebuild actual unplaced World and yielded398 VM");
         auto bad=*saved;bad.jobs.front().unplaced_room_failure->slot.flags|=0x0800;
         require(!cold.route.restore_session_route_stack(bad,owner,&why),"IgnoreRooms cannot borrow a NoRoomRoute witness");
         bad=*saved;bad.jobs.front().unplaced_room_failure->slot_index++;
         require(!cold.route.restore_session_route_stack(bad,owner,&why),"changed exact SLOT index cannot restore");
-        const auto previous=cold.table.records[8].standing;cold.table.records[8].standing++;
-        require(!cold.route.restore_session_route_stack(*saved,owner,&why),"changed installed SLOT bytes cannot restore a valid numeric owner");
-        cold.table.records[8].standing=previous;
+        if(!relative){const auto previous=cold.table.records[8].standing;cold.table.records[8].standing++;
+            require(!cold.route.restore_session_route_stack(*saved,owner,&why),"changed installed SLOT bytes cannot restore a valid numeric owner");
+            cold.table.records[8].standing=previous;
+        }else{
+            bad=*saved;bad.jobs.front().unplaced_room_failure->slot.facing=1;
+            require(!cold.route.restore_session_route_stack(bad,owner,&why),"relative request cannot borrow another transient SLOT facing");
+            bad=*saved;bad.jobs.front().pending.instruction.instruction.operands[6]^=2;
+            require(!odh::is_source_unplaced_room_failure(bad.jobs.front()),"relative NoFailureTrees uses byte6 rather than Route45 byte4");
+            cold.route.set_stack_object_slot_table_provider([](const auto&)->const odh::SlotTable*{throw std::runtime_error("relative cold restore must reconstruct its own transient SLOT");});
+        }
         require(cold.route.restore_session_route_stack(*saved,owner,&why)&&cold.vm.temps()[1]==73&&!cold.route.has_grid(),"cold restore resumes actual yielded child without readmission or artificial geometry");
         for(auto* fixture:{&live,&cold}){
             require(fixture->world.set_person_data(7,62,9)&&fixture->vm.complete(fixture->vm.pending()->ticket,true)&&
@@ -1890,8 +1901,43 @@ void unplaced_same_run_failure_timing(){
             "unknown room, IgnoreRooms and contained absence remain explicit unsupported rather than invented room failure");
     }
 }
+void unplaced_relative_operand_and_failure_policy(){
+    for(const auto location:{0,1,2,3,4,5,6,7,254,255})for(const auto direction:{0,1,2,3,4,5,6,7,254,255})for(const bool disabled:{false,true}){
+        odh::Instruction op{27,1,255,{77,99,static_cast<std::uint8_t>(location),static_cast<std::uint8_t>(direction),55,66,static_cast<std::uint8_t>(disabled?2:0),88}};
+        require(odh::source_route_failure_tree_policy(op)==std::optional<bool>{!disabled},"all admitted relative sectors/facings use the source flag independently of ignored counters");
+        require(odh::make_source_goto_relative_slot(op).has_value(),"admitted relative policy reconstructs exact source transient SLOT");
+    }
+    UnplacedRouteFixture disabled(1,true,false,false,true);
+    require(disabled.start()==odh::VmStatus::returned_false&&!disabled.route.active()&&!disabled.vm.pending()&&disabled.source_ticks==1&&disabled.root_exits==1&&disabled.world.find(7)->person_data[62]==2&&!disabled.world.find(7)->position,
+        "relative NoFailureTrees drains legitimate FAILED/PreExit in same run without child, fake position or geometry");
+    UnplacedRouteFixture missing(0,true,false,false,true);
+    require(missing.start()==odh::VmStatus::fault&&missing.route.active()&&!missing.vm.pending()&&missing.source_ticks==0&&missing.vm.diagnostic().find("failure tree398")!=std::string::npos,
+        "relative source required398 remains explicit unsupported when unavailable");
+    UnplacedRouteFixture unknown(0,true,true,false,true);unknown.room_proved=false;
+    require(unknown.start()==odh::VmStatus::fault&&!unknown.route.active()&&unknown.world.find(7)->person_data[62]!=2,"relative unknown room proof cannot become invented NoRoomRoute");
+    UnplacedRouteFixture contained(0,true,true,false,true);require(contained.world.attach(9,0,7),"relative fixture actual contained unplaced actor");
+    require(contained.start()==odh::VmStatus::fault&&!contained.route.active(),"contained logical absence remains unsupported rather than classified as free out-of-world");
+    UnplacedRouteFixture target_oow(0,true,true,false,true);require(target_oow.world.place_out_of_world(9),"actual relative target placed out of world");
+    require(target_oow.start()==odh::VmStatus::returned_false&&!target_oow.route.active()&&target_oow.room_reads==0&&target_oow.source_ticks==0,"relative source target-OOW guard returnsFalse before creating any routing frame or FAILED tick");
+}
+void unplaced_legacy_marker_parity(){
+    const odh::Instruction operation{27,1,255,{10,0,254,255,10,0,5,0}};
+    require(odh::is_legacy_ui_go_here_request(operation,true)&&!odh::is_legacy_ui_go_here_request(operation,false),"legacy marker classification requires both exact bytes and actual ghost target");
+    UnplacedRouteFixture live(0,true,true,false,true,operation);
+    require(live.start()==odh::VmStatus::waiting&&live.route.external_frame_active(),"identical historical bytes on ordinary target retain real NoRoom398 source behavior");
+    std::string why;const auto saved=live.route.capture_session_route_stack(owner,&why);if(!saved)throw std::runtime_error("ordinary marker-shape source capture: "+why);
+    const auto world=live.world.snapshot();const auto vm=live.vm.snapshot();
+    UnplacedRouteFixture cold(0,false,true,false,true,operation);
+    require(cold.world.restore_snapshot(world)&&cold.vm.restore_snapshot(vm)&&cold.route.restore_session_route_stack(*saved,owner,&why),"ordinary same-byte NoRoom witness remains cold-restorable");
+    UnplacedRouteFixture ghost(0,false,true,false,true,operation);
+    require(ghost.world.restore_snapshot(world)&&ghost.vm.restore_snapshot(vm)&&ghost.world.set_ui_ghost(9,true),"stage exact same source witness with only historical ghost classification changed");
+    require(!ghost.route.restore_session_route_stack(*saved,owner,&why)&&why.find("legacy UI-only marker")!=std::string::npos,"cold validator rejects a legacy ghost witness that live source admission cannot produce");
+    UnplacedRouteFixture legacy(0,true,true,false,true,operation);require(legacy.world.set_ui_ghost(9,true),"set actual legacy UI target before source dispatch");
+    require(legacy.start()==odh::VmStatus::fault&&!legacy.route.active()&&legacy.room_reads==0,"live legacy UI marker keeps its historical path and cannot create source NoRoom witness");
+}
 void unplaced_child_interruption_and_placement(){
-    UnplacedRouteFixture live;const auto child_owner=owner+1;
+    for(const bool relative:{false,true}){
+    UnplacedRouteFixture live(0,true,true,false,relative);const auto child_owner=owner+1;
     const odh::RoutineSet child{{odh::routine_key(4100),{0x8002,
         {{2,254,255,{2,0,77,0,0,5,8,7}}},{},odh::Bhav::Metadata{0,4,4,0}}}};
     require(live.vm.install_owner(child_owner,child)&&live.start()==odh::VmStatus::waiting,"source398 reaches its genuine first child wait");
@@ -1903,7 +1949,7 @@ void unplaced_child_interruption_and_placement(){
     require(immediate&&live.route.parked_for_immediate()&&live.route.tick(1)&&live.source_ticks==0,"real immediate child covers398 without ticking its failed routing parent");
     std::string why;const auto saved=live.route.capture_session_route_stack(owner,&why);
     if(!saved)throw std::runtime_error("source398 immediate capture: "+why);
-    UnplacedRouteFixture cold(0,false);
+    UnplacedRouteFixture cold(0,false,true,false,relative);
     require(cold.vm.install_owner(child_owner,child)&&cold.world.restore_snapshot(live.world.snapshot())&&
         cold.vm.restore_snapshot(live.vm.snapshot())&&cold.route.restore_session_route_stack(*saved,owner,&why),"cold restore retains failed parent, real398 and genuine immediate child together");
     odh::RouteGrid warm_grid{64,64},cold_grid{64,64};
@@ -1918,6 +1964,7 @@ void unplaced_child_interruption_and_placement(){
         fixture->source_ticks==1&&fixture->root_exits==1&&fixture->world.find(7)->person_data[62]==9&&
         fixture->world.find(7)->position==std::optional<odh::EntityPosition>{{4,12,1,0}},
         "warm and cold FAILED continuation preserves actual later placement and child effects");
+    }
 }
 
 void gridless_source_matrix(){
@@ -1928,7 +1975,7 @@ void gridless_source_matrix(){
     general_slot_source_choices();source_standing_before_walking();
     architecture_room_portal_restore();architecture_room_invalidation();
     collision_routes();source_soft_failure_room_graph();source_soft_failure_alternatives();
-    unplaced_same_run_failure_timing();unplaced_child_interruption_and_placement();
+    unplaced_same_run_failure_timing();unplaced_relative_operand_and_failure_policy();unplaced_legacy_marker_parity();unplaced_child_interruption_and_placement();
 }
 void nested_source_legacy_geometry(){
     gridless_fixture_mode=true;Fixture live;gridless_fixture_mode=false;
@@ -2011,5 +2058,5 @@ void lazy_dense_backend(){
 }
 
 }
-int main(){try{gridless_source_matrix();lazy_dense_backend();nested_source_legacy_geometry();unplaced_same_run_failure_timing();unplaced_child_interruption_and_placement();failed_attempt_retains_curroute();authenticated_slot_between_floors();architecture_room_portal_restore();architecture_room_invalidation();source_standing_before_walking();general_slot_source_choices();immediate_routing_interruption();immediate_routing_service();authenticated_transient_relative_routes();deferred_relative_facing();parked_collision_failure_tree();ordinary_go_here_sparse();authenticated_circle_routes();face_anywhere_live_range_continuation();source_soft_failure_room_graph();source_soft_failure_alternatives();authenticated_range_routes();range_retry_and_replay();range_callback_boundaries();range_failure_metadata();source_circle_routes();generic_ranked_sparse_choices();geometry_tests();collision_routes();execution_tests();self_anchor_tests();sparse_point_uses_complete_room_plan();std::cout<<checks<<" source exact SLOT routing checks passed\n";return 0;}
+int main(){try{gridless_source_matrix();lazy_dense_backend();nested_source_legacy_geometry();unplaced_same_run_failure_timing();unplaced_relative_operand_and_failure_policy();unplaced_legacy_marker_parity();unplaced_child_interruption_and_placement();failed_attempt_retains_curroute();authenticated_slot_between_floors();architecture_room_portal_restore();architecture_room_invalidation();source_standing_before_walking();general_slot_source_choices();immediate_routing_interruption();immediate_routing_service();authenticated_transient_relative_routes();deferred_relative_facing();parked_collision_failure_tree();ordinary_go_here_sparse();authenticated_circle_routes();face_anywhere_live_range_continuation();source_soft_failure_room_graph();source_soft_failure_alternatives();authenticated_range_routes();range_retry_and_replay();range_callback_boundaries();range_failure_metadata();source_circle_routes();generic_ranked_sparse_choices();geometry_tests();collision_routes();execution_tests();self_anchor_tests();sparse_point_uses_complete_room_plan();std::cout<<checks<<" source exact SLOT routing checks passed\n";return 0;}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

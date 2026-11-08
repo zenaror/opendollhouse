@@ -1988,12 +1988,15 @@ void validate_route_links(const SessionRuntimeEntity& entity,const Entity& actor
         // was checked above; a suspended parent's pose is historical.
         if(job.unplaced_room_failure){
             const auto& op=job.pending.instruction.instruction;
-            if(!is_source_unplaced_room_failure(job)||
-               job.call_failure_trees!=((op.operands[4]&1U)==0&&i==0)||
+            if(is_legacy_ui_go_here_request(op,target->ui_ghost))
+                throw FormatError("legacy UI-only marker cannot carry source unplaced relative failure");
+            const auto policy=source_route_failure_tree_policy(op);
+            if(!policy||!is_source_unplaced_room_failure(job)||
+               job.call_failure_trees!=(*policy&&i==0)||
                !context_role_matches(job.pending.context,VmEntityRole::caller,job.actor,job.actor_generation)||
                !context_role_matches(job.pending.context,VmEntityRole::stack_object,job.target,job.target_generation))
                 throw FormatError("unplaced room failure lost its exact source request or entity authority");
-            // The controller re-resolves the installed SLOT before restore.
+            // The controller authenticates the installed45 or exact transient27 SLOT before restore.
             // This wire validator grants no movement or placement authority.
             continue;
         }

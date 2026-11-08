@@ -4090,6 +4090,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         // primitive, Caller entity, or substitute VM participates in startup.
         const odh::DefinitionCandidate* global_controller=nullptr;
         bool lifecycle_query=false;
+        std::optional<odh::LiveObjectCreationActiveDispatch> ordinary_dispatch;
         bool selected_subpart=false;
         bool group_part=false;
         std::optional<std::uint32_t> master_guid;
@@ -4107,6 +4108,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::deque<PendingCreateObject> pending_create_objects;
     std::deque<PendingNpcAvatar> pending_npc_avatars;
     std::function<void()> process_lifecycle_npc_avatars;
+    odh::VmPrimitive synchronous_ordinary_object_creation;
     struct LifecycleAuthority {
         odh::Vm* owner=nullptr;
         odh::WorldEntityReference entity;
@@ -6869,22 +6871,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 if(d.check_mode||!d.origin->matches_active_primitive(f,i,d))
                     return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
                         "CreateObjectInstance requires its actual live ordinary primitive dispatch"};
-                const auto plan=odh::capture_create_object_placement(world,f,request);
-                if(plan.status!=odh::CreateObjectPlacementStatus::resolved)
+                if(!synchronous_ordinary_object_creation)
                     return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                        "CreateObjectInstance source placement/frame cannot be resolved (status "+
-                        std::to_string(static_cast<unsigned>(plan.status))+")"};
-                const auto parameter=request.pass_temp0()?t[0]:request.pass_object_ids()?f.context.caller:std::int16_t{0};
-                // Source captures a short only when StackObject is a real
-                // pointer now. A bound nil may still carry a positive raw ID.
-                const auto* stack_object=world.frame_entity(f,odh::VmEntityRole::stack_object);
-                const auto main_stack_object=request.pass_object_ids()&&stack_object?
-                    stack_object->id:std::int16_t{0};
-                if(pending_create_objects.size()>=64)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"CreateObjectInstance queue is full"};
-                pending_create_objects.push_back({const_cast<odh::Vm*>(d.origin),d.ticket,
-                    request,f.context.stack_object,f,d.origin->run_generation(),plan.caller.generation,
-                    plan.direction,plan,parameter,entity_scheduler.running()||simulation_dispatch_running,
-                    main_stack_object});
+                        "ordinary object constructor is not installed at this source boundary"};
+                return synchronous_ordinary_object_creation(f,i,t,d);
             }catch(const std::exception& error){
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
                     std::string("CreateObjectInstance request could not be queued: ")+error.what()};
@@ -17132,7 +17122,23 @@ struct PlacementCandidateProbe {
                     // contract. Ordinary creators must use cached metadata in
                     // dispatch; an unadmitted GUID still trips the same guard.
                     if(pending.lifecycle_query)(void)placement_resources->load(candidate->definition.guid);
-                    else (void)placement_resources->creation_resource(candidate->definition.guid,pending.vm);
+                    else if(pending.ordinary_dispatch){
+                        const auto& proof=*pending.ordinary_dispatch;
+                        const auto admitted=[&]{return pending.vm&&proof.instruction.opcode==42&&
+                            !proof.dispatch.check_mode&&proof.dispatch.origin==pending.vm&&
+                            pending.vm->run_generation()==pending.vm_generation&&pending.source_still_matches()&&
+                            pending.vm->matches_active_primitive(proof.frame,proof.instruction,proof.dispatch)&&[&]{
+                                const auto source_guid=odh::decode_create_object_instance(proof.instruction).guid;
+                                if(source_guid==pending.request.guid)return true;
+                                const auto* root=definition_index->unique(source_guid);
+                                return pending.group_part&&pending.selected_subpart&&root&&root->definition.master_id&&
+                                    root->definition.master_id==candidate->definition.master_id&&
+                                    root->source==candidate->source&&root->asset==candidate->asset;
+                            }();};
+                        if(!admitted())throw odh::FormatError("ordinary creation resource admission lost active42 authority");
+                        (void)placement_resources->load(candidate->definition.guid);
+                        if(!admitted())throw odh::FormatError("ordinary creation source changed during bounded resource admission");
+                    }else (void)placement_resources->creation_resource(candidate->definition.guid,pending.vm);
                 }
                 const Resource object_resource{candidate->source,candidate->asset,candidate->asset.empty()};
                 std::optional<odh::ObjectRuntimeResources> object_resources;
@@ -17750,7 +17756,7 @@ struct PlacementCandidateProbe {
     std::optional<odh::Ttab> create_callback_global_table;
     bool create_callback_global_loaded=false;
     const auto resolve_created_callback=[&](const PendingCreateObject& pending,
-            const ConstructedRuntimeObject& created)->std::optional<odh::VmCall>{
+            const ConstructedRuntimeObject& created,bool ordinary_dispatch=false)->std::optional<odh::VmCall>{
         std::int32_t selector=pending.request.interaction_callback;
         const bool tree=selector==252;
         const bool action_tree=std::any_of(pending.vm->stack().begin(),pending.vm->stack().end(),[](const auto& frame){
@@ -17772,8 +17778,20 @@ struct PlacementCandidateProbe {
         }else if(selector==252||selector==253)selector=pending.vm->temps()[0];
         const bool global=selector<0;
         const auto number=static_cast<std::uint16_t>(selector)&0x7fffU;
-        const auto* target=world.find(pending.stack_object);
-        if(!target)target=world.find(created.id);
+        const auto* target=ordinary_dispatch?
+            world.frame_entity(pending.source_frame,odh::VmEntityRole::stack_object,true):world.find(pending.stack_object);
+        if(ordinary_dispatch){
+            const auto& context=pending.source_frame.context;
+            if(!context.entity_references_bound)throw odh::FormatError("ordinary creation callback lacks captured source references");
+            const auto captured=odh::vm_context_reference(context,odh::VmEntityRole::stack_object);
+            if(!target&&captured.generation)
+                throw odh::FormatError("ordinary creation callback source StackObject expired or was reused during Init");
+        }
+        if(!target){
+            if(!world.is_live_reference({created.id,created.generation}))
+                throw odh::FormatError("creation callback fallback object lost its exact created generation");
+            target=world.find(created.id);
+        }
         if(!target||!target->definition||!definition_index)
             throw odh::FormatError("creation callback target has no exact resource definition");
         const auto* definition=definition_index->unique(target->definition->guid);
@@ -17818,11 +17836,91 @@ struct PlacementCandidateProbe {
         if(installed&&odh::session_loaded_bank_fingerprint(installed->routines())!=
             odh::session_loaded_bank_fingerprint(bank.program->routines()))
             throw odh::FormatError("creation callback owner conflicts with the caller's installed bank");
-        if(!installed&&!pending.vm->install_shared_owner(bank.owner,bank.program))
+        if(!installed&&!ordinary_dispatch&&!pending.vm->install_shared_owner(bank.owner,bank.program))
             throw odh::FormatError("creation callback contextual resource cannot bind to caller");
-        note_installed_resource_owner(*pending.vm,bank.owner);
+        if(installed||!ordinary_dispatch)note_installed_resource_owner(*pending.vm,bank.owner);
         auto context=pending.source_frame.context;context.code_owner=bank.owner;
         return odh::VmCall{key,context,{created.id,0,0,0}};
+    };
+    synchronous_ordinary_object_creation=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+            const odh::Ts1Temps& temps,const odh::VmDispatch& dispatch)->odh::PrimitiveOutcome{
+        const auto reject=[](const std::string& why){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,why};};
+        if(instruction.opcode!=42||!dispatch.origin||dispatch.check_mode||
+           !dispatch.origin->matches_active_primitive(frame,instruction,dispatch))
+            return reject("ordinary object construction requires its exact active source dispatch");
+        const auto request=odh::decode_create_object_instance(instruction);
+        if(request.persist_in_database()||request.use_neighbor())
+            return reject("ordinary object constructor cannot acquire PersistID or avatar neighbor authority");
+        const auto plan=odh::capture_create_object_placement(world,frame,request);
+        if(plan.status!=odh::CreateObjectPlacementStatus::resolved)
+            return reject("ordinary object construction lacks its exact captured placement source");
+        auto* source=const_cast<odh::Vm*>(dispatch.origin);const auto run=source->run_generation();
+        const odh::WorldEntityReference caller{plan.caller.id,plan.caller.generation};const auto parent_depth=source->stack().size();
+        const auto current=[&,source,run,caller,frame,instruction,dispatch]{
+            const auto* body=world.resolve_reference(caller);
+            return body&&!body->dead&&!body->ui_ghost&&source->run_generation()==run&&
+                source->matches_active_primitive(frame,instruction,dispatch);
+        };
+        if(!current())return reject("ordinary object creator lost its exact source body");
+        // Capture actual pointer identity BEFORE Init can delete/reuse any raw
+        // source ID. A bound-nil positive ID stays nil; it never names a later
+        // object merely because the numeric slot becomes occupied.
+        auto callback_source_frame=frame;
+        if(!world.bind_context_live(callback_source_frame.context))return reject("ordinary object callback source references cannot be captured");
+        try{
+            RuntimeObjectConstructionContext pending;
+            pending.vm=source;pending.vm_generation=run;pending.request=request;
+            pending.stack_object=frame.context.stack_object;pending.source_frame=frame;
+            pending.caller_generation=caller.generation;pending.caller_direction=plan.direction;
+            pending.source_still_matches=current;pending.placement=plan;
+            pending.ordinary_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch};
+            pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
+            pending.main_parameter=request.pass_temp0()?temps[0]:request.pass_object_ids()?frame.context.caller:std::int16_t{0};
+            const auto* stack=world.frame_entity(frame,odh::VmEntityRole::stack_object);
+            pending.main_stack_object=request.pass_object_ids()&&stack?stack->id:std::int16_t{0};
+            pending.place_initialized=[&](std::int16_t id,std::string* why){
+                const auto* entity=world.find(id);if(!entity||!current())return false;
+                odh::LiveObjectCreationPlacementSource authority{source,run,id,entity->generation,current};
+                authority.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch};
+                if(!place_new_object_default(id,plan.destination,authority,why,{},plan.direction))return false;
+                entity=world.find(id);
+                if(plan.retry_underneath&&entity&&!entity->position&&!entity->attachment){
+                    const auto* creator=world.find(caller.id);
+                    if(!creator||creator->generation!=caller.generation)return false;
+                    if(creator->position){auto destination=*creator->position;destination.direction=plan.direction;
+                        return place_new_object_default(id,destination,authority,why,odh::ObjectPositionIdentity{creator->id,creator->generation});}
+                }
+                return true;
+            };
+            const auto created=construct_runtime_object(pending);
+            if(host_failed)return reject(last_create_object_diagnostic);
+            if(!current())return reject("ordinary object creation changed its active source during construction");
+            if(!created)return {odh::PrimitiveDisposition::goto_false,{}};
+            if(request.return_immediately()){
+                PendingCreateObject callback_source;callback_source.vm=source;callback_source.ticket=dispatch.ticket;
+                callback_source.request=request;callback_source.stack_object=frame.context.stack_object;
+                callback_source.source_frame=callback_source_frame;callback_source.vm_generation=run;callback_source.caller_generation=caller.generation;
+                const auto callback=resolve_created_callback(callback_source,*created,true);
+                if(callback){
+                    if(!source->prepare_primitive_call(frame,instruction,dispatch,*callback))
+                        return reject("ordinary creation callback failed exact child preflight");
+                    const auto born=odh::WorldEntityReference{created->id,created->generation};
+                    odh::PrimitiveOutcome out{odh::PrimitiveDisposition::call,{}};out.call=*callback;
+                    out.temp_write=odh::VmTempWrite{0,created->id};
+                    out.call_commit=[&,source,run,caller,born,frame,instruction,dispatch,parent_depth]{
+                        const auto* creator=world.resolve_reference(caller);
+                        return creator&&!creator->dead&&!creator->ui_ghost&&world.is_live_reference(born)&&
+                            source->run_generation()==run&&source->matches_active_call_commit(frame,instruction,dispatch,parent_depth);
+                    };
+                    return out;
+                }
+                // A missing callback keeps the successful creation, preserving
+                // source StackObject and Temp0 exactly as the pinned Execute.
+                return {odh::PrimitiveDisposition::goto_true,{}};
+            }
+            odh::PrimitiveOutcome out{odh::PrimitiveDisposition::goto_true,{}};
+            out.stack_object_write=odh::VmStackObjectWrite{created->id};return out;
+        }catch(const std::exception& error){return reject(std::string("synchronous ordinary object creation: ")+error.what());}
     };
     const auto process_pending_create_objects=[&]{
         // Routes can construct before OR during the entity scheduler. Main

@@ -170,12 +170,14 @@ struct PrimitiveOutcome {
     // The latter creates the parent service pending record atomically, retains
     // its exact dispatch ticket, and accepts no other primitive outputs.
     std::optional<VmCall> call = {};
-    // Synchronous branches only. Validated together with frame output before either is published.
+    // Synchronous branches or ordinary child calls. Call Temps publish after child
+    // admission and successful call_commit, before the child executes; a rejected
+    // call preserves them. Immediate/service children do not accept Temp outputs.
     std::optional<VmTempWrite> temp_write = {};
     // Synchronous branches only; may hold any signed identity, independent of World entities.
     // Validated with frame/temp output before publication; other context identities are preserved.
     std::optional<VmStackObjectWrite> stack_object_write = {};
-    // Synchronous branches only; validated with every output, applied after temp_write.
+    // Same branch/ordinary-call contract; validated with every output, applied after temp_write.
     std::optional<VmTempWrite> second_temp_write = {};
     // A primitive may commit external controller state only after the child
     // frame was successfully created. This callback must be atomic and must not
