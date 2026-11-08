@@ -5485,6 +5485,24 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<odh::EntityPosition> route_runtime_start_position;
     std::optional<odh::WorldRoomRouteGrid> unselected_route_grid;
     const auto primary_route_grid=[&]()->decltype(unselected_route_grid)&{return primary_runtime?primary_runtime->route_grid:unselected_route_grid;};
+    constexpr std::size_t household_route_cell_budget=262144;
+    // These are derived value caches, not execution owners. Include every
+    // persistent allocation, including the primary fallback, once by identity.
+    const auto cached_route_grids=[&](const ActorRuntime* omit=nullptr){
+        std::vector<odh::RouteGrid*> grids;
+        if(unselected_route_grid&&unselected_route_grid->grid)grids.push_back(&*unselected_route_grid->grid);
+        // Primary has a separate actor-service registration and is not an
+        // auxiliary member. It owns persistent cells under the SAME cap.
+        if(primary_runtime&&primary_runtime.get()!=omit&&primary_runtime->route_grid&&primary_runtime->route_grid->grid){
+            auto* grid=&*primary_runtime->route_grid->grid;
+            if(std::find(grids.begin(),grids.end(),grid)==grids.end())grids.push_back(grid);
+        }
+        for(auto* actor:auxiliary_actors)if(actor!=omit&&actor->route_grid&&actor->route_grid->grid){
+            auto* grid=&*actor->route_grid->grid;
+            if(std::find(grids.begin(),grids.end(),grid)==grids.end())grids.push_back(grid);
+        }
+        return grids;
+    };
     std::optional<odh::AttemptWalkObstacleSnapshot> runtime_route_obstacle_snapshot;
     std::size_t runtime_route_static_obstacle_count=0;
     std::vector<odh::SavedCollisionCandidate> runtime_route_collision_candidates;
@@ -11255,6 +11273,9 @@ struct PlacementCandidateProbe {
                     }
                     if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid)
                         route_runtime_reason=std::string("route_grid_")+odh::world_room_route_grid_reason_name(grid.reason);
+                    else if([&]{auto pool=cached_route_grids(primary_runtime.get());pool.push_back(&*grid.grid);
+                        return odh::coalesce_route_grid_cache(pool)>household_route_cell_budget;}())
+                        route_runtime_reason="household_route_grid_aggregate_cell_budget_exceeded_for_primary";
                     else {
                         primary_route_grid().emplace(std::move(grid));
                         odh::ContinuousPreRankedSlotGoalProvider range_slot_goals=[&](const auto& table,std::size_t index,
@@ -11778,49 +11799,72 @@ struct PlacementCandidateProbe {
         if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid){
             runtime.route_reason=std::string("route_grid_")+odh::world_room_route_grid_reason_name(grid.reason);return;
         }
-        constexpr std::size_t household_route_cell_budget=262144;
-        std::size_t existing_cells=0;
-        for(const auto* other:auxiliary_actors)
-            if(other!=&runtime&&other->route_grid&&other->route_grid->grid)
-                existing_cells+=other->route_grid->grid->cells();
-        // Keep the same aggregate allocation limit. Auxiliary actors do not pin
-        // unused derived grids. Stable actor order makes cache
-        // reclamation deterministic; VM/queue/portal history stays untouched.
+        struct CacheCells {std::size_t existing,total,logical;};
+        const auto account=[&]{
+            auto pool=cached_route_grids(&runtime);auto all=pool;all.push_back(&*grid.grid);
+            std::size_t logical=0;for(const auto* value:all)logical+=value->cells();
+            const auto total=odh::coalesce_route_grid_cache(all);
+            const std::vector<const odh::RouteGrid*> cached(pool.begin(),pool.end());
+            return CacheCells{odh::RouteGrid::storage_cells(cached),total,logical};
+        };
+        auto cells=account();
+        // Keep the aggregate physical allocation limit. Equal blocked+wall
+        // pages may be shared while live controllers retain independent values.
+        // Idle eviction keeps ALL existing VM/queue/portal/UI lifetime guards.
         for(auto* other:auxiliary_actors){
-            if(existing_cells+grid.grid->cells()<=household_route_cell_budget)break;
+            if(cells.total<=household_route_cell_budget)break;
             if(other==&runtime||!other->route_grid||!other->route_grid->grid||
                !idle_auxiliary_actor_route_cache_releasable(*other))continue;
-            const auto released_cells=other->route_grid->grid->cells();
-            existing_cells-=released_cells;
+            const auto released_cells=other->route_grid->grid->cells();const auto before=cells.total;
             other->go_here.reset(); // Release its reference before Routing.
             other->routing.reset();other->route_grid.reset();
             other->route_spatial_revision.reset();++other->route_cache_evictions;
             other->route_reason="idle_auxiliary_actor_route_cache_released";
+            cells=account(); // Candidate/other caches may still own shared pages.
             session_log.event("routing idle cache released actor="+std::to_string(other->id)+
                 " generation="+std::to_string(other->generation)+
                 " cells="+std::to_string(released_cells)+
+                " physical_cells_released="+std::to_string(before-cells.total)+
                 " for_actor="+std::to_string(runtime.id)+
-                " remaining_cached_cells="+std::to_string(existing_cells)+
+                " remaining_cached_cells="+std::to_string(cells.existing)+
                 " candidate_cells="+std::to_string(grid.grid->cells())+
                 " budget="+std::to_string(household_route_cell_budget));
         }
-        if(existing_cells+grid.grid->cells()>household_route_cell_budget){
+        if(cells.total>household_route_cell_budget){
             runtime.route_reason="household_route_grid_aggregate_cell_budget_exceeded actor="+
                 std::to_string(runtime.id)+" guid="+
                 std::to_string(actor->definition?actor->definition->guid:0)+
                 " room="+std::to_string(*room)+" candidate_cells="+
                 std::to_string(grid.grid->cells())+" windowed="+
                 std::to_string(grid.windowed)+" existing_cells="+
-                std::to_string(existing_cells)+" budget="+
+                std::to_string(cells.existing)+" physical_total="+std::to_string(cells.total)+
+                " logical_total="+std::to_string(cells.logical)+" budget="+
                 std::to_string(household_route_cell_budget)+" caches=";
             for(const auto* other:auxiliary_actors)
                 if(other!=&runtime&&other->route_grid&&other->route_grid->grid)
                     runtime.route_reason+=std::to_string(other->id)+":"+
                         std::to_string(other->route_grid->grid->cells())+":"+
                         (other->npc_origin?"npc":"resident")+":"+
-                        (idle_auxiliary_actor_route_cache_releasable(*other)?"releasable":"retained")+",";
+                        (idle_auxiliary_actor_route_cache_releasable(*other)?"releasable":"retained")+
+                        ":candidate_equal="+std::to_string(grid.grid->same_contents(*other->route_grid->grid))+
+                        ":route_record="+std::to_string(other->routing&&other->routing->has_route_record())+
+                        ":controller_idle="+std::to_string(other->routing&&other->routing->can_release_idle_cache())+
+                        ":portals="+std::to_string(other->room_portals.contexts.size())+
+                        ":dispatch="+std::to_string(other->vm&&other->vm->dispatch_active())+
+                        ":go_here="+(other->go_here?other->go_here->status():"absent")+",";
             return;
         }
+        std::string peer_values;
+        for(const auto* other:auxiliary_actors)if(other!=&runtime&&other->route_grid&&other->route_grid->grid)
+            peer_values+=std::to_string(other->id)+":equal="+
+                std::to_string(grid.grid->same_contents(*other->route_grid->grid))+":route_record="+
+                std::to_string(other->routing&&other->routing->has_route_record())+",";
+        session_log.event("routing cache admitted actor="+std::to_string(runtime.id)+
+            " generation="+std::to_string(runtime.generation)+
+            " candidate_cells="+std::to_string(grid.grid->cells())+
+            " physical_total="+std::to_string(cells.total)+" logical_total="+std::to_string(cells.logical)+
+            " logical_minus_physical_cells="+std::to_string(static_cast<std::int64_t>(cells.logical)-static_cast<std::int64_t>(cells.total))+
+            " budget="+std::to_string(household_route_cell_budget)+" peer_values="+peer_values);
         runtime.route_grid.emplace(std::move(grid));
         ++runtime.route_cache_builds;
         runtime.route_spatial_revision=world.spatial_revision();

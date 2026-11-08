@@ -20,10 +20,17 @@ odh::RoutineSet routines(bool nested,bool child_true=false,bool go_here=false){
     if(nested)child.instructions.insert(child.instructions.begin(),{45,1,1,{0,0,1,0,0,0,0,0}});
     return {{odh::routine_key(4116),main},{odh::routine_key(4107),child}};
 }
+odh::RoutineSet failure_routines(){
+    // Real required global398: expose its actual failure argument and one
+    // execution side effect, then return TRUE without selecting parent success.
+    return {{odh::routine_key(398),odh::Bhav{0x8002,
+        {{2,1,255,{18,0,0,0,0,5,8,9}},{2,254,255,{19,0,1,0,0,3,8,7}}},
+        {},odh::Bhav::Metadata{0,4,0,0}}}};
+}
 struct Fixture {
     odh::World world;odh::RouteGrid grid{128,128};odh::SlotTable table=slots();odh::Routing route{world,grid,table};odh::Vm vm;
-    unsigned ticks=0,profiles=0;
-    explicit Fixture(bool nested=false,bool populate=true,bool child_true=false,bool go_here=false):vm({},world.vm_memory(),{},route.primitive(),{{owner,routines(nested,child_true,go_here)}}){
+    unsigned ticks=0,profiles=0,failure_preexits=0;
+    explicit Fixture(bool nested=false,bool populate=true,bool child_true=false,bool go_here=false):vm(failure_routines(),world.vm_memory(),{},route.primitive(),{{owner,routines(nested,child_true,go_here)}}){
         if(populate){require(world.create(7,odh::EntityKind::avatar,{0,88,0,16})&&world.create(8,odh::EntityKind::avatar,{0,88,0,16})&&
             world.create(9,odh::EntityKind::object)&&world.set_position(7,{32,32,1,0})&&world.set_position(8,{48,48,1,0})&&
             world.set_position(9,{96,32,1,0}),"create real source route participants");
@@ -47,7 +54,17 @@ struct Fixture {
                 d.services.inventory_still_matches=[](const auto&){return true;};
                 d.services.footprint=[](auto){return odh::LiveAttemptWalkFootprint{odh::LiveAttemptWalkFootprintState::absent,{}};};return d;};return input;};
         services.place=[](const auto&,const auto&)->std::optional<odh::SourceSparsePlacementOutcome>{return odh::SourceSparsePlacementOutcome{odh::SourceSparsePlacementStatus::success,0,0,{}};};
-        services.begin_locomotion=[](const auto&,const auto&,auto*){return true;};services.end_locomotion=services.begin_locomotion;
+        services.begin_locomotion=[](const auto&,const auto&,auto*){return true;};
+        services.end_locomotion=[this](const auto& context,const auto&,auto*){
+            const auto* actor=world.find(7);
+            if(actor&&actor->person_data[62]==3&&vm.temps()[19]==1){
+                require(context.vm==&vm&&context.actor==7&&context.actor_generation==actor->generation&&
+                    context.run_generation==vm.run_generation()&&context.root_route,
+                    "failure PreExit uses the exact original root actor/Thread generation");
+                ++failure_preexits;
+            }
+            return true;
+        };
         services.publish_motion=[](const auto&,const auto&,const auto&,auto*){return true;};
         services.publish_velocity=[](const auto&,const auto&,auto*){return true;};services.source_tick=[this](const auto&){++ticks;return true;};
         services.locomotion_profile=[this](const auto&)->std::optional<odh::WalkMotionProfile>{++profiles;return odh::WalkMotionProfile{false,88,false,0};};
@@ -63,7 +80,10 @@ struct Fixture {
         if(placed)require(world.set_position(20,*world.find(7)->position),"publish accepted Destination placement");
         return {odh::routine_key(4107),{7,20,20,owner},{0,0,0,0,-1,-1},odh::VmCallReturnMode::ordinary,true};}
     odh::RouteStackSnapshot capture(){std::string why;auto saved=route.capture_session_route_stack(owner,&why);if(!saved)throw std::runtime_error("capture shoo stack: "+why);return *saved;}
-    void tick(std::uint64_t now){require(route.tick(now),"advance source continuation");if(vm.status()==odh::VmStatus::running)vm.run(64);}
+    void tick(std::uint64_t now){const bool accepted=route.tick(now);
+        const auto detail=std::string("advance source continuation tick=")+std::to_string(now)+" checks="+std::to_string(checks)+
+            " route="+route.diagnostic()+" vm_status="+odh::vm_status_name(vm.status())+" vm="+vm.diagnostic();
+        require(accepted,detail.c_str());if(vm.status()==odh::VmStatus::running)vm.run(64);}
 };
 void token_contract(){
     Fixture f;f.start();const auto old_motion=f.capture().jobs.front().source_sparse->motion;auto token=f.route.prepare_source_shoo(f.shooer());require(bool(token),"prepare healthy top sparse route before Destination creation");auto call=f.destination();
@@ -127,8 +147,20 @@ void wait_and_timeout_contract(){
             committed.jobs.front().source_sparse->collision->timeout==(timeout?1:10)&&
             committed.jobs.front().source_sparse->motion.move_frames==old.move_frames,"shoo commit retains existing wait timeout and movement counters");
         f.tick(2);
-        if(timeout){require(!f.route.active()&&f.vm.status()==odh::VmStatus::returned_false&&f.world.find(7)->person_data[62]==3&&f.profiles==0,
-            "wait timeout falls through source SoftFail without restarting SHOOED or consulting child truth");continue;}
+        if(timeout){
+            const auto failed=f.capture();
+            require(f.route.active()&&f.vm.status()==odh::VmStatus::yielded&&f.vm.external_frame_return()&&
+                f.vm.external_frame_return()->result&&failed.jobs.front().failure_tree_invoked&&
+                failed.jobs.front().external_frame_active&&f.vm.temps()[18]==3&&f.vm.temps()[19]==1&&
+                f.failure_preexits==0&&f.profiles==0,
+                "timeout invokes required global398 once with failure3 and retains its real external-return boundary");
+            f.tick(3);
+            require(!f.route.active()&&f.vm.status()==odh::VmStatus::returned_false&&f.world.find(7)->person_data[62]==3&&
+                f.vm.temps()[19]==1&&f.failure_preexits==1&&f.ticks==2&&f.profiles==0&&f.world.find(7)->static_footprint,
+                "next source tick completes failed parent after one authenticated PreExit, ignoring true failure-child return and preserving SHOOED motion");
+            continue;
+        }
+        require(f.vm.temps()[19]==0&&f.failure_preexits==0,"healthy shoo wait does not invent failure-tree execution or failure cleanup");
         auto waiting=f.capture();require(waiting.jobs.front().frame.state==odh::RouteFrameState::shooed&&
             waiting.jobs.front().source_sparse->collision->wait_time==2&&waiting.jobs.front().source_sparse->collision->timeout==9&&
             waiting.jobs.front().source_sparse->motion.move_frames==old.move_frames&&f.profiles==0,

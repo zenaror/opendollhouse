@@ -279,6 +279,14 @@ void door_range_route_tests() {
     require(vm.run(10)==odh::VmStatus::waiting&&routing.active()&&random.seed()==0,
         "Door range Route45 consumes explicit RNG and schedules its highest-ranked clear goal");
     require(!routing.can_release_idle_cache(),"an admitted walk must retain its controller and grid");
+    const auto active_vm=vm.snapshot();const auto active_actor=*world.find(1)->position;
+    odh::RouteGrid peer(64,64);peer.block({28,20});
+    require(odh::coalesce_route_grid_cache({&peer,&grid})==4096&&grid.same_contents(peer)&&
+        !routing.can_release_idle_cache()&&routing.active()&&vm.pending()->ticket==active_vm.pending->ticket&&
+        vm.steps()==active_vm.steps&&vm.stack().size()==active_vm.stack.size()&&
+        world.find(1)->position==std::optional<odh::EntityPosition>{active_actor},
+        "active borrowed Routing keeps exact pending VM and pose while only identical derived pages are shared");
+    require(peer.block({5,20})&&grid.walkable({5,20}),"a peer cache mutation cannot modify the active route's planned path");
     for(std::uint64_t tick=1;tick<=32&&routing.active();++tick)routing.tick(tick);
     require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&
         world.find(1)->position->x==12&&world.find(1)->position->y==20&&

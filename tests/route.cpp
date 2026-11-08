@@ -16,8 +16,69 @@ void verify(const odh::RouteGrid& grid,const odh::RoutePath& path) {
     require(cost==path.cost,"reported cost matches path");
 }
 }
+void shared_route_grid_cache_values(){
+    const auto make=[](odh::RoutePoint origin=odh::RoutePoint{0,0}){
+        odh::RouteGrid grid(128,128,262144,origin);
+        for(int page=0;page<4;++page)grid.block({origin.x+page+1,origin.y+page*32+1});
+        grid.wall({origin.x+8,origin.y+8},{origin.x+9,origin.y+8});return grid;
+    };
+    auto controlled=make(),resident=make(),npc_active=make(),npc_idle=make();
+    resident.block({20,40});npc_active.block({20,80});
+    const auto expected=odh::find_route(npc_active,{0,0},{{127,127}});
+    require(expected.status==odh::RouteStatus::found,"independent NPC fixture has a real nontrivial path before cache coalescing");
+    require(!controlled.same_contents(resident)&&!resident.same_contents(npc_active)&&controlled.same_contents(npc_idle),
+        "different actor exclusions are distinct complete grid values despite shared static pages");
+    const auto charged=odh::coalesce_route_grid_cache({&controlled,&resident,&npc_active,&npc_idle,nullptr,&controlled});
+    require(charged==6*4096&&charged<controlled.cells()+resident.cells()+npc_active.cells()+npc_idle.cells(),
+        "controlled, resident, active and idle NPC caches count exact unique blocked+wall pages without role filtering");
+    const auto after=odh::find_route(npc_active,{0,0},{{127,127}});
+    require(after.status==expected.status&&after.points==expected.points&&after.cost==expected.cost&&after.expanded==expected.expanded,
+        "page sharing preserves deterministic routing values and search work");verify(npc_active,after);
+    auto copied=controlled;
+    const auto before=odh::RouteGrid::storage_cells({&controlled,&copied});
+    require(copied.block({30,30})&&!copied.walkable({30,30})&&controlled.walkable({30,30})&&
+        odh::RouteGrid::storage_cells({&controlled,&copied})==before+4096,
+        "ordinary grid value copies detach only the changed page before an obstacle write");
+    auto wall_copy=controlled;
+    require(wall_copy.wall({127,31},{127,32})&&!wall_copy.can_step({127,31},{127,32})&&
+        controlled.can_step({127,31},{127,32})&&
+        !wall_copy.can_step({127,32},{127,31}),
+        "reciprocal walls crossing two storage pages preserve independent live grid values");
+    require(wall_copy.wall({127,31},{127,32},false)&&wall_copy.same_contents(controlled),
+        "removing a cross-page wall restores the exact original topology");
+    odh::RouteGrid empty(64,128),aliases(64,128);
+    odh::coalesce_route_grid_cache({&empty,&aliases});
+    require(aliases.wall({63,63},{63,64})&&!aliases.can_step({63,63},{63,64})&&empty.can_step({63,63},{63,64}),
+        "two logical pages aliasing an interned zero page detach independently before reciprocal mutation");
+    auto translated=make({-32,17});
+    require(!translated.same_contents(controlled),"grid origins remain part of full value identity");
+    odh::coalesce_route_grid_cache({&controlled,&translated});
+    require(translated.walkable({-2,47})&&translated.index({-32,17})==0&&translated.point(0)==odh::RoutePoint{-32,17},
+        "shared raw page bytes preserve each grid's independent signed coordinate mapping");
+    odh::RouteGrid tail(64,65),tail_copy(64,65);
+    require(tail.cells()==4160&&odh::coalesce_route_grid_cache({&tail,&tail_copy})==8192,
+        "partial tail storage is charged as its complete allocated page without changing logical cell count");
+    auto survivor=make();const auto survivor_path=odh::find_route(survivor,{0,0},{{127,127}});
+    {auto transient=make();odh::coalesce_route_grid_cache({&transient,&survivor});}
+    require(odh::find_route(survivor,{0,0},{{127,127}}).points==survivor_path.points,
+        "destroying an idle peer leaves borrowed live grid storage alive");
+    odh::RouteGrid all_clear(512,256),all_blocked(512,256);
+    for(int y=0;y<256;++y)for(int x=0;x<512;++x)all_blocked.block({x,y});
+    // Distinct byte patterns cannot be made equivalent by a room label or hash.
+    auto remaining=make();const auto capped=odh::coalesce_route_grid_cache({&all_clear,&all_blocked,&remaining});
+    require(capped>262144,"different blocked/wall page values still exceed the unchanged physical admission cap");
+    // Force65 unique physical page values: no alias may conceal their allocation.
+    std::vector<odh::RouteGrid> unique;unique.reserve(65);std::vector<odh::RouteGrid*> pool;
+    for(int n=0;n<65;++n){unique.emplace_back(64,64);unique.back().block({n%64,n/64});pool.push_back(&unique.back());}
+    require(odh::coalesce_route_grid_cache(pool)==65*4096&&odh::RouteGrid::storage_cells({&unique.front(),&unique.back()})==8192,
+        "65 genuinely different pages still exceed the exact262144 physical-cell admission budget");
+    odh::RouteGrid moved=std::move(survivor);
+    require(survivor.cells()==0&&!survivor.contains({0,0})&&moved.cells()==16384,
+        "moved storage has ordinary empty-source lifetime behavior");
+}
 int main() {
     try {
+        shared_route_grid_cache_values();
         odh::RouteGrid g(9,9);
         auto p=odh::find_route(g,{0,0},{{8,8}});
         require(p.status==odh::RouteStatus::found && p.cost==112 && p.points.size()==9,"open diagonal optimum");verify(g,p);

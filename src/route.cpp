@@ -4,6 +4,8 @@
 #include <limits>
 #include <queue>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace odh {
 namespace {
@@ -21,9 +23,55 @@ RouteGrid::RouteGrid(std::uint32_t width,std::uint32_t height,std::size_t limit,
        static_cast<std::int64_t>(origin.x)+width-1>std::numeric_limits<std::int32_t>::max() ||
        static_cast<std::int64_t>(origin.y)+height-1>std::numeric_limits<std::int32_t>::max())
         throw std::invalid_argument("route grid exceeds dimensions or cell budget");
-    blocked_.resize(static_cast<std::size_t>(cells));walls_.resize(blocked_.size());
+    cells_=static_cast<std::size_t>(cells);
+    pages_.reserve((cells_+page_cells-1)/page_cells);
+    for(std::size_t offset=0;offset<cells_;offset+=page_cells){
+        pages_.push_back(std::make_shared<Page>());
+    }
+}
+void RouteGrid::make_page_writable(std::size_t page){
+    if(!pages_[page].unique())pages_[page]=std::make_shared<Page>(*pages_[page]);
+}
+bool RouteGrid::same_contents(const RouteGrid& other) const {
+    if(width_!=other.width_||height_!=other.height_||!(origin_==other.origin_)||cells_!=other.cells_||pages_.size()!=other.pages_.size())return false;
+    for(std::size_t n=0;n<pages_.size();++n)
+        if(pages_[n]!=other.pages_[n]&&(pages_[n]->blocked!=other.pages_[n]->blocked||pages_[n]->walls!=other.pages_[n]->walls))return false;
+    return true;
+}
+void RouteGrid::share_identical_pages_from(const std::vector<const RouteGrid*>& grids){
+    const auto fingerprint=[](const Page& page){
+        std::uint64_t hash=14695981039346656037ULL;
+        for(const auto& bank:{&page.blocked,&page.walls})for(const auto value:*bank){hash^=value;hash*=1099511628211ULL;}
+        hash^=page.blocked.size();return hash;
+    };
+    std::unordered_map<std::uint64_t,std::vector<const std::shared_ptr<Page>*>> candidates;
+    for(const auto* grid:grids)if(grid&&grid!=this)for(const auto& page:grid->pages_)
+        candidates[fingerprint(*page)].push_back(&page);
+    for(auto& page:pages_){const auto found=candidates.find(fingerprint(*page));if(found==candidates.end())continue;
+        for(const auto* other:found->second)
+            if(page==*other||(page->blocked==(*other)->blocked&&page->walls==(*other)->walls)){
+                page=*other;break; // Hash is only a filter; BOTH banks match byte for byte.
+            }
+    }
+}
+std::size_t RouteGrid::storage_cells(const std::vector<const RouteGrid*>& grids){
+    std::unordered_set<const Page*> seen;std::size_t total=0;
+    for(const auto* grid:grids)if(grid)for(const auto& page:grid->pages_)if(seen.insert(page.get()).second){
+        if(page->blocked.size()>std::numeric_limits<std::size_t>::max()-total)
+            throw std::length_error("route grid physical cell accounting overflow");
+        total+=page->blocked.size();
+    }
+    return total;
+}
+std::size_t coalesce_route_grid_cache(const std::vector<RouteGrid*>& grids){
+    std::vector<const RouteGrid*> previous;
+    for(auto* grid:grids)if(grid&&std::find(previous.begin(),previous.end(),grid)==previous.end()){
+        grid->share_identical_pages_from(previous);previous.push_back(grid);
+    }
+    return RouteGrid::storage_cells(previous);
 }
 bool RouteGrid::contains(RoutePoint p) const {
+    if(pages_.empty())return false;
     const auto x=static_cast<std::int64_t>(p.x)-origin_.x;
     const auto y=static_cast<std::int64_t>(p.y)-origin_.y;
     return x>=0 && y>=0 && static_cast<std::uint64_t>(x)<width_ && static_cast<std::uint64_t>(y)<height_;
@@ -40,25 +88,29 @@ RoutePoint RouteGrid::point(std::size_t n) const {
 }
 bool RouteGrid::block(RoutePoint p,bool value) {
     if(!contains(p)) return false;
-    blocked_[index(p)]=static_cast<std::uint8_t>(value);return true;
+    const auto n=index(p);make_page_writable(n/page_cells);
+    pages_[n/page_cells]->blocked[n%page_cells]=static_cast<std::uint8_t>(value);return true;
 }
 bool RouteGrid::wall(RoutePoint a,RoutePoint b,bool value) {
     if(!contains(a) || !contains(b)) return false;
     const auto d=cardinal_direction(a,b);
     if(d<0) return false;
     const auto reverse=(d+2)%4;
+    // Prepare both page copies before changing either reciprocal wall bit.
+    make_page_writable(index(a)/page_cells);make_page_writable(index(b)/page_cells);
     for(const auto& pair:{std::pair<std::size_t,int>{index(a),d},{index(b),reverse}}) {
         const auto bit=static_cast<std::uint8_t>(1U<<pair.second);
-        if(value) walls_[pair.first]|=bit;
-        else walls_[pair.first]&=static_cast<std::uint8_t>(~bit);
+        auto& flags=pages_[pair.first/page_cells]->walls[pair.first%page_cells];
+        if(value)flags|=bit;
+        else flags&=static_cast<std::uint8_t>(~bit);
     }
     return true;
 }
-bool RouteGrid::walkable(RoutePoint p) const {return contains(p) && blocked_[index(p)]==0;}
+bool RouteGrid::walkable(RoutePoint p) const {return contains(p) && blocked(index(p))==0;}
 bool RouteGrid::cardinal_step(RoutePoint a,RoutePoint b) const {
     if(!walkable(a) || !walkable(b)) return false;
     const auto d=cardinal_direction(a,b);
-    return d>=0 && (walls_[index(a)]&(1U<<d))==0;
+    return d>=0 && (walls(index(a))&(1U<<d))==0;
 }
 bool RouteGrid::can_step(RoutePoint a,RoutePoint b) const {
     if(!walkable(a) || !walkable(b)) return false;
