@@ -3925,6 +3925,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::optional<odh::OriginalCompanionMarker> original_companion;
         std::uint64_t original_run_generation=0;
         odh::WorldEntityReference original_marker_owner{};
+        // Only an actual synchronous ordinary/Init Create42 supplies this
+        // dispatch. Deferred creators retain their existing pending proof.
+        std::optional<odh::LiveObjectCreationActiveDispatch> active_dispatch;
     };
     struct PendingTravelActivation {
         odh::Vm* vm=nullptr;
@@ -6654,6 +6657,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     pending.request=std::move(*resolved.request);
                     pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
                     pending.lifecycle_current=current;pending.lifecycle_result=&created;
+                    pending.active_dispatch=odh::LiveObjectCreationActiveDispatch{f,i,d};
                     pending_npc_avatars.push_front(std::move(pending));process_lifecycle_npc_avatars();
                     if(host_failed)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,last_npc_diagnostic};
                     if(!current())return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
@@ -17943,6 +17947,7 @@ struct PlacementCandidateProbe {
                         std::int16_t caller,bool ignore_caller){
                         if(&target!=&world||!place_created_avatar||!current())return odh::NpcPositionAttemptStatus::unsupported;
                         odh::LiveObjectCreationPlacementSource source{pending.vm,creator_run,id,generation,current};
+                        source.active_dispatch=pending.active_dispatch;
                         if(ignore_caller){const auto* parent=world.find(caller);
                             if(!parent||parent->generation!=pending.request.caller_generation)return odh::NpcPositionAttemptStatus::unsupported;
                             source.ignored_intersection_group=odh::WorldEntityReference{caller,parent->generation};}
@@ -18825,6 +18830,7 @@ struct PlacementCandidateProbe {
                 PendingNpcAvatar pending;pending.vm=const_cast<odh::Vm*>(dispatch.origin);pending.ticket=dispatch.ticket;
                 pending.request=std::move(*resolved.request);pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
                 pending.lifecycle_current=current;pending.lifecycle_result=&created;
+                pending.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch};
                 pending_npc_avatars.push_front(std::move(pending));process_lifecycle_npc_avatars();
                 if(host_failed)return reject(last_npc_diagnostic);
                 odh::PrimitiveOutcome out{created?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::goto_false,{}};

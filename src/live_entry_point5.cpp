@@ -53,6 +53,7 @@ bool source_dispatch_is_live(const LiveEntryPoint5Request& request) noexcept {
                !source.source_run_generation||source.source_vm->run_generation()!=source.source_run_generation||
                source.created_entity<=0||!source.created_generation||
                (source.created_entity!=request.tested_entity&&source.created_entity!=request.other_entity))return false;
+            if(source.active_dispatch&&!live_object_creation_active_dispatch_matches(source))return false;
             const auto* created=request.world->find(source.created_entity);
             return created&&(created->kind==EntityKind::object||created->kind==EntityKind::avatar)&&!created->ui_ghost&&
                 created->generation==source.created_generation;
@@ -91,6 +92,18 @@ bool entities_match(const LiveEntryPoint5Request& request) {
         other->generation==request.other_generation;
 }
 } // namespace
+
+bool live_object_creation_active_dispatch_matches(const LiveObjectCreationPlacementSource& source) noexcept {
+    try {
+        // Expire host ownership before dereferencing its borrowed VM.
+        if(!source.source_still_matches||!source.source_still_matches()||!source.active_dispatch||
+           !source.source_vm||!source.source_run_generation||source.created_entity<=0||!source.created_generation)return false;
+        const auto& active=*source.active_dispatch;const auto& vm=*source.source_vm;
+        return vm.run_generation()==source.source_run_generation&&active.instruction.opcode==42&&
+            active.dispatch.origin==&vm&&active.dispatch.ticket&&
+            vm.matches_active_query(active.frame,active.instruction,active.dispatch);
+    }catch(...){return false;}
+}
 
 bool live_original_recovery_placement_source_matches(const LiveOriginalRecoveryPlacementSource& source,const World& world) noexcept {
     try{

@@ -80,6 +80,82 @@ struct Fixture {
     void run(){require(vm.start(odh::routine_key(4096),{1,1,2})==odh::VmStatus::running&&
         vm.run(1)==odh::VmStatus::returned_true,"evaluate placement in actual source46 dispatch");}
 };
+void active_creation_avatar_authority(){
+    for(const bool lifecycle_check:{false,true})for(const bool admit:{false,true}){
+        Fixture f;f.obstacles({2});bool scope=true,expire_during=false;unsigned effects=0;odh::LiveObjectCreationPlacementSource retained;
+        auto globals=std::make_shared<const odh::VmProgram>(odh::RoutineSet{});
+        const odh::Bhav ep{0x8002,{{99,254,255,{}}},{},odh::Bhav::Metadata{0,4,4,0}};
+        auto bank=std::make_shared<const odh::VmProgram>(odh::RoutineSet{{odh::routine_key(4097),ep},{odh::routine_key(4098),ep},{odh::routine_key(4099),ep}});
+        odh::Vm actor_thread{odh::RoutineSet{},f.world.vm_memory()},other_thread{odh::RoutineSet{},f.world.vm_memory()};
+        auto services=f.services;
+        services.entry_point5=[&](const odh::AvatarPositionEntryPoint5Request& placement)->std::optional<bool>{
+            require(placement.object_creation_source&&placement.object_creation_source->active_dispatch&&
+                odh::live_object_creation_active_dispatch_matches(*placement.object_creation_source),
+                "bilateral EP5 retains the actual synchronous factory dispatch proof");
+            odh::LiveEntryPoint5Request request;request.world=&f.world;request.tested_entity=placement.tested_entity;
+            request.tested_generation=placement.tested_generation;request.other_entity=placement.other;request.other_generation=placement.other_generation;
+            request.action=placement.action;request.ghost=placement.ghost;request.object_creation_source=placement.object_creation_source;
+            request.code_owner=900;request.global_program=globals;request.owner_program=bank;request.live_memory=f.world.vm_memory();
+            request.register_owner=placement.tested_entity==1?&actor_thread:&other_thread;request.identities_still_match=[] {return true;};
+            request.check_primitive=[&](const auto& frame,const auto&,const auto&,const auto& dispatch){
+                require(dispatch.check_mode&&frame.arguments.size()==4,"actual placement EP5 executes a disposable exact-argument check");
+                ++effects;const_cast<odh::Vm*>(dispatch.origin)->temps()[3]++;if(expire_during)scope=false;
+                return odh::PrimitiveOutcome{admit?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::goto_false,{}};
+            };
+            const auto result=odh::evaluate_live_entry_point5(request);
+            if(result.state==odh::LiveEntryPoint5State::unsupported)return {};
+            return result.state==odh::LiveEntryPoint5State::evaluated_true;
+        };
+        odh::AvatarPositionValid validator(f.world,services);const auto id=f.world.find(1)->generation;
+        odh::VmPrimitive handler=[&](const auto& frame,const auto& instruction,const auto&,const auto& dispatch){
+            const auto& vm=*dispatch.origin;
+            require(dispatch.check_mode==lifecycle_check&&!vm.pending(),"factory is actually dispatching; no pending opcode is fabricated");
+            odh::LiveObjectCreationPlacementSource proof{&vm,vm.run_generation(),1,id,[&]{return scope;}};
+            proof.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch};retained=proof;
+            require(odh::live_object_creation_active_dispatch_matches(proof),"shared helper authenticates exact active ordinary or lifecycle42");
+            const auto reject=[&](auto mutate,const char* why){auto bad=proof;mutate(bad);const auto before=f.geometry_calls;
+                require(validator.evaluate_creation(bad,1,id,f.candidate,0,0).status==odh::AvatarPositionValidStatus::unsupported&&f.geometry_calls==before,why);};
+            reject([](auto& v){++v.active_dispatch->dispatch.ticket;},"wrong active ticket rejects before geometry");
+            reject([](auto& v){++v.active_dispatch->frame.pc;},"wrong active frame rejects before geometry");
+            reject([](auto& v){v.active_dispatch->instruction.opcode=46;},"another primitive cannot authorize factory placement");
+            reject([](auto& v){v.active_dispatch->dispatch.check_mode=!v.active_dispatch->dispatch.check_mode;},"forged ordinary/check mode rejects");
+            reject([](auto& v){++v.source_run_generation;},"old VM run cannot authorize synchronous creation");
+            reject([](auto& v){++v.created_generation;},"old created generation cannot place the new body");
+            reject([&](auto& v){v.created_entity=4;v.created_generation=f.world.find(4)->generation;},"factory identity cannot be borrowed by another avatar");
+            auto expired=proof;expired.source_still_matches=[] {return false;};expired.source_vm=reinterpret_cast<const odh::Vm*>(1);
+            require(!odh::live_object_creation_active_dispatch_matches(expired),"expired scope rejects before inspecting a borrowed VM pointer");
+            const auto result=validator.evaluate_creation(proof,1,id,f.candidate,0,0);
+            require(result.status==(admit?odh::AvatarPositionValidStatus::success:odh::AvatarPositionValidStatus::blocked)&&effects==(admit?1U:2U),
+                "synchronous factory uses real bilateral geometry and EP5 outcomes without teleporting");
+            require(f.world.find(1)->position==std::optional<odh::EntityPosition>{{16,16,1,0}}&&
+                !vm.pending()&&vm.temps()[4]==77&&actor_thread.temps()[3]==1&&other_thread.temps()[3]==(admit?0:1),
+                "placement validation preserves creator continuation and pose while publishing each real tested Thread's effects");
+            auto retry=proof;retry.ignored_intersection_group=odh::WorldEntityReference{4,f.world.find(4)->generation};
+            f.group=[](auto owner,auto other)->std::optional<bool>{return owner==4&&other==2;};
+            const auto before_retry=effects;
+            require(validator.evaluate_creation(retry,1,id,f.candidate,0,0).status==odh::AvatarPositionValidStatus::success&&effects==before_retry,
+                "UnderneathMe retry ignores only the exact creating Caller group without inventing EP5 approval");
+            auto stale_retry=retry;++stale_retry.ignored_intersection_group->generation;
+            require(validator.evaluate_creation(stale_retry,1,id,f.candidate,0,0).status==odh::AvatarPositionValidStatus::unsupported,
+                "active factory retry retains the actual Caller generation guard");
+            f.obstacles({2,3});const auto unrelated=validator.evaluate_creation(retry,1,id,f.candidate,0,0);
+            require(unrelated.status==(admit?odh::AvatarPositionValidStatus::success:odh::AvatarPositionValidStatus::blocked)&&
+                (admit||unrelated.blocker==3),"Caller group exclusion preserves every unrelated actual obstacle");
+            f.group={};f.obstacles({2});expire_during=true;const auto before_expiry=effects;
+            require(validator.evaluate_creation(proof,1,id,f.candidate,0,0).status==odh::AvatarPositionValidStatus::unsupported&&effects==before_expiry+1,
+                "factory expiry during actual EP5 refuses placement while retaining already-published tested Thread effects");
+            scope=true;expire_during=false;
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        };
+        const auto key=odh::routine_key(4700);odh::Vm source({{key,{0x8002,{{42,254,255,{101,0,0,0,5,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}},f.world.vm_memory(),{},handler);
+        require(source.start(key,{4,4,0})==odh::VmStatus::running,"start actual synchronous factory source");source.temps()[4]=77;
+        const auto status=lifecycle_check?source.run_synchronous_check(8,handler).status:source.run(8);
+        require(status==odh::VmStatus::returned_true&&!odh::live_object_creation_active_dispatch_matches(retained),
+            "retained active proof expires at the actual dispatch return even while host scope remains live");
+        const auto before=f.geometry_calls;require(validator.evaluate_creation(retained,1,id,f.candidate,0,0).status==odh::AvatarPositionValidStatus::unsupported&&f.geometry_calls==before,
+            "a saved copy of the old active frame cannot authorize later geometry");
+    }
+}
 void creation_avatar_authority(){
     Fixture f;f.obstacles({2});
     const auto key=odh::routine_key(4700);
@@ -826,6 +902,6 @@ void shared_placement_direct_targets(){
     }
 }
 }
-int main(){try{host_constructor_avatar_authority();original_recovery_avatar_authority();retired_container_avatar_authority();creation_avatar_authority();shared_placement_direct_targets();prepared_direct_authorization();route_execution_scope();ranged_relative_placement_scope();route_api_requires_opcode45();overlap_order_and_effects();floor_and_flags();callbacks_and_generations();live_snap_avatar_position_valid_ep5();
+int main(){try{active_creation_avatar_authority();host_constructor_avatar_authority();original_recovery_avatar_authority();retired_container_avatar_authority();creation_avatar_authority();shared_placement_direct_targets();prepared_direct_authorization();route_execution_scope();ranged_relative_placement_scope();route_api_requires_opcode45();overlap_order_and_effects();floor_and_flags();callbacks_and_generations();live_snap_avatar_position_valid_ep5();
     std::cout<<checks<<" avatar PositionValid checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"avatar PositionValid: "<<error.what()<<'\n';return 1;}}

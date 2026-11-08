@@ -10,7 +10,14 @@ enum class LiveEntryPoint5State { evaluated_true, evaluated_false, unsupported }
 
 // Host-owned ephemeral capability for ordinary placement immediately after
 // real object construction. The callback must expire with that construction
-// scope; it authenticates the actual suspended source without a fake opcode.
+// scope; it authenticates the actual active or suspended source without a fake opcode.
+// Exact source dispatch retained only within the synchronous factory scope.
+// No saved frame or synthetic pending state can satisfy the VM's active proof.
+struct LiveObjectCreationActiveDispatch {
+    VmFrame frame;
+    Instruction instruction;
+    VmDispatch dispatch;
+};
 struct LiveObjectCreationPlacementSource {
     const Vm* source_vm=nullptr;
     std::uint64_t source_run_generation=0;
@@ -19,7 +26,9 @@ struct LiveObjectCreationPlacementSource {
     std::function<bool()> source_still_matches;
     // UnderneathMe retry ignores only the exact creating Caller multitile group.
     std::optional<WorldEntityReference> ignored_intersection_group;
+    std::optional<LiveObjectCreationActiveDispatch> active_dispatch;
 };
+bool live_object_creation_active_dispatch_matches(const LiveObjectCreationPlacementSource&) noexcept;
 
 struct LiveRetiredContainerPlacementSource {
     const World* world=nullptr;

@@ -100,8 +100,16 @@ AvatarPositionValidResult AvatarPositionValid::evaluate_creation(const LiveObjec
     try{
         if(!source.source_still_matches||!source.source_still_matches()||!source.source_vm||
             !source.source_run_generation||source.source_vm->run_generation()!=source.source_run_generation||
-            source.created_entity!=id||source.created_generation!=generation||
-            source.source_vm->status()!=VmStatus::waiting||!source.source_vm->pending()||source.source_vm->stack().empty()||
+            source.created_entity!=id||source.created_generation!=generation)
+            return unknown("avatar creation placement requires its exact live factory scope");
+        if(source.active_dispatch){
+            if(!live_object_creation_active_dispatch_matches(source))
+                return unknown("avatar creation placement requires its actual active CreateObjectInstance source");
+            const auto& active=*source.active_dispatch;
+            return evaluate_internal(active.frame,*source.source_vm,active.instruction,active.dispatch,
+                nullptr,nullptr,nullptr,&source,id,generation,candidate,direction,flags);
+        }
+        if(source.source_vm->status()!=VmStatus::waiting||!source.source_vm->pending()||source.source_vm->stack().empty()||
             source.source_vm->pending()->instruction.instruction.opcode!=42)
             return unknown("avatar creation placement requires its actual pending CreateObjectInstance source");
         const auto& vm=*source.source_vm;
@@ -142,14 +150,21 @@ AvatarPositionValidResult AvatarPositionValid::evaluate_internal(const VmFrame& 
         if(creation){
             if(authorization||route_proof||execution||!creation->source_still_matches||!creation->source_still_matches()||
                 creation->source_vm!=&vm||creation->source_run_generation!=vm.run_generation()||
-                creation->created_entity!=id||creation->created_generation!=generation||
-                vm.status()!=VmStatus::waiting||!vm.pending()||vm.stack().empty())return false;
-            const auto& pending=*vm.pending();const auto& trace=pending.instruction;
+                creation->created_entity!=id||creation->created_generation!=generation)return false;
             if(creation->ignored_intersection_group){
                 const auto ignored=*creation->ignored_intersection_group;
                 if(!world_.is_live_reference(ignored)||ignored.id!=frame.context.caller||
                     (frame.context.entity_references_bound&&vm_context_reference(frame.context,VmEntityRole::caller)!=ignored))return false;
             }
+            if(creation->active_dispatch){
+                const auto& active=*creation->active_dispatch;
+                return live_object_creation_active_dispatch_matches(*creation)&&vm_frame_equal(frame,active.frame)&&
+                    instruction.opcode==active.instruction.opcode&&instruction.operands==active.instruction.operands&&
+                    instruction.on_true==active.instruction.on_true&&instruction.on_false==active.instruction.on_false&&
+                    dispatch.origin==active.dispatch.origin&&dispatch.ticket==active.dispatch.ticket&&dispatch.check_mode==active.dispatch.check_mode;
+            }
+            if(vm.status()!=VmStatus::waiting||!vm.pending()||vm.stack().empty())return false;
+            const auto& pending=*vm.pending();const auto& trace=pending.instruction;
             return dispatch.origin==&vm&&dispatch.ticket==pending.ticket&&!dispatch.check_mode&&
                 trace.instruction.opcode==42&&instruction.opcode==42&&trace.instruction.operands==instruction.operands&&
                 trace.instruction.on_true==instruction.on_true&&trace.instruction.on_false==instruction.on_false&&

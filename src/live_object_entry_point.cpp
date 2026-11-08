@@ -33,9 +33,12 @@ LiveObjectEntryPointResult evaluate_live_object_entry_point(const LiveObjectEntr
             return unsupported("object entry point construction capability has expired");
         if(!source.source_vm||!source.source_run_generation||source.created_entity!=object||source.created_generation!=generation)
             return unsupported("object entry point capability does not own this new object");
+        if(source.active_dispatch&&!live_object_creation_active_dispatch_matches(source))
+            return unsupported("object entry point active creation dispatch is stale");
         const auto run=registers->run_generation();
         const auto current=[&]() {
             if(!source.source_still_matches()||!identities()||
+               (source.active_dispatch&&!live_object_creation_active_dispatch_matches(source))||
                source.source_vm->run_generation()!=source.source_run_generation||registers->run_generation()!=run||
                registers->shared_program_for_owner(0)!=globals||registers->shared_program_for_owner(owner)!=bank)return false;
             const auto* entity=world->find(object);

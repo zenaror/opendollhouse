@@ -60,6 +60,29 @@ struct Fixture {
         return r;
     }
 };
+void active_factory_entry_point(){
+    for(const bool check:{false,true}){
+        Fixture f;std::optional<odh::LiveObjectEntryPointRequest> retained;
+        odh::VmPrimitive factory=[&](const auto& frame,const auto& instruction,const auto&,const auto& dispatch){
+            require(dispatch.check_mode==check&&!dispatch.origin->pending(),"lifecycle executes inside an actual synchronous creation dispatch");
+            auto request=f.request();request.creation_source.source_vm=dispatch.origin;
+            request.creation_source.source_run_generation=dispatch.origin->run_generation();
+            request.creation_source.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch};retained=request;
+            auto bad=request;++bad.creation_source.active_dispatch->dispatch.ticket;
+            require(odh::evaluate_live_object_entry_point(bad).state==State::unsupported&&!f.effects,
+                "entry point consumer refuses another active factory ticket before effects");
+            require(odh::evaluate_live_object_entry_point(request).state==State::evaluated_true&&f.effects==1&&
+                !dispatch.origin->pending(),"real creation EP6 publishes object effects without consuming or faking its active source");
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        };
+        odh::Vm source({{key(4700),routine({{42,254,255,{}}})}},f.world.vm_memory(),{},factory);
+        require(source.start(key(4700),{1,1,1})==odh::VmStatus::running,"start exact active object factory");
+        require((check?source.run_synchronous_check(8,factory).status:source.run(8))==odh::VmStatus::returned_true,
+            "ordinary and Init/check factory callers complete after real lifecycle effect");
+        require(retained&&odh::evaluate_live_object_entry_point(*retained).state==State::unsupported&&f.effects==1,
+            "retained active source cannot re-run object lifecycle after dispatch expiry");
+    }
+}
 void contexts_and_arguments(){
     for(const auto entry:{6,8,9})for(const auto& source_args:std::vector<std::optional<std::vector<std::int16_t>>>{
             std::nullopt,std::vector<std::int16_t>{},std::vector<std::int16_t>{7,-8}}){
@@ -136,6 +159,6 @@ void outcomes_and_idle_thread(){
         "native bounded stack rejects unbounded synchronous recursion without treating source List capacity as a hard limit");
 }
 }
-int main(){try{contexts_and_arguments();authority_and_false();outcomes_and_idle_thread();
+int main(){try{active_factory_entry_point();contexts_and_arguments();authority_and_false();outcomes_and_idle_thread();
     std::cout<<checks<<" live object entry point checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"live object entry point: "<<error.what()<<'\n';return 1;}}
