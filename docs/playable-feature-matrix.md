@@ -9,7 +9,10 @@ implementado ou observado em parte; não significa sistema completo.
 | Scripts, objetos e interações | Parcial | Ciclo completo de criação, execução, cancelamento e retirada em mais perfis. |
 | Movimento e animação | Parcial | Escadas, obstáculos, personagens e ações nos percursos integrados. |
 | Necessidades e autonomia | Parcial | Dia residencial completo, sem ações falhando silenciosamente. |
-| Incêndios | Em aberto | A ação de fogo solicitada pelo fogão ainda encerra a execução. Migrar criação e propagação, estado do relógio, objetos afetados, combate e persistência. |
+| Incêndios | Em aberto | A ação de fogo solicitada pelo fogão ainda encerra a execução. Completar criação e propagação, relógio, morte de Sims, objetos queimados e cinzas, combate manual, bombeiros por telefone ou alarme e persistência. |
+| Roubo, polícia e alarme contra roubo | Em aberto | Chegada do ladrão, detecção, roubo, chamada manual ou por alarme, intervenção policial e consequências sobre os bens ao continuar a partida. |
+| Bebês | Em aberto | Nascimento ou adoção conforme as regras originais, cuidados, crescimento para criança, intervenções e continuidade da família após salvar. |
+| Morte e tentativa de recuperar o Sim | Em aberto | Morte, chegada da Morte, lápide ou urna, interação para tentar recuperar o personagem e preservação do resultado e da identidade. |
 | Relações e serviços | Parcial | Perfis sociais e serviços além dos casos já observados. |
 | Carreiras e habilidades | Parcial | Seleção, horários, pagamento, promoção e progressão mais amplos. |
 | Famílias e vizinhança | Parcial | Completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. Criação de rascunho, renomeação, exclusão elegível e cancelamentos já observados em percurso delimitado. |
@@ -19,6 +22,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Interface original | Parcial | Navegação, catálogos, diálogos, retratos e proporção em todas as telas. |
 | Gráficos e áudio | Parcial | Apresentação, iluminação, animações, vozes, música e efeitos integrados. |
 | Animais e ciclos de personagens | Gambá original criado, salvo e reaberto em percurso curto; aparência por espécie e desenho observados em verificação delimitada. | Aquisição, comportamento, controle, serviços e persistência nos demais estados; validar os animais dentro dos percursos completos. |
+| Visitas e eventos de animais | Chegada e reabertura de um gambá observadas; restante em aberto. | Urso, gambá, guaxinim e demais visitantes com comportamentos próprios, lixo, reações da casa, serviços e desfechos persistentes. |
 | Idiomas e conteúdo personalizado | Parcial | Uso real, fallback e continuação após salvar. |
 | Gozando a Vida e Fazendo a Festa | Em aberto | Objetos, eventos, convidados e atividades pelas regras dos dados. |
 | Encontro Marcado | Parcial | Percurso completo ao Centro com efeitos e retorno preservados. |

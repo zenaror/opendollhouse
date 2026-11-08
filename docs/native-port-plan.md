@@ -13,6 +13,7 @@ da referência não eliminam requisitos do jogo original.
 | --- | --- | --- |
 | Vida residencial | Entrar na casa, controlar e cancelar ações, deixar a autonomia avançar por um dia, usar necessidades/interações/serviço e continuar após salvar e sair. | Scripts, movimento, personagens, interface e persistência trabalhando juntos. |
 | Família e lote | Criar adulto e criança com orçamento normal, mudar, comprar/editar, sair, voltar e mudar novamente sem perder pessoas, dinheiro ou alterações. Cobrir renomear/excluir e cancelamentos. | Gestão de famílias, propriedade, transações, compra/construção e salvamento. |
+| Eventos e ciclo de vida | Executar visitas de animais, roubo e polícia, bebês, morte e tentativa de recuperar o Sim, além de incêndios e bombeiros, com consequências preservadas ao continuar a partida. | Scripts, criação e retirada de personagens, família, bens, serviços, alarmes, interface e persistência compartilhados. |
 | Viagens e expansões | Sair, chegar com os viajantes corretos, fazer atividade com efeito observável, salvar/reabrir no destino e voltar à mesma casa com progresso preservado. | Estado compartilhado, seleção/transporte, destinos e regras de retorno. |
 | Experiência original | Interface, controles, imagem, áudio, idioma e conteúdo personalizado permitem os percursos anteriores. | Apresentação e serviços nativos ligados ao estado real. |
 | Candidata jogável | Instalar/iniciar, jogar por tempo prolongado, salvar/continuar e obter diagnóstico útil quando algo falhar. | Conjunto completo dos requisitos, pacote e validação integrada. |
@@ -23,8 +24,9 @@ necessário aperfeiçoar todos os objetos de uma casa antes de integrar viagens.
 ## Ordem de integração
 
 1. Completar as dependências residenciais que interrompem os percursos. Incêndios
-   precisam integrar relógio, criação e propagação, objetos afetados, combate e
-   salvamento; tratar essas partes como um serviço compartilhado.
+   precisam integrar relógio, criação e propagação, objetos afetados e cinzas,
+   risco aos Sims, combate manual, bombeiros, telefone, alarme e salvamento;
+   tratar essas partes e sua ligação ao ciclo de vida como serviços compartilhados.
 2. Fechar o percurso compartilhado de viagem ao Centro e de volta, reutilizando
    as partes existentes e conferindo familiares e convidados pelas regras de
    controle próprias de cada um. Preservar necessidades e progresso pessoal
