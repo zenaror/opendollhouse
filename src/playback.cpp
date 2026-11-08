@@ -918,18 +918,31 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
         state_=std::move(*next);source_walk_.reset();hands_=HandsState{{},actor->id,actor->generation,vm_->run_generation()};
         return {PrimitiveDisposition::goto_true,{}};
     }
+    std::shared_ptr<const AnimationHeader> clip;
+    if(animation_lookup_resolver_){
+        const auto lookup=animation_lookup_resolver_(f,source,id);
+        if(lookup.availability==AnimationAvailability::absent){
+            if(lookup.clip)return unsupported("absent animation unexpectedly carries a clip");
+            // Pinned VMAnimateSim exits before its mode switch: no output,
+            // event, wait, primary/carry or gesture replacement on this path.
+            return {PrimitiveDisposition::goto_true_next_tick,{}};
+        }
+        if(lookup.availability!=AnimationAvailability::available||!lookup.clip)
+            return unsupported(lookup.diagnostic.empty()?"animation source authority unavailable":lookup.diagnostic);
+        clip=lookup.clip;
+    }else{
+        clip=resolver_?resolver_(f,source,id):nullptr;
+        if(!clip)return unsupported(mode==2?"carry animation resource not supplied by explicit resolver":
+            "animation resource not supplied by explicit resolver");
+    }
     if(mode==3){carry_clip_.reset();carry_resource_.reset();}
     if(mode==2){
-        const auto clip=resolver_?resolver_(f,source,id):nullptr;
-        if(!clip)return unsupported("carry animation resource not supplied by explicit resolver");
         carry_clip_=clip;carry_resource_=resource_key(f,*actor,PlaybackResourceKey::Kind::animation,source,id);
         return {PrimitiveDisposition::goto_true,{}};
     }
     const auto bank=(flags&32U)?VmFrameBank::locals:VmFrameBank::arguments;
     const auto index=static_cast<std::size_t>((flags&32U)?i.operands[2]:0);
     if(mode==0&&bank==VmFrameBank::arguments&&index>=f.arguments.size())return unsupported("animation event destination outside frame");
-    const auto clip=resolver_?resolver_(f,source,id):nullptr;
-    if(!clip)return unsupported("animation resource not supplied by explicit resolver");
     if(mode==1||!state_||state_->clip!=clip||state_->actor!=actor->id||state_->actor_generation!=actor->generation) {
         std::string error;auto next=prepare(clip,*actor,(flags&2U)!=0,mode==1,(flags&64U)!=0,error);
         if(!next)return unsupported(error);

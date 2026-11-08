@@ -4990,17 +4990,43 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             return true;
         };
     }
-    const auto resolve_animation=[&](const odh::VmFrame& frame,std::uint32_t source,std::uint16_t id,std::optional<std::int16_t> posture)
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    std::size_t animation_resolution_failure_events=0;
+#endif
+    const auto resolve_animation=[&](const odh::VmFrame& frame,std::uint32_t source,std::uint16_t id,std::optional<std::int16_t> posture,bool* proved_absence=nullptr)
         ->std::shared_ptr<const odh::AnimationHeader>{
+        if(proved_absence)*proved_absence=false;
         animation_resolution_diagnostic.clear();
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        const char* resolution_stage="actor";
+        std::optional<std::int16_t> resolution_age;
+        std::optional<bool> resolution_child;
+        std::optional<std::uint32_t> resolution_table_owner;
+        std::optional<std::uint16_t> resolution_table_id;
+        std::string_view resolution_name;
+        const auto note_stage=[&](const char* stage){resolution_stage=stage;};
+        const auto note_table=[&](std::optional<std::uint32_t> owner,std::uint16_t table){
+            resolution_table_owner=owner;resolution_table_id=table;
+        };
+        const auto note_name=[&](std::string_view name){resolution_name=name;};
+#else
+        const auto note_stage=[](const char*){};
+        const auto note_table=[](std::optional<std::uint32_t>,std::uint16_t){};
+        const auto note_name=[](std::string_view){};
+#endif
         try{
             const auto* actor=world.frame_entity(frame,odh::VmEntityRole::caller);
             if(!actor||actor->person_data.size()<=58)throw odh::FormatError("animation actor age unavailable");
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+            resolution_age=actor->person_data[58];
+#endif
             if(posture&&*posture==-1){
+                note_stage("catalog-carry");note_name("a2o-rarm-carry-loop");
                 auto resource=animation_catalog->resolve("a2o-rarm-carry-loop");
                 const auto* header=&resource->header;
                 return std::shared_ptr<const odh::AnimationHeader>(std::move(resource),header);
             }
+            note_stage("body-descriptor");
             const odh::AvatarBodyDescriptor* actor_body=primary_body()?&*primary_body():nullptr;
             if(frame.context.caller!=runtime_avatar_id){
                 actor_body=nullptr;
@@ -5010,18 +5036,26 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     throw odh::FormatError("additional resident posture animation requires its own derived body descriptor");
             }
             const bool child=actor_body?actor_body->child:actor->person_data[58]<18;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+            resolution_child=child;
+#endif
             const odh::StringTable* table=nullptr;
             const auto find_table=[](const auto& tables,std::uint16_t key)->const odh::StringTable*{
                 const auto i=tables.find(key);return i==tables.end()?nullptr:&i->second;
             };
             if(posture&&actor_body){
+                note_stage("catalog-posture");note_name(actor_body->walk.at(static_cast<std::size_t>(*posture)));
                 auto resource=animation_catalog->resolve(actor_body->walk.at(static_cast<std::size_t>(*posture)));
                 const auto* header=&resource->header;
                 return std::shared_ptr<const odh::AnimationHeader>(std::move(resource),header);
             }
-            if(posture){table=find_table(global_animation_tables,child?151:150);id=static_cast<std::uint16_t>(*posture);}
+            note_stage("table-owner");
+            if(posture){note_table({},child?151:150);table=find_table(global_animation_tables,child?151:150);id=static_cast<std::uint16_t>(*posture);}
             else if(source==0||source==65536){
                 auto owner=source==0?frame.context.code_owner:frame.context.stack_object;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                resolution_table_owner=owner;
+#endif
                 auto tables=private_animation_tables.find(owner);
                 if(tables==private_animation_tables.end()&&source==0&&bind_resource_owner_animation_tables&&
                    bind_resource_owner_animation_tables(frame.context.code_owner))
@@ -5050,21 +5084,84 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                         tables=private_animation_tables.find(stack_owner);
                     }
                 }
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                resolution_table_owner=owner;
+#endif
                 const auto base=animation_table_ids.find(owner);
                 if(tables==private_animation_tables.end()||base==animation_table_ids.end())throw odh::FormatError("animation owner not supplied by host");
+                note_stage("table");note_table(owner,static_cast<std::uint16_t>(base->second+(child?1:0)));
                 table=find_table(tables->second,static_cast<std::uint16_t>(base->second+(child?1:0)));
-                if(!table)table=find_table(tables->second,child?130:129);
-            }else if(source==1)table=find_table(global_animation_tables,128);
-            else if(source==2)table=find_table(global_animation_tables,130);
-            else if(source==3)table=find_table(global_animation_tables,child?157:156);
+                if(!table){note_table(owner,child?130:129);table=find_table(tables->second,child?130:129);}
+            }else if(source==1){note_table({},128);table=find_table(global_animation_tables,128);}
+            else if(source==2){note_table({},130);table=find_table(global_animation_tables,130);}
+            else if(source==3){note_table({},child?157:156);table=find_table(global_animation_tables,child?157:156);}
             else throw odh::FormatError("animation source outside explicit host profile");
+            note_stage("table");
             if(!table)throw odh::FormatError("animation STR# table absent including fallback");
+            note_stage("string-row");
             const auto* entry=odh::string_in_language(*table,1,id);
             if(!entry)throw odh::FormatError("animation STR# index absent in explicit language 1");
-            auto resource=animation_catalog->resolve(entry->value);
+            note_stage("catalog-name");note_name(entry->value);
+            auto resource=proved_absence?animation_catalog->resolve_if_present(entry->value):animation_catalog->resolve(entry->value);
+            if(!resource){if(proved_absence)*proved_absence=true;return {};}
             const auto* header=&resource->header;
             return std::shared_ptr<const odh::AnimationHeader>(std::move(resource),header);
-        }catch(const odh::FormatError& e){animation_resolution_diagnostic=e.what();return {};}
+        }catch(const odh::FormatError& e){
+            animation_resolution_diagnostic=e.what();
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+            if(animation_resolution_failure_events<16){
+                ++animation_resolution_failure_events;
+                // Diagnostic failures must not replace the original resolver result.
+                try{
+                    const auto hex=[](std::string_view bytes,std::size_t limit){
+                        constexpr char digits[]="0123456789abcdef";std::string out;
+                        const auto count=std::min(bytes.size(),limit);out.reserve(count*2);
+                        for(std::size_t i=0;i<count;++i){const auto byte=static_cast<unsigned char>(bytes[i]);
+                            out.push_back(digits[byte>>4]);out.push_back(digits[byte&15]);}
+                        return out;
+                    };
+                    const auto generation=[&](std::int32_t id){
+                        const auto* entity=id>0&&id<=32767?world.find(static_cast<std::int16_t>(id)):nullptr;
+                        return entity?std::to_string(entity->generation):std::string{"unavailable"};
+                    };
+                    const auto usage=animation_catalog?animation_catalog->usage():odh::host::CatalogUsage{};
+                    std::ostringstream out;
+                    out<<"animation resolution failed event="<<animation_resolution_failure_events<<" stage="<<resolution_stage
+                        <<" tick="<<ticks<<" routine="<<frame.key.id<<" pc="<<frame.pc
+                        <<" source="<<source<<" id="<<id<<" posture="<<(posture?std::to_string(*posture):"none")
+                        <<" caller="<<frame.context.caller<<'/'<<generation(frame.context.caller)
+                        <<" callee="<<frame.context.callee<<'/'<<generation(frame.context.callee)
+                        <<" stack="<<frame.context.stack_object<<'/'<<generation(frame.context.stack_object)
+                        <<" refs_bound="<<(frame.context.entity_references_bound?"true":"false")
+                        <<" bound_caller_gen="<<frame.context.caller_generation
+                        <<" bound_callee_gen="<<frame.context.callee_generation
+                        <<" bound_stack_gen="<<frame.context.stack_object_generation
+                        <<" code_owner="<<frame.context.code_owner
+                        <<" age="<<(resolution_age?std::to_string(*resolution_age):"unavailable")
+                        <<" child="<<(resolution_child?(*resolution_child?"true":"false"):"unavailable")
+                        <<" table_owner="<<(resolution_table_owner?std::to_string(*resolution_table_owner):"global-or-unselected")
+                        <<" table_id="<<(resolution_table_id?std::to_string(*resolution_table_id):"unselected")
+                        <<" language=1"
+                        <<" catalog_sources="<<usage.sources<<" bcf_supported="<<usage.bcf_supported
+                        <<" bcf_skipped="<<usage.bcf_skipped_profile<<" live_headers="<<usage.live_headers
+                        <<" cache_records="<<usage.cache_records<<" metadata_bytes="<<usage.metadata_bytes
+                        <<" reason_len="<<animation_resolution_diagnostic.size()
+                        <<" reason_hex="<<hex(animation_resolution_diagnostic,192)
+                        <<" name_len="<<resolution_name.size()<<" name_hex="<<hex(resolution_name,96);
+                    const auto owner=resource_owner_provenance.find(frame.context.code_owner);
+                    if(owner!=resource_owner_provenance.end()){
+                        const auto& provenance=owner->second;
+                        out<<" owner_guid="<<provenance.resource_guid<<" owner_objd="<<provenance.definition_chunk_id
+                            <<" owner_source_len="<<provenance.source.size()<<" owner_source_hex="<<hex(provenance.source,96)
+                            <<" owner_asset_len="<<provenance.asset.size()<<" owner_asset_hex="<<hex(provenance.asset,96);
+                    }else out<<" owner_provenance=unavailable";
+                    // Existing session logger accepts 2048 bytes; keep every event within it.
+                    session_log.event(out.str().substr(0,2048));
+                }catch(...){ /* Preserve the existing null result even if diagnostic formatting fails. */ }
+            }
+#endif
+            return {};
+        }
     };
     const odh::SourceWalkAnimationNameResolver route_animation_name=[&](const odh::VmFrame& frame,
             std::uint16_t index,bool swimming)->std::optional<std::string>{
@@ -5104,6 +5201,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }catch(const odh::FormatError& error){animation_resolution_diagnostic=error.what();return {};}
     };
     const auto bind_authored_reset_lookup=[&](odh::Playback& playback){
+        playback.set_animation_lookup_resolver([&](const odh::VmFrame& frame,std::uint32_t source,std::uint16_t id)->odh::AnimationLookup{
+            bool absent=false;auto clip=resolve_animation(frame,source,id,{},&absent);
+            const auto availability=absent?odh::AnimationAvailability::absent:
+                clip?odh::AnimationAvailability::available:odh::AnimationAvailability::unavailable;
+            return {availability,std::move(clip),animation_resolution_diagnostic};
+        });
         playback.set_reset_lookup_resolver([&](const odh::VmFrame& frame,std::int16_t posture)->odh::ResetAnimationLookup{
             animation_resolution_diagnostic.clear();
             try{

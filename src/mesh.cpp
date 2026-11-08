@@ -1,5 +1,6 @@
 #include "odh/mesh.hpp"
 #include "read_cursor.hpp"
+#include "bcf_sections.hpp"
 
 #include <charconv>
 #include <cctype>
@@ -238,24 +239,7 @@ Mesh read_skn(const View& view,MeshLimits limits) {
 AppearanceCollection read_bcf_appearances(const View& view,MeshLimits limits) {
     detail::Cursor c(view,limits.text_bytes);
     if(c.u32()!=0)throw FormatError("BCF skeleton section outside appearance-only profile");
-    AppearanceCollection result{};
-    const auto count=signed_count<Appearance>(c,limits.appearances,13,4);
-    result.appearances.reserve(count);
-    for(std::uint32_t i=0;i<count;++i) {
-        Appearance appearance{};
-        appearance.name=c.pascal();appearance.type=c.i32();appearance.zero=c.i32();
-        const auto raw_bindings=c.u32();
-        const auto bindings=bounded<AppearanceBinding>(c,raw_bindings,
-                                                       limits.appearance_bindings,10);
-        appearance.bindings.reserve(bindings);
-        for(std::uint32_t j=0;j<bindings;++j) {
-            AppearanceBinding binding{};
-            binding.bone=c.pascal();binding.mesh_name=c.pascal();
-            binding.censor_flags=c.i32();binding.zero=c.i32();
-            appearance.bindings.push_back(std::move(binding));
-        }
-        result.appearances.push_back(std::move(appearance));
-    }
+    AppearanceCollection result{detail::bcf_appearance_section(c,limits),0};
     if(c.i32()!=0)throw FormatError("BCF animation section outside appearance-only profile");
     result.remaining_bytes=c.remaining();
     return result;

@@ -31,6 +31,20 @@ catálogo e não é promovido a v2 apenas por ser reaberto. O contrato interno
 experimental está em [native_personal_catalog.hpp](../include/odh/native_personal_catalog.hpp);
 a existência desse contrato não declara uma API pública ou paridade completa.
 
+## Animações ausentes
+
+Um pedido comum de animação pode continuar no próximo passo da simulação quando
+o catálogo comprova que o nome pedido não existe, conforme a referência TS1.
+Nesse caso, a animação atual e o objeto carregado pelo personagem são preservados.
+Por exemplo, um nome reservado por um comportamento não deve ser substituído por
+outra animação parecida.
+
+Essa conclusão exige conferir todas as seções dos arquivos binários admitidos.
+Um arquivo desconhecido que possa conter o nome impede afirmar sua ausência.
+Arquivo danificado, nome ambíguo, erro de leitura e limite de recursos continuam
+sendo falhas. Movimento, alcance de objetos e restauração de animações salvas
+mantêm seus próprios contratos; essa regra não autoriza ignorar seus erros.
+
 ## Objetos, posições e retirada
 
 O estado espacial admite vários ocupantes no mesmo quadrado. A cadeia original

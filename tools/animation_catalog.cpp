@@ -68,8 +68,10 @@ AnimationCatalog::AnimationCatalog(const std::vector<std::string>& paths,Catalog
         const auto si=static_cast<std::uint32_t>(p.sources.size());p.sources.push_back(std::move(s));const auto& source=*p.sources.back();p.stats.far_entries+=source.entries.size();
         for(std::size_t ei=0;ei<source.entries.size();++ei){const auto& e=source.entries[ei];charge(p.stats.name_bytes,e.name.size(),limits.name_bytes,"catalog cumulative names exceed budget");charge(p.stats.index_bytes,sizeof(FarEntry),limits.index_bytes,"catalog index exceeds budget");const auto key=basename(e.name);
             if(suffix(key,".cfp")){p.index(p.cfps,key,si,static_cast<std::uint32_t>(ei),0);++p.stats.cfp_entries;}
-            else if(suffix(key,".bcf")){const auto v=source.view->subview(e.offset,e.length);if(v.le32(0)!=0||v.le32(4)!=0){++p.stats.bcf_skipped_profile;continue;}
-                const auto table=read_bcf_animations(v,limits.parser);++p.stats.bcf_supported;for(std::size_t ai=0;ai<table.animations.size();++ai)p.index(p.animations,fold(table.animations[ai].name),si,static_cast<std::uint32_t>(ei),static_cast<std::uint32_t>(ai));}
+            else if(suffix(key,".cmx")){++p.stats.bcf_skipped_profile;}
+            else if(suffix(key,".bcf")){const auto v=source.view->subview(e.offset,e.length);
+                const auto table=read_bcf_animations(v,limits.parser);++p.stats.bcf_supported;
+                if(table.remaining_bytes)++p.stats.bcf_skipped_profile;for(std::size_t ai=0;ai<table.animations.size();++ai)p.index(p.animations,fold(table.animations[ai].name),si,static_cast<std::uint32_t>(ei),static_cast<std::uint32_t>(ai));}
         }
     }
     const auto sort=[](auto& items){std::sort(items.begin(),items.end(),[](const auto& a,const auto& b){return a.key<b.key;});};sort(p.animations);sort(p.cfps);p.stats.sources=p.sources.size();p.stats.animations=p.animations.size();

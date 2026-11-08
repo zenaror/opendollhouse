@@ -39,7 +39,7 @@ struct AnimationHeader {
     std::vector<BoneMotion> motions;
 };
 struct AnimationCollection {std::vector<AnimationHeader> animations;std::uint64_t remaining_bytes;};
-// Animation-only binary BCF profile (zero skeleton and appearance counts).
+// Binary BCF animation section after bounded skeleton/appearance metadata.
 // Transform data remains external CFP; properties are preserved, not executed.
 AnimationCollection read_bcf_animations(const View&,AnimationLimits limits={});
 struct CfpPlanes {std::array<std::vector<std::uint32_t>,7> bits;std::uint64_t remaining_bytes;};

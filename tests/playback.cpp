@@ -516,7 +516,52 @@ void source_reset_preserves_carry_and_hands(){
     require(f.player.carry_clip()==carry&&f.player.hands()&&f.player.hands()->left==hands->left&&f.player.hands()->right==hands->right&&!f.player.progress(),
         "source Reset clears primary animation but preserves same carry clip and hand gestures");
 }
+void ordinary_animation_absence_tests(){
+    using Availability=odh::AnimationAvailability;
+    for(const auto flags:{std::uint8_t{0},std::uint8_t{1},std::uint8_t{16},std::uint8_t{17}}){
+        odh::World world;require(world.create(1,odh::EntityKind::avatar,{0,88,1}),"create absence scheduling actor");
+        unsigned lookups=0;odh::Playback player(world,{});
+        player.set_animation_lookup_resolver([&](const auto&,std::uint32_t source,std::uint16_t id){
+            ++lookups;require(source==0&&id==9,"typed lookup sees exact normalized request");
+            return odh::AnimationLookup{Availability::absent,{}, {}};
+        });
+        auto program=routine(flags,4,9);program.instructions[0].on_true=1;
+        program.instructions[1]={2,254,255,{1,0,77,0,0,5,8,7}};
+        odh::Vm vm({{odh::routine_key(4096),program}},world.vm_memory(),{},player.primitive());
+        require(player.bind(vm),"bind real absence playback VM");vm.start(odh::routine_key(4096),{1,2,2},{123,456});
+        require(vm.run(20)==odh::VmStatus::next_tick&&vm.steps()==1&&vm.stack().back().pc==1&&
+            !vm.pending()&&lookups==1&&vm.temps()[1]==0&&vm.stack().back().arguments[0]==123&&
+            vm.stack().back().arguments[1]==456&&!player.progress()&&!player.carry_clip(),
+            "proven absence branches TRUE only next tick, without frame writes, waits or invented playback in every mode");
+        require(vm.run(20)==odh::VmStatus::next_tick&&vm.steps()==1&&lookups==1,
+            "missing animation does not implicitly consume another scheduler slice");
+        require(vm.resume_next_tick()&&vm.run(20)==odh::VmStatus::returned_true&&vm.temps()[1]==77,
+            "ordinary VM next-tick release executes the actual TRUE continuation");
+    }
+    Fixture held(1);held.start();require(held.apply(16,1).disposition==odh::PrimitiveDisposition::goto_true,
+        "establish real primary and carry state before absent requests");
+    odh::PlaybackSnapshot before;std::string why;require(held.player.capture_snapshot(before,&why),"capture held state");
+    const auto carry=held.player.carry_clip();
+    held.player.set_animation_lookup_resolver([](const auto&,auto,auto){return odh::AnimationLookup{Availability::absent,{}, {}};});
+    for(const auto flags:{std::uint8_t{0},std::uint8_t{1},std::uint8_t{16},std::uint8_t{17}}){
+        const auto outcome=held.apply(flags,9);odh::PlaybackSnapshot after;
+        require(outcome.disposition==odh::PrimitiveDisposition::goto_true_next_tick&&!outcome.write&&!outcome.temp_write&&
+            held.player.capture_snapshot(after,&why)&&same_primary(before,after)&&before.carry==after.carry&&
+            held.player.carry_clip()==carry,
+            "absent modes preserve existing primary/carry/gesture/event state and emit no output writes");
+    }
+    held.player.set_animation_lookup_resolver([](const auto&,auto,auto){return odh::AnimationLookup{Availability::unavailable,{},"provider incomplete"};});
+    require(held.apply(1,9).disposition==odh::PrimitiveDisposition::unsupported,"typed provider error remains unavailable");
+    held.player.set_animation_lookup_resolver([&](const auto&,auto,auto){return odh::AnimationLookup{Availability::absent,held.a,{}};});
+    require(held.apply(1,9).disposition==odh::PrimitiveDisposition::unsupported,"contradictory absence and clip rejects");
+    Fixture legacy;legacy.a.reset();require(legacy.apply(1,9).disposition==odh::PrimitiveDisposition::unsupported,
+        "legacy null resource remains unavailable rather than proved absence");
+    Fixture present;present.player.set_animation_lookup_resolver([&](const auto&,auto,auto){return odh::AnimationLookup{Availability::available,present.a,{}};});
+    require(present.apply(1,9).disposition==odh::PrimitiveDisposition::goto_true&&present.player.progress().has_value(),
+        "typed known presence still starts actual playback");
+}
 int main(){try{
+    ordinary_animation_absence_tests();
     source_reset_preserves_carry_and_hands();
     prepared_carry_transfer_tests();
     route_animation_tests();

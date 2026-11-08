@@ -1,5 +1,6 @@
 #include "odh/animation.hpp"
 #include "read_cursor.hpp"
+#include "bcf_sections.hpp"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -53,8 +54,10 @@ AnimationProperties pairs(detail::Cursor& c,std::uint32_t& budget) {
 }
 AnimationCollection read_bcf_animations(const View& view,AnimationLimits limits) {
     detail::Cursor c(view,limits.text_bytes);
-    if(c.u32()!=0)throw FormatError("BCF skeleton section outside animation-only profile");
-    if(c.u32()!=0)throw FormatError("BCF appearance section outside animation-only profile");
+    // All binary BCF profiles share these bounded sections. Validate/discard
+    // prefix metadata before indexing animations, including proven-empty files.
+    detail::bcf_skeleton_section(c,SkeletonLimits{});
+    detail::bcf_appearance_section(c,MeshLimits{});
     const auto count=bounded(c,limits.animations,26);AnimationCollection result{{},0};result.animations.reserve(count);
     for(std::uint32_t n=0;n<count;++n){AnimationHeader a{};a.name=c.pascal();a.xskill=c.pascal();
         a.duration_bits=c.u32();a.distance_bits=c.u32();a.moving=c.u32();a.translations=c.u32();a.rotations=c.u32();

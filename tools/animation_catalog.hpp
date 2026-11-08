@@ -23,8 +23,9 @@ struct CatalogUsage {
 // HOST, seekable read-only files, not thread-safe. Caller supplies every FAR;
 // Lookup of duplicate animation names or CFP basenames rejects, regardless of
 // source order; unrelated duplicates do not prevent constructing the index.
-// Only zero-skeleton/zero-appearance binary BCF is indexed. Other profiles are
-// counted as skipped, not claimed covered. Malformed supported resources fail.
+// All bounded binary BCF sections are validated, including zero-animation
+// skeleton/appearance files. Unknown CMX or trailing profiles keep absence
+// authority incomplete; malformed binary resources fail explicitly.
 // Accounting is logical bytes (strings + populated record sizeof), not RSS or
 // allocator capacity. Live returned handles stay charged after cache eviction;
 // budget exhaustion while handles are pinned fails explicitly. Handles may

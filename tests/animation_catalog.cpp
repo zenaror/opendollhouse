@@ -10,6 +10,15 @@ template<class F>void rejects(F f){bool rejected=false;try{f();}catch(const odh:
 void put(std::string& b,std::uint32_t v){for(int i=0;i<4;++i)b+=static_cast<char>((v>>(8*i))&255);}
 void text(std::string& b,const std::string& v){b+=static_cast<char>(v.size());b+=v;}
 std::string bcf(const std::string& name,const std::string& skill="Skill"){std::string b;put(b,0);put(b,0);put(b,1);text(b,name);text(b,skill);for(auto v:{0U,0U,0U,1U,1U,0U})put(b,v);return b;}
+// Real BCF section layouts, including the mixed skeleton+appearance profile.
+std::string prefixed_bcf(bool skeleton,bool appearance,const std::string& animation={}){
+    std::string b;put(b,skeleton?1:0);
+    if(skeleton){text(b,"rig");b+=char(0);b+=char(0);} // zero bones
+    put(b,appearance?1:0);
+    if(appearance){text(b,"skin");put(b,0);put(b,0);put(b,0);} // zero bindings
+    if(animation.empty())put(b,0);else b+=bcf(animation).substr(8);
+    return b;
+}
 std::string far(const std::vector<std::pair<std::string,std::string>>& entries){std::string b="FAR!byAZ";put(b,1);put(b,0);std::vector<std::uint32_t> offsets;for(const auto& e:entries){offsets.push_back(static_cast<std::uint32_t>(b.size()));b+=e.second;}auto offset=static_cast<std::uint32_t>(b.size());for(int i=0;i<4;++i)b[12+i]=static_cast<char>((offset>>(8*i))&255);put(b,static_cast<std::uint32_t>(entries.size()));for(std::size_t i=0;i<entries.size();++i){const auto& e=entries[i];put(b,static_cast<std::uint32_t>(e.second.size()));put(b,static_cast<std::uint32_t>(e.second.size()));put(b,offsets[i]);put(b,static_cast<std::uint32_t>(e.first.size()));b+=e.first;}return b;}
 struct Temp {std::filesystem::path path=std::filesystem::temp_directory_path()/("odh-catalog-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));Temp(){std::filesystem::create_directory(path);}~Temp(){std::filesystem::remove_all(path);}std::string write(const std::string& name,const std::string& bytes){const auto p=path/name;std::ofstream s(p,std::ios::binary);s.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));return p.string();}};
 void usage(const odh::host::CatalogUsage& u){std::cout<<"sources="<<u.sources<<" far_entries="<<u.far_entries<<" supported_bcf="<<u.bcf_supported<<" skipped_profile_bcf="<<u.bcf_skipped_profile<<" animations="<<u.animations<<" cfp_entries="<<u.cfp_entries<<" name_bytes="<<u.name_bytes<<" index_bytes="<<u.index_bytes<<" cache_records="<<u.cache_records<<" registry_entries="<<u.registry_entries<<" registry_bytes="<<u.registry_bytes<<" live_headers="<<u.live_headers<<" metadata_bytes="<<u.metadata_bytes<<" cfp_samples="<<u.cfp_samples<<'\n';}
@@ -18,7 +27,7 @@ int main(int argc,char** argv){try{
     using namespace odh::host;
     if(argc==3){AnimationCatalog native({argv[1],argv[2]});usage(native.usage());auto decoded=native.decode("a2o-idle-neutral-trans-stand-lstand");require(decoded->animation->cfp.has_value(),"native CFP exists");require(decoded->planes.bits[0].size()==90&&decoded->planes.bits[3].size()==1305,"native planes");usage(native.usage());std::cout<<decoded->animation->bcf.source<<":"<<decoded->animation->bcf.entry<<" -> "<<decoded->animation->cfp->entry<<" remaining="<<decoded->planes.remaining_bytes<<'\n';return 0;}
     Temp t;const std::string cfp(7,127);std::string mixed;put(mixed,1);put(mixed,0);
-    const auto a=t.write("one.far",far({{"Animation\\NotClip.cmx.bcf",bcf("Clip")},{"rig.bcf",mixed},{"unused.bcf",bcf("Other","OtherSkill")}}));
+    const auto a=t.write("one.far",far({{"Animation\\NotClip.cmx.bcf",bcf("Clip")},{"rig.cmx",mixed},{"unused.bcf",bcf("Other","OtherSkill")}}));
     const auto b=t.write("two.far",far({{"Nested/Skill.CFP",cfp},{"other.cmx.bcf",bcf("Third","Nested\\OtherSkill")},{"CFP\\OtherSkill.cfp",cfp}}));
     AnimationCatalog catalog({a,b});const auto stats=catalog.usage();require(stats.sources==2&&stats.bcf_supported==3&&stats.bcf_skipped_profile==1&&stats.animations==3,"profiles/counts");require(stats.metadata_bytes==0&&stats.cfp_samples==0,"lazy cache");
     auto exact_limits=CatalogLimits{};exact_limits.name_bytes=stats.name_bytes;exact_limits.index_bytes=stats.index_bytes;AnimationCatalog exact({a,b},exact_limits);require(exact.usage().name_bytes==stats.name_bytes,"cumulative exact name/index budgets");--exact_limits.name_bytes;rejects([&]{AnimationCatalog over({a,b},exact_limits);});exact_limits.name_bytes=stats.name_bytes;--exact_limits.index_bytes;rejects([&]{AnimationCatalog over({a,b},exact_limits);});
@@ -36,6 +45,45 @@ int main(int argc,char** argv){try{
     auto moved=std::move(catalog);rejects([&]{catalog.resolve("clip");});rejects([&]{catalog.usage();});require(moved.resolve("clip")->header.name=="Clip","source/View stable across move");AnimationCatalog assigned({missing});assigned=std::move(moved);rejects([&]{moved.decode("clip");});require(assigned.decode("clip")->planes.bits[0].size()==1,"move assignment keeps owned streams");std::shared_ptr<const CatalogDecoded> survivor;{AnimationCatalog dying({a,b});survivor=dying.decode("clip");}require(survivor->planes.bits[0].size()==1&&survivor->animation->bcf.source==a,"owned handles after catalog destruction");
     const auto fixture=bcf("Truncated");for(std::size_t n=0;n<fixture.size();++n){const auto truncated=t.write("truncated.far",far({{"clip.bcf",fixture.substr(0,n)}}));rejects([&]{AnimationCatalog c({truncated});});}
     const auto broken=t.write("broken.far",far({{"clip.bcf",bcf("Broken")},{"skill.cfp",cfp.substr(0,6)}}));AnimationCatalog trunc_cfp({broken});require(trunc_cfp.resolve("broken")->cfp.has_value(),"header resolve does not decode malformed CFP");rejects([&]{trunc_cfp.decode("broken");});require(trunc_cfp.usage().cfp_samples==0,"failed CFP decode releases ledger");
+    {
+        const auto prefix=t.write("section-profiles.far",far({
+            {"appearance.bcf",prefixed_bcf(false,true)}, {"skeleton.bcf",prefixed_bcf(true,false)},
+            {"mixed.bcf",prefixed_bcf(true,true)}, {"animated-mixed.bcf",prefixed_bcf(true,true,"Prefixed")},
+            {"Skill.cfp",cfp}}));
+        AnimationCatalog complete_prefix({prefix});
+        const auto u=complete_prefix.usage();
+        require(u.bcf_supported==4&&u.bcf_skipped_profile==0&&u.animations==1,
+            "validated skeleton/appearance/mixed zero-animation providers retain complete name authority");
+        const auto selected=complete_prefix.resolve_if_present("prefixed");
+        require(selected&&selected->header.name=="Prefixed"&&selected->bcf.entry=="animated-mixed.bcf"&&
+            complete_prefix.decode("PREFIXED")->animation==selected,
+            "shared prefix reader resolves real mixed animation header and CFP with exact identity");
+        require(!complete_prefix.resolve_if_present("missing"),"complete prefixed providers prove named absence");
+        auto small=CatalogLimits{};small.metadata_bytes=1;AnimationCatalog budget({prefix},small);
+        rejects([&]{budget.resolve_if_present("Prefixed");});
+        small={};small.parser.text_bytes=2;rejects([&]{AnimationCatalog text_budget({prefix},small);});
+        const auto wire=prefixed_bcf(true,true,"Prefixed");
+        for(std::size_t n=0;n<wire.size();++n){const auto broken=t.write("prefix-truncated.far",far({{"partial.bcf",wire.substr(0,n)}}));
+            rejects([&]{AnimationCatalog bad({broken});});}
+        auto bad_count=wire;bad_count[0]=65;
+        const auto overflow=t.write("prefix-count.far",far({{"overflow.bcf",bad_count}}));
+        rejects([&]{AnimationCatalog bad({overflow});});
+        const auto unknown=t.write("unknown-profile.far",far({{"possibly-present.cmx","unknown text profile"},
+            {"known.bcf",bcf("Known")}}));
+        AnimationCatalog partial({unknown});require(partial.resolve_if_present("Known")->header.name=="Known",
+            "known present remains usable alongside an unclassified possible provider");
+        rejects([&]{partial.resolve_if_present("missing");});
+        const auto trailing=t.write("unknown-trailing.far",far({{"known.bcf",bcf("Known")+"unknown"}}));
+        AnimationCatalog unparsed({trailing});require(unparsed.resolve_if_present("Known")->header.name=="Known",
+            "known animation survives unknown trailing metadata");
+        rejects([&]{unparsed.resolve_if_present("missing");});
+        const auto duplicate_prefix=t.write("duplicate-prefix.far",far({{"duplicate.bcf",prefixed_bcf(true,false,"Prefixed")}}));
+        AnimationCatalog ambiguity({prefix,duplicate_prefix});rejects([&]{ambiguity.resolve_if_present("prefixed");});
+        auto one=CatalogLimits{};one.cache_records=1;AnimationCatalog pinned_absence({prefix,unknown},one);
+        auto pinned_header=pinned_absence.resolve_if_present("Prefixed");
+        rejects([&]{pinned_absence.resolve_if_present("Known");});
+        require(pinned_header->header.name=="Prefixed","pinned-header budget error never becomes absence");
+    }
     {const auto clean=t.write("complete-lookup.far",far({{"clip.bcf",bcf("Lookup")}}));AnimationCatalog complete({clean});
      const auto clip=complete.resolve("Lookup");require(complete.resolve_if_present("lookup")==clip,"typed presence retains exact admitted header identity");
      require(!complete.resolve_if_present("missing"),"complete supported index proves named animation absence without synthesizing a clip");
