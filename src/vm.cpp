@@ -1253,9 +1253,11 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                         (outcome.second_temp_write && outcome.second_temp_write->index >= register_temps().size()))
                         throw VmError("primitive temp output index outside registers");
                 }
-                if(outcome.call && outcome.disposition!=PrimitiveDisposition::call)
+                if(outcome.call && outcome.disposition!=PrimitiveDisposition::call &&
+                   outcome.disposition!=PrimitiveDisposition::suspend_and_call)
                     throw VmError("primitive call payload requires call disposition");
-                if(outcome.call_commit&&outcome.disposition!=PrimitiveDisposition::call)
+                if(outcome.call_commit&&outcome.disposition!=PrimitiveDisposition::call&&
+                   outcome.disposition!=PrimitiveDisposition::suspend_and_call)
                     throw VmError("primitive call commit requires call disposition");
                 if (outcome.write && outcome.disposition == PrimitiveDisposition::unsupported)
                     throw VmError("unsupported primitive outcome must not carry frame output");
@@ -1273,6 +1275,7 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                     *lifecycle_deleted=true;
                     break;
                 case PrimitiveDisposition::call:
+                case PrimitiveDisposition::suspend_and_call:
                     if(check_mode){
                         bool named_child=false;
                         if(instruction.opcode==28&&instruction.operands[5]==2&&outcome.call&&named_routine_scope(outcome.call->key.scope)&&
@@ -1289,6 +1292,22 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                         throw VmError("external child requires its pending service scheduling API");
                     {
                     const auto parent_index=stack_.size()-1;
+                    const bool service_child=outcome.disposition==PrimitiveDisposition::suspend_and_call;
+                    if(service_child){
+                        if(check_mode||outcome.call->return_mode!=VmCallReturnMode::ordinary||outcome.write||
+                           pending_||external_frame_return_||immediate_return_)
+                            throw VmError("pending primitive child requires an ordinary child and exclusive service admission");
+                        // Authenticate the existing owner/bank and call shape
+                        // before creating either persistent continuation value.
+                        // A host needing a new owner uses prepare_primitive_call
+                        // at its authenticated primitive safe point, as before.
+                        if(!can_accept_call(*outcome.call))
+                            throw VmError("pending primitive child failed call preflight");
+                        static_assert(std::is_nothrow_copy_constructible_v<VmPending>);
+                        suspended_pending_.reserve(suspended_pending_.size()+1);
+                    }
+                    const auto service_pending=service_child?std::optional<VmPending>{VmPending{dispatch.ticket,
+                        VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction,frame.context.code_owner},frame.context}}:std::nullopt;
                     const bool immediate=outcome.call->return_mode==VmCallReturnMode::immediate;
                     std::optional<VmFrame> immediate_parent_output;
                     if(outcome.write){
@@ -1311,8 +1330,13 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                         immediate_continuations_.push_back({dispatch.ticket,stack_.size(),VmStatus::running,{}});
                     }
                     try{push(outcome.call->key,outcome.call->context,outcome.call->arguments,
-                             outcome.call->return_mode, dispatch.ticket,outcome.call->exact_arguments,outcome.call->action_tree_override);}
+                             service_child?VmCallReturnMode::external_frame_next_tick:outcome.call->return_mode,
+                             dispatch.ticket,outcome.call->exact_arguments,outcome.call->action_tree_override);}
                     catch(...){if(immediate)immediate_continuations_.pop_back();throw;}
+                    // reserve above makes this nonallocating. The child has
+                    // passed push's complete context/frame checks, but has not
+                    // executed. Commit sees the exact real suspended parent.
+                    if(service_pending)suspended_pending_.push_back(*service_pending);
                     if(outcome.call_commit){
                         bool accepted=false;
                         try{
@@ -1327,9 +1351,11 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                             } commit(*this,dispatch,instruction,parent_index+1);
                             accepted=outcome.call_commit();
                         }
-                        catch(...){stack_.pop_back();if(immediate)immediate_continuations_.pop_back();status_=VmStatus::fault;throw;}
+                        catch(...){stack_.pop_back();if(service_child)suspended_pending_.pop_back();
+                            if(immediate)immediate_continuations_.pop_back();status_=VmStatus::fault;throw;}
                         if(!accepted){
                             stack_.pop_back();
+                            if(service_child)suspended_pending_.pop_back();
                             if(immediate)immediate_continuations_.pop_back();
                             throw VmError("primitive call state commit rejected after frame preflight");
                         }

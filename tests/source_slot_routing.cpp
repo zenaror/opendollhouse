@@ -1755,6 +1755,167 @@ void architecture_room_invalidation(){
         "missing event provider stays explicit unsupported, never a free or failed authored route");
 }
 
+struct UnplacedRouteFixture {
+    odh::World world;odh::SlotTable table=source_table();odh::Routing route{world,table};odh::Vm vm;
+    unsigned source_ticks=0,room_reads=0,root_exits=0,nested_exits=0;bool room_proved=true,exit_supported=true;
+    std::vector<std::int16_t> failure_arguments;
+    static odh::RoutineSet failure_program(bool available,bool nested){
+        if(!available)return {};
+        std::vector<odh::Instruction> instructions;
+        if(nested)instructions.push_back({45,255,1,{8,0,1,0,0,0,0,0}});
+        instructions.push_back({2,static_cast<std::uint8_t>(nested?2:1),255,{1,0,73,0,0,5,8,7}});
+        instructions.push_back({99,254,255,{}});
+        return {{odh::routine_key(398),{0x8002,std::move(instructions),{},odh::Bhav::Metadata{0,4,4,0}}}};
+    }
+    explicit UnplacedRouteFixture(std::uint8_t flags=0,bool populate=true,bool failure_available=true,bool nested=false):
+        vm(failure_program(failure_available,nested),world.vm_memory(),{},
+            [this](const auto& f,const auto& i,const auto& t,const auto& d){
+                if(i.opcode==99){failure_arguments=f.arguments;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};}
+                return route.primitive()(f,i,t,d);},{{owner,program(1,flags)}}){
+        if(populate)require(world.create(7,odh::EntityKind::avatar,{0,88,3,16})&&world.create(9,odh::EntityKind::object,{0,0,1})&&
+            world.set_position(9,{20,20,1,0})&&world.declare_object_word(7,8,0),"unplaced avatar has actual identity, flags and a positioned target");
+        route.set_stack_object_slot_table_provider([this](const auto&){return &table;});
+        route.set_unplaced_room_failure_provider([this](const auto& target)->std::optional<std::uint16_t>{
+            ++room_reads;require(target==*world.find(9)->position,"room proof uses real target pose");
+            return room_proved?std::optional<std::uint16_t>{2}:std::nullopt;
+        });
+        const auto valid=[this](const odh::SourceSparseMotionContext& context){
+            const auto* actor=world.find(7);
+            if(!actor||context.actor_generation!=actor->generation||context.actor_unplaced!=!actor->position)return false;
+            if(context.lifecycle_instruction)return vm.matches_active_primitive(context.frame,*context.lifecycle_instruction,context.dispatch);
+            return !vm.dispatch_active()&&vm.pending()&&context.dispatch.ticket==vm.pending()->ticket;
+        };
+        odh::SourceSparseServices services;
+        services.source_tick=[this,valid](const auto& context){require(valid(context),"FAILED tick has real pending or active primitive authority");++source_ticks;return true;};
+        services.end_locomotion=[this,valid](const auto& context,const auto&,std::string* error){
+            require(valid(context),"PreExit is lifecycle authority, not a positioned-motion callback");
+            if(!exit_supported){if(error)*error="fixture source PreExit dependency unknown";return false;}
+            if(context.root_route){++root_exits;return world.set_static_footprint(7,true);}++nested_exits;return true;
+        };
+        route.set_source_sparse_services(std::move(services));require(route.bind(vm),"bind the same native Routing without a geometry allocation");
+    }
+    odh::VmStatus start(){require(vm.start(odh::routine_key(4116),{7,7,9,owner},{8})==odh::VmStatus::running,"start exact original route owner");return vm.run(12);}
+};
+void unplaced_same_run_failure_timing(){
+    for(const bool nested:{false,true}){
+        UnplacedRouteFixture live(0,true,true,nested);const auto spatial=live.world.spatial_revision();
+        const auto status=live.start();
+        const bool admitted=status==odh::VmStatus::waiting&&live.route.active()&&live.route.external_frame_active()&&
+            live.vm.stack().back().key.id==398&&live.route.active_frame_context()->state==odh::RouteFrameState::failed&&
+            live.vm.pending()->instruction.instruction.opcode==99&&live.vm.temps()[1]==73&&
+            live.failure_arguments==std::vector<std::int16_t>{2,0,0,0}&&live.world.find(7)->person_data[62]==2&&
+            live.source_ticks==(nested?1U:0U)&&live.nested_exits==(nested?1U:0U)&&live.root_exits==0&&
+            !live.route.has_grid()&&!live.world.find(7)->position&&live.world.spatial_revision()==spatial+1;
+        // World deliberately invalidates derived spatial data for person-bank
+        // writes too: mandatory RouteResult0->2 is exactly one such change.
+        if(!admitted){
+            std::string args;for(const auto arg:live.failure_arguments)args+=std::to_string(arg)+",";
+            throw std::runtime_error("source398 first-yield timing mismatch nested="+std::to_string(nested)+
+                " status="+odh::vm_status_name(status)+" vm="+live.vm.diagnostic()+" routing="+live.route.diagnostic()+
+                " active="+std::to_string(live.route.active())+" external="+std::to_string(live.route.external_frame_active())+
+                " top="+std::to_string(live.vm.stack().empty()?0:live.vm.stack().back().key.id)+
+                " pending_opcode="+std::to_string(live.vm.pending()?live.vm.pending()->instruction.instruction.opcode:0)+
+                " temp1="+std::to_string(live.vm.temps()[1])+" args="+args+
+                " route_result="+std::to_string(live.world.find(7)->person_data[62])+
+                " rng="+std::to_string(live.source_ticks)+" root_exits="+std::to_string(live.root_exits)+
+                " nested_exits="+std::to_string(live.nested_exits)+" has_grid="+std::to_string(live.route.has_grid())+
+                " positioned="+std::to_string(live.world.find(7)->position.has_value())+
+                " revision="+std::to_string(live.world.spatial_revision())+" before="+std::to_string(spatial));
+        }
+        require(admitted,"398 effects and any nested no-child FAILED tick execute before the first genuine child yield, without a host route tick");
+        std::string why;const auto saved=live.route.capture_session_route_stack(owner,&why);
+        if(!saved)throw std::runtime_error("same-run failure398 capture: "+why);
+        require(saved->jobs.size()==1&&odh::is_source_unplaced_room_failure(saved->jobs.front())&&
+            !live.route.intersects_destination({20,20}).value_or(true),"yielded source failure has no CurRoute or invented destination reservation");
+        // Static admission proof also serves staged older pending snapshots;
+        // exercise its own identity guards without borrowing an active owner.
+        if(!nested){
+            auto state=live.vm.snapshot();state.stack.resize(1);state.pending=saved->jobs.front().pending;
+            state.suspended_pending.clear();state.external_frame_return.reset();state.status=odh::VmStatus::waiting;
+            UnplacedRouteFixture staged(0,false);
+            require(staged.world.restore_snapshot(live.world.snapshot())&&staged.vm.restore_snapshot(state),"prepare exact staged source parent VM for static proof validation");
+            auto proof=saved->jobs.front();proof.failure_pending=true;proof.failure_tree_invoked=false;
+            proof.external_frame_active=false;proof.external_frame_owner=0;proof.external_frame_call.reset();
+            require(odh::Routing::validates_immediate_parent(staged.world,staged.vm,*state.pending,state.stack.front(),&proof),"exact staged source witness admits its own unplaced pending frame");
+            for(unsigned field=0;field<3;++field){auto wrong=proof;
+                if(field==0)++wrong.ticket;if(field==1)++wrong.run_generation;if(field==2)++wrong.target_generation;
+                require(!odh::Routing::validates_immediate_parent(staged.world,staged.vm,*state.pending,state.stack.front(),&wrong),
+                    "static API independently rejects wrong witness ticket, run and live target generation");
+            }
+        }
+        UnplacedRouteFixture cold(0,false,true,nested);
+        require(cold.world.restore_snapshot(live.world.snapshot())&&cold.vm.restore_snapshot(live.vm.snapshot()),"rebuild actual unplaced World and yielded398 VM");
+        auto bad=*saved;bad.jobs.front().unplaced_room_failure->slot.flags|=0x0800;
+        require(!cold.route.restore_session_route_stack(bad,owner,&why),"IgnoreRooms cannot borrow a NoRoomRoute witness");
+        bad=*saved;bad.jobs.front().unplaced_room_failure->slot_index++;
+        require(!cold.route.restore_session_route_stack(bad,owner,&why),"changed exact SLOT index cannot restore");
+        const auto previous=cold.table.records[8].standing;cold.table.records[8].standing++;
+        require(!cold.route.restore_session_route_stack(*saved,owner,&why),"changed installed SLOT bytes cannot restore a valid numeric owner");
+        cold.table.records[8].standing=previous;
+        require(cold.route.restore_session_route_stack(*saved,owner,&why)&&cold.vm.temps()[1]==73&&!cold.route.has_grid(),"cold restore resumes actual yielded child without readmission or artificial geometry");
+        for(auto* fixture:{&live,&cold}){
+            require(fixture->world.set_person_data(7,62,9)&&fixture->vm.complete(fixture->vm.pending()->ticket,true)&&
+                fixture->vm.run(8)==odh::VmStatus::yielded&&fixture->route.active()&&fixture->root_exits==0,
+                "source398 return stops at the source-proven external boundary before FAILED RNG and PreExit");
+            require(fixture->route.tick(1)&&fixture->vm.run(8)==odh::VmStatus::returned_false&&!fixture->route.active()&&
+                fixture->root_exits==1&&fixture->world.find(7)->person_data[62]==9&&!fixture->world.find(7)->position,
+                "next owning routing tick runs root PreExit even unplaced and preserves authored child effects");
+        }
+        require(live.source_ticks==(nested?2U:1U)&&cold.source_ticks==1,"cold restore consumes only remaining FAILED tick RNG, never replays nested history");
+    }
+    UnplacedRouteFixture disabled(1,true,false);
+    require(disabled.start()==odh::VmStatus::returned_false&&!disabled.route.active()&&!disabled.vm.pending()&&
+        disabled.source_ticks==1&&disabled.root_exits==1&&disabled.failure_arguments.empty()&&
+        disabled.world.find(7)->person_data[62]==2&&!disabled.world.find(7)->position,
+        "NoFailureTrees performs legitimate transient FAILED RNG/PreExit/false in the initial run with no wait or398 dependency");
+    UnplacedRouteFixture missing(0,true,false);
+    require(missing.start()==odh::VmStatus::fault&&missing.route.active()&&!missing.route.external_frame_active()&&
+        !missing.vm.pending()&&missing.source_ticks==0&&missing.root_exits==0&&
+        missing.vm.diagnostic().find("failure tree398")!=std::string::npos,
+        "missing required398 fails atomic admission explicitly, never yields an artificial route wait or authored false");
+    UnplacedRouteFixture unsupported_exit(1);unsupported_exit.exit_supported=false;
+    require(unsupported_exit.start()==odh::VmStatus::fault&&unsupported_exit.route.active()&&
+        unsupported_exit.vm.diagnostic().find("PreExit dependency unknown")!=std::string::npos,
+        "unadmitted PreExit capability stays an explicit source service failure rather than skipped cleanup");
+    for(unsigned unsupported=0;unsupported<3;++unsupported){
+        UnplacedRouteFixture unknown;
+        if(unsupported==0)unknown.room_proved=false;
+        if(unsupported==1)unknown.table.records[8].flags|=0x0800;
+        if(unsupported==2)require(unknown.world.attach(9,0,7),"use an actual contained unplaced avatar");
+        require(unknown.start()==odh::VmStatus::fault&&!unknown.route.active()&&unknown.world.find(7)->person_data[62]!=2,
+            "unknown room, IgnoreRooms and contained absence remain explicit unsupported rather than invented room failure");
+    }
 }
-int main(){try{failed_attempt_retains_curroute();authenticated_slot_between_floors();architecture_room_portal_restore();architecture_room_invalidation();source_standing_before_walking();general_slot_source_choices();immediate_routing_interruption();immediate_routing_service();authenticated_transient_relative_routes();deferred_relative_facing();parked_collision_failure_tree();ordinary_go_here_sparse();authenticated_circle_routes();face_anywhere_live_range_continuation();source_soft_failure_room_graph();source_soft_failure_alternatives();authenticated_range_routes();range_retry_and_replay();range_callback_boundaries();range_failure_metadata();source_circle_routes();generic_ranked_sparse_choices();geometry_tests();collision_routes();execution_tests();self_anchor_tests();sparse_point_uses_complete_room_plan();std::cout<<checks<<" source exact SLOT routing checks passed\n";return 0;}
+void unplaced_child_interruption_and_placement(){
+    UnplacedRouteFixture live;const auto child_owner=owner+1;
+    const odh::RoutineSet child{{odh::routine_key(4100),{0x8002,
+        {{2,254,255,{2,0,77,0,0,5,8,7}}},{},odh::Bhav::Metadata{0,4,4,0}}}};
+    require(live.vm.install_owner(child_owner,child)&&live.start()==odh::VmStatus::waiting,"source398 reaches its genuine first child wait");
+    const auto pending=*live.vm.pending();
+    const odh::VmCall call{odh::routine_key(4100),{7,9,9,child_owner},{}};
+    const auto immediate=live.vm.inject_immediate(call,[&](const auto& p,const auto& frame){
+        return p.ticket==pending.ticket&&p.instruction.instruction.opcode==99&&frame.context.caller==7;
+    });
+    require(immediate&&live.route.parked_for_immediate()&&live.route.tick(1)&&live.source_ticks==0,"real immediate child covers398 without ticking its failed routing parent");
+    std::string why;const auto saved=live.route.capture_session_route_stack(owner,&why);
+    if(!saved)throw std::runtime_error("source398 immediate capture: "+why);
+    UnplacedRouteFixture cold(0,false);
+    require(cold.vm.install_owner(child_owner,child)&&cold.world.restore_snapshot(live.world.snapshot())&&
+        cold.vm.restore_snapshot(live.vm.snapshot())&&cold.route.restore_session_route_stack(*saved,owner,&why),"cold restore retains failed parent, real398 and genuine immediate child together");
+    odh::RouteGrid warm_grid{64,64},cold_grid{64,64};
+    for(auto* fixture:{&live,&cold}){
+        require(fixture->vm.run(8)==odh::VmStatus::yielded&&fixture->vm.temps()[2]==77&&fixture->vm.resume_immediate(*immediate)&&
+            fixture->vm.complete(fixture->vm.pending()->ticket,true)&&fixture->vm.run(8)==odh::VmStatus::yielded,
+            "shared immediate registers and398 return resume exactly once through existing VM ownership");
+        require(fixture->world.set_position(7,{4,12,1,0})&&fixture->world.set_person_data(7,62,9),"source placement may happen while failure child is retained");
+    }
+    require(live.route.attach_grid(warm_grid)&&cold.route.attach_grid(cold_grid),"same failed-route owner accepts actual later geometry, without replacing the controller");
+    for(auto* fixture:{&live,&cold})require(fixture->route.tick(2)&&fixture->vm.run(8)==odh::VmStatus::returned_false&&
+        fixture->source_ticks==1&&fixture->root_exits==1&&fixture->world.find(7)->person_data[62]==9&&
+        fixture->world.find(7)->position==std::optional<odh::EntityPosition>{{4,12,1,0}},
+        "warm and cold FAILED continuation preserves actual later placement and child effects");
+}
+
+}
+int main(){try{unplaced_same_run_failure_timing();unplaced_child_interruption_and_placement();failed_attempt_retains_curroute();authenticated_slot_between_floors();architecture_room_portal_restore();architecture_room_invalidation();source_standing_before_walking();general_slot_source_choices();immediate_routing_interruption();immediate_routing_service();authenticated_transient_relative_routes();deferred_relative_facing();parked_collision_failure_tree();ordinary_go_here_sparse();authenticated_circle_routes();face_anywhere_live_range_continuation();source_soft_failure_room_graph();source_soft_failure_alternatives();authenticated_range_routes();range_retry_and_replay();range_callback_boundaries();range_failure_metadata();source_circle_routes();generic_ranked_sparse_choices();geometry_tests();collision_routes();execution_tests();self_anchor_tests();sparse_point_uses_complete_room_plan();std::cout<<checks<<" source exact SLOT routing checks passed\n";return 0;}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

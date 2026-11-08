@@ -6908,7 +6908,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         const auto* actor=world.find(actor_id);
         const auto* stack=household_restore?household_restore->route_stack(actor_id):
             session_restore?session_restore->route_stack(actor_id):nullptr;
-        if(!actor||!stack||!odh::Routing::validates_immediate_parent(world,thread,pending,frame))return false;
+        if(!actor||!stack)return false;
         const odh::RouteJobSnapshot* saved=nullptr;
         for(const auto& job:stack->jobs)if(job.ticket==pending.ticket){
             if(saved)return false;
@@ -6923,7 +6923,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                    continuation.parent_depth!=pending.instruction.depth)return false;
                 ++parents;
             }
-        return parents==1&&odh::Routing::validates_immediate_parent(world,thread,saved->pending,saved->route_frame);
+        return parents==1&&odh::Routing::validates_immediate_parent(world,thread,pending,frame,saved)&&
+            odh::Routing::validates_immediate_parent(world,thread,saved->pending,saved->route_frame,saved);
     };
     const auto bind_immediate_services=[&](odh::EntityThreadControllers& controllers,odh::Vm& thread,
             odh::Playback* animation,std::function<odh::Routing*()> routing){
@@ -8894,10 +8895,21 @@ struct PlacementCandidateProbe {
         };
         const auto motion_context_valid=[&,actor_id,thread_ptr=&thread](const odh::SourceSparseMotionContext& context){
             const auto* actor=world.find(actor_id);
-            return context.vm==thread_ptr&&context.actor==actor_id&&actor&&actor->position&&
+            return !context.lifecycle_instruction&&context.vm==thread_ptr&&context.actor==actor_id&&actor&&actor->position&&
                 actor->generation==context.actor_generation&&*actor->position==context.position&&
                 callee_vm_for(actor_id)==thread_ptr&&thread_ptr->run_generation()==context.run_generation&&
                 context.dispatch.origin==thread_ptr&&thread_ptr->pending()&&thread_ptr->pending()->ticket==context.dispatch.ticket;
+        };
+        const auto lifecycle_context_valid=[&,actor_id,thread_ptr=&thread](const odh::SourceSparseMotionContext& context){
+            const auto* actor=world.find(actor_id);
+            if(context.vm!=thread_ptr||context.actor!=actor_id||!actor||actor->generation!=context.actor_generation||
+               actor->position.has_value()==context.actor_unplaced||
+               (actor->position&&!(*actor->position==context.position))||callee_vm_for(actor_id)!=thread_ptr||
+               thread_ptr->run_generation()!=context.run_generation||context.dispatch.origin!=thread_ptr)return false;
+            if(context.lifecycle_instruction)
+                return thread_ptr->matches_active_primitive(context.frame,*context.lifecycle_instruction,context.dispatch);
+            return !thread_ptr->dispatch_active()&&thread_ptr->pending()&&
+                thread_ptr->pending()->ticket==context.dispatch.ticket;
         };
         services.locomotion_profile=[&,motion_context_valid](const odh::SourceSparseMotionContext& context)
                 ->std::optional<odh::WalkMotionProfile>{
@@ -8919,13 +8931,22 @@ struct PlacementCandidateProbe {
             return motion_context_valid(context)&&animation&&animation->start_source_walk_animation(context.frame,*context.vm,
                 context.actor_generation,context.run_generation,profile.in_pool,profile.walk_style,profile.is_pet,error);
         };
-        services.end_locomotion=[&,motion_context_valid](const odh::SourceSparseMotionContext& context,
+        services.end_locomotion=[&,lifecycle_context_valid](const odh::SourceSparseMotionContext& context,
                 const odh::WalkMotionProfile&,std::string* error){
-            if(!motion_context_valid(context))return false;
-            source_walk_visuals.erase(context.actor);
+            if(!lifecycle_context_valid(context))return false;
             if(!context.root_route)return true;
+            const auto flags=world.read(context.frame,3,8);
+            // PersistID/collision-policy/same-pose placement are not represented
+            // by NID or GUID. Never infer that source condition to be false.
+            if(!flags||(static_cast<std::uint16_t>(*flags)&16U)){
+                if(error)*error="source PreExit intersection reset requires admitted PersistID/collision/same-pose services";
+                return false;
+            }
             auto* animation=look_turn_playback_for(context.actor);
-            return animation&&animation->end_source_walk_animation(context.frame,*context.vm,context.actor_generation,context.run_generation,error);
+            if(!animation||!animation->end_source_walk_animation(context.frame,*context.vm,context.actor_generation,context.run_generation,error,
+                context.lifecycle_instruction?&*context.lifecycle_instruction:nullptr,
+                context.lifecycle_instruction?&context.dispatch:nullptr))return false;
+            source_walk_visuals.erase(context.actor);return true;
         };
         services.publish_motion=[&,motion_context_valid](const odh::SourceSparseMotionContext& context,
                 const odh::WalkMotionEffects& effects,const std::array<float,3>& weights,std::string* error){
@@ -8936,8 +8957,8 @@ struct PlacementCandidateProbe {
             source_walk_visuals.insert_or_assign(context.actor,SourceWalkVisual{context.actor_generation,context.position,effects});
             return true;
         };
-        services.source_tick=[&,motion_context_valid](const odh::SourceSparseMotionContext& context){
-            if(!motion_context_valid(context))return false;
+        services.source_tick=[&,lifecycle_context_valid](const odh::SourceSparseMotionContext& context){
+            if(!lifecycle_context_valid(context))return false;
             ++rng_requests;random.next(1);return true;
         };
         services.room_route=[&,motion_context_valid](const odh::SourceSparseMotionContext& context,
@@ -11477,6 +11498,28 @@ struct PlacementCandidateProbe {
                 return route_position_publication(context);
             });
         }
+        routing.set_unplaced_room_failure_provider([&](const odh::EntityPosition& target)->std::optional<std::uint16_t>{
+            if(!render_lot||!render_lot->runtime_room_map()||!render_lot->prepared_architecture()||
+               !restored_world||!definition_index||target.level<1||target.level>2)return {};
+            const auto room=render_lot->runtime_room_at(target);if(!room||!*room)return {};
+            // A dummy-room portal would invalidate the empty-room proof. Do
+            // not omit out-of-world/contained portal participants from it.
+            auto cursor=std::int16_t{0};
+            while(const auto next=world.next_entity(cursor)){
+                cursor=*next;const auto* entity=world.find(cursor);if(!entity)return {};
+                if(entity->kind!=odh::EntityKind::object||!entity->entry_points||entity->entry_points->size()<=15||
+                   !entity->entry_points->at(15).action)continue;
+                if(!entity->position||entity->attachment)return {};
+                const auto portal_room=render_lot->runtime_room_at(*entity->position);
+                if(!portal_room||!*portal_room)return {};
+            }
+            const auto architecture=build_runtime_attempt_walk_architecture(*restored_world,world,*definition_index,
+                render_lot->runtime_architecture_resource(),*render_lot->prepared_architecture(),*room,
+                static_cast<std::uint8_t>(target.level-1));
+            if(!architecture.portal_inventory_complete||std::any_of(architecture.portal_edges.begin(),architecture.portal_edges.end(),
+                [](const auto& edge){return edge.source_room==0;}))return {};
+            return room;
+        });
         routing.set_room_pair_provider([&](const odh::EntityPosition& actor,
             const odh::EntityPosition& target)
             ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {
@@ -11680,9 +11723,10 @@ struct PlacementCandidateProbe {
     const auto configure_actor_routing=[&](ActorRuntime& runtime){
         const auto* actor=world.find(runtime.id);
         if(!render_lot||!render_lot->prepared_architecture()||!shared.routing_slots||!actor||
-           !actor->position||actor->position->level<1||actor->position->level>2){
+           (actor->position&&(actor->position->level<1||actor->position->level>2))){
             runtime.route_reason="prepared_lot_world_or_global_SLOT_unavailable";return;
         }
+        if(actor->position&&(!runtime.route_grid||!runtime.route_grid->grid)){
         const auto room=render_lot->runtime_room_at(*actor->position);
         if(!room){runtime.route_reason="household_resident_room_unresolved";return;}
         const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
@@ -11752,7 +11796,17 @@ struct PlacementCandidateProbe {
         runtime.route_grid.emplace(std::move(grid));
         ++runtime.route_cache_builds;
         runtime.route_spatial_revision=world.spatial_revision();
-        runtime.routing=std::make_unique<odh::Routing>(world,*runtime.route_grid->grid,*shared.routing_slots);
+        }
+        if(runtime.routing){
+            if(runtime.route_grid&&runtime.route_grid->grid&&!runtime.routing->has_grid()&&
+               !runtime.routing->attach_grid(*runtime.route_grid->grid)){
+                runtime.route_reason="route_controller_cannot_attach_actual_grid";return;
+            }
+            runtime.route_reason.clear();return;
+        }
+        runtime.routing=runtime.route_grid&&runtime.route_grid->grid
+            ?std::make_unique<odh::Routing>(world,*runtime.route_grid->grid,*shared.routing_slots)
+            :std::make_unique<odh::Routing>(world,*shared.routing_slots);
         bind_route_goal_receipts(*runtime.routing);
         configure_look_turn_services(*runtime.routing);
         if(runtime.vm)configure_source_sparse(*runtime.routing,*runtime.vm,runtime.id);
@@ -11860,9 +11914,36 @@ struct PlacementCandidateProbe {
         runtime.route_reason.clear();
     };
     ensure_actor_routing=[&](ActorRuntime& actor){
-        if(actor.routing)return;
         const auto* live=world.find(actor.id);
-        if(!live||!live->position)return;
+        if(actor.routing&&(!live||!live->position||actor.routing->has_grid()))return;
+        if(!live){
+            const auto* body=live?live:world.resolve_reference({actor.id,actor.generation});
+            actor.route_reason=std::string(live?"route_actor_unplaced":"route_actor_unindexed")+
+                " id="+std::to_string(actor.id)+" generation="+std::to_string(actor.generation)+
+                " guid="+std::to_string(body&&body->definition?body->definition->guid:0)+
+                " nid="+std::to_string(body&&body->person_data.size()>31?body->person_data[31]:0)+
+                " retained="+std::to_string(body!=nullptr)+
+                " dead="+std::to_string(body&&body->dead)+
+                " attached="+std::to_string(body&&body->attachment.has_value())+
+                " source="+actor.resource.archive+" asset="+actor.resource.entry;
+            if(actor.vm&&!actor.vm->stack().empty()){
+                const auto& frame=actor.vm->stack().back();
+                actor.route_reason+=" caller="+std::to_string(frame.context.caller)+
+                    " callee="+std::to_string(frame.context.callee)+
+                    " stack="+std::to_string(frame.context.stack_object)+
+                    " owner="+std::to_string(frame.context.code_owner);
+                const auto resource=resource_owner_provenance.find(frame.context.code_owner);
+                if(resource!=resource_owner_provenance.end())actor.route_reason+=
+                    " frame_source="+resource->second.source+" frame_asset="+resource->second.asset;
+            }
+            if(actor.vm&&actor.vm->pending()){
+                const auto& instruction=actor.vm->pending()->instruction.instruction;
+                actor.route_reason+=" opcode="+std::to_string(instruction.opcode)+" operands=";
+                for(const auto byte:instruction.operands)actor.route_reason+=std::to_string(byte)+",";
+            }
+            session_log.event("routing context unavailable: "+actor.route_reason);
+            return;
+        }
         configure_actor_routing(actor);
         if(actor.id==runtime_avatar_id&&actor.routing){
             route_runtime_state="ready_dynamic_single_room_grid";
@@ -18204,7 +18285,7 @@ struct PlacementCandidateProbe {
                 if(primary_routing()->tick(ticks))return true;
                 host_failed=true;host_diagnostic="parked resident route tick rejected: "+primary_routing()->diagnostic();return false;
             }
-            if(!primary_routing()->external_frame_active()&&
+            if(primary_routing()->spatial_route_active()&&!primary_routing()->external_frame_active()&&
                !refresh_route_obstacles(!primary_routing()->waiting_for_room_portal_step())){
                 host_failed=true;
                 host_diagnostic=route_runtime_reason;
@@ -18236,7 +18317,7 @@ struct PlacementCandidateProbe {
             }
             // A local SLOT may cross the geometric room boundary. Rebuild the
             // arrival-room grid before Main can select its next route.
-            if(!primary_routing()->active()){
+            if(!primary_routing()->active()&&primary_routing()->has_grid()&&world.find(runtime_avatar_id)&&world.find(runtime_avatar_id)->position){
                 if(!refresh_route_obstacles()){
                     host_failed=true;host_diagnostic=route_runtime_reason;return false;
                 }
@@ -18259,7 +18340,7 @@ struct PlacementCandidateProbe {
             }
             if(runtime.go_here_cancel_pending&&runtime.go_here&&runtime.go_here->status()=="queued"&&
                runtime.routing->interrupt())runtime.go_here_cancel_pending=false;
-            if(!runtime.routing->external_frame_active()&&
+            if(runtime.routing->spatial_route_active()&&!runtime.routing->external_frame_active()&&
                !refresh_household_route(runtime,!runtime.routing->waiting_for_room_portal_step())){
                 host_failed=true;host_diagnostic=runtime.route_reason;return false;
             }
@@ -18275,7 +18356,7 @@ struct PlacementCandidateProbe {
 #endif
                 }
             });
-            if(!runtime.routing->active()){
+            if(!runtime.routing->active()&&runtime.routing->has_grid()&&world.find(runtime.id)&&world.find(runtime.id)->position){
                 if(!refresh_household_route(runtime)){
                     host_failed=true;host_diagnostic=runtime.route_reason;return false;
                 }

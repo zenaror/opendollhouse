@@ -180,9 +180,13 @@ bool Playback::service_wait() {
     wait_.reset();return true;
 }
 bool Playback::valid_slot_context(const VmFrame& frame,const Vm& vm,std::uint64_t actor_generation,
-    std::uint64_t vm_generation,std::string* error) const {
+    std::uint64_t vm_generation,std::string* error,const Instruction* lifecycle_instruction,const VmDispatch* lifecycle_dispatch) const {
     const auto reject=[&](const char* why){if(error)*error=why;return false;};
-    if(vm_!=&vm||vm.dispatch_active()||!vm_generation||vm.run_generation()!=vm_generation||vm.stack().empty())
+    const bool primitive=lifecycle_instruction&&lifecycle_dispatch&&
+        vm.matches_active_primitive(frame,*lifecycle_instruction,*lifecycle_dispatch);
+    if((lifecycle_instruction||lifecycle_dispatch)&&!primitive)
+        return reject("route PreExit requires its exact active primitive authority");
+    if(vm_!=&vm||(vm.dispatch_active()&&!primitive)||!vm_generation||vm.run_generation()!=vm_generation||vm.stack().empty())
         return reject("avatar slot carry requires the captured bound VM at a safe point");
     if(vm.status()!=VmStatus::running&&vm.status()!=VmStatus::budget_exhausted&&
        vm.status()!=VmStatus::waiting&&vm.status()!=VmStatus::yielded)
@@ -514,10 +518,11 @@ bool Playback::set_source_walk_velocity(const VmFrame& frame,const Vm& vm,std::u
     source_walk_->weights=walk_weights(velocity);return true;
 }
 bool Playback::end_source_walk_animation(const VmFrame& frame,const Vm& vm,std::uint64_t actor_generation,
-    std::uint64_t run,std::string* error){
+    std::uint64_t run,std::string* error,const Instruction* lifecycle_instruction,const VmDispatch* lifecycle_dispatch){
     if(error)error->clear();
     if(executing_){if(error)*error="source walk end cannot reenter playback";return false;}
-    if(!valid_slot_context(frame,vm,actor_generation,run,error)||vm.stack().empty()||!same_frame(frame,vm.stack().back()))return false;
+    if(!valid_slot_context(frame,vm,actor_generation,run,error,lifecycle_instruction,lifecycle_dispatch)||
+       vm.stack().empty()||!same_frame(frame,vm.stack().back()))return false;
     if(source_walk_&&!state_){if(error)*error="source walk collection lacks its primary";return false;}
     if(!world_.set_static_footprint(frame.context.caller,true)){if(error)*error="source walk end footprint update failed";return false;}
     if(source_walk_){

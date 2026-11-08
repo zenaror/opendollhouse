@@ -1086,8 +1086,140 @@ void variable_output_tests() {
         parent.steps()==0&&parent.stack()[0].pc==0&&parent.stack()[0].arguments[0]==17,
         "check variable output stays on the disposable interpreter frame and registers");
 }
+
+// A primitive-owned service remains pending while its real child executes in
+// the same interpreter loop. These are VM fixtures, not a route implementation.
+void atomic_pending_service_children() {
+    using Disposition=odh::PrimitiveDisposition;
+    const odh::Instruction service{73,254,255,{}},sleep{0,254,255,{}};
+    const odh::RoutineSet code{{key(),routine({service})},
+        {key(398),routine({expr(5,6,123,8,7,1,255),{74,2,255,{}},sleep})}};
+    unsigned commits=0,effects=0,admissions=0;odh::Vm* active=nullptr;
+    odh::VmFrame captured;odh::Instruction operation{};odh::VmDispatch dispatch_copy{};
+    const odh::VmPrimitive primitive=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+            const auto&,const odh::VmDispatch& dispatch)->odh::PrimitiveOutcome {
+        if(instruction.opcode==0)return {Disposition::wait,{}};
+        if(instruction.opcode==74){++effects;return {Disposition::goto_true,{}};}
+        require(instruction.opcode==73&&active->matches_active_primitive(frame,instruction,dispatch),
+            "service admission has the real executing primitive proof");
+        ++admissions;captured=frame;operation=instruction;dispatch_copy=dispatch;
+        const odh::VmCall call{key(398),frame.context,{2,0,0,0}};
+        require(active->prepare_primitive_call(frame,instruction,dispatch,call),
+            "service child preflight uses the ordinary admitted call contract");
+        const auto parent_depth=active->stack().size();
+        odh::PrimitiveOutcome outcome{Disposition::suspend_and_call,{}, {},call};
+        outcome.call_commit=[&,frame,instruction,dispatch,parent_depth]{
+            require(active->matches_active_call_commit(frame,instruction,dispatch,parent_depth)&&
+                active->stack().back().return_mode==odh::VmCallReturnMode::external_frame_next_tick&&
+                active->stack().back().invocation_ticket==dispatch.ticket&&
+                active->suspended_pending().back().ticket==dispatch.ticket,
+                "service commit sees the admitted real child and exact suspended parent before execution");
+            ++commits;return true;
+        };return outcome;
+    };
+    odh::Vm live(code,{}, {},primitive);active=&live;
+    require(live.start(key(),{1,2,3},{7})==odh::VmStatus::running&&live.run(10)==odh::VmStatus::waiting&&
+        effects==1&&commits==1&&admissions==1&&live.temps()[6]==123&&live.steps()==4,
+        "child shared-register and external effects occur in initial run before its genuine Sleep wait");
+    const auto saved=live.snapshot();
+    require(saved.stack.size()==2&&saved.stack[0].pc==0&&saved.stack[1].pc==2&&
+        saved.stack[1].arguments[0]==2&&saved.pending&&saved.pending->instruction.instruction.opcode==0&&
+        saved.suspended_pending.size()==1&&saved.suspended_pending[0].ticket==dispatch_copy.ticket&&
+        saved.suspended_pending[0].instruction.depth==1&&saved.suspended_pending[0].instruction.pc==0&&
+        saved.stack[1].invocation_ticket==dispatch_copy.ticket&&
+        !live.matches_active_call_commit(captured,operation,dispatch_copy,1),
+        "pending parent, child Sleep and expired commit proof have existing snapshot ownership");
+    odh::Vm cold(code,{}, {},primitive);require(cold.restore_snapshot(saved),
+        "real yielded child and service pending restore without a new VM wire state");
+    const auto restored=cold.snapshot();
+    require(restored.temps==saved.temps&&restored.steps==saved.steps&&restored.ticket_sequence==saved.ticket_sequence&&
+        restored.run_generation==saved.run_generation&&restored.pending->ticket==saved.pending->ticket&&
+        restored.suspended_pending[0].ticket==saved.suspended_pending[0].ticket&&
+        odh::vm_frame_equal(restored.stack[0],saved.stack[0])&&odh::vm_frame_equal(restored.stack[1],saved.stack[1]),
+        "cold service graph retains exact existing frame, register and ticket values");
+    for(auto* vm:{&live,&cold}){
+        require(vm->complete(vm->pending()->ticket,true)&&vm->status()==odh::VmStatus::yielded&&
+            vm->external_frame_return()&&vm->pending()&&vm->pending()->ticket==dispatch_copy.ticket&&
+            vm->stack().size()==1&&vm->stack().back().pc==0&&
+            vm->run(100)==odh::VmStatus::yielded,
+            "child return stops at the existing external next-tick boundary without branching the service parent");
+        require(vm->resume_external_frame(dispatch_copy.ticket)&&vm->status()==odh::VmStatus::waiting&&
+            vm->complete(dispatch_copy.ticket,false)&&vm->status()==odh::VmStatus::returned_false&&vm->temps()[6]==123,
+            "only the service owner's later completion selects the original authored branch");
+    }
+    require(effects==1&&commits==1&&admissions==1,"cold restore does not repeat child admission or completed effects");
+
+    const odh::RoutineSet immediate_code{{key(),routine({service})},{key(398),routine({expr(5,5,88)})}};
+    odh::Vm immediate(immediate_code,{}, {},[&](const auto& frame,const auto&,const auto&,const auto&){
+        return odh::PrimitiveOutcome{Disposition::suspend_and_call,{}, {},odh::VmCall{key(398),frame.context,{}}};});
+    require(immediate.start(key(),{1,2,3})==odh::VmStatus::running&&immediate.run(10)==odh::VmStatus::yielded&&
+        immediate.temps()[5]==88&&immediate.steps()==2&&immediate.pending()&&immediate.external_frame_return()&&
+        immediate.stack().size()==1&&immediate.stack()[0].pc==0,
+        "a nonwaiting service child executes immediately but its return still ends the same run boundary");
+
+    const odh::RoutineSet budget_code{{key(),routine({service})},
+        {key(398),routine({expr(5,6,45,8,7,1,255),sleep})}};
+    odh::Vm budget(budget_code,{}, {},[&](const auto& frame,const auto& instruction,const auto&,const auto&){
+        return instruction.opcode==0?odh::PrimitiveOutcome{Disposition::wait,{}}:
+            odh::PrimitiveOutcome{Disposition::suspend_and_call,{}, {},odh::VmCall{key(398),frame.context,{}}};});
+    require(budget.start(key(),{1,2,3})==odh::VmStatus::running&&budget.run(1)==odh::VmStatus::budget_exhausted&&
+        budget.steps()==1&&budget.temps()[6]==0&&budget.stack().size()==2&&!budget.pending()&&budget.suspended_pending().size()==1,
+        "pending service admission consumes its instruction within the original shared budget");
+    require(budget.run(1)==odh::VmStatus::budget_exhausted&&budget.steps()==2&&budget.temps()[6]==45&&
+        budget.run(1)==odh::VmStatus::waiting&&budget.steps()==3,
+        "child execution receives no private budget reset or extra host scheduling boundary");
+
+    for(unsigned variant=0;variant<10;++variant){
+        unsigned attempted=0,child_effects=0;auto rejected_code=code;
+        if(variant==2)rejected_code[key(398)]=routine({{74,2,255,{}}}); // malformed branch
+        if(variant==3)rejected_code[key(398)]=routine({sleep},5000);
+        odh::VmLimits limits;if(variant==4)limits.stack_depth=1;
+        odh::Vm rejected(rejected_code,{},limits,
+            [&](const auto& frame,const auto& instruction,const auto&,const auto&)->odh::PrimitiveOutcome{
+                if(instruction.opcode!=73){++child_effects;return {Disposition::goto_true,{}};}
+                odh::VmCall request{variant==0?key(399):key(398),frame.context,{}};
+                if(variant==1)request.context.caller_generation=7; // malformed unbound context
+                if(variant==5)request.return_mode=odh::VmCallReturnMode::interaction_next_tick;
+                odh::PrimitiveOutcome outcome{Disposition::suspend_and_call,{}, {},request};
+                if(variant==6)outcome.write=odh::VmFrameWrite{odh::VmFrameBank::locals,6,99,true};
+                if(variant==7)outcome.call.reset();
+                outcome.call_commit=[&]{++attempted;if(variant==9)throw std::runtime_error("service commit failure");return variant!=8;};
+                return outcome;
+            });
+        rejected.start(key(),{1,2,3},{5});const auto before=rejected.snapshot();bool raised=false;
+        try{(void)rejected.run(10);}catch(const std::runtime_error&){raised=true;}
+        require(raised==(variant==9)&&rejected.status()==odh::VmStatus::fault&&rejected.stack().size()==1&&
+            odh::vm_frame_equal(rejected.stack()[0],before.stack[0])&&!rejected.pending()&&
+            rejected.suspended_pending().empty()&&!rejected.external_frame_return()&&child_effects==0&&
+            attempted==(variant>=8?1U:0U)&&rejected.steps()==1,
+            "invalid child/context/bounds/output or refused commit leaves no service/child publication or authored false");
+    }
+
+    const auto ordinary_handler=[&](const auto& frame,const auto&,const auto&,const auto&){
+        return odh::PrimitiveOutcome{Disposition::call,{}, {},odh::VmCall{key(398),frame.context,{}}};};
+    odh::Vm ordinary(immediate_code,{}, {},ordinary_handler);
+    require(ordinary.start(key(),{1,2,3})==odh::VmStatus::running&&ordinary.run(10)==odh::VmStatus::returned_true&&
+        ordinary.temps()[5]==88&&!ordinary.pending()&&ordinary.suspended_pending().empty()&&!ordinary.external_frame_return(),
+        "old ordinary call still returns directly to its authored branch in the same run");
+    odh::Vm waiting(code,{}, {},[](const auto&,const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{Disposition::wait,{}};});
+    require(waiting.start(key(),{1,2,3})==odh::VmStatus::running&&waiting.run(10)==odh::VmStatus::waiting&&
+        waiting.stack().size()==1&&waiting.pending()->ticket==1&&waiting.suspended_pending().empty(),
+        "old wait-only disposition keeps its one pending record and host completion boundary");
+    unsigned checked_effects=0;
+    const odh::VmPrimitive checked_primitive=[&](const auto& frame,const auto& instruction,const auto&,const auto&){
+        if(instruction.opcode!=73){++checked_effects;return odh::PrimitiveOutcome{Disposition::goto_true,{}};}
+        return odh::PrimitiveOutcome{Disposition::suspend_and_call,{}, {},odh::VmCall{key(398),frame.context,{}}};};
+    odh::Vm checked(code);checked.start(key(),{1,2,3});
+    require(checked.run_synchronous_check(10,checked_primitive).status==odh::VmStatus::fault&&checked_effects==0&&
+        checked.stack().size()==1&&!checked.pending()&&checked.suspended_pending().empty(),
+        "synchronous checks cannot admit a service child or publish partial asynchronous state");
+
+    std::cout<<"atomic pending service child admission passed (synthetic VM fixtures)\n";
+}
+
 int main() {
     try {
+        atomic_pending_service_children();
         source_error_provenance_tests();
         variable_output_tests();
         {

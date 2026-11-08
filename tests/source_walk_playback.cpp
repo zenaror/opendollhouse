@@ -30,6 +30,7 @@ struct Fixture {
     std::shared_ptr<odh::AnimationHeader> carry=animation("carry",4,false,0),other=animation("ordinary",4,false,0);
     bool empty_half=false,unknown_half=false,fail_half=false,throw_resource=false;
     std::function<void()> during_name,during_resource;
+    bool inline_pre_exit=false;std::optional<odh::VmDispatch> exit_token;std::optional<odh::Instruction> exit_instruction;std::optional<odh::VmFrame> exit_frame;
     std::vector<std::uint16_t> name_reads,loads;
     odh::Playback player;
     odh::Vm vm;
@@ -45,7 +46,12 @@ struct Fixture {
             if(index==25&&unknown_half)return {};if(index==25&&empty_half)return std::string{};
             return clips.at({swim,index})->name;
         }),vm(program(flags,id),world.vm_memory(),{},[this](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
-            if(instruction.opcode==99)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+            if(instruction.opcode==99){
+                if(inline_pre_exit){exit_token=dispatch;exit_instruction=instruction;exit_frame=frame;std::string why;
+                    require(player.end_source_walk_animation(frame,vm,world.find(1)->generation,vm.run_generation(),&why,&instruction,&dispatch),why.c_str());
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};}
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+            }
             return player.primitive()(frame,instruction,temps,dispatch);
         }){
         for(bool swim:{false,true})for(auto index:{std::uint16_t{3},std::uint16_t{20},std::uint16_t{21},std::uint16_t{25}})
@@ -203,6 +209,22 @@ void opcode44_and_root_exit(){
         after.carry==before.carry&&after.hands->value.right==before.hands->value.right&&end.player.sample_collection()->count==1&&end.player.sample(),
         "root PreExit drops extras and retains primary idle frame, queue, cursors, carry and hands with a valid single-idle resource key");
 }
+void unplaced_active_primitive_pre_exit(){
+    Fixture source;source.carry_and_hands();require(source.start()&&source.velocity(3)&&source.player.advance(1),"prepare actual three-clip animation, carry and hands");
+    require(source.world.place_out_of_world(1),"source placement owner removes avatar before its route PreExit");
+    const auto before=source.snapshot();const auto ticket=source.vm.pending()->ticket;
+    source.inline_pre_exit=true;
+    require(source.vm.retry_pending(ticket)&&source.vm.run(1)==odh::VmStatus::budget_exhausted&&
+        source.player.sample_collection()->count==1&&!source.world.find(1)->position&&source.world.find(1)->static_footprint,
+        "real active primitive cleans source walk extras while unplaced with no fake geometry, wait or VM reentry");
+    const auto after=source.snapshot();
+    require(!after.source_walk&&after.state->frame==before.state->frame&&after.state->queue==before.state->queue&&
+        after.carry==before.carry&&after.hands->value.right==before.hands->value.right,
+        "unplaced PreExit retains real primary cursor, event queue, carry and hands");
+    std::string why;
+    require(!source.player.end_source_walk_animation(*source.exit_frame,source.vm,source.world.find(1)->generation,source.vm.run_generation(),&why,
+        &*source.exit_instruction,&*source.exit_token),"expired primitive token cannot authorize a later PreExit");
+}
 void zero_weight_progress_and_stale_context(){
     Fixture tiny(true,false,0,1,1);
     require(tiny.start()&&tiny.player.advance(1)&&tiny.player.advance(2)&&tiny.snapshot().source_walk->secondary[0].frame==1,
@@ -219,6 +241,6 @@ void zero_weight_progress_and_stale_context(){
     require(restart.vm.start(odh::routine_key(4096),{1,1,2},{0,0,0,0})==odh::VmStatus::running&&!restart.player.sample_collection(),"read-only collection sample rejects stale VM generation before any animation tick");
 }
 }
-int main(){try{collection_frames_events();selection_and_early_return();fresh_restore_and_validation();opcode44_and_root_exit();zero_weight_progress_and_stale_context();
+int main(){try{collection_frames_events();selection_and_early_return();fresh_restore_and_validation();opcode44_and_root_exit();unplaced_active_primitive_pre_exit();zero_weight_progress_and_stale_context();
     std::cout<<checks<<" source walk playback checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"source walk playback: "<<error.what()<<'\n';return 1;}}

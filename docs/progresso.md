@@ -1,6 +1,6 @@
 # Situação do primeiro marco
 
-Situação em 7 de novembro de 2026: motor nativo experimental, com cobertura
+Situação em 8 de novembro de 2026: motor nativo experimental, com cobertura
 parcial. Ainda não há uma versão completa jogável publicada.
 
 | Área | Resultado observado em percursos delimitados | O que falta para aceitar o conjunto |
@@ -11,7 +11,7 @@ parcial. Ainda não há uma versão completa jogável publicada.
 | Salvamento | Partidas delimitadas salvam e reabrem preservando o estado. | Continuidade também após viagens, edição e gestão de famílias. |
 | Famílias e lotes | Adulto e criança criados pela interface, com edição e cancelamento do rascunho. Renomear, cancelar, excluir uma família sem casa e reabrir a lista preservaram as famílias anteriores e seu salvamento. Em percurso sem janela, compra, construção, mudança e reocupação preservaram casa, pessoas e dinheiro; a nova família continuou e reabriu o salvamento inteiro idêntico. | Completar mudanças pelas telas, edição de personagens já criados, demais dados pessoais e continuidade residencial; corrigir a resposta a entradas rápidas e conferir a aparência no original. |
 | Expansões | Percurso sem janela, com um viajante: Centro, atividade com efeito em Diversão, salvar/reabrir no destino e voltar para casa; o táxi sai e o salvamento final reabre idêntico. Um convite real também levou uma acompanhante ao lote do Centro; o Sim controlado completou uma atividade com efeito em Diversão e conversou com ela, com mudanças observadas nas necessidades e na relação. O salvamento reabriu inteiro idêntico. | Ampliar atividades conjuntas, retorno com acompanhante e progresso pessoal preservado, apresentação e regras próprias das sete expansões. Nenhuma expansão aceita como completa. |
-| Personagens e animais | Peças compartilhadas de aparência e comportamento. | Animais, bebês e demais ciclos ainda sem cobertura completa. |
+| Personagens e animais | Peças compartilhadas de aparência e comportamento. O progresso de uma entregadora de jornais vinda de um pacote original foi gravado quando ela saiu do lote e reaberto com o salvamento inteiro idêntico. | Ampliar a cobertura dos NPCs, animais, bebês e demais ciclos. |
 | Interface e áudio | Implementação nativa e reconstrução parcial da interface original. | Todas as telas, acabamento, animação, iluminação e áudio. |
 | Idiomas e conteúdo personalizado | Leitura de textos e partes do suporte a conteúdo clássico. | Conferência representativa dentro dos percursos completos e uso/salvamento de conteúdo personalizado. |
 | Outras plataformas | Preparação de ferramentas e separação de serviços. | Compilar e executar o jogo em cada alvo, medir recursos e adaptar entrada/apresentação. |

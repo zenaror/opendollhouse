@@ -326,6 +326,34 @@ void architecture_route_event_archive_tests(){
     rejects([&]{odh::encode_session_bundle(malformed);},"architecture extension cannot weaken original actor/frame ownership");
 }
 
+void unplaced_room_failure_archive_tests(){
+    auto bundle=local_route_fixture();auto& runtime=bundle.runtime_entities.front();
+    odh::RouteJobSnapshot job;static_cast<odh::LocalRouteSnapshot&>(job)=*runtime.route;
+    job.pending=*runtime.vm.pending;job.route_frame=runtime.vm.stack.back();runtime.route.reset();
+    job.expected={-32768,-32768,1,0};job.path.clear();job.next=1;job.entry_flags=0;job.facing=0;
+    job.walking_started=false;job.same_room_verified=false;job.call_failure_trees=false;job.frame={};
+    job.failure_pending=true;job.failure_code=2;job.failure_reason="source InitRoutes room0 has no portals";
+    job.pending.instruction.instruction.operands[4]=1;runtime.vm.pending=job.pending;
+    odh::SourceUnplacedRoomFailure origin;origin.slot_version=10;origin.slot_index=1;
+    origin.slot.type=3;origin.target_room=2;job.unplaced_room_failure=origin;
+    bundle.world.entities.front().position.reset();bundle.world.entities.front().static_footprint=true;
+    bundle.world.entities.front().person_data[62]=2;
+    runtime.route_stack=odh::RouteStackSnapshot{{job},bundle.host.tick,{}};
+    const auto bytes=odh::encode_session_bundle(bundle);const auto cold=odh::decode_session_bundle(bytes);
+    require(odh::encode_session_bundle(cold)==bytes&&
+        odh::is_source_unplaced_room_failure(cold.runtime_entities.front().route_stack->jobs.front())&&
+        !cold.world.entities.front().position,
+        "RSTK5 round trip preserves exact pre-selection failure and true position absence");
+    for(unsigned field=0;field<5;++field){auto bad=bundle;auto& route=bad.runtime_entities.front().route_stack->jobs.front();
+        if(field==0)route.unplaced_room_failure->slot.flags|=0x0800;
+        if(field==1)route.unplaced_room_failure->slot_index++;
+        if(field==2)route.unplaced_room_failure->target_room=0;
+        if(field==3)route.failure_code=3;
+        if(field==4)route.path.push_back({20,20});
+        rejects([&]{odh::encode_session_bundle(bad);},"forged nonspatial failure cannot gain spatial or source authority");
+    }
+}
+
 void route_stack_archive_tests() {
     for(const bool returned:{false,true})for(const auto opcode:{27,45}){
         auto parked=immediate_interaction_fixture(returned);
@@ -3211,6 +3239,7 @@ int main() {
     source_slot_chair_choices_archive_tests();
     sparse_locomotion_archive_tests();
     route_stack_archive_tests();
+    unplaced_room_failure_archive_tests();
     route_cache_archive_tests();
     npc_avatar_cases();
     object_history_cases();

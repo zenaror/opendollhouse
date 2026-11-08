@@ -265,7 +265,8 @@ float source_slot_facing_radians(const SlotRecord& slot,const EntityPosition& ta
 }
 bool is_source_failure_tree_continuation(const RouteJobSnapshot& job) noexcept {
     if(!job.failure_tree_invoked||!job.external_frame_active||job.external_frame_sitting||job.external_frame_purpose||
-       !job.external_frame_call||job.frame.state!=RouteFrameState::room_portal||job.failure_code<=0||job.failure_blocker<0)return false;
+       !job.external_frame_call||(job.frame.state!=RouteFrameState::room_portal&&
+        !(job.unplaced_room_failure&&job.frame.state==RouteFrameState::failed))||job.failure_code<=0||job.failure_blocker<0)return false;
     const auto& call=*job.external_frame_call;const auto& context=job.pending.context;
     return call.key.scope==RoutineScope::global&&call.key.id==398&&call.return_mode==VmCallReturnMode::ordinary&&
         !call.exact_arguments&&call.context.caller==job.actor&&vm_context_equal(call.context,context)&&call.arguments.size()==4&&
@@ -1343,7 +1344,7 @@ bool Routing::valid_local_session_job(const Job& job,std::optional<CodeOwner> ve
         source_direction_notch(*job.target_anchor_radian_direction)!=job.target_position.direction||
         job.target_position.level!=job.expected.level||
         (!job.source_circle&&!job.source_range&&!source_choices&&!(job.path.front()==RoutePoint{job.target_position.x,job.target_position.y}))||
-        (!job.source_sparse&&!grid_.contains(job.path.front())))))
+        (!job.source_sparse&&!grid().contains(job.path.front())))))
         return reject("self-targeted Route45 has no valid frozen request anchor");
     if((job.source_circle&&(!source_circle||!job.arrival_radian_direction||job.entry_flags<=0))||
        (job.source_range&&(!source_range||!job.arrival_radian_direction||job.entry_flags<=0))||
@@ -1385,10 +1386,10 @@ bool Routing::valid_local_session_job(const Job& job,std::optional<CodeOwner> ve
                 return reject("actor and destination are no longer in the same verified room");
         } catch(...) {return reject("room lookup failed while checking the route checkpoint");}
         if(!(job.path[job.next-1]==RoutePoint{job.expected.x,job.expected.y})||
-           !grid_.contains(job.path[job.next-1])||!grid_.walkable(job.path[job.next-1]))
+           !grid().contains(job.path[job.next-1])||!grid().walkable(job.path[job.next-1]))
             return reject("current route point is outside the walkable grid");
         for(std::size_t n=job.next;n<job.path.size();++n)
-            if(!grid_.can_step(job.path[n-1],job.path[n]))
+            if(!grid().can_step(job.path[n-1],job.path[n]))
                 return reject("remaining route is no longer walkable");
     }
     // A retained dead target can be captured before the next source dispatch.
@@ -1807,6 +1808,7 @@ std::optional<Routing::Job> Routing::job_from_snapshot(const RouteJobSnapshot& s
     result.failure_code=saved.failure_code;
     result.failure_blocker=saved.failure_blocker;
     result.failure_reason=saved.failure_reason;
+    result.unplaced_room_failure=saved.unplaced_room_failure;
     result.selected_sitting_object=saved.selected_sitting_object;
     result.fallback_goals=saved.fallback_goals;
     result.external_frame_sitting=saved.external_frame_sitting;
@@ -1878,13 +1880,20 @@ bool route_call_equal(const VmCall& a,const VmCall& b) {
 }
 }
 bool Routing::validates_immediate_parent(const World& world,const Vm& vm,
-        const VmPending& pending,const VmFrame& frame) {
+        const VmPending& pending,const VmFrame& frame,const RouteJobSnapshot* source_failure) {
     if(vm.dispatch_active()||!pending.ticket||!pending.instruction.depth||
        pending.instruction.depth>vm.stack().size()||!route_frame_equal(frame,vm.stack()[pending.instruction.depth-1])||
        !route_context_equal(pending.context,frame.context)||!route_key_equal(pending.instruction.key,frame.key)||
        pending.instruction.pc!=frame.pc||pending.instruction.code_owner!=frame.context.code_owner)return false;
     const auto* actor=world.frame_entity(frame,VmEntityRole::caller);
-    if(!actor||actor->kind!=EntityKind::avatar||!actor->position||!std::isfinite(actor->radian_direction))return false;
+    const auto* target=world.frame_entity(frame,VmEntityRole::stack_object);
+    const bool failed_unplaced=source_failure&&is_source_unplaced_room_failure(*source_failure)&&
+        source_failure->ticket==pending.ticket&&source_failure->run_generation==vm.run_generation()&&
+        source_failure->target==frame.context.stack_object&&target&&source_failure->target_generation==target->generation&&
+        source_failure->actor==frame.context.caller&&actor&&source_failure->actor_generation==actor->generation&&
+        route_pending_equal(source_failure->pending,pending)&&route_frame_equal(source_failure->route_frame,frame);
+    if(!actor||actor->kind!=EntityKind::avatar||(!actor->position&&(!failed_unplaced||actor->attachment))||
+       !std::isfinite(actor->radian_direction))return false;
     const auto& instruction=pending.instruction.instruction;
     const bool relative=make_source_goto_relative_slot(instruction).has_value();
     const auto scope=static_cast<unsigned>(instruction.operands[2])|(static_cast<unsigned>(instruction.operands[3])<<8);
@@ -1904,7 +1913,19 @@ bool Routing::validates_immediate_parent(const World& world,const Vm& vm,
     return false;
 }
 bool Routing::validates_immediate_parent(const VmPending& pending,const VmFrame& frame) const {
-    return !executing_&&vm_&&validates_immediate_parent(world_,*vm_,pending,frame);
+    if(executing_||!vm_)return false;
+    const Job* source=nullptr;
+    if(job_&&job_->ticket==pending.ticket)source=&*job_;
+    for(const auto& parent:suspended_jobs_)if(parent.ticket==pending.ticket)source=&parent;
+    if(source&&source->unplaced_room_failure){
+        RouteJobSnapshot proof;static_cast<LocalRouteSnapshot&>(proof)=local_snapshot(*source);
+        proof.pending=pending;proof.route_frame=frame;proof.unplaced_room_failure=source->unplaced_room_failure;
+        proof.failure_pending=source->failure_pending;proof.failure_tree_invoked=source->failure_tree_invoked;
+        proof.failure_code=source->failure_code;proof.failure_blocker=source->failure_blocker;proof.failure_reason=source->failure_reason;
+        proof.external_frame_active=source->external_frame_active;proof.external_frame_call=source->external_frame_call;
+        return validates_immediate_parent(world_,*vm_,pending,frame,&proof);
+    }
+    return validates_immediate_parent(world_,*vm_,pending,frame);
 }
 bool Routing::can_park_for_immediate(const VmPending& pending,const VmFrame& frame) const {
     if(!job_||!vm_||!vm_->pending()||!route_pending_equal(pending,*vm_->pending())||
@@ -1912,7 +1933,8 @@ bool Routing::can_park_for_immediate(const VmPending& pending,const VmFrame& fra
        !validates_immediate_parent(pending,frame))return false;
     const auto* actor=world_.find(job_->actor);const auto* target=world_.resolve_reference({job_->target,job_->target_generation});
     return actor&&target&&actor->generation==job_->actor_generation&&target->generation==job_->target_generation&&
-        actor->position&&*actor->position==job_->expected&&
+        ((job_->unplaced_room_failure&&!actor->attachment)||
+         (actor->position&&*actor->position==job_->expected))&&
         same_float_bits(actor->radian_direction,job_->expected_radian_direction);
 }
 bool Routing::park_for_immediate(std::uint64_t ticket) {
@@ -1942,11 +1964,12 @@ bool Routing::retry_immediate_parent(std::uint64_t ticket) {
     const auto parked=std::find(parked_immediate_routes_.begin(),parked_immediate_routes_.end(),ticket);
     const auto* actor=world_.find(job_->actor);const auto* target=world_.resolve_reference({job_->target,job_->target_generation});
     if(parked==parked_immediate_routes_.end()||!actor||!target||actor->generation!=job_->actor_generation||
-       target->generation!=job_->target_generation||!actor->position||actor->attachment)return false;
+       target->generation!=job_->target_generation||(!actor->position&&!job_->unplaced_room_failure)||actor->attachment)return false;
     // Source keeps routing state and shared World effects from the immediate child.
     // Only the host's anti-external-mutation baseline is advanced at this authenticated return.
-    job_->expected=*actor->position;job_->expected_radian_direction=actor->radian_direction;
-    if(!job_->look_towards)job_->walking_started=!actor->static_footprint;
+    if(!job_->unplaced_room_failure)job_->expected=*actor->position;
+    job_->expected_radian_direction=actor->radian_direction;
+    if(!job_->look_towards&&!job_->unplaced_room_failure)job_->walking_started=!actor->static_footprint;
     if(job_->look_towards){job_->path.front()={actor->position->x,actor->position->y};
         job_->target_position.x=actor->position->x;job_->target_position.y=actor->position->y;job_->target_position.level=actor->position->level;}
     parked_immediate_routes_.erase(parked);route_mutated();return true;
@@ -1977,6 +2000,7 @@ std::optional<RouteStackSnapshot> Routing::capture_session_route_stack(
         saved.failure_code=job.failure_code;
         saved.failure_blocker=job.failure_blocker;
         saved.failure_reason=job.failure_reason;
+        saved.unplaced_room_failure=job.unplaced_room_failure;
         saved.selected_sitting_object=job.selected_sitting_object;
         saved.fallback_goals=job.fallback_goals;
         saved.external_frame_sitting=job.external_frame_sitting;
@@ -2081,7 +2105,7 @@ bool Routing::valid_session_route_stack(const RouteStackSnapshot& saved,bool req
             return reject("route stack repeats a pending ticket");
         const auto* actor=world_.find(job.actor);const auto* target=world_.resolve_reference({job.target,job.target_generation});
         if(!actor||!target||actor->kind!=EntityKind::avatar||actor->generation!=job.actor_generation||
-           target->generation!=job.target_generation||!actor->position||!target->position)
+           target->generation!=job.target_generation||(!job.unplaced_room_failure&&(!actor->position||!target->position)))
             return reject("route stack participant identity is unavailable");
         if(!job.carried_target.empty()&&!route_carried_target_matches(world_,{job.actor,job.actor_generation},
             {job.target,job.target_generation},job.carried_target,job.target_position))
@@ -2115,7 +2139,7 @@ bool Routing::valid_session_route_stack(const RouteStackSnapshot& saved,bool req
         for(const auto& continuation:vm.immediate_continuations)
             if(continuation.parent_pending&&continuation.parent_pending->ticket==job.ticket){
                 live=&*continuation.parent_pending;++matches;immediate_parent=true;
-                if(!validates_immediate_parent(world_,*vm_,*live,job.route_frame))
+                if(!validates_immediate_parent(world_,*vm_,*live,job.route_frame,job.unplaced_room_failure?&job:nullptr))
                     return reject("parked routing parent has no exact immediate continuation");
             }
         if(matches!=1||!route_pending_equal(pending,*live))return reject("route stack pending VM linkage changed");
@@ -2126,6 +2150,16 @@ bool Routing::valid_session_route_stack(const RouteStackSnapshot& saved,bool req
            (job.replay_frame&&(!route_frame_equal(*job.replay_frame,job.route_frame)||
             !route_instruction_equal(*job.replay_instruction,pending.instruction.instruction))))
             return reject("deferred route replay does not match its original instruction");
+        if(job.unplaced_room_failure){
+            if(!is_source_unplaced_room_failure(job)||job.call_failure_trees!=((pending.instruction.instruction.operands[4]&1U)==0&&index==0))
+                return reject("unplaced room failure lifecycle differs from its source request");
+            const auto& origin=*job.unplaced_room_failure;const auto& op=pending.instruction.instruction;
+            const auto scope=op.operands[2]|(op.operands[3]<<8);
+            const SlotTable* table=scope==2?&globals_:(stack_object_slots_?stack_object_slots_(job.route_frame):nullptr);
+            const auto* slot=table?slot_of_type(*table,3,origin.slot_index):nullptr;
+            if(!slot||table->version!=origin.slot_version||!same_slot_record(*slot,origin.slot))
+                return reject("unplaced room failure lost its exact installed SLOT");
+        }else if(!grid_)return reject("spatial route stack has no actual grid");
         if(job.deferred_room_route) {
             if(!room_portal_step_||!room_pair_||!route_grid_refresh_)
                 return reject("deferred route continuation services are unavailable");
@@ -2148,7 +2182,7 @@ bool Routing::valid_session_route_stack(const RouteStackSnapshot& saved,bool req
                ((opcode==27||cross_floor_slot)&&job.call_failure_trees!=(failure_trees&&index==0))||job.arrival_radian_direction||
                job.target_anchor_radian_direction)
                 return reject("deferred route source facing or failure policy changed");
-        }else if(job.path.empty()||job.path.size()-1>limits_.expanded||job.next==0||job.next>job.path.size())
+        }else if(!job.unplaced_room_failure&&(job.path.empty()||job.path.size()-1>limits_.expanded||job.next==0||job.next>job.path.size()))
             return reject("local route stack path progress is malformed");
         if(job.external_frame_active) {
             if(!job.external_frame_call||job.external_frame_owner!=job.external_frame_call->context.code_owner||
@@ -2226,7 +2260,7 @@ bool Routing::valid_session_route_stack(const RouteStackSnapshot& saved,bool req
         const auto reconstructed=job_from_snapshot(job);
         if(!reconstructed)return reject("route motion continuation is unavailable or malformed");
         if(job.source_choices&&!world_.reference_is_dead({job.target,job.target_generation})&&!validate_source_slot_choices(*reconstructed,reason))return false;
-        if(active&&!immediate_parent&&!job.external_frame_active&&!job.deferred_room_route&&
+        if(active&&!immediate_parent&&!job.external_frame_active&&!job.deferred_room_route&&!job.unplaced_room_failure&&
            (!(*actor->position==job.expected)||!same_float_bits(actor->radian_direction,job.expected_radian_direction)||
             (actor->attachment&&!is_source_standing_before_walk(job))||(!job.look_towards&&job.frame.state!=RouteFrameState::shooed&&actor->static_footprint==job.walking_started)))
         {
@@ -2243,15 +2277,15 @@ bool Routing::valid_session_route_stack(const RouteStackSnapshot& saved,bool req
                <<" walking_started="<<job.walking_started;
             return reject(why.str());
         }
-        if(active&&!immediate_parent&&!job.external_frame_active&&!job.deferred_room_route&&!job.look_towards) {
+        if(active&&!immediate_parent&&!job.external_frame_active&&!job.deferred_room_route&&!job.unplaced_room_failure&&!job.look_towards) {
             if(job.actor!=job.target&&!job.source_circle&&!job.source_range&&
                !target_checkpoint_matches(world_,job.actor,job.actor_generation,job.target,job.target_generation,job.carried_target,job.target_position,(captured_source_goals(job)||job.deferred_room_route)))return reject("active route destination moved since its checkpoint");
             if(!job.source_sparse&&!job.source_choices&&!job.room_route_invalid&&!job.room_route_replan_active) {
                 if(!(job.path[job.next-1]==RoutePoint{job.expected.x,job.expected.y})||
-                   !grid_.contains(job.path[job.next-1])||!grid_.walkable(job.path[job.next-1]))
+                   !grid().contains(job.path[job.next-1])||!grid().walkable(job.path[job.next-1]))
                     return reject("active route progress is outside the prepared grid");
                 for(std::size_t n=job.next;n<job.path.size();++n)
-                    if(!grid_.can_step(job.path[n-1],job.path[n]))return reject("active route remaining path is no longer walkable");
+                    if(!grid().can_step(job.path[n-1],job.path[n]))return reject("active route remaining path is no longer walkable");
             }
         }
         for(const auto& goal:job.fallback_goals)if(goal.facing>7||(!goal.entry_flags&&!job.source_choices)||
@@ -2469,7 +2503,7 @@ bool Routing::try_next_sitting_goal() {
        actor->generation!=job_->actor_generation||target->generation!=job_->target_generation||
        (job_->target!=job_->actor&&!target_checkpoint_matches(world_,job_->actor,job_->actor_generation,job_->target,job_->target_generation,job_->carried_target,job_->target_position,(captured_source_goals(*job_)||job_->deferred_room_route))))
         return false;
-    const auto result=find_pre_ranked_slot_route(grid_,{actor->position->x,actor->position->y},
+    const auto result=find_pre_ranked_slot_route(grid(),{actor->position->x,actor->position->y},
                                                  job_->fallback_goals,limits_);
     if(result.path.status!=RouteStatus::found||!result.selected)return false;
     const auto index=*result.selected;
@@ -2522,6 +2556,21 @@ std::optional<bool> Routing::intersects_destination(RoutePoint point,
            !target||target->generation!=job.target_generation)
             return reject("participant identity is stale");
         if(candidate_chair&&*candidate_chair<=0)return reject("candidate chair identity is invalid");
+        if(job.unplaced_room_failure){
+            RouteJobSnapshot value;static_cast<LocalRouteSnapshot&>(value)=local_snapshot(job);
+            value.unplaced_room_failure=job.unplaced_room_failure;
+            value.failure_pending=job.failure_pending;value.failure_tree_invoked=job.failure_tree_invoked;
+            value.failure_code=job.failure_code;value.failure_blocker=job.failure_blocker;value.failure_reason=job.failure_reason;
+            value.external_frame_active=job.external_frame_active;value.external_frame_call=job.external_frame_call;
+            const auto snapshot=vm_->snapshot();const VmPending* pending=nullptr;
+            if(snapshot.pending&&snapshot.pending->ticket==job.ticket)pending=&*snapshot.pending;
+            for(const auto& p:snapshot.suspended_pending)if(p.ticket==job.ticket)pending=&p;
+            for(const auto& c:snapshot.immediate_continuations)if(c.parent_pending&&c.parent_pending->ticket==job.ticket)pending=&*c.parent_pending;
+            if(!pending||!pending->instruction.depth||pending->instruction.depth>snapshot.stack.size())return reject("unplaced failure lost VM owner");
+            value.pending=*pending;value.route_frame=snapshot.stack[pending->instruction.depth-1];
+            if(!is_source_unplaced_room_failure(value))return reject("unplaced failure has no authenticated pre-selection lifecycle");
+            return false; // InitRoutes failed before the source ever selected CurRoute.
+        }
         if(job.deferred_room_route){
             // InitRoutes(SLOT,target) calls AttemptRoute(null) before room
             // traversal. Route45 and supported source27 (including its
@@ -2602,7 +2651,7 @@ std::optional<bool> Routing::try_next_circle_goal() {
     const auto frame=vm_->stack().back();
     std::vector<PreRankedSlotGoal> accepted;
     for(const auto& goal:remaining){
-        if(!grid_.contains(goal.position))continue;
+        if(!grid().contains(goal.position))continue;
         if(goal_validator_&&!goal_validator_(frame,goal.position))continue;
         PreRankedSlotGoal value{goal.position,goal.entry_flags,goal.facing};value.radian_direction=goal.radian_direction;
         accepted.push_back(value);
@@ -2613,7 +2662,7 @@ std::optional<bool> Routing::try_next_circle_goal() {
         diagnostic_="source circle participants changed during retry verification";return std::nullopt;
     }
     if(accepted.empty())return false;
-    const auto result=find_pre_ranked_slot_route(grid_,{actor->position->x,actor->position->y},accepted,limits_);
+    const auto result=find_pre_ranked_slot_route(grid(),{actor->position->x,actor->position->y},accepted,limits_);
     if(result.path.status==RouteStatus::budget_exhausted||result.path.status==RouteStatus::invalid_input){
         diagnostic_="source circle retry search reached an unsupported input or work bound";return std::nullopt;
     }
@@ -2632,10 +2681,41 @@ std::optional<bool> Routing::try_next_circle_goal() {
     job_->frame.state=job_->path.size()==1?RouteFrameState::turn_only:RouteFrameState::walking;
     diagnostic_.clear();return true;
 }
+bool Routing::attach_grid(RouteGrid& value){
+    if(executing_||grid_)return false;
+    if(job_&&!job_->unplaced_room_failure)return false;
+    for(const auto& parent:suspended_jobs_)if(!parent.unplaced_room_failure)return false;
+    grid_=&value;return true;
+}
+bool is_source_unplaced_room_failure(const RouteJobSnapshot& job){
+    if(!job.unplaced_room_failure)return false;
+    const auto& origin=*job.unplaced_room_failure;const auto& op=job.pending.instruction.instruction;
+    const auto scope=op.operands[2]|(op.operands[3]<<8);
+    std::size_t index=op.operands[0]|(op.operands[1]<<8);
+    if(scope==0){if(index>=job.route_frame.arguments.size()||job.route_frame.arguments[index]<0)return false;
+        index=static_cast<std::size_t>(job.route_frame.arguments[index]);}
+    const bool policy=(op.operands[4]&1U)==0;
+    if(op.opcode!=45||scope>2||(op.operands[4]&~1U)||op.operands[5]||op.operands[6]||op.operands[7]||
+       origin.slot_version<4||origin.slot_version>10||origin.slot_index!=index||origin.slot_index>65535||
+       origin.slot.type!=3||(origin.slot.flags&0x0800U)||!origin.target_room||
+       job.failure_code!=2||job.failure_blocker||job.failure_reason.empty()||
+       (job.call_failure_trees&&!policy)||job.failure_pending==job.failure_tree_invoked||
+       (job.failure_tree_invoked&&(!job.call_failure_trees||!is_source_failure_tree_continuation(job)))||
+       (job.failure_pending&&(job.external_frame_active||(job.frame.state!=RouteFrameState::initial&&job.frame.state!=RouteFrameState::failed)))||
+       job.deferred_room_route||job.room_context_open||job.room_route_replan_active||
+       job.portal_steps||job.portal_retries||job.portal_replan_required||job.external_frame_purpose||job.external_frame_callee_generation||
+       job.replay_frame||job.replay_instruction||job.source_circle||job.source_range||job.source_choices||job.source_sparse||job.look_towards||
+       job.walking_started||job.same_room_verified||!job.path.empty()||job.next!=1||job.entry_flags||job.facing||job.face_anywhere||
+       job.arrival_radian_direction||job.target_anchor_radian_direction||job.selected_sitting_object||!job.fallback_goals.empty()||
+       job.sparse_consideration||!job.carried_target.empty()||job.external_frame_sitting||
+       !(job.expected==EntityPosition{-32768,-32768,1,0}))return false;
+    return true;
+}
 PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,const VmDispatch& dispatch,RouteOutcomeReceipt* immediate) {
     // Pinned Execute returns before creating a routing frame or reading any
     // operand geometry in check mode and for null/OOW StackObject. In
     // particular these queries cannot invalidate a live route's receipts.
+    if(i.opcode==45&&dispatch.check_mode)return {PrimitiveDisposition::goto_false,{}};
     if(i.opcode==27){
         if(executing_)return unsupported("routing callback cannot reenter controller");
         if(!vm_||dispatch.origin!=vm_)return unsupported("routing controller bound to another VM");
@@ -2698,7 +2778,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         }
     }
     diagnostic_.clear();
-    if(look_towards)return request_look_towards(frame,i,dispatch,nested_request);
+    if(look_towards){if(!grid_)return unsupported("LookTowards requires its actual prepared route context");
+        return request_look_towards(frame,i,dispatch,nested_request);}
     const auto* relative_target=goto_relative?world_.frame_entity(frame,VmEntityRole::stack_object):nullptr;
     const bool ordinary_go_here_relative=relative_target&&!relative_target->ui_ghost&&is_source_ordinary_go_here_instruction(i);
     const bool saved_go_here_relative=goto_relative&&
@@ -2790,6 +2871,88 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const bool source_failure_trees=goto_relative?
         (relative_request&&!relative_request->no_failure_trees):
         ((source_point_slot||source_circle_slot||source_range_slot||source_generic_sparse_slot)&&(i.operands[4]&1U)==0);
+    if(!goto_relative){
+        if(!slot)return {PrimitiveDisposition::goto_false,{}};
+        const auto* actor=world_.frame_entity(frame,VmEntityRole::caller);
+        const auto* target=world_.frame_entity(frame,VmEntityRole::stack_object);
+        if(!target)return {PrimitiveDisposition::goto_false,{}};
+        if(actor&&!actor->position){
+            if(actor->kind!=EntityKind::avatar||actor->attachment||!actor->generation||actor->person_data.size()<=62||
+               !target->position||target->generation==0||selected_slots->version<4||selected_slots->version>10||
+               (slot->flags&0x0800U)||!unplaced_room_failure_)
+                return unsupported("unplaced Route45 requires a free source avatar, positioned target and complete room proof");
+            if(nested_request&&(actor->id!=job_->actor||actor->generation!=job_->actor_generation))
+                return unsupported("nested unplaced Route45 changed avatar identity");
+            const auto actor_id=actor->id,target_id=target->id;
+            const auto actor_generation=actor->generation,target_generation=target->generation;
+            const auto target_position=*target->position;
+            const auto room=[&]{struct Guard{bool& busy;explicit Guard(bool& value):busy(value){busy=true;}~Guard(){busy=false;}} guard(executing_);
+                return unplaced_room_failure_(target_position);}();
+            actor=world_.find(actor_id);target=world_.resolve_reference({target_id,target_generation});
+            if(!room||!*room||!actor||!target||actor->generation!=actor_generation||actor->position||actor->attachment||
+               !target->position||!(*target->position==target_position))
+                return unsupported("unplaced Route45 room search is unknown or participants changed");
+            if(!source_sparse_services_.source_tick||!source_sparse_services_.end_locomotion)
+                return unsupported("unplaced source routing requires authenticated FAILED RNG and PreExit services");
+            Job failed{};failed.ticket=dispatch.ticket;failed.actor=actor_id;failed.target=target_id;
+            failed.actor_generation=actor_generation;failed.target_generation=target_generation;
+            failed.run_generation=vm_->run_generation();failed.expected={-32768,-32768,1,0};
+            failed.expected_radian_direction=actor->radian_direction;failed.target_position=target_position;
+            failed.call_failure_trees=(i.operands[4]&1U)==0&&!nested_request;
+            failed.failure_pending=true;failed.failure_code=2;failed.frame.state=RouteFrameState::failed;
+            failed.failure_reason="source InitRoutes has no path from unplaced room 0";
+            failed.unplaced_room_failure=SourceUnplacedRoomFailure{selected_slots->version,slot_index,*slot,*room};
+            if(nested_request)suspended_jobs_.push_back(std::move(*job_));
+            job_=std::move(failed);
+            if(job_->call_failure_trees){
+                VmCall failure{routine_key(398),frame.context,{2,0,0,0}};
+                if(!vm_->prepare_primitive_call(frame,i,dispatch,failure))
+                    return unsupported("required source failure tree398 failed primitive child preflight");
+                const auto depth=vm_->stack().size();const auto run=vm_->run_generation();
+                PrimitiveOutcome outcome{PrimitiveDisposition::suspend_and_call,{}};outcome.call=failure;
+                outcome.call_commit=[this,frame,i,dispatch,depth,run,failure=std::move(failure),actor_id,actor_generation,target_id,target_generation,target_position]()mutable{
+                    if(!vm_||!vm_->matches_active_call_commit(frame,i,dispatch,depth)||vm_->run_generation()!=run||
+                       !job_||job_->ticket!=dispatch.ticket||!job_->unplaced_room_failure)return false;
+                    const auto* actor=world_.find(actor_id);const auto* target=world_.resolve_reference({target_id,target_generation});
+                    if(!actor||actor->generation!=actor_generation||actor->position||actor->attachment||
+                       !target||!target->position||!(*target->position==target_position)||
+                       !world_.bind_context_live(failure.context))return false;
+                    // All identities/allocation preflight precede source publication.
+                    // Moving the already owned call cannot allocate after RouteResult.
+                    if(!world_.set_person_data(actor_id,62,2))return false;
+                    job_->failure_pending=false;job_->failure_tree_invoked=true;
+                    job_->external_frame_active=true;job_->external_frame_owner=failure.context.code_owner;
+                    job_->external_frame_call.emplace(std::move(failure));
+                    job_->frame.state=RouteFrameState::failed;return true;
+                };
+                return outcome;
+            }
+            // Source's no-child FAILED frame executes immediately after CONTINUE.
+            // No asynchronous wait, motion grid or private VM is introduced.
+            if(!vm_->matches_active_primitive(frame,i,dispatch)||!source_sparse_services_.source_tick||
+               !source_sparse_services_.end_locomotion)
+                return unsupported("source inline FAILED frame requires authenticated RNG and PreExit services");
+            if(!world_.set_person_data(actor_id,62,2))return unsupported("source RouteResult is unavailable");
+            SourceSparseMotionContext context;context.vm=vm_;context.frame=frame;context.dispatch=dispatch;
+            context.actor=actor_id;context.actor_generation=actor_generation;context.run_generation=vm_->run_generation();
+            context.actor_unplaced=true;context.position={-32768,-32768,1,0};
+            context.root_route=suspended_jobs_.empty();context.lifecycle_instruction=i;
+            const auto matches=[&]{const auto* current=world_.find(actor_id);
+                return vm_->matches_active_primitive(frame,i,dispatch)&&job_&&job_->ticket==dispatch.ticket&&
+                    current&&current->generation==actor_generation&&!current->position&&!current->attachment;};
+            std::string exit_error;
+            {struct Guard{bool& busy;explicit Guard(bool& value):busy(value){busy=true;}~Guard(){busy=false;}} guard(executing_);
+                if(!source_sparse_services_.source_tick(context)||!matches())
+                    return unsupported("source inline FAILED frame RNG rejected its active primitive");
+                if(!source_sparse_services_.end_locomotion(context,WalkMotionProfile{},&exit_error)||!matches())
+                    return unsupported(exit_error.empty()?"source inline FAILED frame PreExit rejected":exit_error);
+            }
+            if(context.root_route){job_.reset();last_tick_.reset();}
+            else{job_=std::move(suspended_jobs_.back());suspended_jobs_.pop_back();}
+            return {PrimitiveDisposition::goto_false,"source InitRoutes has no room route"};
+        }
+    }
+    if(!grid_)return unsupported("positioned routing requires its actual prepared grid");
     if(!goto_relative||ranged_goto_relative) {
         if(!slot) return {PrimitiveDisposition::goto_false,{}};
         // Door range routing has separate explicit scoring and host validation.
@@ -2992,6 +3155,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         if(stair_goto_relative)
             return unsupported("stair GotoRelativePosition failure tree is not implemented: "+reason);
         if(!source_failure_trees||nested_request){
+            if(actor->person_data.size()>62&&!world_.set_person_data(actor->id,62,code))return unsupported("source RouteResult write failed");
             if(immediate){immediate->failure_code=code;immediate->blocker.id=blocker;
                 if(const auto* current=world_.find(blocker)){immediate->blocker.generation=current->generation;immediate->blocker_generation_is_current_lookup=true;}}
             return {PrimitiveDisposition::goto_false,reason};
@@ -3098,12 +3262,12 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
                 if(execution_callback_error)return unsupported(*execution_callback_error);
                 return fail_route(7,"GotoRelativePosition target rejected by host room/clearance validator");
             }
-            if(!grid_.contains(goal))
+            if(!grid().contains(goal))
                 return fail_route(7,"GotoRelativePosition target lies outside the active route grid");
             if(start==goal) {
-                if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
+                if(!grid().walkable(start)) path={RouteStatus::no_path,{},0,0};
                 else path={RouteStatus::found,{start},0,0};
-            } else path=find_route(grid_,start,{goal},limits_);
+            } else path=find_route(grid(),start,{goal},limits_);
         }
     } else if(general_source_slot||(!point_offset_slot&&!source_point_slot&&(((ranged_slot||bed_circle_slot||source_circle_slot)&&(ranged_slot_goals_||continuous_ranged_slot_goals_||authenticated_source_slot))||
                                    (!ranged_slot&&!bed_circle_slot&&!source_circle_slot&&ranked_goals_)))) {
@@ -3320,7 +3484,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
                 return unsupported("source sparse route plan could not be installed");
             }
         }
-        if(!sparse_source_selected&&!general_source_slot&& !grid_.walkable(start))
+        if(!sparse_source_selected&&!general_source_slot&& !grid().walkable(start))
             invalid_route_input_diagnostic="pre-ranked SLOT route start is outside the walkable grid";
         else if(!sparse_source_selected&&!general_source_slot&&candidates.empty())
             invalid_route_input_diagnostic="pre-ranked SLOT goal provider returned no candidates (actor="+
@@ -3331,8 +3495,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
                 std::to_string(slot->flags)+")";
         else if(!sparse_source_selected&&!general_source_slot&&accepted.empty())
             invalid_route_input_diagnostic="host rejected every pre-ranked SLOT goal as outside the walkable grid";
-        else if(!sparse_source_selected&&!general_source_slot)for(const auto& goal:accepted)if(!grid_.contains(goal.position)||
-            (goal.sitting_approach&&!grid_.contains(*goal.sitting_approach))||
+        else if(!sparse_source_selected&&!general_source_slot)for(const auto& goal:accepted)if(!grid().contains(goal.position)||
+            (goal.sitting_approach&&!grid().contains(*goal.sitting_approach))||
             (!general_source_slot&&goal.entry_flags==0)||goal.facing>=8) {
             invalid_route_input_diagnostic="pre-ranked SLOT goal is outside the grid or has invalid facing flags";
             break;
@@ -3341,11 +3505,11 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         // routing follows its failure branch (and optional failure tree),
         // rather than treating an empty candidate list as malformed metadata.
         if(!sparse_source_selected&&!(general_source_slot&&selected&&(selected->sitting_object||source_stand_before_walk))){
-            const bool known_empty=(ranged_goto_relative||source_circle_slot||source_range_slot)&&grid_.walkable(start)&&accepted.empty();
+            const bool known_empty=(ranged_goto_relative||source_circle_slot||source_range_slot)&&grid().walkable(start)&&accepted.empty();
             if(goal_receipt&&!known_empty)++goal_receipt->reachable_attempts;
             auto result=known_empty?
                 PreRankedSlotRoute{{RouteStatus::no_path,{},0,0},{}}:
-                find_pre_ranked_slot_route(grid_,start,accepted,limits_);
+                find_pre_ranked_slot_route(grid(),start,accepted,limits_);
             if(result.selected) {
                 selected=accepted[*result.selected];
                 fallback_goals.reserve(accepted.size()-1);
@@ -3395,9 +3559,9 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
                 if(execution_callback_error)return unsupported(*execution_callback_error);
                 return fail_route(7,"source exact SLOT point rejected by host bounds/wall/placement validator");
             }
-            if(!grid_.contains(goal))return fail_route(7,"source exact SLOT point lies outside the active route grid");
-            if(start==goal)path=grid_.walkable(start)?RoutePath{RouteStatus::found,{start},0,0}:RoutePath{RouteStatus::no_path,{},0,0};
-            else path=find_route(grid_,start,{goal},limits_);
+            if(!grid().contains(goal))return fail_route(7,"source exact SLOT point lies outside the active route grid");
+            if(start==goal)path=grid().walkable(start)?RoutePath{RouteStatus::found,{start},0,0}:RoutePath{RouteStatus::no_path,{},0,0};
+            else path=find_route(grid(),start,{goal},limits_);
         }
     } else if(point_offset_slot) {
         point_candidate=enumerate_reference_slot_point_candidate(*selected_slots,slot_index,
@@ -3407,13 +3571,13 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             if(execution_callback_error)return unsupported(*execution_callback_error);
             return {PrimitiveDisposition::goto_false,"point-offset SLOT rejected by host room/clearance validator"};
         }
-        if(!grid_.contains(goal))
+        if(!grid().contains(goal))
             return {PrimitiveDisposition::goto_false,"point-offset SLOT lies outside the active route grid"};
         route_goal_count=1;
         if(start==goal) {
-            if(!grid_.walkable(start))path={RouteStatus::no_path,{},0,0};
+            if(!grid().walkable(start))path={RouteStatus::no_path,{},0,0};
             else path={RouteStatus::found,{start},0,0};
-        } else path=find_route(grid_,start,{goal},limits_);
+        } else path=find_route(grid(),start,{goal},limits_);
     } else {
         std::vector<RoutePoint> goals;
         bool direction_compatible_candidate=false;
@@ -3440,16 +3604,16 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         }
         if(std::find(goals.begin(),goals.end(),start)!=goals.end()) {
             // Validate clearance even for the turn-only shortcut.
-            if(!grid_.contains(start)) path={RouteStatus::invalid_input,{},0,0};
-            else if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
+            if(!grid().contains(start)) path={RouteStatus::invalid_input,{},0,0};
+            else if(!grid().walkable(start)) path={RouteStatus::no_path,{},0,0};
             else path={RouteStatus::found,{start},0,0};
-        }else path=find_route(grid_,start,goals,limits_);
+        }else path=find_route(grid(),start,goals,limits_);
     }
     if(path.status==RouteStatus::budget_exhausted) return unsupported("routing search budget exhausted");
     if(path.status==RouteStatus::invalid_input) {
         if(invalid_route_input_diagnostic.empty())invalid_route_input_diagnostic=
             "routing inputs invalid: start "+std::to_string(start.x)+","+std::to_string(start.y)+
-            " walkable="+std::string(grid_.walkable(start)?"yes":"no")+
+            " walkable="+std::string(grid().walkable(start)?"yes":"no")+
             ", accepted goals="+std::to_string(route_goal_count);
         return unsupported(invalid_route_input_diagnostic);
     }
@@ -3810,11 +3974,12 @@ bool Routing::source_route_tick_prefix() {
     const auto frame=vm_->stack().back();const auto pending=*vm_->pending();
     const auto ticket=job_->ticket,run=job_->run_generation,generation=job_->actor_generation;
     const auto id=job_->actor;const auto* actor=world_.find(id);
-    if(!actor||actor->generation!=generation||!actor->position)
-        return reject("source route tick prefix has no positioned actor");
+    if(!actor||actor->generation!=generation||(!actor->position&&!job_->unplaced_room_failure))
+        return reject("source route tick prefix has no authenticated actor");
     SourceSparseMotionContext context;context.vm=vm_;context.frame=frame;
     context.dispatch={vm_,ticket,false};context.actor=id;context.actor_generation=generation;
-    context.run_generation=run;context.position=*actor->position;context.root_route=suspended_jobs_.empty();context.room_context_open=job_->room_context_open;
+    context.run_generation=run;context.actor_unplaced=!actor->position;
+    context.position=actor->position.value_or(EntityPosition{-32768,-32768,1,0});context.root_route=suspended_jobs_.empty();context.room_context_open=job_->room_context_open;
     const auto radians=actor->radian_direction;
     try {
         if(!source_sparse_services_.source_tick(context))return reject("source route tick prefix was rejected");
@@ -3824,7 +3989,8 @@ bool Routing::source_route_tick_prefix() {
        job_->actor_generation!=generation||vm_->run_generation()!=run||vm_->status()!=VmStatus::waiting||
        !vm_->pending()||!route_pending_equal(*vm_->pending(),pending)||vm_->stack().empty()||
        !route_frame_equal(vm_->stack().back(),frame)||!actor||actor->generation!=generation||
-       !actor->position||!(*actor->position==context.position)||!same_float_bits(actor->radian_direction,radians))
+       actor->position.has_value()==context.actor_unplaced||
+       (actor->position&&!(*actor->position==context.position))||!same_float_bits(actor->radian_direction,radians))
         return reject("source route tick prefix changed its owning frame or actor");
     return true;
 }
@@ -4595,6 +4761,11 @@ void Routing::emit_outcome(const RouteOutcomeReceipt& receipt) const noexcept {
     try{if(outcome_observer_)outcome_observer_(receipt);}catch(...){}
 }
 bool Routing::finish(bool result,std::string reason) {
+    if(!result&&!job_->failure_tree_invoked&&!job_->unplaced_room_failure){
+        const auto* actor=world_.find(job_->actor);
+        if(actor&&actor->generation==job_->actor_generation&&actor->person_data.size()>62)
+            if(!world_.set_person_data(actor->id,62,job_->failure_code)){diagnostic_="source RouteResult write failed";return false;}
+    }
     if(!result&&!job_->failure_tree_invoked)
         if(const auto receipt=outcome_receipt(*job_,result,reason,RouteOutcomeStage::failure_decision))emit_outcome(*receipt);
     if(!result&&job_->call_failure_trees&&!job_->failure_tree_invoked) {
@@ -4606,25 +4777,31 @@ bool Routing::finish(bool result,std::string reason) {
             VmCall failure{routine_key(398),pending->context,
                            {job_->failure_code,job_->failure_blocker,0,0}};
             if(vm_->call_pending(job_->ticket,failure)) {
+                job_->failure_pending=false;
                 job_->failure_tree_invoked=true;
                 job_->external_frame_purpose.reset();job_->external_frame_callee_generation=0;
                 job_->failure_reason=reason;
                 job_->external_frame_active=true;
                 job_->external_frame_owner=failure.context.code_owner;
                 job_->external_frame_call=std::move(failure);if(job_->external_frame_call)world_.bind_context_live(job_->external_frame_call->context);
-                job_->frame.state=RouteFrameState::room_portal;
+                job_->frame.state=job_->unplaced_room_failure?RouteFrameState::failed:RouteFrameState::room_portal;
                 return true;
             }
+            diagnostic_="required source failure tree398 could not be invoked: "+vm_->diagnostic();
+            return false;
         }
+        diagnostic_="required source failure tree398 has no matching owning pending frame";
+        return false;
     }
     if(suspended_jobs_.empty()&&!job_->look_towards&&source_sparse_services_.end_locomotion&&
        vm_&&vm_->pending()&&vm_->pending()->ticket==job_->ticket&&
        vm_->run_generation()==job_->run_generation&&!vm_->stack().empty()){
         const auto* actor=world_.find(job_->actor);
-        if(actor&&actor->generation==job_->actor_generation&&actor->position){
+        if(actor&&actor->generation==job_->actor_generation){
             SourceSparseMotionContext context;context.vm=vm_;context.frame=vm_->stack().back();
             context.dispatch={vm_,job_->ticket,false};context.actor=job_->actor;context.actor_generation=job_->actor_generation;
-            context.run_generation=job_->run_generation;context.position=*actor->position;context.root_route=true;
+            context.run_generation=job_->run_generation;context.actor_unplaced=!actor->position;
+            context.position=actor->position.value_or(EntityPosition{-32768,-32768,1,0});context.root_route=true;
             const auto profile=job_->source_sparse?job_->source_sparse->profile:WalkMotionProfile{};
             const auto ticket=job_->ticket;std::string error;
             if(!source_sparse_services_.end_locomotion(context,profile,&error)||!job_||job_->ticket!=ticket||
@@ -4879,7 +5056,7 @@ std::optional<bool> Routing::resume_invalidated_walk(){
         job_->path={{actor->position->x,actor->position->y},job_->path.back()};job_->next=1;
         job_->frame.state=s.lifecycle==1?RouteFrameState::begin_turn:RouteFrameState::walking;return true;
     }
-    const auto path=find_route(grid_,{actor->position->x,actor->position->y},{job_->path.back()},limits_);
+    const auto path=find_route(grid(),{actor->position->x,actor->position->y},{job_->path.back()},limits_);
     if(path.status==RouteStatus::no_path)return false;
     if(path.status!=RouteStatus::found)return {};
     job_->path=path.points;job_->next=1;return true;
@@ -5023,8 +5200,8 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
                 const auto* target=world_.resolve_reference({job_->target,job_->target_generation});
                 if(!actor||!target||actor->generation!=job_->actor_generation||
                    target->generation!=job_->target_generation||!actor->position||!target->position||
-                   actor->attachment||!grid_.contains({actor->position->x,actor->position->y})||
-                   !grid_.walkable({actor->position->x,actor->position->y})||
+                   actor->attachment||!grid().contains({actor->position->x,actor->position->y})||
+                   !grid().walkable({actor->position->x,actor->position->y})||
                    (job_->target!=job_->actor&&!target_checkpoint_matches(world_,job_->actor,job_->actor_generation,job_->target,job_->target_generation,job_->carried_target,job_->target_position,(captured_source_goals(*job_)||job_->deferred_room_route))))
                     return finish(false,"failed EntryPoint26 changed or invalidated route participants");
                 if(route_grid_refresh_&&!route_grid_refresh_(*actor->position))
@@ -5103,7 +5280,7 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
                 if(!(*actor->position==job_->expected)&&!refresh_after_external_move(false))
                     return finish(false,"portal frame moved avatar but host route-grid refresh failed");
                 const auto goal=job_->path.back();
-                const auto replanned=find_route(grid_,{actor->position->x,actor->position->y},{goal},limits_);
+                const auto replanned=find_route(grid(),{actor->position->x,actor->position->y},{goal},limits_);
                 if(replanned.status!=RouteStatus::found)
                     return finish(false,"portal frame moved avatar but parent route could not be replanned");
                 job_->path=replanned.points;job_->next=1;job_->expected=*actor->position;
@@ -5124,11 +5301,11 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
        vm_->status()!=VmStatus::waiting||vm_->pending()->ticket!=job_->ticket) {
         cancel_chain("route canceled by VM restart or ticket mismatch");return false;
     }
-    if(!source_route_tick_prefix())return false;
-    if(job_->failure_pending) {
-        job_->failure_pending=false;
+    if(job_->unplaced_room_failure&&job_->failure_pending&&job_->call_failure_trees)
         return finish(false,job_->failure_reason);
-    }
+    if(!source_route_tick_prefix())return false;
+    if(job_->failure_pending)
+        return finish(false,job_->failure_reason);
     if(job_->interrupt_pending){
         job_->interrupt_pending=false;
         if(job_->call_failure_trees)job_->failure_code=4;
@@ -5161,7 +5338,7 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
     std::optional<RouteMovement> event;
     if(job_->next<job_->path.size()) {
         const auto point=job_->path[job_->next];const RoutePoint from{actor->position->x,actor->position->y};
-        if(!grid_.can_step(from,point)) {
+        if(!grid().can_step(from,point)) {
             if(job_->source_circle||job_->source_range){
                 const auto retried=try_next_circle_goal();
                 if(!retried)return false;

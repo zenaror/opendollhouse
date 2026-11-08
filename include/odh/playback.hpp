@@ -185,7 +185,8 @@ public:
     // Root PreExit only: retain the actual primary state/cursors, drop extras,
     // and give that retained idle full weight. Carry and current hands persist.
     bool end_source_walk_animation(const VmFrame&,const Vm& source_vm,
-        std::uint64_t actor_generation,std::uint64_t vm_generation,std::string* error=nullptr);
+        std::uint64_t actor_generation,std::uint64_t vm_generation,std::string* error=nullptr,
+        const Instruction* lifecycle_instruction=nullptr,const VmDispatch* lifecycle_dispatch=nullptr);
     bool capture_snapshot(PlaybackSnapshot&,std::string* error=nullptr) const;
     bool restore_snapshot(const PlaybackSnapshot&,Vm&,const PlaybackRestoreResolver&,std::string* error=nullptr);
     VmPrimitive primitive();
@@ -251,7 +252,8 @@ private:
     bool tick_impl(std::uint64_t,const std::function<void(const PlaybackEvent&)>&,
                    bool deliver_pending,bool report_success);
     bool valid_slot_context(const VmFrame&,const Vm&,std::uint64_t actor_generation,
-        std::uint64_t vm_generation,std::string* error) const;
+        std::uint64_t vm_generation,std::string* error,
+        const Instruction* lifecycle_instruction=nullptr,const VmDispatch* lifecycle_dispatch=nullptr) const;
     World& world_;AnimationResolver resolver_;PlaybackLimits limits_;
     ResetAnimationLookupResolver reset_lookup_resolver_;
     AnimationResetResolver reset_resolver_;RouteAnimationResolver route_resolver_;

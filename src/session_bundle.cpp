@@ -1985,6 +1985,17 @@ void validate_route_links(const SessionRuntimeEntity& entity,const Entity& actor
         // Authenticate each frozen request using the same resource, operand,
         // geometry and identity rules as legacy routes. Full live VM linkage
         // was checked above; a suspended parent's pose is historical.
+        if(job.unplaced_room_failure){
+            const auto& op=job.pending.instruction.instruction;
+            if(!is_source_unplaced_room_failure(job)||
+               job.call_failure_trees!=((op.operands[4]&1U)==0&&i==0)||
+               !context_role_matches(job.pending.context,VmEntityRole::caller,job.actor,job.actor_generation)||
+               !context_role_matches(job.pending.context,VmEntityRole::stack_object,job.target,job.target_generation))
+                throw FormatError("unplaced room failure lost its exact source request or entity authority");
+            // The controller re-resolves the installed SLOT before restore.
+            // This wire validator grants no movement or placement authority.
+            continue;
+        }
         auto request=entity;request.route_stack.reset();request.route=static_cast<const LocalRouteSnapshot&>(job);
         request.vm.pending=job.pending;request.vm.stack.resize(depth);request.vm.status=VmStatus::waiting;
         request.vm.suspended_pending.clear();request.vm.external_frame_return.reset();
@@ -3465,8 +3476,9 @@ std::vector<std::uint8_t> encode_route_stack(const RouteStackSnapshot& stack,con
        stack.portal_contexts.size()>stack.jobs.size())throw FormatError("route stack count exceeds bounds");
     const bool shoo=std::any_of(stack.jobs.begin(),stack.jobs.end(),[](const auto& job){return job.external_frame_purpose.has_value();});
     const bool architecture=std::any_of(stack.jobs.begin(),stack.jobs.end(),[](const auto&job){return job.room_route_replan_active;});
-    const bool modern=modern_route_stack(stack);
-    Writer w(limits.archive.max_section_bytes);w.u16(modern?4:architecture?3:shoo?2:1);w.u8(stack.last_tick?1:0);if(stack.last_tick)w.u64(*stack.last_tick);
+    const bool unplaced=std::any_of(stack.jobs.begin(),stack.jobs.end(),[](const auto& job){return job.unplaced_room_failure.has_value();});
+    const bool modern=unplaced||modern_route_stack(stack);
+    Writer w(limits.archive.max_section_bytes);w.u16(unplaced?5:modern?4:architecture?3:shoo?2:1);w.u8(stack.last_tick?1:0);if(stack.last_tick)w.u64(*stack.last_tick);
     w.u16(static_cast<std::uint16_t>(stack.jobs.size()));
     for(const auto& job:stack.jobs){
         route_blob(w,encode_local_route(job,limits,true));
@@ -3502,6 +3514,12 @@ std::vector<std::uint8_t> encode_route_stack(const RouteStackSnapshot& stack,con
             w.u8(static_cast<std::uint8_t>(*job.external_frame_purpose));w.u64(job.external_frame_callee_generation);
         }}else if(job.external_frame_callee_generation)throw FormatError("route external callee generation has no purpose");
         if(architecture||modern)w.u8(job.room_route_replan_active);
+        if(unplaced){w.u8(job.unplaced_room_failure?1:0);if(job.unplaced_room_failure){
+            if(!is_source_unplaced_room_failure(job))throw FormatError("invalid unplaced room failure continuation");
+            const auto& origin=*job.unplaced_room_failure;
+            w.u32(origin.slot_version);w.u32(static_cast<std::uint32_t>(origin.slot_index));
+            write_slot_record(w,origin.slot);w.u16(origin.target_room);
+        }}
     }
     w.u16(static_cast<std::uint16_t>(stack.portal_contexts.size()));
     for(const auto& context:stack.portal_contexts){
@@ -3522,7 +3540,7 @@ std::vector<std::uint8_t> encode_route_stack(const RouteStackSnapshot& stack,con
 }
 RouteStackSnapshot decode_route_stack(const std::vector<std::uint8_t>& bytes,const SessionBundleLimits& limits) {
     Reader r(bytes);const auto version=r.u16();
-    if(version<1||version>4)throw FormatError("unsupported route stack version");RouteStackSnapshot stack;
+    if(version<1||version>5)throw FormatError("unsupported route stack version");RouteStackSnapshot stack;
     if(route_flag(r))stack.last_tick=r.u64();const auto count=r.u16();
     if(count>limits.vm.vm.stack_depth||count>r.remaining()/16)throw FormatError("route stack count exceeds bounds");
     stack.jobs.reserve(count);
@@ -3558,8 +3576,15 @@ RouteStackSnapshot decode_route_stack(const std::vector<std::uint8_t>& bytes,con
             job.external_frame_purpose=static_cast<RouteExternalFramePurpose>(purpose);job.external_frame_callee_generation=r.u64();
         }
         if(version>=3){const auto phase=route_flag(r);if(phase!=job.room_route_replan_active)throw FormatError("architecture route stack/local phase markers disagree");}
+        if(version>=5&&route_flag(r)){
+            SourceUnplacedRoomFailure origin;origin.slot_version=r.u32();origin.slot_index=r.u32();
+            origin.slot=read_slot_record(r);origin.target_room=r.u16();job.unplaced_room_failure=std::move(origin);
+            if(!is_source_unplaced_room_failure(job))throw FormatError("invalid unplaced room failure continuation");
+        }
         stack.jobs.push_back(std::move(job));
     }
+    if(version==5&&std::none_of(stack.jobs.begin(),stack.jobs.end(),[](const auto& job){return job.unplaced_room_failure.has_value();}))
+        throw FormatError("noncanonical unplaced room failure extension");
     if(version<3&&std::any_of(stack.jobs.begin(),stack.jobs.end(),[](const auto&job){return job.room_route_replan_active;}))
         throw FormatError("architecture room replan requires route stack version3");
     if(version==3&&std::none_of(stack.jobs.begin(),stack.jobs.end(),[](const auto&job){return job.room_route_replan_active;}))

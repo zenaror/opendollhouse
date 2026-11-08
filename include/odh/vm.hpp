@@ -129,7 +129,7 @@ struct VmLimits {
     std::size_t frame_variables = 4096;
     std::size_t code_owners = 64; // Includes default owner zero.
 };
-enum class PrimitiveDisposition { goto_true, goto_false, wait, unsupported, call, goto_true_next_tick, continue_execution, continue_next_tick, lifecycle_deleted, source_error };
+enum class PrimitiveDisposition { goto_true, goto_false, wait, unsupported, call, goto_true_next_tick, continue_execution, continue_next_tick, lifecycle_deleted, source_error, suspend_and_call };
 struct VmCall {
     RoutineKey key;
     VmContext context;
@@ -165,7 +165,11 @@ struct PrimitiveOutcome {
     PrimitiveDisposition disposition = PrimitiveDisposition::unsupported;
     std::string diagnostic;
     std::optional<VmFrameWrite> write = {}; // Branches, WAIT and calls may publish validated frame output.
-    std::optional<VmCall> call = {}; // Explicit child frame; parent remains on this instruction.
+    // call: ordinary/immediate child; suspend_and_call: ordinary descriptor
+    // admitted as a real external_frame_next_tick child in this same run().
+    // The latter creates the parent service pending record atomically, retains
+    // its exact dispatch ticket, and accepts no other primitive outputs.
+    std::optional<VmCall> call = {};
     // Synchronous branches only. Validated together with frame output before either is published.
     std::optional<VmTempWrite> temp_write = {};
     // Synchronous branches only; may hold any signed identity, independent of World entities.
@@ -175,7 +179,8 @@ struct PrimitiveOutcome {
     std::optional<VmTempWrite> second_temp_write = {};
     // A primitive may commit external controller state only after the child
     // frame was successfully created. This callback must be atomic and must not
-    // throw; false or an exception rolls back the child frame before it runs.
+    // throw; false or an exception rolls back the child frame and any newly
+    // admitted parent service pending record before that child runs.
     std::function<bool()> call_commit = {};
     // Exclusive of all other outputs/calls, and accepted only on a synchronous
     // branch. Vm resolves indirection and invokes its effective memory setter.

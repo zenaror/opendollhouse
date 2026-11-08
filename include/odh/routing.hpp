@@ -313,6 +313,14 @@ struct PreRankedSlotGoal {
 // Value-only scheduler continuation, ordered from the oldest suspended parent
 // to the active child. VM frames remain owned by VmSnapshot; the frozen copies
 // certify exact pending-frame linkage on restore, without executing a BHAV.
+// InitRoutes can fail its room search before any CurRoute or walk grid exists.
+// This records the exact authored request, not a destination or World position.
+struct SourceUnplacedRoomFailure {
+    std::uint32_t slot_version=0;
+    std::size_t slot_index=0;
+    SlotRecord slot{};
+    std::uint16_t target_room=0;
+};
 struct RouteJobSnapshot : LocalRouteSnapshot {
     VmPending pending{};
     VmFrame route_frame{};
@@ -334,7 +342,11 @@ struct RouteJobSnapshot : LocalRouteSnapshot {
     // Absent preserves the original portal/sitting/failure-tree wire profile.
     std::optional<RouteExternalFramePurpose> external_frame_purpose;
     std::uint64_t external_frame_callee_generation=0;
+    std::optional<SourceUnplacedRoomFailure> unplaced_room_failure;
 };
+// Pure structural proof; live controller restore additionally authenticates the
+// installed SLOT through its original StackObject/global resource provider.
+bool is_source_unplaced_room_failure(const RouteJobSnapshot&);
 // Host-owned room graph state. Core capture leaves this list empty; the host
 // fills and authenticates it before writing a session. Core restore validates
 // its ticket/call linkage and never performs graph discovery or EP5 calls.
@@ -420,6 +432,10 @@ struct RoutePortalStepPlan {
     std::optional<VmCall> call;
     std::string diagnostic;
 };
+// A complete room graph may prove that the dummy room 0 has no outgoing
+// portals and a positioned target belongs to a nonzero room. Unknown geometry,
+// an unplaced portal or ambiguous membership must return no value.
+using RouteUnplacedRoomFailureProvider=std::function<std::optional<std::uint16_t>(const EntityPosition& target)>;
 using RouteRoomPairProvider=std::function<std::optional<std::pair<std::uint16_t,std::uint16_t>>(
     const EntityPosition& actor,const EntityPosition& target)>;
 // Called at a Route45 scheduler safe point. `previous_call` and
@@ -486,6 +502,8 @@ struct SourceSparseMotionContext {
     EntityPosition position{};
     bool root_route=true;
     bool room_context_open=false;
+    bool actor_unplaced=false; // lifecycle only; never motion or placement authority
+    std::optional<Instruction> lifecycle_instruction; // exact active primitive, otherwise pending service
 };
 using SourceSparseAnimationProvider=std::function<bool(const SourceSparseMotionContext&,
     const WalkMotionProfile&,std::string*)>;
@@ -540,7 +558,16 @@ class Routing {
 public:
     Routing(World& world,RouteGrid& grid,const SlotTable& globals,
             PreRankedSlotGoalProvider goals={},RouteLimits limits={})
-        :world_(world),grid_(grid),globals_(globals),ranked_goals_(std::move(goals)),limits_(limits) {}
+        :world_(world),grid_(&grid),globals_(globals),ranked_goals_(std::move(goals)),limits_(limits) {}
+    // The same controller can own a pre-walk failure without allocating geometry.
+    Routing(World& world,const SlotTable& globals,RouteLimits limits={})
+        :world_(world),globals_(globals),limits_(limits) {}
+    bool has_grid() const noexcept {return grid_!=nullptr;}
+    bool attach_grid(RouteGrid&);
+    void set_unplaced_room_failure_provider(RouteUnplacedRoomFailureProvider provider){
+        if(executing_||job_)throw std::logic_error("cannot replace room proof while routing");
+        unplaced_room_failure_=std::move(provider);
+    }
     Routing(const Routing&)=delete;
     Routing& operator=(const Routing&)=delete;
     bool bind(Vm&);
@@ -670,6 +697,7 @@ public:
     bool discard_for_source_reset();
     std::vector<WorldEntityReference> strong_entity_references() const;
     bool active() const {return job_.has_value();}
+    bool spatial_route_active() const {return job_&&!job_->unplaced_room_failure;}
     // Original House layout counts any retained route record, including covered
     // and immediate continuations, irrespective of its current movement phase.
     bool has_route_record() const noexcept {return job_.has_value()||!suspended_jobs_.empty()||!parked_immediate_routes_.empty();}
@@ -681,7 +709,8 @@ public:
             active_range_lease_.expired()&&!replay_placement_authorization_;
     }
     // Source immediate actions cover a routing frame without executing it.
-    static bool validates_immediate_parent(const World&,const Vm&,const VmPending&,const VmFrame&);
+    static bool validates_immediate_parent(const World&,const Vm&,const VmPending&,const VmFrame&,
+        const RouteJobSnapshot* source_failure=nullptr);
     bool validates_immediate_parent(const VmPending&,const VmFrame&) const;
     bool can_park_for_immediate(const VmPending&,const VmFrame&) const;
     bool park_for_immediate(std::uint64_t parent_ticket);
@@ -757,6 +786,7 @@ private:
         std::int16_t failure_code=3;
         std::int16_t failure_blocker=0;
         std::string failure_reason{};
+        std::optional<SourceUnplacedRoomFailure> unplaced_room_failure;
         std::optional<std::int16_t> selected_sitting_object{};
         std::vector<PreRankedSlotGoal> fallback_goals{};
         bool external_frame_sitting=false;
@@ -838,7 +868,12 @@ private:
     bool finish(bool result,std::string reason);
     void cancel_chain(const std::string& reason);
     World& world_;
-    RouteGrid& grid_;
+    RouteGrid* grid_=nullptr;
+    RouteGrid& grid() const {
+        if(!grid_)throw std::logic_error("spatial routing has no prepared grid");
+        return *grid_;
+    }
+    RouteUnplacedRoomFailureProvider unplaced_room_failure_;
     const SlotTable& globals_;
     PreRankedSlotGoalProvider ranked_goals_;
     RouteGoalSelectionObserver goal_selection_observer_;
