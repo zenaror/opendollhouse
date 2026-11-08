@@ -131,7 +131,7 @@ void validate_native_personal_snapshot(const NativePersonalSnapshot& s){
  if(s.version!=1||!nonzero(s.neighborhood_identity)||s.records.size()>4096)throw FormatError("personal snapshot header unsupported");
  std::int16_t previous=0;
  for(const auto& r:s.records){identity(r.identity);projection(r.projection);
-  if(r.identity.neighbor_id<=previous||!r.revision||static_cast<unsigned>(r.writer)<1||static_cast<unsigned>(r.writer)>3)
+  if(r.identity.neighbor_id<=previous||!r.revision||static_cast<unsigned>(r.writer)<1||static_cast<unsigned>(r.writer)>4)
    throw FormatError("personal record order/revision/writer invalid");
   previous=r.identity.neighbor_id;
   if(r.seed_words&&r.seed_words->size()!=80&&r.seed_words->size()!=256)throw FormatError("personal seed bank shape unsupported");
@@ -189,6 +189,7 @@ void NativePersonalState::restore(const NativePersonalSnapshot& s){
  state_=std::move(candidate);effective_=std::move(effective);++epoch_;
 }
 PreparedNativePersonalCommit NativePersonalState::prepare(const World& world,const std::vector<NativePersonalSource>& input,NativePersonalWriteSource writer) const {
+ if(static_cast<unsigned>(writer)<1||static_cast<unsigned>(writer)>4)throw FormatError("personal writer source is unsupported");
  if(input.empty()||input.size()>4096)throw FormatError("personal writer requires a bounded explicit source list");
  if(epoch_==std::numeric_limits<std::uint64_t>::max())throw FormatError("personal epoch exhausted");
  PreparedNativePersonalCommit out;out.owner_=this;out.epoch_=epoch_;out.candidate_=state_;out.sources_=input;

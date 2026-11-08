@@ -9,7 +9,29 @@
 #include <iostream>
 using travel_test::require;
 template<class F>void rejects(F f,const char* why){try{f();}catch(const std::exception&){return;}throw std::runtime_error(why);}
+void original_frontend_global_phase(){
+ auto destination=travel_test::travel_state(travel_test::managed_home());
+ destination.protocol=odh::Ts1TravelProtocol::original_6e598;destination.current_house=23;destination.current_mode=2;
+ std::vector<std::int16_t> simi(64);simi[32]=1;simi[9]=0;simi[18]=73;
+ odh::RuntimeGlobals globals(simi,odh::Ts1GlobalActivation::saved_new,23);
+ odh_host::reset_original_frontend_load_globals(globals,destination,false);
+ require(globals.read(32)==0&&globals.read(9)==0&&globals.read(18)==73,
+   "actual original preload clears imported Simless without replacing synthetic family0 or unrelated globals");
+ require(globals.write(32,1)&&globals.write(9,21),"simulate source load globals before the actual postload boundary");
+ odh_host::reset_original_frontend_load_globals(globals,destination,false);
+ require(globals.read(32)==0&&globals.read(9)==21,"postload reset preserves whole-family selection as well");
+ require(globals.write(32,1),"seed an exact saved native continuation");const auto before=globals.snapshot();
+ rejects([&]{odh_host::reset_original_frontend_load_globals(globals,destination,true);},"cold restore cannot invoke frontend reset");
+ require(globals.snapshot().words==before.words&&globals.snapshot().selected_sim_is_runtime_id==before.selected_sim_is_runtime_id,
+   "refused cold reset preserves all exact continuation values");
+ auto legacy=destination;legacy.protocol=odh::Ts1TravelProtocol::legacy_pin;
+ rejects([&]{odh_host::reset_original_frontend_load_globals(globals,legacy,false);},"legacy frontend is not silently changed");
+ destination.family_activated=true;
+ rejects([&]{odh_host::reset_original_frontend_load_globals(globals,destination,false);},"ordinary active gameplay is not a fresh load phase");
+ require(globals.read(32)==1,"refused phases do not normalize historical Simless state");
+}
 int main(){try{
+ original_frontend_global_phase();
  auto home=travel_test::managed_home();odh::Family f;f.house_number=7;f.family_number=12;f.budget=7000;f.member_guids={123456};std::vector<odh::FamilyEntry> source{{21,f}};
  const auto directory=std::filesystem::temp_directory_path()/("odh-travel-checkpoint-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));std::filesystem::create_directory(directory);setenv("XDG_DATA_HOME",directory.c_str(),1);setenv("XDG_CONFIG_HOME",directory.c_str(),1);
  const auto identity=home.family_lease->neighborhood_identity;home.family_lease.reset();

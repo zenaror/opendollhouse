@@ -1,6 +1,11 @@
 #pragma once
 #include "linux_family_session_journal.hpp"
+#include "odh/runtime_globals.hpp"
 namespace odh_host {
+// Original4f1b96 clears Simless (Global32) before and after a fresh
+// authenticated destination load. Callers own that source phase; native cold
+// restore is explicitly refused. Other globals, including single-family0, stay.
+void reset_original_frontend_load_globals(odh::RuntimeGlobals&,const odh::Ts1TravelState&,bool native_restore);
 struct TravelSessionCheckpoint {
     // Exact immutable home bytes survive the full trip, independently of outer
     // journal metadata (budget/inventory) promoted from the active destination.

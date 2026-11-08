@@ -75,6 +75,7 @@
 #include "odh/neighbor_context.hpp"
 #include "odh/native_personal_state.hpp"
 #include "odh/native_personal_session.hpp"
+#include "odh/original_frontend_personal.hpp"
 #include "odh/neighbor_info.hpp"
 #include "odh/npc_avatar.hpp"
 #include "odh/avatar_constructor_metadata.hpp"
@@ -14271,7 +14272,8 @@ struct PlacementCandidateProbe {
         std::sort(bundle.object_threads.begin(),bundle.object_threads.end(),[](const auto& a,const auto& b){return a.id<b.id;});
         return bundle.object_threads;
     };
-    const auto save_live_session=[&](bool validate_only=false,odh::SessionBundle* captured=nullptr)->std::string {
+    const auto save_live_session=[&](bool validate_only=false,odh::SessionBundle* captured=nullptr,
+            const odh::PreparedOriginalFrontendPersonalSave* frontend_save=nullptr)->std::string {
 #ifdef __linux__
         if(host_failed)throw odh::FormatError("saving is disabled after an unrecoverable host failure");
         if(!primary_runtime||(actorless_arrival&&travel_state&&!travel_state->family_activated))
@@ -14459,6 +14461,11 @@ struct PlacementCandidateProbe {
             !session_context->suspended_home.empty());
         if(neighbor_inventory&&(neighbor_inventory->changed()||trip_started||neighbor_inventory->protocol()==odh::Ts1TravelProtocol::original_6e598))bundle.neighbor_inventory=neighbor_inventory->snapshot();
         if(personal_state&&(personal_state_was_saved||personal_state->changed()))bundle.personal_state=personal_state->snapshot();
+        if(frontend_save){
+            if(!personal_state||!frontend_save->source_current(world,*personal_state))
+                throw odh::FormatError("frontend personal candidate lost its exact live source before capture");
+            bundle.personal_state=frontend_save->preview_snapshot();
+        }
         if(type_attributes&&(type_attributes_was_saved||type_attributes->changed()||trip_started))
             bundle.type_attributes=type_attributes->snapshot();
         if(build_buy_permission_was_saved||build_buy_permission_dirty||!build_buy_permission.enabled())
@@ -14904,6 +14911,14 @@ struct PlacementCandidateProbe {
         // Apply the loader's complete supported-profile validation before any
         // filesystem mutation. A previous usable save must survive rejection.
         validate_session_candidate(bundle,encoded);
+        if(frontend_save){
+            // Validation/codec preparation runs before CAS. No live NPER
+            // revision is published until the exact durable candidate wins.
+            if(!personal_state||!frontend_save->source_current(world,*personal_state)||
+               !neighborhood_path||!type_attributes_neighborhood_identity||
+               odh_host::fingerprint_transfer_resource(*neighborhood_path)!=*type_attributes_neighborhood_identity)
+                throw odh::FormatError("frontend personal source changed before checkpoint publication");
+        }
         if(captured)*captured=bundle;
         if(validate_only)return {}; // Complete codec and restore validation, no filesystem publication.
         if(!session_context->family_journal&&(bundle.type_attributes||bundle.personal_state)&&
@@ -19351,6 +19366,14 @@ struct PlacementCandidateProbe {
     bool fresh_lot_positions_certified=false;
     if(saved_world_main && !restoring_object_lifetime && session_context && !session_context->single_resident_session &&
        !occupancy_saved_execution_invalidated){
+#ifdef __linux__
+        if(actorless_arrival&&travel_state&&travel_state->protocol==odh::Ts1TravelProtocol::original_6e598){
+            if(!runtime_globals||!arrival_departure)
+                throw odh::FormatError("original frontend preload globals lack authenticated departure authority");
+            odh_host::reset_original_frontend_load_globals(*runtime_globals,*travel_state,restoring_session);
+            runtime_globals_dirty=true;
+        }
+#endif
         import_saved_object_mains();
         imported_code_plan=odh_host::prepare_saved_code_import(*objt,*definition_index,shared_program,
             [&](const odh::DefinitionCandidate& candidate)->std::shared_ptr<const odh::VmProgram>{
@@ -19655,6 +19678,14 @@ struct PlacementCandidateProbe {
             }
         }
         if(!residential_property_arrival)run_imported_lot_load_entries();
+#ifdef __linux__
+        if(actorless_arrival&&travel_state&&travel_state->protocol==odh::Ts1TravelProtocol::original_6e598){
+            if(!runtime_globals||!arrival_departure||original_load_traversal||entity_scheduler.running())
+                throw odh::FormatError("original frontend postload globals lost the completed source load phase");
+            odh_host::reset_original_frontend_load_globals(*runtime_globals,*travel_state,restoring_session);
+            runtime_globals_dirty=true;
+        }
+#endif
     }
     if(pending_household_activation){
         if(original_load_traversal||entity_scheduler.running()||host_failed)
@@ -20543,7 +20574,30 @@ struct PlacementCandidateProbe {
             continue;
         }
         if(travel_state&&travel_state->pending){
-            const auto saved=save_live_session();
+            std::optional<odh::OriginalFrontendPersonalSource> frontend_source;
+            std::optional<odh::PreparedOriginalFrontendPersonalSave> frontend_save;
+            // Original4f277c's proven Downtown branch saves the neighborhood
+            // people BEFORE the next lot loads. It is not Generic17's family
+            // writer and does not run for ordinary save/cold checkpoints.
+            const bool downtown_frontend=travel_state->protocol==odh::Ts1TravelProtocol::original_6e598&&
+                travel_state->current_mode==2&&travel_state->current_house>=21&&travel_state->current_house<=30;
+            if(downtown_frontend){
+                if(!session_context||!personal_state||!neighborhood_path||!type_attributes_neighborhood_identity||
+                   !runtime_globals||entity_scheduler.running()||primary_vm().dispatch_active())
+                    throw odh::FormatError("original frontend save lacks its authenticated safe transition boundary");
+                const auto simless=runtime_globals->read(32);
+                if(!simless)throw odh::FormatError("original frontend Simless source is unavailable");
+                with_iff_file(*neighborhood_path,[&](const auto& view){
+                    frontend_source.emplace(odh::read_original_frontend_personal_source(view));
+                });
+                // Default lookup deliberately refuses ambiguous GUIDs rather
+                // than borrowing the legacy provider's last-GUID semantics.
+                frontend_save.emplace(odh::prepare_original_frontend_personal_save(*frontend_source,world,*personal_state,
+                    *simless,personal_source));
+            }
+            const auto saved=save_live_session(false,nullptr,frontend_save?&*frontend_save:nullptr);
+            if(frontend_save&&!frontend_save->commit(*personal_state,world))
+                throw odh::FormatError("frontend personal durable checkpoint accepted but live owner commit failed; reopen the accepted checkpoint: "+saved);
             temporary_travel=odh_host::PersonRunResult::TemporaryTravel{*travel_state,std::filesystem::path(saved),session_context->suspended_home};
             break; // Deferred safe boundary: no further tick in the superseded lot.
         }

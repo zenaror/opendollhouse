@@ -15,6 +15,15 @@ std::vector<std::uint8_t> read_checkpoint(const std::filesystem::path& path,std:
  const auto size=std::filesystem::file_size(path);if(size>limit)throw odh::FormatError("travel checkpoint exceeds bounded archive limit");std::ifstream in(path,std::ios::binary);if(!in)throw odh::FormatError("cannot read current travel checkpoint");std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));if(!bytes.empty())in.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));if(!in||in.peek()!=std::char_traits<char>::eof())throw odh::FormatError("travel checkpoint changed during read");return bytes;
 }
 }
+void reset_original_frontend_load_globals(odh::RuntimeGlobals& globals,const odh::Ts1TravelState& destination,bool native_restore){
+ odh::validate_ts1_travel_state(destination);
+ if(native_restore||destination.protocol!=odh::Ts1TravelProtocol::original_6e598||
+    destination.current_house==destination.home_house||destination.family_activated||destination.pending)
+  throw odh::FormatError("original frontend globals require the authenticated fresh destination load phase");
+ //004f1b96 calls46dae0(32,0) on both sides of2808b;32 is not an
+ // alias for CurrentFamily9. Never replace legitimate synthetic family0.
+ if(!globals.write(32,0))throw odh::FormatError("original frontend Simless backing is unavailable");
+}
 odh::SessionBundle make_travel_session_envelope(const std::vector<std::uint8_t>& suspended_home,const odh::SessionBundle& active,odh::SessionBundleLimits limits){
  if(!active.travel||active.travel_visited_session||active.travel_home_session||active.host.house_number==active.travel->home_house)throw odh::FormatError("active visited session required for travel envelope");
  auto home=odh::decode_session_bundle(suspended_home,std::nullopt,limits);

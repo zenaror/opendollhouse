@@ -28,7 +28,7 @@ struct NativePersonalIdentity {
     std::array<std::uint8_t,32> character_fingerprint{};
 };
 bool same_native_personal_identity(const NativePersonalIdentity&,const NativePersonalIdentity&);
-enum class NativePersonalWriteSource : std::uint8_t { generic25=1, retirement=2, family17=3 };
+enum class NativePersonalWriteSource : std::uint8_t { generic25=1, retirement=2, family17=3, frontend_save=4 };
 struct NativePersonalRecord {
     NativePersonalIdentity identity;
     std::uint64_t revision=0;
@@ -61,6 +61,7 @@ class NativePersonalState;
 class PreparedNativePersonalCommit {
 public:
     PreparedNativePersonalCommit()=default;
+    const NativePersonalSnapshot& preview_snapshot() const {return candidate_;}
 private:
     const NativePersonalState* owner_=nullptr;
     std::uint64_t epoch_=0;
