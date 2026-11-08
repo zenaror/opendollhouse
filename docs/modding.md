@@ -198,3 +198,41 @@ recusar um save que contenha um formato novo.
 
 A interface interna está em [native_personal_state.hpp](../include/odh/native_personal_state.hpp).
 A cobertura disponível continua indicada no [progresso](progresso.md).
+
+
+### Viagens com acompanhantes (experimental)
+
+Há uma implementação experimental das regras de transporte do jogo original,
+ainda em validação dentro do aplicativo. Para experimentá-la, uma importação
+nova pode usar `--original-companion-protocol`. A escolha fica registrada no
+salvamento e não precisa ser repetida ao continuar essa partida.
+
+Salvamentos nativos anteriores mantêm suas regras. A opção não converte um save
+antigo: ela não consegue recuperar dados que deixaram de ser registrados no
+passado. O objetivo da versão jogável é escolher o formato adequado sem exigir
+uma opção de diagnóstico.
+
+Imagine Ana convidando Bia para visitar uma feira. O jogo precisa reconhecer
+Bia ao chegar e ao voltar, conservar seus dados e reaproveitar seu personagem
+quando ele já existir. Criar outra Bia a cada chegada produziria uma duplicata.
+Convidar para sair e convidar para casa também são escolhas diferentes; uma não
+autoriza automaticamente a outra.
+
+Uma ação de viagem deve usar o conjunto de operações compatível com o formato
+da partida. Misturar marcadores antigos de ida e volta com os novos efeitos
+pode confundir uma pessoa com uma informação sobre roupa ou fama. O motor
+confere o formato em vez de tentar adivinhá-lo.
+
+O espaço reservado aos efeitos da viagem é limpo pelas regras originais.
+Um mod não deve usá-lo para guardar progresso permanente. Fora dessas ações,
+os leitores preservam informações desconhecidas, sua ordem e a diferença entre
+uma informação ausente e um zero registrado.
+
+Trocar a roupa ao chegar exige o recurso correto de aparência. Se ele faltar,
+o efeito é recusado sem consumir os dados como se a troca tivesse funcionado.
+A implementação atual também recusa uma viagem familiar quando algum membro
+selecionado não tem um personagem ativo autenticado; esse caso ainda precisa
+ser ampliado. A existência do código não comprova todas as viagens, os efeitos
+visuais ou a equivalência numérica completa ao jogo original.
+
+A interface interna está em [original_companion_protocol.hpp](../include/odh/original_companion_protocol.hpp).

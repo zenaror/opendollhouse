@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Native adaptation of FreeSO TS1 inventory operations; see header for pinned provenance.
 #include "odh/neighbor_inventory.hpp"
+#include "odh/neighbor_context.hpp"
 #include <algorithm>
 
 namespace odh {
@@ -10,15 +11,16 @@ std::int16_t word(std::uint64_t value) {
     return static_cast<std::int16_t>(v<32768?v:static_cast<std::int32_t>(v)-65536);
 }
 }
-NeighborInventory::NeighborInventory(const Ngbh& seed,NeighborInventoryLimits limits):limits_(limits) {
-    restore({1,seed.inventory_by_id});changed_=false;
+NeighborInventory::NeighborInventory(const Ngbh& seed,NeighborInventoryLimits limits,Ts1TravelProtocol protocol):limits_(limits) {
+    restore({static_cast<std::uint32_t>(protocol),seed.inventory_by_id});changed_=false;
 }
 void NeighborInventory::validate(const NeighborInventorySnapshot& value) const {
-    if(value.version!=1||value.inventory_by_id.size()>limits_.neighbors)
+    if((value.version!=1&&value.version!=2)||value.inventory_by_id.size()>limits_.neighbors)
         throw FormatError("neighbor inventory version or neighbor bound exceeded");
     std::size_t total=0;
     for(const auto& [nid,items]:value.inventory_by_id){
         (void)nid;
+        if(value.version==2&&items.size()>32767)throw FormatError("original inventory row exceeds signed index capacity");
         if(items.size()>limits_.items-total)throw FormatError("neighbor inventory item bound exceeded");
         total+=items.size();
     }
@@ -70,7 +72,7 @@ PrimitiveOutcome NeighborInventory::execute(std::int16_t nid,const Instruction& 
     const auto index=temps[index_temp];
     std::int32_t count=(flags&2U)?temps[0]:1;
     PrimitiveOutcome result{PrimitiveDisposition::goto_false,{}};
-    if(mode>6)return {PrimitiveDisposition::unsupported,"TS1 inventory mode is outside the pinned implemented0..6 profile"};
+    if(mode>6)return {PrimitiveDisposition::unsupported,"TS1 inventory mode is outside the implemented0..6 profile"};
     auto found=state_.inventory_by_id.find(nid);
     if(mode==0||mode==5||mode==6){
         // Check capacity before creating a new empty inventory, so failure is atomic.
@@ -120,11 +122,84 @@ PrimitiveOutcome NeighborInventory::execute(std::int16_t nid,const Instruction& 
     if(mode==2&&(flags&128U))result.temp_write=VmTempWrite{index_temp,word(static_cast<std::int32_t>(index)-1)};
     return result;
 }
+bool same_neighbor_inventory_snapshot(const NeighborInventorySnapshot& a,const NeighborInventorySnapshot& b) noexcept {
+    if(a.version!=b.version||a.inventory_by_id.size()!=b.inventory_by_id.size())return false;
+    auto x=a.inventory_by_id.begin(),y=b.inventory_by_id.begin();
+    for(;x!=a.inventory_by_id.end();++x,++y){
+        if(x->first!=y->first||x->second.size()!=y->second.size())return false;
+        for(std::size_t i=0;i<x->second.size();++i){const auto& l=x->second[i];const auto& r=y->second[i];
+            if(l.type!=r.type||l.guid!=r.guid||l.count!=r.count)return false;}
+    }
+    return true;
+}
+PreparedNeighborInventory NeighborInventory::prepare_replacement(const NeighborInventorySnapshot& replacement) const {
+    validate(replacement);
+    if(replacement.version!=state_.version)throw FormatError("inventory protocol cannot change inside a runtime");
+    PreparedNeighborInventory out;out.owner_=this;out.expected_=state_;out.replacement_=replacement;
+    for(const auto& row:replacement.inventory_by_id)out.replacement_count_+=row.second.size();return out;
+}
+bool NeighborInventory::replacement_current(const PreparedNeighborInventory& p) const noexcept {
+    return p.owner_==this&&same_neighbor_inventory_snapshot(state_,p.expected_);
+}
+bool NeighborInventory::commit_replacement(PreparedNeighborInventory&& p) noexcept {
+    if(!replacement_current(p))return false;
+    const bool changed=!same_neighbor_inventory_snapshot(state_,p.replacement_);
+    state_.inventory_by_id.swap(p.replacement_.inventory_by_id);item_count_=p.replacement_count_;
+    changed_=changed_||changed;p.owner_=nullptr;return true;
+}
+PrimitiveOutcome NeighborInventory::execute_original(std::int16_t nid,const Instruction& i,const Ts1Temps& temps,
+        std::uint32_t guid,std::optional<std::uint32_t> companion) {
+    if(i.opcode!=51||protocol()!=Ts1TravelProtocol::original_6e598||i.operands[0]>6)
+        return {PrimitiveDisposition::unsupported,"original inventory profile/mode mismatch"};
+    // Original00455338, helpers0041f38f/3f8/429/56d/662/69e. Signed count words.
+    const auto mode=i.operands[0];const auto type=static_cast<std::int32_t>(i.operands[1]);
+    const auto flags=static_cast<unsigned>(i.operands[2])|(static_cast<unsigned>(i.operands[3])<<8);
+    const auto count=(flags&2U)?temps[(flags>>2)&3U]:std::int16_t{1};
+    const auto index_temp=(flags>>8)&3U,output_temp=(flags>>5)&3U,index_output=(flags>>11)&3U;
+    auto candidate=state_;auto& items=candidate.inventory_by_id[nid];
+    PrimitiveOutcome result{PrimitiveDisposition::goto_true,{}};
+    const auto match=[&]{return std::find_if(items.begin(),items.end(),[&](const auto& x){return x.type==type&&x.guid==guid;});};
+    if(mode==5||mode==6){
+        if(!companion||!*companion)throw FormatError("original companion marker target unavailable");
+        const auto selected_type=mode==5?1:3;
+        items.erase(std::remove_if(items.begin(),items.end(),[&](const auto& x){return x.type==selected_type;}),items.end());
+        items.push_back({selected_type,*companion,1});
+    }else if(mode==0){
+        if(count){auto found=match();
+            if(found==items.end()){if(items.size()>=32767)throw FormatError("original inventory row exceeds signed index capacity");items.push_back({type,guid,static_cast<std::uint16_t>(count)});}
+            else {const auto sum=static_cast<std::int32_t>(word(found->count))+count;
+                found->count=static_cast<std::uint16_t>(sum<32767?sum:32767);}
+        }
+    }else if(mode==1){
+        if(count){const auto found=match();if(found==items.end())result.disposition=PrimitiveDisposition::goto_false;
+            else if(count==-1||word(found->count)<=1)items.erase(found);
+            else found->count=static_cast<std::uint16_t>(found->count-1);}
+    }else if(mode==2){
+        if(count){const auto index=temps[index_temp];
+            if(index<0||static_cast<std::size_t>(index)>=items.size())result.disposition=PrimitiveDisposition::goto_false;
+            else {auto found=items.begin()+index;const auto remaining=static_cast<std::int32_t>(word(found->count))-count;
+                if(count<0||remaining<=0)items.erase(found);else found->count=static_cast<std::uint16_t>(remaining);}}
+    }else if(mode==3){
+        const auto found=match();const auto value=found==items.end()?std::int16_t{0}:word(found->count);
+        if(!value)result.disposition=PrimitiveDisposition::goto_false;
+        else {result.temp_write=VmTempWrite{output_temp,value};result.second_temp_write=VmTempWrite{index_output,static_cast<std::int16_t>(found-items.begin())};}
+    }else if(mode==4){
+        const auto start=static_cast<std::int32_t>(temps[index_temp])+1;std::optional<std::size_t> selected;
+        if(start>=0&&start<=32767)for(std::size_t n=static_cast<std::size_t>(start);n<items.size();++n)
+            if(items[n].type==type&&(!(flags&1U)||!guid||items[n].guid==guid)){selected=n;break;}
+        result.temp_write=VmTempWrite{output_temp,selected?word(items[*selected].count):std::int16_t{0}};
+        result.second_temp_write=VmTempWrite{index_output,selected?static_cast<std::int16_t>(*selected):std::int16_t{-1}};
+        result.disposition=selected?PrimitiveDisposition::goto_true:PrimitiveDisposition::goto_false;
+    }
+    // Read operations and count-zero no-ops never manufacture an absent row.
+    if(result.disposition==PrimitiveDisposition::goto_false||mode==3||mode==4||((mode==0||mode==1||mode==2)&&count==0))return result;
+    auto prepared=prepare_replacement(candidate);if(!commit_replacement(std::move(prepared)))throw FormatError("original inventory source changed");return result;
+}
 VmPrimitive neighbor_inventory_primitive(NeighborInventory& source,const World& world,
-    std::function<void(const InventoryFind&)> observed) {
-    return [&source,&world,observed=std::move(observed)](const VmFrame& frame,const Instruction& i,const Ts1Temps& temps,const VmDispatch&)->PrimitiveOutcome {
+    std::function<void(const InventoryFind&)> observed,const NeighborContext* neighbors) {
+    return [&source,&world,neighbors,observed=std::move(observed)](const VmFrame& frame,const Instruction& i,const Ts1Temps& temps,const VmDispatch&)->PrimitiveOutcome {
         if(i.opcode!=51)return {};
-        if(i.operands[0]>6)return {PrimitiveDisposition::unsupported,"TS1 inventory mode is outside the pinned implemented0..6 profile"};
+        if(i.operands[0]>6)return {PrimitiveDisposition::unsupported,"TS1 inventory mode is outside the implemented0..6 profile"};
         const auto target_id=(i.operands[3]&32U)?temps[4]:frame.context.caller;
         const auto* target=world.find(target_id);
         if(!target||target->kind!=EntityKind::avatar||target->person_data.size()<=31)
@@ -137,13 +212,21 @@ VmPrimitive neighbor_inventory_primitive(NeighborInventory& source,const World& 
             guid=stack->definition->guid;
         }
         try {
-            auto result=source.execute(nid,i,temps,guid);
+            std::optional<std::uint32_t> companion;
+            if(source.protocol()==Ts1TravelProtocol::original_6e598&&(i.operands[0]==5||i.operands[0]==6)){
+                const auto* selected=neighbors?neighbors->by_id(temps[0]):nullptr;
+                if(!selected||!selected->guid)return {PrimitiveDisposition::unsupported,"original companion marker lacks exact target neighbor"};
+                companion=selected->guid;
+            }
+            auto result=source.protocol()==Ts1TravelProtocol::original_6e598?
+                source.execute_original(nid,i,temps,guid,companion):source.execute(nid,i,temps,guid);
             if(observed&&i.operands[0]==3){
+                const bool original=source.protocol()==Ts1TravelProtocol::original_6e598;
                 std::optional<std::size_t> index;std::optional<std::int16_t> count;
                 if(auto list=source.items(nid))for(std::size_t n=0;n<list->size();++n)
-                    if((*list)[n].guid==guid&&(i.operands[1]==0||(*list)[n].type==i.operands[1])){index=n;count=word((*list)[n].count);break;}
-                observed({frame.context,target_id,nid,guid,i.operands[1],static_cast<std::uint8_t>((i.operands[2]>>2)&3U),
-                    static_cast<std::uint8_t>(i.operands[3]&3U),(i.operands[2]&16U)!=0,
+                    if((*list)[n].guid==guid&&((!original&&i.operands[1]==0)||(*list)[n].type==i.operands[1])){index=n;count=word((*list)[n].count);break;}
+                observed({frame.context,target_id,nid,guid,i.operands[1],static_cast<std::uint8_t>(original?(i.operands[2]>>5)&3U:(i.operands[2]>>2)&3U),
+                    static_cast<std::uint8_t>(original?(i.operands[3]>>3)&3U:i.operands[3]&3U),original||(i.operands[2]&16U)!=0,
                     result.disposition==PrimitiveDisposition::goto_true,index,count});
             }
             return result;

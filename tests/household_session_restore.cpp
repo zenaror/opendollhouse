@@ -430,7 +430,7 @@ void generic_execution_tests(){
         reuse.roster,reuse.baseline,reuse.lot,reuse.bootstrap,21,{},metadata);},"removed baseline identity was not checked");
 }
 
-void npc_restore_tests(bool reuse_original=false) {
+void npc_restore_tests(bool reuse_original=false,bool original_protocol=false) {
     Fixture f;constexpr odh::CodeOwner owner=0xfc72c0c0U;
     const std::int16_t neighbor_id=reuse_original?0:40;
     std::optional<odh::SessionRemovedOriginalObject> removed;
@@ -439,7 +439,8 @@ void npc_restore_tests(bool reuse_original=false) {
         f.baseline=f.world.snapshot();removed=odh::SessionRemovedOriginalObject{3,f.world.find(3)->generation,0x12345678u};
         require(f.world.remove(3),"remove authenticated original before recycling its ID for a resource-only NPC");
     }
-    require(f.world.create(3,odh::EntityKind::avatar,{2,88,1,16})&&f.world.define_type(3,owner)&&
+    const std::size_t person_words=original_protocol?256:88;
+    require(f.world.create(3,odh::EntityKind::avatar,{2,person_words,1,16})&&f.world.define_type(3,owner)&&
         f.world.set_person_data(3,31,neighbor_id)&&f.world.declare_definition_word(3,20,19)&&
         f.world.define_entry_points(3,{{0,4096}})&&f.world.set_position(3,{14,20,1,2}),"construct NPC outside original lot");
     Execution live_npc(f.world,3,f.rng,true,{{owner,program()}});live_npc.schedule(f.scheduler,3);
@@ -458,16 +459,19 @@ void npc_restore_tests(bool reuse_original=false) {
     provenance.routine_fingerprint=odh::session_loaded_bank_fingerprint(program());
     const auto capture=[&]{auto b=f.snapshot();b.generic_execution=true;npc.runtime=live_npc.snapshot(3);
         npc.runtime.resource_owners={provenance};b.npc_avatars={npc};
+        if(original_protocol)b.neighbor_inventory=odh::NeighborInventorySnapshot{2,{}};
         if(removed){b.removed_original_objects={*removed};b.object_history=odh::SessionObjectHistory{};
             b.object_history->reusable_entity_ids=true;}
         return b;};
     const auto saved=capture();const auto bytes=odh::encode_session_bundle(saved);
+    if(original_protocol){auto legacy=saved;legacy.neighbor_inventory.reset();
+        rejects([&]{odh::encode_session_bundle(legacy);},"original256 NPC cannot masquerade as a legacy absent profile");}
     std::size_t resolved=0;
     const odh::SessionNpcAvatarResolver metadata=[&](const auto& origin){++resolved;
         if(origin.guid!=owner||origin.neighbor_id!=neighbor_id||origin.source!=npc.origin.source||origin.asset!="Pizza.iff"||
            origin.object_definition_id!=128||origin.character_fingerprint!=npc.origin.character_fingerprint)
             throw odh::FormatError("NPC exact resource identity changed");
-        odh::World source;require(source.create(origin.id,odh::EntityKind::avatar,{2,88,1,16})&&
+        odh::World source;require(source.create(origin.id,odh::EntityKind::avatar,{2,person_words,1,16})&&
             source.define_type(origin.id,origin.guid)&&source.set_person_data(origin.id,31,neighbor_id)&&
             source.declare_definition_word(origin.id,20,19)&&source.define_entry_points(origin.id,{{0,4096}}),
             "resource-only NPC metadata");
@@ -946,7 +950,7 @@ void tests(){
     named_resource_restore_tests();
     signed_motive_restore_tests();
     legacy_avatar_containment_tests();
-    route_stack_profile_tests();npc_restore_tests();npc_restore_tests(true);generic_execution_tests();equivalent_action_owner_cache_tests();Fixture f;f.start();odh::VmFrame attribute_frame;
+    route_stack_profile_tests();npc_restore_tests();npc_restore_tests(true);npc_restore_tests(false,true);generic_execution_tests();equivalent_action_owner_cache_tests();Fixture f;f.start();odh::VmFrame attribute_frame;
     attribute_frame.context.caller=1;attribute_frame.context.stack_object=1;
     require(f.world.write(attribute_frame,0,4,99),"TS1 attribute bank grows on write");
     f.step();auto saved=f.snapshot();const auto bytes=odh::encode_session_bundle(saved);

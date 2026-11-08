@@ -1,5 +1,6 @@
 #pragma once
 #include "odh/world.hpp"
+#include "odh/neighbor_inventory.hpp"
 #include <array>
 #include <optional>
 #include <string>
@@ -18,6 +19,26 @@ struct Ts1TravelDepartureMember {
     Ts1TravelMember member;
     WorldEntityReference avatar{};
 };
+struct OriginalCompanionMarker {
+    std::int16_t owner_neighbor=0,target_neighbor=0;
+    std::int32_t type=0;
+    std::uint32_t guid=0,index=0;
+    std::uint16_t count=0;
+};
+struct OriginalTravelEffectReceipt {
+    Ts1TravelDepartureMember source;
+    // Keys0..6,9,10,11,12. Zero is an actual source value but AddInventory
+    // omits it; the receipt never fabricates a zero-count transport entry.
+    std::array<std::int16_t,11> values{};
+    bool companion=false;
+};
+struct OriginalTravelCapture {
+    std::array<std::int16_t,3> source_temps{}; // Temp1 hour,Temp2 minute,Temp3 single/family.
+    std::int16_t source_hour=0,source_minute=0,time_owner=0,time_hour=0,time_minute=0;
+    bool source_residential=false;
+    std::optional<OriginalCompanionMarker> companion;
+    std::vector<OriginalTravelEffectReceipt> effects;
+};
 struct Ts1TravelRequest {
     std::int16_t destination=0; // -1 means immutable permanent home.
     WorldEntityReference thread_owner{};
@@ -32,6 +53,7 @@ struct Ts1TravelRequest {
     // Empty + absent retain the exact legacy v1 representation and semantics.
     std::vector<Ts1TravelDepartureMember> departure_members;
     std::optional<std::int16_t> departure_transit;
+    std::optional<OriginalTravelCapture> original; // TRIP3, complete original producer receipt.
 };
 struct Ts1TravelState {
     std::uint16_t home_house=0,current_house=0,family_chunk_id=0;
@@ -44,6 +66,7 @@ struct Ts1TravelState {
     std::int16_t caller_neighbor_id=0,transit_info=0;
     bool family_activated=false; // Generic18/26 has activated this destination runtime subset.
     std::optional<Ts1TravelRequest> pending;
+    Ts1TravelProtocol protocol=Ts1TravelProtocol::legacy_pin;
 };
 bool same_ts1_travel_member(const Ts1TravelMember&,const Ts1TravelMember&);
 // Require a pending request. Legacy requests use their historical state fields;

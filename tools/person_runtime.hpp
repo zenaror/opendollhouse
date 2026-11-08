@@ -106,6 +106,9 @@ struct IntegratedSessionContext {
     // Enabled only after the host can bootstrap the destination without
     // publishing or ticking its arriving avatars ahead of the source call.
     bool temporary_travel_enabled = false;
+    // Explicit fresh-import opt-in; existing NINV1/absent archives cannot migrate.
+    bool original_companion_protocol_fresh = false;
+    odh::Ts1TravelProtocol travel_protocol = odh::Ts1TravelProtocol::legacy_pin;
     // A private validation launcher can exercise destinations beyond Downtown.
     bool all_travel_destinations = false;
     // Fresh destination construction uses the exact departed active session,

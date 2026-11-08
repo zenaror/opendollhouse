@@ -44,6 +44,26 @@ bool same_native_personal_identity(const NativePersonalIdentity& a,const NativeP
 bool native_personal_v9_field(std::size_t index) noexcept {
  return std::any_of(std::begin(fields),std::end(fields),[&](const auto& f){return f.index==index;});
 }
+std::optional<NativePersonalProjection> original_neighbor_seed_projection(const NeighborRecord& n){
+ if((n.version!=4&&n.version!=10)||n.person_mode<0||n.person_mode>9||
+    (n.person_mode>0)!=n.person_data.has_value()||
+    (n.person_data&&n.person_data->size()!=(n.version==4?80U:256U)))throw FormatError("original personal seed schema/shape unsupported");
+ if(!n.person_mode)return {};
+ NativePersonalProjection p;p.schema_version=static_cast<std::uint8_t>(n.person_mode);
+ for(const auto f:fields)if(f.minimum<=static_cast<unsigned>(n.person_mode)){
+  p.present[f.index]=1;p.values[f.index]=f.index<n.person_data->size()?n.person_data->at(f.index):0;
+ }
+ return p;
+}
+void apply_original_neighbor_personal(const NeighborRecord& n,std::vector<std::int16_t>& bank){
+ if(bank.size()!=256||n.neighbor_id<=0||!n.guid)throw FormatError("original personal binding needs the native256-word target and exact neighbor");
+ const auto source=original_neighbor_seed_projection(n);
+ if(source)apply_native_personal_projection(*source,bank);
+ // Family is bound separately even for schema0, whose original record storage
+ // was initialized to zero. It is not permission to populate other absent fields.
+ bank[31]=n.neighbor_id;bank[61]=n.person_data?n.person_data->at(61):0;
+ if(n.native_personal)apply_native_personal_projection(*n.native_personal,bank);
+}
 void apply_native_personal_projection(const NativePersonalProjection& p,std::vector<std::int16_t>& bank){
  projection(p);
  for(const auto f:fields)if(f.minimum<=p.schema_version&&p.present[f.index]){

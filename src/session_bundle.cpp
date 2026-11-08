@@ -2394,7 +2394,9 @@ void validate_npc_avatars(const SessionBundle& bundle,const SessionBundleLimits&
         const bool bad_kind=absent||entity->kind!=EntityKind::avatar||entity->ui_ghost;
         const bool bad_generation=absent||entity->generation!=origin.generation;
         const bool bad_guid=absent||!entity->definition||entity->definition->guid!=origin.guid;
-        const bool bad_person=absent||(entity->person_data.size()!=88&&entity->person_data.size()!=101);
+        const bool original_person=bundle.neighbor_inventory&&bundle.neighbor_inventory->version==2;
+        const bool bad_person=absent||(entity->person_data.size()!=88&&entity->person_data.size()!=101&&
+            !(original_person&&entity->person_data.size()==256));
         const bool bad_neighbor=bad_person||entity->person_data[31]!=origin.neighbor_id;
         const bool bad_motives=absent||entity->motives.size()!=16;
         const bool runtime_collision=std::any_of(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),

@@ -87,7 +87,7 @@ public:
 };
 void authenticate_origin(const odh::Ts1TravelState& value,const odh::Ts1TravelState& expected){
  odh::validate_ts1_travel_state(expected);
- if(value.occupancy_epoch||expected.occupancy_epoch||value.home_house!=expected.home_house||value.home_mode!=expected.home_mode||value.family_chunk_id!=expected.family_chunk_id||value.family_number!=expected.family_number||value.family_identity!=expected.family_identity||value.neighborhood_identity!=expected.neighborhood_identity||value.permanent_roster.size()!=expected.permanent_roster.size())throw odh::FormatError("unmanaged travel source identity changed");
+ if(value.protocol!=expected.protocol||value.occupancy_epoch||expected.occupancy_epoch||value.home_house!=expected.home_house||value.home_mode!=expected.home_mode||value.family_chunk_id!=expected.family_chunk_id||value.family_number!=expected.family_number||value.family_identity!=expected.family_identity||value.neighborhood_identity!=expected.neighborhood_identity||value.permanent_roster.size()!=expected.permanent_roster.size())throw odh::FormatError("unmanaged travel source identity changed");
  for(std::size_t i=0;i<value.permanent_roster.size();++i)if(!odh::same_ts1_travel_member(value.permanent_roster[i],expected.permanent_roster[i]))throw odh::FormatError("unmanaged travel permanent roster changed");
 }
 std::optional<std::vector<std::uint8_t>> read_private_head(const std::filesystem::path& path,std::optional<TravelCheckpointDigest> expected,odh::SessionBundleLimits limits){

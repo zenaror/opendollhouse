@@ -142,6 +142,7 @@ struct Options {
     std::optional<unsigned> house;
     std::optional<unsigned> resident_id;
     bool plan_only = false, choose_language = false;
+    bool original_companion_protocol = false;
     std::optional<odh_host::SessionObjectCommand> object_command;
     std::optional<odh::ArchitectureEditCommand> architecture_command;
     std::optional<std::filesystem::path> load_session;
@@ -272,6 +273,10 @@ Options parse_options(int argc, char** argv) {
     bool have_root = false, have_mode = false, have_language = false, have_neighborhood = false;
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
+        if(key=="--original-companion-protocol"){
+            if(result.original_companion_protocol)throw odh::FormatError("duplicate original companion profile option");
+            result.original_companion_protocol=true;continue;
+        }
         if(key=="--lot-window-size"){
             if(result.lot_window_size||i+2>=argc)
                 throw odh::FormatError("--lot-window-size requires one width and height pair");
@@ -707,6 +712,7 @@ Options parse_options(int argc, char** argv) {
             "[--headless-single-resident-go-here X Y LEVEL TICK] "
             "[--headless-resident-go-here ACTOR X Y LEVEL RELATIVE_TICK] "
             "[--headless-resident-interaction ACTOR TARGET TICK (repeat up to 32, nondecreasing ticks)] "
+            "[--original-companion-protocol (experimental fresh original import only; persisted, no legacy upgrade)] "
             "[--headless-menu-query ACTOR TARGET (zero ticks, actual selected actor)] [--headless-resident-interaction-variant ACTOR TARGET ROW PARAM0 LANGUAGE NAME TICK (exact observed dynamic choice)] [--headless-resident-interaction-variant-hex ACTOR TARGET ROW PARAM0 LANGUAGE NAME_HEX TICK (lossless observed source bytes)] [--headless-resident-interaction-row ACTOR TARGET ROW TICK (authored zero-based TTAB row)] "
             "[--headless-resident-stand ACTOR TICK (saved household seats only; repeat up to 8, nondecreasing ticks 1..N)] "
             "[--headless-stand (legacy saved single-resident seat)] "
@@ -821,7 +827,7 @@ odh_host::CommunityLotStoreOptions community_lot_store_options(const std::filesy
     return result;
 }
 bool same_travel_origin(const odh::Ts1TravelState& a,const odh::Ts1TravelState& b) {
-    if(a.home_house!=b.home_house||a.home_mode!=b.home_mode||a.family_chunk_id!=b.family_chunk_id||a.family_number!=b.family_number||a.occupancy_epoch!=b.occupancy_epoch||a.family_identity!=b.family_identity||a.neighborhood_identity!=b.neighborhood_identity||a.permanent_roster.size()!=b.permanent_roster.size())return false;
+    if(a.protocol!=b.protocol||a.home_house!=b.home_house||a.home_mode!=b.home_mode||a.family_chunk_id!=b.family_chunk_id||a.family_number!=b.family_number||a.occupancy_epoch!=b.occupancy_epoch||a.family_identity!=b.family_identity||a.neighborhood_identity!=b.neighborhood_identity||a.permanent_roster.size()!=b.permanent_roster.size())return false;
     for(std::size_t i=0;i<a.permanent_roster.size();++i)if(!odh::same_ts1_travel_member(a.permanent_roster[i],b.permanent_roster[i]))return false;
     return true;
 }
@@ -2262,6 +2268,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 else throw odh::FormatError("temporary travel origin has unknown character resource source");
                 context.household_members.push_back({character,member.guid,member.neighbor_id,member.object_definition_id,member.character_source+"/"+member.character_asset});}
             auto origin=identify_travel_origin(context,userdata/"Neighborhood.iff");
+            origin.protocol=claim.protocol;
             if(!same_travel_origin(origin,claim))throw odh::FormatError("temporary travel permanent home or resource roster changed");return origin;
         };
         const auto authenticate_trip=[&](const std::vector<std::uint8_t>& bytes,
@@ -2392,8 +2399,12 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 // source lot. It is distinct from that lot's admitted roster.
                 auto members=odh::ts1_travel_departure_members(trip.state);
                 trip.state.transit_info=odh::ts1_travel_departure_transit(trip.state);
-                trip.state.caller_guid=members.front().guid;
-                trip.state.caller_neighbor_id=members.front().neighbor_id;
+                const auto selected=trip.state.protocol==odh::Ts1TravelProtocol::original_6e598?
+                    std::find_if(trip.state.pending->departure_members.begin(),trip.state.pending->departure_members.end(),[&](const auto& m){const auto& source=trip.state.pending->source_frame.context;return m.avatar.id==source.caller&&m.avatar.generation==source.caller_generation;}):trip.state.pending->departure_members.begin();
+                if(trip.state.protocol==odh::Ts1TravelProtocol::original_6e598){
+                    if(selected==trip.state.pending->departure_members.end())throw odh::FormatError("original departure lost source caller identity");
+                    trip.state.caller_guid=selected->member.guid;trip.state.caller_neighbor_id=selected->member.neighbor_id;
+                }else{trip.state.caller_guid=members.front().guid;trip.state.caller_neighbor_id=members.front().neighbor_id;}
                 trip.state.travelers=std::move(members);
                 trip.state.current_house=destination;trip.state.current_mode=static_cast<std::uint8_t>(mode);trip.state.pending.reset();trip.state.family_activated=false;
                 trip.arrival=true;trip.returning.reset();options.resident_id=static_cast<unsigned>(trip.state.caller_neighbor_id);
@@ -2703,6 +2714,8 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }
                 session_context.family_transfer = std::move(family_transfer);
                 session_context.occupancy_retirement = std::move(occupancy_retirement);
+                const bool source_native_profile=options.restore_bundle.has_value();
+                const bool source_original_profile=options.restore_bundle&&options.restore_bundle->neighbor_inventory&&options.restore_bundle->neighbor_inventory->version==2;
                 options.restore_bundle.reset(); // Runtime revalidates its candidate independently.
                 session_context.resources = verified_identity;
                 session_context.restore_archive = std::move(options.restore_archive);
@@ -2754,6 +2767,12 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 session_context.resident_neighbor_id = resident->neighbor_id;
 #ifdef __linux__
                 session_context.temporary_travel_enabled=temporary_travel_host_ready&&!session_context.single_resident_session;
+                session_context.original_companion_protocol_fresh=options.original_companion_protocol;
+                const bool saved_original=source_original_profile;
+                if(options.original_companion_protocol&&source_native_profile&&!saved_original)
+                    throw odh::FormatError("original companion profile cannot migrate a legacy native checkpoint; select a fresh original import");
+                session_context.travel_protocol=temporary_trip?temporary_trip->state.protocol:
+                    (saved_original||options.original_companion_protocol?odh::Ts1TravelProtocol::original_6e598:odh::Ts1TravelProtocol::legacy_pin);
                 session_context.all_travel_destinations=all_travel_destinations;
                 if(temporary_trip){
                     session_context.travel_state=temporary_trip->returning?temporary_trip->origin:temporary_trip->state;
@@ -2765,6 +2784,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     session_context.travel_return=temporary_trip->returning;
                 }else if(!session_context.single_resident_session){
                     session_context.travel_state=identify_travel_origin(session_context,userdata/"Neighborhood.iff");
+                    session_context.travel_state->protocol=session_context.travel_protocol;
                     if(!session_context.family_journal){
                         if(private_neighborhood!=session_context.travel_state->neighborhood_identity)
                             throw odh::FormatError("neighborhood changed during private home save discovery");

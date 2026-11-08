@@ -28,7 +28,7 @@ void run(){
     odh::NeighborInventory next(ordered);t[1]=-1;r=next.execute(1,op(4,6,128),t,42);
     require(r.temp_write->value==14467&&r.second_temp_write->value==0,"next type sums all raw counts with signed wrap");
     t[1]=3;r=next.execute(1,op(4,6,128),t,42);require(r.disposition==odh::PrimitiveDisposition::goto_false&&r.temp_write&&!r.second_temp_write,"exhausted next still writes sum");
-    const auto before=next.snapshot();auto corrupt=before;corrupt.version=2;
+    const auto before=next.snapshot();auto corrupt=before;corrupt.version=3;
     try{next.restore(corrupt);throw std::runtime_error("accepted bad version");}catch(const odh::FormatError&){}
     require(next.items(1)->at(0).count==40000,"failed restore keeps live state");
     odh::NeighborInventory small(odh::Ngbh{}, {1,1});small.set_data(-32768,0,32768);

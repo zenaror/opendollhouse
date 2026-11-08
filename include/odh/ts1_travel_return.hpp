@@ -12,7 +12,7 @@ public:
 private:
     Ts1TravelPersonInheritanceSource(Nbrs neighbors,std::array<std::uint8_t,32> identity)
         :neighbors_(std::move(neighbors)),identity_(identity) {}
-    std::optional<std::int16_t> inherited_value(const Ts1TravelMember&,std::size_t) const;
+    std::optional<std::int16_t> inherited_value(const Ts1TravelMember&,std::size_t,Ts1TravelProtocol = Ts1TravelProtocol::legacy_pin) const;
     NeighborContext neighbors_;
     std::array<std::uint8_t,32> identity_{};
     friend Ts1TravelPersonInheritanceSource read_ts1_travel_person_inheritance(const View&);

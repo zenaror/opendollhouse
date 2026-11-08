@@ -140,7 +140,8 @@ WorldSnapshot session_restore_baseline(const SessionBundle& bundle,const WorldSn
         auto metadata=resolve_npc(origin);
         if(metadata.id!=origin.id||metadata.generation!=origin.generation||metadata.kind!=EntityKind::avatar||
            !metadata.definition||metadata.definition->guid!=origin.guid||metadata.ui_ghost||metadata.attachment||metadata.position||
-           (metadata.person_data.size()!=88&&metadata.person_data.size()!=101)||metadata.person_data[31]!=origin.neighbor_id||metadata.motives.size()!=16)
+           (metadata.person_data.size()!=88&&metadata.person_data.size()!=101&&
+            !(bundle.neighbor_inventory&&bundle.neighbor_inventory->version==2&&metadata.person_data.size()==256))||metadata.person_data[31]!=origin.neighbor_id||metadata.motives.size()!=16)
             throw FormatError("NPC avatar resource constructor returned incompatible metadata");
         expected.entities.push_back(std::move(metadata));
     }

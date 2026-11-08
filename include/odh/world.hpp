@@ -478,6 +478,8 @@ public:
                            std::int16_t per_hour_change,std::int16_t maximum);
     bool clear_motive_changes(std::int16_t id);
     bool tick_motive_changes();
+    // Actual original constructor Simulate0: only this newly born body advances.
+    bool tick_motive_changes(WorldEntityReference);
     bool has_motive_change(std::int16_t id,std::int16_t motive) const;
     bool declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value);
     // Runtime-only source SetObstacleStatic consumer. False retains the source

@@ -38,6 +38,11 @@ void validate_native_personal_successor(const NativePersonalSnapshot&,const Nati
 std::vector<std::uint8_t> encode_native_personal_snapshot(const NativePersonalSnapshot&);
 NativePersonalSnapshot decode_native_personal_snapshot(const std::vector<std::uint8_t>&);
 bool native_personal_v9_field(std::size_t index) noexcept;
+// Original serialized schema is NBRS person_mode (record+18), proven by423e3b.
+// Record4 reads80 words into a zeroed256-word original allocation; selected
+// fields80..82 have known zero backing, unlike an absent schema0 record.
+std::optional<NativePersonalProjection> original_neighbor_seed_projection(const NeighborRecord&);
+void apply_original_neighbor_personal(const NeighborRecord&,std::vector<std::int16_t>&);
 // Preserves absent/unproven fields. Family61 is read separately by constructor.
 void apply_native_personal_projection(const NativePersonalProjection&,std::vector<std::int16_t>&);
 

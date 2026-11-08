@@ -1,4 +1,5 @@
 #include "odh/ts1_travel_return.hpp"
+#include "odh/original_companion_protocol.hpp"
 #include "odh/sha256.hpp"
 #include "odh/native_personal_session.hpp"
 #include <algorithm>
@@ -22,7 +23,7 @@ Ts1TravelPersonInheritanceSource read_ts1_travel_person_inheritance(const View& 
  return Ts1TravelPersonInheritanceSource(std::move(*neighbors),identity);
 }
 std::optional<std::int16_t> Ts1TravelPersonInheritanceSource::inherited_value(
- const Ts1TravelMember& member,std::size_t index) const {
+ const Ts1TravelMember& member,std::size_t index,Ts1TravelProtocol protocol) const {
  // Neighbor IDs are unique, while the pinned provider permits several IDs
  // with the same GUID. Inheritance uses this actual selected NID's record,
  // not the provider's separate last-GUID lookup for literal construction.
@@ -30,6 +31,13 @@ std::optional<std::int16_t> Ts1TravelPersonInheritanceSource::inherited_value(
  if(!selected||selected->guid!=member.guid)
   throw FormatError("travel personal inheritance neighbor/GUID identity is missing or mismatched");
  const auto& record=*selected;
+ if(protocol==Ts1TravelProtocol::original_6e598){
+  const auto projection=original_neighbor_seed_projection(record);
+  if(index==31)return member.neighbor_id;
+  if(index==61)return record.person_data?record.person_data->at(61):std::int16_t{0};
+  if(!projection||index>=projection->present.size()||!projection->present[index])return {};
+  return projection->values[index];
+ }
  if(record.version!=4&&record.version!=10)throw FormatError("travel personal inheritance record version is unsupported");
  if((record.person_mode>0)!=record.person_data.has_value()||
     (record.person_data&&record.person_data->size()!=(record.version==4?80u:256u)))
@@ -101,22 +109,29 @@ PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionBundle& envelope,
  if(result.home_.personal_state&&!active.personal_state)throw FormatError("return dropped shared personal records");
  if(active.personal_state)project_native_personal_session(result.home_,*active.personal_state);
  NeighborInventory inventory(Ngbh{});inventory.restore(*active.neighbor_inventory);
+ if(state.protocol==Ts1TravelProtocol::original_6e598)validate_original_travel_capture(active);
  constexpr unsigned need_motives[7]={9,6,5,15,7,8,14}; // Type2 GUID0..6 source order.
  for(const auto& identity:ts1_travel_departure_members(state)){
   const auto& home_actor=avatar(result.home_,member(result.home_,identity));const auto& visited_actor=resolve_ts1_travel_departure_avatar(active,identity);
   if(visited_actor.motives.size()!=16)throw FormatError("travel return requires the actual source motive bank");
-  for(unsigned key=0;key<7;++key){const auto token=inventory.get_data(identity.neighbor_id,key);if(!token||*token!=static_cast<std::uint16_t>(visited_actor.motives[need_motives[key]]))throw FormatError("travel return motive token differs from the sealed source avatar");}
+  if(state.protocol==Ts1TravelProtocol::legacy_pin)for(unsigned key=0;key<7;++key){const auto token=inventory.get_data(identity.neighbor_id,key);if(!token||*token!=static_cast<std::uint16_t>(visited_actor.motives[need_motives[key]]))throw FormatError("travel return motive token differs from the sealed source avatar");}
   const auto size=std::max(home_actor.person_data.size(),visited_actor.person_data.size());
   // Resolve/bind every selected identity even if it happens to have no delta.
   // A malformed source cannot become trusted because all values match HOME.
-  if(inheritance)(void)inheritance->inherited_value(identity,0);
+  if(inheritance)(void)inheritance->inherited_value(identity,0,state.protocol);
   for(std::size_t index=0;index<size;++index){
    const auto old=index<home_actor.person_data.size()?std::optional<std::int16_t>{home_actor.person_data[index]}:std::nullopt;
    const auto current=index<visited_actor.person_data.size()?std::optional<std::int16_t>{visited_actor.person_data[index]}:std::nullopt;
    if(old!=current){
     Ts1TravelPersonalDelta delta{identity,index,old,current};
-    if(old&&current&&(proven_lot_local_word(index)||proven_action_workspace_flag(delta)))result.runtime_deltas_.push_back(std::move(delta));
-    else if(old&&current&&inheritance&&inheritance->inherited_value(identity,index)==current)
+    // Original4258ed/42597a have a closed44-field persistence contract.
+    // Fresh256-word workspace does not expand HOME or become personal progress.
+    // Effect fields8/80/81/82 are separately carried to the authored Generic21.
+    if(state.protocol==Ts1TravelProtocol::original_6e598&&
+       (!native_personal_v9_field(index)||index==80||index==81||index==82))
+     result.runtime_deltas_.push_back(std::move(delta));
+    else if(old&&current&&(proven_lot_local_word(index)||proven_action_workspace_flag(delta)))result.runtime_deltas_.push_back(std::move(delta));
+    else if(old&&current&&inheritance&&inheritance->inherited_value(identity,index,state.protocol)==current)
      result.inherited_deltas_.push_back(std::move(delta));
     else result.personal_deltas_.push_back(std::move(delta));
    }

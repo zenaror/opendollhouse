@@ -1,4 +1,5 @@
 #include "odh/npc_avatar.hpp"
+#include "odh/original_avatar_constructor.hpp"
 #include "odh/household_spawn.hpp"
 #include <utility>
 
@@ -39,7 +40,7 @@ bool valid_request(const NpcAvatarRequest& request) {
         request.creation.guid==request.guid()&&request.constructor_neighbor&&
         request.constructor_neighbor->neighbor_id==request.requested_neighbor.neighbor_id;
     const bool pass_ids=(direct||neighbor)&&request.creation.pass_object_ids();
-    return request.caller>0&&request.caller_generation&&(direct||neighbor||out_of_world)&&
+    return ((request.caller>0&&request.caller_generation)||(request.original_semantics&&request.original_load_current&&request.caller==0&&request.caller_generation==0&&out_of_world))&&(direct||neighbor||out_of_world)&&
         request.main_stack_object>=0&&(pass_ids||request.main_stack_object==0)&&
         (request.creation.pass_temp0()||request.main_param==(pass_ids?request.caller:0))&&
         (direct||valid_neighbor(request.requested_neighbor,request.guid()))&&
@@ -67,6 +68,7 @@ bool capture_request_placement(NpcAvatarRequest& request,const VmFrame& frame,
     return true;
 }
 bool caller_present(const World& world,const NpcAvatarRequest& request) {
+    if(request.original_load_current)return request.original_semantics&&request.original_load_current();
     const auto* caller=world.find(request.caller);
     return caller && caller->generation==request.caller_generation && !caller->ui_ghost;
 }
@@ -158,6 +160,10 @@ bool materialize_npc_avatar(World& candidate,std::int16_t id,const NpcAvatarRequ
     if(!materialize_npc_avatar_base(candidate,id,definition,entries,initial_value))return false;
     const auto* created=candidate.find(id);if(!created)return false;
     const WorldEntityReference reference{id,created->generation};
+    if(request.original_semantics){
+        if(!request.original_residential||!candidate.replace_person_data(id,std::vector<std::int16_t>(256))||!candidate.declare_definition_word(id,10,0))return false;
+        for(std::int16_t m=0;m<16;++m)if(!candidate.set_motive(id,m,m==5?70:m==7?-40:0))return false;
+    }
     // Fresh cXPerson.ClassInit459797 calls base431b5e: record0 is created
     // empty by46dfaf, raw Slot14 becomes-1, and native XY/level become
     // (-16,-16,1). Base constructor43194c zeros the scalar bank including
@@ -189,6 +195,8 @@ NpcAvatarStartupResult initialize_npc_avatar(World& world,Vm& thread,std::int16_
     const NpcAvatarRequest& request,const EntryPointTable& entries,const NpcAvatarBodyInputs& inputs,
     RandomState& random,std::optional<std::uint16_t> current_family,const NpcPositionAttempt& position,
     std::uint64_t budget,const VmPrimitive& primitive,bool scheduler_running_now,const std::function<bool()>& self_deleted) {
+    if(request.original_semantics)return initialize_original_avatar(world,thread,id,owner,request,entries,inputs,random,
+        budget,primitive,scheduler_running_now,self_deleted);
     NpcAvatarStartupResult result;
     const auto fail=[&](const std::string& why){result.diagnostic=why;return result;};
     const auto* actor=world.find(id);

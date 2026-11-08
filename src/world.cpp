@@ -1287,6 +1287,31 @@ bool World::tick_motive_changes() {
     }
     return true;
 }
+bool World::tick_motive_changes(WorldEntityReference reference) {
+    if(reject_room_reentry())return false;
+    const auto found=entities_.find(reference.id);
+    if(found==entities_.end()||found->second.generation!=reference.generation||found->second.dead||found->second.kind!=EntityKind::avatar||found->second.motives.size()<16)return false;
+    auto& entity=found->second;const auto id=reference.id;
+        if(entity.motive_changes.empty())entity.motive_changes.resize(16);
+        if(entity.motive_changes.size()!=16)return false;
+        for(std::size_t index=0;index<entity.motive_changes.size();++index){
+            auto& change=entity.motive_changes[index];
+            change.ticked=true;
+            if(change.per_hour_change==0)continue;
+            const auto rate=(static_cast<double>(change.per_hour_change)/60.0)/30.0;
+            change.fractional+=rate;
+            if(std::abs(change.fractional)<1.0)continue;
+            auto& current=entity.motives[index];
+            if((rate>0.0&&current>change.maximum)||(rate<0.0&&current<change.maximum))continue;
+            const auto delta=wrap_motive_double(change.fractional);
+            change.fractional=std::fmod(change.fractional,1.0);
+            auto next=wrap_motive_word(static_cast<std::int32_t>(current)+delta);
+            if((rate>0.0&&next>change.maximum)||(rate<0.0&&next<change.maximum))
+                next=change.maximum;
+            if(!set_motive(id,static_cast<std::int16_t>(index),next))return false;
+        }
+    return true;
+}
 bool World::has_motive_change(std::int16_t id,std::int16_t motive) const {
     const auto found=entities_.find(id);
     return found!=entities_.end()&&found->second.kind==EntityKind::avatar&&

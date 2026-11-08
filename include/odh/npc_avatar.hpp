@@ -23,6 +23,16 @@ struct NpcAvatarRequest {
     // is the real OOW sentinel; absent plan is only Generic19/20 construction.
     std::optional<CreateObjectPlacementPlan> direct_placement;
     std::uint32_t guid() const {return direct_resource_guid?direct_resource_guid:requested_neighbor.guid;}
+    // Explicit original transport constructor, never inferred from NBRS format.
+    bool original_semantics=false;
+    std::optional<bool> original_residential;
+    std::optional<std::int16_t> original_definition_version;
+    std::function<bool()> original_load_current; // Frontend load only; no fake Caller.
+    std::function<bool(WorldEntityReference,Vm&,std::string&)> original_main_prepared;
+    std::function<bool(WorldEntityReference,Vm&,CodeOwner,const std::function<bool()>&)> original_guarded_init;
+    std::function<bool(WorldEntityReference,Vm&,std::uint64_t,std::string&)> original_initial_tick;
+    std::function<bool(WorldEntityReference,std::string&)> original_lookup_flags;
+    std::function<bool(WorldEntityReference,std::string&)> original_curves_ready;
     NeighborRecord requested_neighbor{};
     std::optional<NeighborRecord> constructor_neighbor;
 };
