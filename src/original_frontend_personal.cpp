@@ -4,6 +4,17 @@
 #include <sstream>
 #include <algorithm>
 namespace odh {
+std::optional<bool> original_frontend_personal_save_required(const OriginalFrontendSaveBoundary& input) noexcept {
+    if(input.simless!=original_frontend_playing_simless)return false;
+    const auto house=input.house;
+    if((house>=21&&house<=30)||(house>=81&&house<=89)||(house>=93&&house<=98))return true;
+    const bool vacation=house>=40&&house<=49;
+    if(input.zoning&&*input.zoning==OriginalLotClass::community)return true;
+    if(vacation&&input.family_number&&*input.family_number==0)return true;
+    if(!input.zoning||(vacation&&!input.family_number))return std::nullopt;
+    return false;
+}
+
 struct OriginalFrontendPersonalSource::Data {
     std::string owned;
     Nbrs neighbors;

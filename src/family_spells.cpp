@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "odh/family_spells.hpp"
+#include "odh/original_lot_classification.hpp"
 #include <algorithm>
 #include <utility>
 
@@ -34,11 +35,9 @@ Guard guards(const FamilySpellsSnapshot& state,bool capture,const LotZoning* zon
     // Original classification key0 is always1, without touching the row bank.
     if(!*house)return {noop(),true};
     if(!zoning)return {unsupported("family spells explicit zoning authority unavailable"),false};
-    const auto found=zoning->find(*house);
-    if(found==zoning->end())return {noop(),false};
-    if(found->second!=0&&found->second!=1)
-        return {unsupported("family spells zoning row is outside residential/community profile"),false};
-    return {noop(),found->second==0};
+    const auto classification=classify_original_lot(zoning,*house);
+    if(!classification)return {unsupported("family spells zoning row is outside residential/community profile"),false};
+    return {noop(),*classification==OriginalLotClass::residential};
 }
 struct Target {const Entity* entity=nullptr;FamilySpellsOutcome outcome=noop();};
 Target controller(const World& world) {

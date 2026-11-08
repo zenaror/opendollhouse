@@ -20767,12 +20767,29 @@ struct PlacementCandidateProbe {
         if(travel_state&&travel_state->pending){
             std::optional<odh::OriginalFrontendPersonalSource> frontend_source;
             std::optional<odh::PreparedOriginalFrontendPersonalSave> frontend_save;
-            // Original4f277c's proven Downtown branch saves the neighborhood
-            // people BEFORE the next lot loads. It is not Generic17's family
-            // writer and does not run for ordinary save/cold checkpoints.
-            const bool downtown_frontend=travel_state->protocol==odh::Ts1TravelProtocol::original_6e598&&
-                travel_state->current_mode==2&&travel_state->current_house>=21&&travel_state->current_house<=30;
-            if(downtown_frontend){
+            // Original4f277c selects its shared neighborhood-person writer by
+            // actual house/classification and the current playing/family globals.
+            // This is a safe next-lot boundary, never ordinary save/cold restore.
+            // False preserves the existing whole-lot/Generic17 family path; it
+            // does not mean that the transition can omit its durable checkpoint.
+            bool frontend_personal_required=false;
+            if(travel_state->protocol==odh::Ts1TravelProtocol::original_6e598){
+                if(!runtime_globals)throw odh::FormatError("original frontend save decision lacks runtime globals");
+                const auto simless=runtime_globals->read(32);
+                if(!simless)throw odh::FormatError("original frontend save decision lacks actual Simless backing");
+                std::optional<std::int32_t> family_number;
+                if(const auto selected=runtime_globals->read(9))family_number=*selected;
+                // Semantic LotZoning rows (0/1) are not original classes
+                // (1/2). Preserve known missing row versus unavailable map.
+                const auto zoning=odh::classify_original_lot(
+                    explicit_family_spell_zoning?&*explicit_family_spell_zoning:nullptr,
+                    static_cast<std::int16_t>(travel_state->current_house));
+                const auto required=odh::original_frontend_personal_save_required({
+                    static_cast<std::int16_t>(travel_state->current_house),*simless,family_number,zoning});
+                if(!required)throw odh::FormatError("original frontend save decision lacks its required lot classification or current family number");
+                frontend_personal_required=*required;
+            }
+            if(frontend_personal_required){
                 if(!session_context||!personal_state||!neighborhood_path||!type_attributes_neighborhood_identity||
                    !runtime_globals||entity_scheduler.running()||primary_vm().dispatch_active())
                     throw odh::FormatError("original frontend save lacks its authenticated safe transition boundary");

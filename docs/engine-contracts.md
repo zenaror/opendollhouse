@@ -95,6 +95,13 @@ conferem a origem desses dados antes de admitir o novo estado.
 
 ## Viagem temporária
 
+A gravação de personagens entre lotes segue a classificação do lote e a família
+ativa. Por exemplo, um lote comunitário da Cidade Velha usa uma regra diferente
+da casa da família. O [classificador compartilhado](../include/odh/original_lot_classification.hpp)
+distingue residencial, comunitário, sem classificação e dados indisponíveis;
+os consumidores usam esse resultado em vez de reinterpretar números do arquivo.
+Esse contrato ainda é experimental, sem uma API pública estável para mods.
+
 A casa suspensa permanece a referência até a ativação válida do destino. O lote
 de destino é preparado com os recursos corretos, e os viajantes entram quando os
 scripts os solicitam; não duplicar a família antecipadamente. Membros permanentes

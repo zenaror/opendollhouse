@@ -16,6 +16,62 @@ odh::OriginalFrontendPersonalSource read(const std::string& b){std::istringstrea
 odh::NativePersonalIdentity identity(std::int16_t nid,std::uint32_t guid=0){odh::NativePersonalIdentity i{nid,guid?guid:std::uint32_t(10000+nid),128,"UserData/Characters/Fixture"+std::to_string(nid)+".iff",{}};i.character_fingerprint.fill(static_cast<std::uint8_t>(nid));return i;}
 void person(odh::World& w,std::int16_t id,std::int16_t nid,std::uint32_t guid=0){require(w.create(id,odh::EntityKind::avatar,{0,88,0,16})&&w.define_type(id,identity(nid,guid).guid)&&w.set_person_data(id,31,nid)&&w.set_person_data(id,61,21)&&w.set_person_data(id,32,4)&&w.set_motive(id,9,-70),"create actual live provenance-bound body");}
 odh::NativePersonalSourceResolver resolver(const odh::World& w){return [&w](std::int16_t id){const auto* e=w.find(id);if(!e||!e->definition||e->person_data.size()<32)throw odh::FormatError("fixture resolver missing body");return odh::NativePersonalSource{identity(e->person_data[31],e->definition->guid),{id,e->generation}};};}
+void boundary_matrix(){
+    struct Case{std::int16_t house,simless;std::optional<std::int32_t> family;std::optional<std::int16_t> zoning;std::optional<bool> result;};
+    const std::vector<Case> cases{
+        {20,0,5,1,false},{21,0,5,1,true},{30,0,5,1,true},{31,0,5,1,false},
+        {80,0,5,1,false},{81,0,5,1,true},{89,0,5,1,true},{90,0,5,1,false},
+        {92,0,5,1,false},{93,0,5,1,true},{98,0,5,1,true},{99,0,5,1,false},
+        {39,0,0,1,false},{40,0,0,1,true},{49,0,0,1,true},{50,0,0,1,false},
+        {40,0,5,1,false},{49,0,5,1,false},{40,0,65536,1,false},
+        {61,0,5,2,true},{61,0,5,1,false},{61,0,5,0,false},
+        {21,1,0,2,false},{81,-1,0,2,false},{93,2,0,2,false},{40,1,0,2,false},
+        {21,0,{},{},true},{81,0,{},{},true},{93,0,{},{},true},
+        {40,0,0,{},true},{40,0,{},2,true},{40,0,{},1,{}},{40,0,5,{},{}},
+        {61,0,{},2,true},{61,0,{},1,false},{61,0,5,{},{}},{61,1,{},{},false}
+    };
+    for(const auto& c:cases){const auto zoning=c.zoning?std::optional<odh::OriginalLotClass>{static_cast<odh::OriginalLotClass>(*c.zoning)}:std::nullopt;
+        require(odh::original_frontend_personal_save_required({c.house,c.simless,c.family,zoning})==c.result,
+            "source-derived frontend boundary matrix preserves exact range edges, playing/family/zoning and necessary unknowns");}
+    const odh::LotZoning rows{{5,0},{61,1},{62,7}};
+    require(odh::classify_original_lot(nullptr,0)==odh::OriginalLotClass::residential&&
+        !odh::classify_original_lot(nullptr,5)&&odh::classify_original_lot(&rows,0)==odh::OriginalLotClass::residential,
+        "source key0 is residential without rows; missing authority stays distinct");
+    require(odh::classify_original_lot(&rows,5)==odh::OriginalLotClass::residential&&
+        odh::classify_original_lot(&rows,61)==odh::OriginalLotClass::community&&
+        odh::classify_original_lot(&rows,6)==odh::OriginalLotClass::unclassified&&!odh::classify_original_lot(&rows,62),
+        "raw native labels map explicitly to source classes, preserving known absence and rejecting unsupported row domains");
+    require(odh::original_frontend_personal_save_required({61,0,5,odh::classify_original_lot(&rows,61)})==std::optional<bool>{true}&&
+        odh::original_frontend_personal_save_required({5,0,5,odh::classify_original_lot(&rows,5)})==std::optional<bool>{false}&&
+        odh::original_frontend_personal_save_required({6,0,5,odh::classify_original_lot(&rows,6)})==std::optional<bool>{false},
+        "producer-to-policy integration distinguishes residential, community and missing-row HOME without an invented fallback");
+    // The classifier has no mode enum: a community row remains authoritative
+    // outside any hard-coded map, and editor/nonplaying cannot capture people.
+    for(const auto house:{std::int16_t{5},std::int16_t{49},std::int16_t{62},std::int16_t{91}})
+        require(odh::original_frontend_personal_save_required({house,0,5,odh::OriginalLotClass::community})==std::optional<bool>{true}&&
+            odh::original_frontend_personal_save_required({house,1,0,odh::OriginalLotClass::community})==std::optional<bool>{false},
+            "actual community zoning and playing state take precedence over selector labels");
+}
+void parsed_boundary_writer_matrix(){
+    odh::StringTable zoning_text{odh::StringTableState::decoded,-3,{{1,"61, community",{}},{1,"60, residential",{}}},0};
+    const auto zoning=odh::read_lot_zoning(zoning_text);
+    struct Case{std::int16_t house;std::int32_t family;bool capture;};
+    for(const auto c:std::vector<Case>{{22,5,true},{61,5,true},{81,5,true},{93,5,true},{40,0,true},{40,5,false},{5,5,false}}){
+        const auto n=neighbors();const auto source=read(iff(n));odh::NativePersonalState state(n,source.neighborhood_identity());
+        odh::World world;person(world,1,41);require(world.set_person_data(1,10,777),"controlled fixture has real personal-bank progress");
+        const auto before=odh::encode_native_personal_snapshot(state.snapshot());
+        const auto decision=odh::original_frontend_personal_save_required({c.house,0,c.family,odh::classify_original_lot(&zoning,c.house)});
+        require(decision==std::optional<bool>{c.capture},"parsed semantic zoning feeds typed original class and exact expansion predicate");
+        if(*decision){auto prepared=odh::prepare_original_frontend_personal_save(source,world,state,0,resolver(world));
+            require(prepared.sources().size()==1&&state.snapshot().records.empty()&&prepared.commit(state,world)&&
+                state.snapshot().records.size()==1&&state.snapshot().records.front().revision==1&&
+                state.snapshot().records.front().writer==odh::NativePersonalWriteSource::frontend_save&&
+                state.snapshot().records.front().projection.values[10]==777,
+                "Downtown/community/Studio/Magic/Vacation0 use the SAME authenticated writer and one real revision");
+        }else require(odh::encode_native_personal_snapshot(state.snapshot())==before,
+            "ordinary HOME and nonzero-family Vacation do not fabricate writer4; their other persistence branch remains separate");
+    }
+}
 void matrix(){auto n=neighbors();auto bytes=iff(n);const auto s=read(bytes);bytes.assign(1,'x');
     odh::NativePersonalState state(n,s.neighborhood_identity());odh::World w;for(std::int16_t i=1;i<=4;++i)person(w,i,40+i);
     const auto raw=odh::encode_world_snapshot(w.snapshot());const auto resolve=resolver(w);
@@ -59,4 +115,4 @@ void projection(){auto n=neighbors();const auto s=read(iff(n));odh::NativePerson
     const auto projected=odh::encode_world_snapshot(home.world);odh::project_native_personal_session(home,cold.snapshot());require(odh::encode_world_snapshot(home.world)==projected,"same committed projection is idempotent and cannot rerun constructor");
 }
 }
-int main(){try{matrix();index_matrix();projection();std::cout<<"original frontend personal: "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{boundary_matrix();parsed_boundary_writer_matrix();matrix();index_matrix();projection();std::cout<<"original frontend personal: "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
