@@ -1,4 +1,5 @@
 #include "odh/npc_avatar.hpp"
+#include "odh/avatar_constructor_metadata.hpp"
 #include <iostream>
 
 namespace {
@@ -78,8 +79,82 @@ struct Fixture {
         ++sync_calls;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
     };}
 };
+void authentic_constructor_metadata_profiles(){
+    const auto rejects=[](const auto& action){try{action();}catch(const odh::FormatError&){return true;}return false;};
+    odh::World world;
+    require(world.create(1,odh::EntityKind::object)&&world.define_type(1,0x81e6bef9),"actual original constructor caller");
+    odh::NpcAvatarRequest request;request.creation={guid,static_cast<std::uint8_t>(odh::CreateObjectPosition::out_of_world),0,0,0};
+    request.caller=1;request.caller_generation=world.find(1)->generation;
+    request.requested_neighbor=*neighbor(40,201,40).record;request.constructor_neighbor=request.requested_neighbor;
+    request.original_semantics=true;request.original_residential=false;request.original_definition_version=138;
+    bool current=true;const auto source=[&]{const auto* caller=world.find(1);return current&&caller&&caller->generation==request.caller_generation;};
+    odh::NativePersonalIdentity identity{40,guid,128,"UserData/Characters/Test.iff",{}};identity.character_fingerprint.fill(0x41);
+    odh::AvatarConstructorMetadata profiles;
+    require(odh::materialize_npc_avatar(world,2,request,definition(),entries()),"use actual original materializer for zeroed256 body and word10");
+    const odh::WorldEntityReference old{2,world.find(2)->generation};
+    require(world.find(2)->person_data[31]==0&&odh::AvatarConstructorMetadata::original_shape(*world.find(2)),"materialization precedes selective NID binding");
+    profiles.admit_constructed(world,old,identity,request,source);
+    require(profiles.contains(old,identity)&&world.find(2)->person_data[31]==0,"exact profile registration before Main neither invents NID nor modifies body banks");
+    for(unsigned field=0;field<4;++field){auto wrong=identity;
+        if(field==0)++wrong.neighbor_id;if(field==1)++wrong.definition_chunk_id;
+        if(field==2)wrong.character_asset="UserData/Characters/Other.iff";if(field==3)wrong.character_fingerprint[0]^=1;
+        require(rejects([&]{profiles.contains(old,wrong);}),"same numeric body cannot borrow another NID, OBJD, resource or fingerprint profile");
+    }
+    require(world.set_person_data(2,31,40)&&world.mark_dead(old)&&world.remove_retaining_body(old),"source owner retires the exact original body");
+    profiles.collect(world);
+    require(profiles.contains(old,identity)&&world.resolve_reference(old)&&world.reference_is_dead(old),"metadata survives while an old exact generation remains retained");
+    require(odh::materialize_npc_avatar(world,2,request,definition(),entries()),"source constructs a new body reusing the released numeric ID");
+    const odh::WorldEntityReference fresh{2,world.find(2)->generation};
+    require(fresh.generation!=old.generation&&!profiles.contains(fresh,identity),"same ID and same resource with a new generation inherits no constructor evidence");
+    current=false;
+    require(rejects([&]{profiles.admit_constructed(world,fresh,identity,request,source);})&&!profiles.contains(fresh,identity),"expired source admission cannot register a materialized body");
+    current=true;profiles.admit_constructed(world,fresh,identity,request,source);
+    require(world.set_person_data(2,31,40),"actual selective source binding happens after metadata admission");
+    const auto seed=*neighbor(40,201,40).record;
+    profiles.validate_selected_name(fresh,identity,seed.name,&seed,{"Nora"});
+    require(rejects([&]{profiles.validate_selected_name(fresh,identity,std::string("Nora"),&seed,{"Nora"});})&&
+        rejects([&]{profiles.validate_selected_name(fresh,identity,std::string("arbitrary"),&seed,{"Nora"});})&&
+        rejects([&]{profiles.validate_selected_name(fresh,identity,std::nullopt,&seed,{"Nora"});})&&
+        rejects([&]{profiles.validate_selected_name(fresh,identity,seed.name,nullptr,{"Nora"});}),
+        "original name is exactly the authenticated NBRS value, not an arbitrary or PIN-list substitute");
+    auto wrong_seed=seed;wrong_seed.neighbor_id++;
+    require(rejects([&]{profiles.validate_selected_name(fresh,identity,seed.name,&wrong_seed,{"Nora"});}),"another neighbor cannot authorize the same saved original name");
+    odh::World cold;
+    require(cold.restore_snapshot(world.snapshot()),"cold World restores actual live and retained generations without executing a constructor");
+    odh::AvatarConstructorMetadata restored;
+    require(restored.admit_restored(*cold.find(2),identity,true)&&restored.admit_restored(*cold.resolve_reference(old),identity,true)&&
+        restored.contains(fresh,identity)&&restored.contains(old,identity),"cold native256 evidence preserves full resource identities for live and retained bodies");
+    restored.validate_selected_name(fresh,identity,seed.name,&seed,{"Nora"});
+    auto empty_seed=seed;empty_seed.name.clear();
+    restored.validate_selected_name(fresh,identity,std::string{},&empty_seed,{"Nora"});
+    require(rejects([&]{restored.validate_selected_name(fresh,identity,seed.name,&empty_seed,{"Nora"});}),
+        "cold original names retain raw source bytes and require the current exact authenticated source value");
+    auto bad=*cold.find(2);bad.definition_words[10]=1;odh::AvatarConstructorMetadata invalid;
+    require(!invalid.admit_restored(bad,identity,true)&&!invalid.contains(fresh,identity),"adulterated word10 cannot declare the original256 constructor shape");
+    require(!invalid.admit_restored(*cold.find(2),identity,false),"native-looking bytes alone do not upgrade an archive without its original protocol");
+    odh::World legacy;
+    require(odh::materialize_npc_avatar_base(legacy,3,definition(),entries())&&legacy.set_person_data(3,31,40),"real base constructor retains its101-word legacy shape");
+    require(!invalid.admit_restored(*legacy.find(3),identity,true)&&legacy.find(3)->person_data.size()==101,"legacy101 is preserved and never admitted as original256");
+    const odh::WorldEntityReference legacy_ref{3,legacy.find(3)->generation};
+    invalid.validate_selected_name(legacy_ref,identity,std::string("Nora"),&seed,{"Nora"});
+    invalid.validate_selected_name(legacy_ref,identity,std::nullopt,nullptr,{});
+    require(rejects([&]{invalid.validate_selected_name(legacy_ref,identity,seed.name,&seed,{"Nora"});})&&
+        rejects([&]{invalid.validate_selected_name(legacy_ref,identity,std::nullopt,&seed,{"Nora"});}),
+        "legacy resource-name membership and required selection remain strict despite an available NBRS source");
+    auto enlarged=*legacy.find(3);enlarged.person_data.resize(256);
+    require(!invalid.admit_restored(enlarged,identity,true),"tampering bank length alone cannot authorize native constructor metadata");
+    require(legacy.replace_person_data(3,std::vector<std::int16_t>(88))&&legacy.set_person_data(3,31,40)&&
+        !invalid.admit_restored(*legacy.find(3),identity,true)&&legacy.find(3)->person_data.size()==88,"legacy88 remains unchanged without implicit promotion");
+    std::vector<odh::WorldEntityReference> collected;
+    require(world.collect_retained_bodies({},&collected)&&!world.resolve_reference(old),"actual World owner releases the unreferenced old body");
+    profiles.collect(world);
+    require(profiles.size()==1&&!profiles.contains(old,identity)&&profiles.contains(fresh,identity),"profile evidence follows actual retained lifetime and keeps the unrelated new generation");
+    odh::AvatarConstructorMetadata limited(1);
+    require(limited.admit_restored(*cold.find(2),identity,true)&&rejects([&]{limited.admit_restored(*cold.resolve_reference(old),identity,true);}),"bounded metadata table rejects excess retained origins without dropping existing evidence");
 }
-int main(){try{
+
+}
+int main(){try{authentic_constructor_metadata_profiles();
     {
         odh::World candidate;
         require(odh::materialize_npc_avatar_base(candidate,2,definition(),entries(),std::int16_t{123}),

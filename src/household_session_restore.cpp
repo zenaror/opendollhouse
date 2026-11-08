@@ -259,7 +259,7 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         if(a.ui_ghost)mark("ghost_entity");
         if(!a.static_footprint&&!route_actor&&!created&&!native_actor)mark("dynamic_footprint_entity");
         if(!changed.empty())
-            throw FormatError("session World metadata rejected for entity "+std::to_string(b.id)+": "+changed);
+            throw FormatError("session World metadata rejected for entity "+std::to_string(b.id)+": "+changed+" ("+describe_person_metadata_pair(a,b)+")");
     }
     for(const auto& entity:bundle.world.entities){
         const auto found=std::find_if(expected.entities.begin(),expected.entities.end(),

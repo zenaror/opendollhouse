@@ -77,6 +77,7 @@
 #include "odh/native_personal_session.hpp"
 #include "odh/neighbor_info.hpp"
 #include "odh/npc_avatar.hpp"
+#include "odh/avatar_constructor_metadata.hpp"
 #include "odh/avatar_neighbor.hpp"
 #include "odh/household_transfer.hpp"
 #include "odh/occupancy_projection.hpp"
@@ -2736,17 +2737,33 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
         std::sort(roster.begin(),roster.end(),[](const auto& a,const auto& b){return a.id<b.id;});return roster;
     };
-    std::set<odh::WorldEntityReference> original_constructor_metadata;
+    odh::AvatarConstructorMetadata original_constructor_metadata;
+    const auto npc_constructor_identity=[](const odh::SessionNpcAvatarOrigin& origin){
+        return odh::NativePersonalIdentity{origin.neighbor_id,origin.guid,origin.object_definition_id,
+            odh::native_personal_resource_key(origin.source,origin.asset),origin.character_fingerprint};
+    };
+    const auto household_constructor_identity=[](const odh::SessionHouseholdMember& member){
+        return odh::NativePersonalIdentity{member.neighbor_id,member.guid,member.object_definition_id,
+            member.character_asset,member.character_fingerprint};
+    };
+    const auto saved_constructor_body=[](const odh::SessionBundle& saved,odh::WorldEntityReference ref)->const odh::Entity*{
+        for(const auto& body:saved.world.entities)if(body.id==ref.id&&body.generation==ref.generation)return &body;
+        for(const auto& body:saved.world.retained_entities)if(body.id==ref.id&&body.generation==ref.generation)return &body;
+        return nullptr;
+    };
     std::optional<odh::ObjectGroupSnapshot> initial_group_restore;
     std::vector<odh::SessionCreatedObject> initial_retired_origins;
     if(session_context&&!session_context->restore_archive.empty()){
         const auto saved=odh::decode_session_bundle(session_context->restore_archive);
-        if(saved.neighbor_inventory&&saved.neighbor_inventory->version==2){
-            for(const auto& body:saved.world.entities)if(body.kind==odh::EntityKind::avatar&&body.person_data.size()==256)
-                original_constructor_metadata.insert({body.id,body.generation});
-            for(const auto& body:saved.world.retained_entities)if(body.kind==odh::EntityKind::avatar&&body.person_data.size()==256)
-                original_constructor_metadata.insert({body.id,body.generation});
-        }
+        const bool native_profile=saved.neighbor_inventory&&saved.neighbor_inventory->version==2;
+        const auto admit_profile=[&](odh::WorldEntityReference ref,const odh::NativePersonalIdentity& identity){
+            if(const auto* body=saved_constructor_body(saved,ref))
+                original_constructor_metadata.admit_restored(*body,identity,native_profile);
+        };
+        for(const auto& npc:saved.npc_avatars)admit_profile({npc.origin.id,npc.origin.generation},npc_constructor_identity(npc.origin));
+        for(const auto& member:saved.household_roster)admit_profile({member.id,member.generation},household_constructor_identity(member));
+        if(saved.object_history)for(const auto& origin:saved.object_history->retired_npc_avatars)
+            admit_profile({origin.id,origin.generation},npc_constructor_identity(origin));
         if(saved.object_history)initial_retired_origins=saved.object_history->retired_created_objects;
         if(saved.object_groups){
             if(!definition_index)throw odh::FormatError("group restore requires its actual resource index");
@@ -2811,7 +2828,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         odh::World metadata;
         if(!data.entry_points||!odh::materialize_npc_avatar_base(metadata,origin.id,definition.definition,*data.entry_points))
             throw odh::FormatError("NPC resource cannot reconstruct avatar metadata");
-        if(original_constructor_metadata.count({origin.id,origin.generation})){
+        if(original_constructor_metadata.contains({origin.id,origin.generation},npc_constructor_identity(origin))){
             if(!neighbor)throw odh::FormatError("original NPC metadata requires its authenticated neighbor source");
             std::vector<std::int16_t> bank(256);odh::apply_original_neighbor_personal(*neighbor,bank);
             if(!metadata.replace_person_data(origin.id,bank)||!metadata.declare_definition_word(origin.id,10,0))
@@ -2841,7 +2858,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         odh::World metadata;
         if(!data.entry_points||!odh::materialize_npc_avatar_base(metadata,member.id,definition->definition,*data.entry_points))
             throw odh::FormatError("household character resource cannot reconstruct exact avatar constructor metadata");
-        if(original_constructor_metadata.count({member.id,member.generation})){
+        if(original_constructor_metadata.contains({member.id,member.generation},household_constructor_identity(member))){
             std::vector<std::int16_t> bank(256);odh::apply_original_neighbor_personal(*neighbor,bank);
             if(!metadata.replace_person_data(member.id,bank)||!metadata.declare_definition_word(member.id,10,0))
                 throw odh::FormatError("original household metadata cannot bind its selective source profile");
@@ -2897,6 +2914,18 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
            !metadata.set_person_data(member.id,31,member.neighbor_id)||
            !metadata.set_person_data(member.id,61,signed_word(lease.family_chunk_id)))
             throw odh::FormatError("historical household resource cannot reconstruct exact avatar metadata");
+        // Historical occupancy owns its own profile. Never borrow the active
+        // family's registry or infer native construction from an ID alone.
+        const auto historical=odh::decode_session_bundle(bytes);
+        const auto* source_body=saved_constructor_body(historical,{member.id,member.generation});
+        if(source_body&&odh::AvatarConstructorMetadata::restored_original(*source_body,household_constructor_identity(member),
+            historical.neighbor_inventory&&historical.neighbor_inventory->version==2)){
+            if(!metadata.replace_person_data(member.id,source_body->person_data)||
+               !metadata.declare_definition_word(member.id,10,0)||
+               !metadata.set_person_data(member.id,31,member.neighbor_id)||
+               !metadata.set_person_data(member.id,61,signed_word(lease.family_chunk_id)))
+                throw odh::FormatError("historical original household constructor metadata publication failed");
+        }
         auto entity=*metadata.find(member.id);entity.generation=member.generation;return entity;
 #else
         (void)origin;throw odh::FormatError("historical household storage provider is unavailable on this host");
@@ -3582,11 +3611,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         const auto& inputs=*actor->npc_body_inputs;
         actor->body_state=odh::derive_avatar_body_descriptor(world,actor->id,random,inputs.body,
             inputs.global_walk,inputs.global_swim,inputs.object_walk);
-        const auto& names=inputs.body->names;
-        if(saved.selected_name){
-            if(std::find(names.begin(),names.end(),*saved.selected_name)==names.end())
-                throw odh::FormatError("NPC saved body name is not in its exact resource");
-        }else if(!names.empty())throw odh::FormatError("NPC saved body name choice is absent");
+        original_constructor_metadata.validate_selected_name({saved.origin.id,saved.origin.generation},
+            npc_constructor_identity(saved.origin),saved.selected_name,
+            neighbors?neighbors->by_id(saved.origin.neighbor_id):nullptr,inputs.body->names);
         actor->body_state->selected_name=saved.selected_name;
         simulation_motives.emplace(actor->id,odh::Ts1MotiveDecay{});
         if(!simulation_motives.at(actor->id).restore(saved.decay))
@@ -14181,6 +14208,7 @@ struct PlacementCandidateProbe {
         std::sort(roots.begin(),roots.end());roots.erase(std::unique(roots.begin(),roots.end()),roots.end());
         std::vector<odh::WorldEntityReference> collected;
         if(!world.collect_retained_bodies(roots,&collected))return false;
+        original_constructor_metadata.collect(world);
         if(relationships)for(const auto& ref:collected)
             if(!relationships->forget_object_source(ref.id,ref.generation))return false;
         if(live_dynamic_groups&&!live_dynamic_groups->collect_retired_native_members())return false;
@@ -14744,6 +14772,10 @@ struct PlacementCandidateProbe {
                 throw odh::FormatError("NPC removal or identity replacement is not a supported capture boundary");
             const auto motive=simulation_motives.find(actor->id);
             if(motive==simulation_motives.end())throw odh::FormatError("NPC motive continuation is absent");
+            if(!actor->npc_body_inputs||!actor->npc_body_inputs->body)
+                throw odh::FormatError("NPC name capture lacks its immutable body resource");
+            original_constructor_metadata.validate_selected_name({origin.id,origin.generation},npc_constructor_identity(origin),
+                actor->body_state->selected_name,neighbors?neighbors->by_id(origin.neighbor_id):nullptr,actor->npc_body_inputs->body->names);
             odh::SessionNpcAvatar npc;npc.origin=origin;npc.primary_owner=actor->primary_owner;
             npc.origin.source=odh_host::generic_session_source_key(session_context->game_root,origin.source);
             npc.runtime=capture_runtime_entity(actor->id,*actor->vm,*actor->controllers,actor->playback,actor->routing.get());
@@ -17636,6 +17668,9 @@ struct PlacementCandidateProbe {
                     return e&&e->generation==generation&&(!pending.vm||pending.vm->run_generation()==creator_run)&&
                         (pending.lifecycle_current?pending.lifecycle_current():
                          (pending.vm->status()==odh::VmStatus::waiting&&pending.vm->pending()&&pending.vm->pending()->ticket==pending.ticket));};
+                if(pending.request.original_semantics)
+                    original_constructor_metadata.admit_constructed(world,{id,generation},npc_constructor_identity(*bound->npc_origin),
+                        pending.request,current);
                 if(auto* registry=current_position_registry()){
                     // Avatar.MovesOften is always true; GameObject.MovedSelf
                     // constructor history belongs only to ordinary objects.
