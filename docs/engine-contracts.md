@@ -86,6 +86,14 @@ objeto e outro reutilizar seu número, isso não autoriza executar a ação no
 substituto. Esses contratos são internos e experimentais; não definem uma nova
 API pública para mods.
 
+Uma caminhada pode continuar consultando a posição e a direção do alvo que
+acabou de sair do lote. Essas leituras usam a referência exata preservada,
+incluindo sua geração, mesmo se outro personagem reutilizar o mesmo número.
+Isso não permite mover ou alterar o alvo retirado: o Sim que caminha precisa
+continuar presente, e as verificações de posição, obstáculos e permissões
+permanecem obrigatórias. A direção de um objeto fora do mapa também vem do
+próprio objeto, nunca de seu substituto.
+
 Planejar uma passagem entre cômodos e caminhar até ela são etapas diferentes.
 A primeira usa o mapa de passagens e confere se as portas e escadas ainda são
 as mesmas, nas posições esperadas. A caminhada verifica então os obstáculos

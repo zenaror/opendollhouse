@@ -27,6 +27,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Leitura da posição e direção de alvos que saíram do lote durante uma
+  caminhada, preservando a referência original quando seu número é reutilizado.
 - Tratamento da posição especial usada pelo jogo para retirar personagens do
   lote, preservando a direção e os vínculos dos objetos carregados.
 - Referências de ações pendentes a objetos removidos, permitindo o encerramento

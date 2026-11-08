@@ -1,6 +1,7 @@
 #include "odh/routing.hpp"
 #include "odh/source_walk_plan.hpp"
 #include "odh/slot_scoring.hpp"
+#include "odh/source_direction.hpp"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -913,7 +914,7 @@ void range_retry_and_replay(){
     require(fallback&&fallback->source_range&&fallback->path.back()==odh::RoutePoint{4,20}&&fallback->source_range->fallback_goals.empty(),
         "range fallback preserves order without rerunning RNG or live placement");
     retry.finish(2);
-    for(bool unknown:{false,true}){
+    for(unsigned target_state=0;target_state<3;++target_state)for(bool unknown:{false,true}){
         Fixture replay;replay.table=range_table();bool same_room=false;unsigned providers=0;std::optional<odh::RoutePlacementContext> captured;
         replay.route.set_room_pair_provider([&](const auto&,const auto&){return std::optional<std::pair<std::uint16_t,std::uint16_t>>{{1,static_cast<std::uint16_t>(same_room?1:2)}};});
         replay.route.set_room_portal_step_provider([&](auto,const auto&,const auto&,const auto&,const auto&,auto){
@@ -923,17 +924,36 @@ void range_retry_and_replay(){
             require(!replay.vm.dispatch_active()&&replay.vm.status()==odh::VmStatus::waiting&&
                 context.proof.matches(context.frame,replay.vm,context.instruction,context.dispatch),
                 "only the private room-route replay mints authority for the actual waiting source45");
+            const auto* body=replay.world.frame_entity(context.frame,odh::VmEntityRole::stack_object);
+            const auto actual_angle=body?odh::source_entity_radian_direction(replay.world,body->id,body->generation):std::nullopt;
+            require(body&&body->position==std::optional<odh::EntityPosition>{target}&&actual_angle&&*actual_angle==angle&&
+                body->dead==(target_state!=0),"private range replay reads exact live or retained source anchor");
             if(unknown)throw std::runtime_error("EP5 capability unknown");
             return odh::AuthenticatedRangeSlotGoals{{range_goal(table,target,angle,{20,4})},0,0,0};
         });
         replay.start();require(providers==0&&replay.route.waiting_for_room_portal_step(),"cross-room request parks before local generic goal generation");
         const auto ticket=replay.vm.pending()->ticket;
+        const auto target_ref=odh::vm_context_reference(replay.vm.stack().back().context,odh::VmEntityRole::stack_object);
+        require(target_ref.generation!=0,"deferred room route binds the original target generation");
+        if(target_state){
+            require(replay.world.remove_retaining_body(target_ref),"retire referenced target while real room route waits");
+            if(target_state==2)require(replay.world.create(target_ref.id,odh::EntityKind::object)&&
+                replay.world.set_position(target_ref.id,{52,52,1,4}),"replacement cannot redirect frozen private route target");
+        }
         const bool advanced=replay.route.tick(1);
         require(providers==1&&captured&&!captured->proof.matches(captured->frame,replay.vm,captured->instruction,captured->dispatch),
             "private replay lease also expires on both successful and throwing callback return");
         if(unknown){require(!advanced&&replay.route.active()&&replay.vm.pending()&&replay.vm.pending()->ticket==ticket&&
             replay.vm.status()==odh::VmStatus::waiting,"unknown replay placement keeps authored branch pending rather than forging false");}
-        else {require(advanced&&replay.route.capture_local_session_route(owner)->source_range.has_value(),"private replay publishes a typed local range continuation");replay.finish(2);}
+        else {
+            std::string capture_reason;
+            const auto continuation=replay.route.capture_local_session_route(owner,&capture_reason);
+            require(advanced&&continuation&&continuation->source_range.has_value(),
+                ("private replay publishes a typed local range continuation: target_state="+std::to_string(target_state)+
+                 " advanced="+std::to_string(advanced)+" capture="+std::to_string(bool(continuation))+
+                 " capture_reason="+capture_reason+" routing="+replay.route.diagnostic()).c_str());
+            replay.finish(2);
+        }
     }
 }
 void generic_ranked_sparse_choices(){

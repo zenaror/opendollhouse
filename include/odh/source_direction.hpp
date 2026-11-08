@@ -14,11 +14,15 @@ inline float source_game_object_radians(std::uint8_t notch) noexcept {
     return static_cast<float>(value);
 }
 inline std::optional<float> source_entity_radian_direction(const World& world,std::int16_t id,std::uint64_t generation){
-    const auto* entity=world.find(id);if(!entity||entity->generation!=generation)return {};
+    // Source entity references retain their exact body after Delete. This is
+    // a read-only orientation lookup, never authority to mutate that body.
+    const auto* entity=world.resolve_reference({id,generation});if(!entity)return {};
     if(entity->kind==EntityKind::avatar)return std::isfinite(entity->radian_direction)?std::optional<float>{entity->radian_direction}:std::nullopt;
     if(entity->position)return entity->position->direction<=7?std::optional<float>{source_game_object_radians(entity->position->direction)}:std::nullopt;
-    VmFrame frame;frame.context.caller=id;const auto direction=world.read(frame,3,1);
-    if(!direction||*direction<0||*direction>7)return {};
-    return source_game_object_radians(static_cast<std::uint8_t>(*direction));
+    // Read this body's own scalar: an unbound numeric VM lookup could resolve
+    // a replacement entity after ID reuse instead of the retained source body.
+    const auto direction=entity->object_words.find(1);
+    if(direction==entity->object_words.end()||direction->second<0||direction->second>7)return {};
+    return source_game_object_radians(static_cast<std::uint8_t>(direction->second));
 }
 }

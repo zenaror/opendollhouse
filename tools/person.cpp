@@ -14348,8 +14348,63 @@ struct PlacementCandidateProbe {
             const auto* slot=odh::slot_of_type(table,3,index);
             const auto angle=object?odh::source_entity_radian_direction(world,object->id,object->generation):std::nullopt;
             if(!actor||!object||!slot||!angle||(actor->position&&!(*actor->position==caller))||
-               (object->position&&!(*object->position==target))||*angle!=radians)
+               (object->position&&!(*object->position==target))||*angle!=radians){
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                // Failure-only observation: the enclosing routing exception
+                // receipt is capped, so retain the complete participant facts
+                // together in the existing session log. Never retry this call.
+                try {
+                    std::ostringstream receipt;receipt<<"source SLOT participant mismatch"
+                        <<" actor_present="<<bool(actor)<<" object_present="<<bool(object)
+                        <<" slot_present="<<bool(slot)<<" angle_present="<<bool(angle)
+                        <<" actor_pose_mismatch="<<bool(actor&&actor->position&&!(*actor->position==caller))
+                        <<" object_pose_mismatch="<<bool(object&&object->position&&!(*object->position==target))
+                        <<" angle_mismatch="<<bool(angle&&*angle!=radians)
+                        <<" index="<<index<<" table_version="<<table.version<<" table_records="<<table.records.size();
+                    const auto pose=[&](const std::optional<odh::EntityPosition>& position){
+                        if(position)receipt<<position->x<<','<<position->y<<','<<position->level<<','<<unsigned(position->direction);
+                        else receipt<<"absent";
+                    };
+                    receipt<<" expected_caller=";pose(caller);receipt<<" expected_target=";pose(target);
+                    receipt<<" expected_angle="<<std::hexfloat<<radians<<" actual_source_angle=";
+                    if(angle)receipt<<*angle;else receipt<<"absent";
+                    receipt<<std::defaultfloat;
+                    const auto entity=[&](const char* label,const odh::Entity* value){
+                        receipt<<' '<<label<<'=';
+                        if(!value){receipt<<"absent";return;}
+                        receipt<<value->id<<'/'<<value->generation<<",dead:"<<value->dead<<",avatar:"
+                            <<(value->kind==odh::EntityKind::avatar)<<",pose:";pose(value->position);
+                        receipt<<",raw_angle:"<<std::hexfloat<<value->radian_direction<<std::defaultfloat<<",word1:";
+                        const auto heading=value->object_words.find(1);
+                        if(heading!=value->object_words.end())receipt<<heading->second;else receipt<<"absent";
+                    };
+                    entity("frame_actor",actor);entity("frame_object",object);
+                    entity("live_caller_lookup",world.find(context.frame.context.caller));
+                    entity("live_stack_lookup",world.find(context.frame.context.stack_object));
+                    const auto refs=[&](const char* label,const odh::VmContext& frame_context){
+                        receipt<<' '<<label<<"=[bound:"<<frame_context.entity_references_bound
+                            <<",caller:"<<frame_context.caller<<'/'<<frame_context.caller_generation
+                            <<",callee:"<<frame_context.callee<<'/'<<frame_context.callee_generation
+                            <<",stack:"<<frame_context.stack_object<<'/'<<frame_context.stack_object_generation<<']';
+                    };
+                    refs("source_frame",context.frame.context);
+                    receipt<<" owner="<<context.frame.context.code_owner<<" routine="<<context.frame.key.id
+                        <<" pc="<<context.frame.pc<<" opcode="<<context.instruction.opcode<<" operands=";
+                    for(const auto byte:context.instruction.operands)receipt<<unsigned(byte)<<',';
+                    receipt<<" run="<<context.vm->run_generation()<<" dispatch_ticket="<<context.dispatch.ticket;
+                    if(context.vm->pending()){
+                        receipt<<" pending_ticket="<<context.vm->pending()->ticket;
+                        refs("pending_frame",context.vm->pending()->context);
+                    }else receipt<<" pending_ticket=absent";
+                    const auto* routing=source_routing_for(context.frame.context.caller);
+                    receipt<<" route_for_caller="<<context.frame.context.caller<<" route_present="<<bool(routing);
+                    if(routing)receipt<<" route_active="<<routing->active()<<" route_depth="<<routing->active_route_depth()
+                        <<" route_record="<<routing->has_route_record();
+                    session_log.event(receipt.str());
+                }catch(...){/* Diagnostic observation never replaces the source failure. */}
+#endif
                 throw odh::FormatError("source SLOT participants differ from the authenticated route");
+            }
             const auto current=[&]{return context.proof.matches(context.frame,*context.vm,context.instruction,context.dispatch);};
             const odh::Ts1PlacementInvocation invocation{context.frame,context.instruction,context.dispatch,current};
             const auto goals=placement_adapter->locations(invocation,*slot,{object->id,object->generation},

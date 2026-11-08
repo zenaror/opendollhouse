@@ -3179,7 +3179,9 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const auto execution_actor_attachment=actor->attachment,execution_target_attachment=target->attachment;
     const auto refresh_execution_participants=[&]()->bool {
         auto* current_actor=world_.find(execution_actor_id);
-        auto* current_target=world_.find(execution_target_id);
+        // Only the moving actor needs live mutation authority. The target is
+        // the same exact source anchor already read by the placement proof.
+        const auto* current_target=world_.resolve_reference({execution_target_id,execution_target_generation});
         if(!current_actor||!current_target||current_actor->generation!=execution_actor_generation||
            current_target->generation!=execution_target_generation||!current_actor->position||!current_target->position||
            !(*current_actor->position==execution_actor_position)||!(*current_target->position==execution_target_position)||
@@ -4786,6 +4788,22 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
     executing_=false;
     PrimitiveOutcome outcome;
     replay_placement_range_=false;
+    const auto replay_failure=[&](const std::string& reason,const char* phase,const char* exception){
+        std::string detail=reason+" phase="+phase+" actor="+std::to_string(deferred.actor)+"/"+
+            std::to_string(deferred.actor_generation)+" target="+std::to_string(deferred.target)+"/"+
+            std::to_string(deferred.target_generation)+" run="+std::to_string(deferred.run_generation)+
+            " ticket="+std::to_string(deferred.ticket)+" frame_state="+std::to_string(static_cast<unsigned>(deferred.frame.state))+
+            " portal_steps="+std::to_string(deferred.portal_steps)+" portal_retries="+std::to_string(deferred.portal_retries)+
+            " authenticated_range="+std::to_string(replay_placement_range_);
+        if(deferred.replay_frame)detail+=" owner="+std::to_string(deferred.replay_frame->context.code_owner)+
+            " routine="+std::to_string(deferred.replay_frame->key.id)+" pc="+std::to_string(deferred.replay_frame->pc);
+        if(deferred.replay_instruction)detail+=" opcode="+std::to_string(deferred.replay_instruction->opcode);
+        if(exception){
+            std::string bounded;for(const char* at=exception;*at&&bounded.size()<512;++at)bounded.push_back(*at);
+            detail+=" exception="+bounded;
+        }
+        return detail;
+    };
     try {
         if(!vm_->pending()||vm_->pending()->ticket!=deferred.ticket||vm_->run_generation()!=deferred.run_generation)
             throw std::logic_error("private range replay pending authority is stale");
@@ -4793,6 +4811,17 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
         struct ReplayEnd {std::optional<std::pair<std::uint64_t,std::uint64_t>>& value;~ReplayEnd(){value.reset();}} replay_end{replay_placement_authorization_};
         outcome=request(*deferred.replay_frame,*deferred.replay_instruction,
                         VmDispatch{vm_,deferred.ticket});
+    } catch(const std::exception& error) {
+        executing_=was_executing;
+        if(replay_placement_range_){
+            const auto reason=replay_failure("authenticated range planning is unsupported after room transition",
+                "room_transition_local_replay_exception",error.what());
+            job_=std::move(deferred);diagnostic_=reason;return false;
+        }
+        const auto reason=replay_failure("local Route45 SLOT planning raised an exception after room transition",
+            "room_transition_local_replay_exception",error.what());
+        job_=std::move(deferred);
+        return finish(false,reason);
     } catch(...) {
         executing_=was_executing;
         if(replay_placement_range_){
@@ -4814,9 +4843,11 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
         return true;
     }
     if(replay_placement_range_&&outcome.disposition==PrimitiveDisposition::unsupported){
+        const auto reason=replay_failure(outcome.diagnostic.empty()?"authenticated range planning is unsupported after room transition":outcome.diagnostic,
+            "room_transition_local_replay_unsupported",nullptr);
         if(job_)job_.reset();
         job_=std::move(deferred);
-        diagnostic_=outcome.diagnostic.empty()?"authenticated range planning is unsupported after room transition":outcome.diagnostic;
+        diagnostic_=reason;
         return false;
     }
     const auto reason=diagnostic_.empty()?"local Route45 SLOT planning failed after room transition":diagnostic_;

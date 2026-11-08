@@ -37,6 +37,69 @@ struct Fixture{
             });active=&vm;vm.start(odh::routine_key(4096),{1,2,2,0});require(vm.run(1)==odh::VmStatus::returned_true,"real SLOT request completes");return result;
     }
 };
+void retained_source_orientation(){
+    for(const bool avatar:{false,true})for(const bool positioned:{false,true})for(const bool reuse:{false,true}){
+        odh::World world;require(world.create(2,avatar?odh::EntityKind::avatar:odh::EntityKind::object)&&
+            world.set_position(2,{160,160,1,6}),"orientation exact source body");
+        if(avatar)require(world.set_radian_direction(2,0.03125f),"source avatar continuous orientation");
+        if(!positioned)require(world.place_out_of_world(2,6),"source OOW body retains its own heading");
+        const odh::WorldEntityReference old{2,world.find(2)->generation};
+        const auto expected=odh::source_entity_radian_direction(world,old.id,old.generation);
+        require(expected&&world.remove_retaining_body(old)&&world.resolve_reference(old)->dead&&!world.is_live_reference(old),
+            "retire source body without destroying its bound reference");
+        if(reuse)require(world.create(2,odh::EntityKind::object)&&world.set_position(2,{320,352,2,2})&&
+            world.find(2)->generation!=old.generation,"replacement has another body, pose and heading");
+        const auto revision=world.spatial_revision();
+        require(odh::source_entity_radian_direction(world,old.id,old.generation)==expected&&world.spatial_revision()==revision,
+            "readonly orientation preserves exact retained body across absent or reused numeric ID");
+        require(!odh::source_entity_radian_direction(world,old.id,old.generation+1000)&&
+            !odh::source_entity_radian_direction(world,old.id,0)&&!odh::source_entity_radian_direction(world,99,old.generation),
+            "missing, wrong-generation and nil references stay unknown");
+        require(!world.publish_native_slot0(old,{}),"readonly anchor never authorizes retained-body mutation");
+    }
+    odh::World missing;require(missing.create(2,odh::EntityKind::object),"unknown OOW direction source");
+    const odh::WorldEntityReference old{2,missing.find(2)->generation};
+    require(!odh::source_entity_radian_direction(missing,old.id,old.generation)&&missing.remove_retaining_body(old)&&
+        missing.create(2,odh::EntityKind::object)&&missing.declare_object_word(2,1,6)&&
+        !odh::source_entity_radian_direction(missing,old.id,old.generation),
+        "retained OOW body cannot borrow a replacement's known heading");
+}
+void retained_target_range(){
+    for(const bool avatar:{false,true})for(const bool reuse:{false,true}){
+        Fixture fixture;const std::int16_t target_id=avatar?4:2;
+        if(avatar)require(fixture.world.set_radian_direction(target_id,0.03125f),"ranged avatar uses continuous target heading");
+        const odh::Ts1PlacementIdentity target{target_id,fixture.world.find(target_id)->generation};
+        const odh::Ts1PlacementIdentity caller{1,fixture.world.find(1)->generation};
+        odh::VmContext source{1,1,target_id,0};require(fixture.world.bind_context_live(source),"freeze exact source frame references");
+        auto record=slot();record.flags=255;record.proximity=std::array<std::int32_t,3>{16,32,16};
+        const auto run=[&](odh::Ts1PlacementIdentity anchor){
+            odh::Ts1PlacementLocations result;odh::Vm* active=nullptr;
+            odh::Vm vm({{odh::routine_key(4096),{0x8002,{{27,254,255,{0,0,255,254,0,0,6,0}}},{},odh::Bhav::Metadata{0,4,4,0}}}},fixture.world.vm_memory(),{},
+                [&](const auto& frame,const auto& instruction,const auto&,const auto& dispatch){
+                    odh::Ts1PlacementInvocation invocation{frame,instruction,dispatch,[&]{return active->matches_active_primitive(frame,instruction,dispatch);}};
+                    result=odh::ts1_find_slot_locations(fixture.world,invocation,record,anchor,caller,fixture.services);
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+                });active=&vm;
+            require(vm.start(odh::routine_key(4096),source)==odh::VmStatus::running&&vm.run(1)==odh::VmStatus::returned_true,
+                "range parser retains the real source invocation");return result;
+        };
+        const auto baseline=run(target);require(baseline.supported&&!baseline.goals.empty(),"live source range baseline");
+        const auto before_checks=fixture.checks,before_draws=fixture.draws;
+        require(fixture.world.remove_retaining_body({target.id,target.generation}),"source target becomes an exact retained anchor");
+        if(reuse)require(fixture.world.create(target.id,odh::EntityKind::object)&&fixture.world.set_position(target.id,{400,432,2,4}),
+            "range target ID reused with unrelated coordinates and direction");
+        const auto retained=run(target);require(retained.supported&&retained.goals.size()==baseline.goals.size()&&
+            fixture.checks-before_checks==before_checks&&fixture.draws-before_draws==before_draws,
+            "retained source range performs the same candidate checks and RNG draws");
+        for(std::size_t n=0;n<baseline.goals.size();++n)require(retained.goals[n].position==baseline.goals[n].position&&
+            retained.goals[n].radians==baseline.goals[n].radians&&retained.goals[n].score==baseline.goals[n].score,
+            "retained range geometry, orientation and ranking never follow the replacement ID");
+        require(!run({target.id,target.generation+1000}).supported&&!run({99,target.generation}).supported,
+            "source range rejects missing and wrong-generation anchors");
+        require(fixture.world.remove_retaining_body({caller.id,caller.generation})&&!run(target).supported,
+            "readable retained target does not make a retained moving caller valid");
+    }
+}
 void diagnostic_observation(){
     Fixture baseline,observed;auto r=slot();r.flags=255;r.proximity=std::array<std::int32_t,3>{16,16,16};
     odh::Ts1SlotDiagnostics diagnostic;unsigned reports=0;
@@ -169,5 +232,5 @@ void containment_and_unknown(){
     height.height=5;height.offset_bits[2]=bits(3.25f);require(odh::ts1_storage_slot_height(height)==3.25f,"nonstandard height5 uses raw Z");
 }
 }
-int main(){try{diagnostic_observation();exact_and_offsets();range_and_phase();chairs_and_failure();containment_and_unknown();std::cout<<"TS1 shared SLOT parser matrix passed\n";}
+int main(){try{retained_source_orientation();retained_target_range();diagnostic_observation();exact_and_offsets();range_and_phase();chairs_and_failure();containment_and_unknown();std::cout<<"TS1 shared SLOT parser matrix passed\n";}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

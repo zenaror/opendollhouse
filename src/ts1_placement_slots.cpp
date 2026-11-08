@@ -21,7 +21,7 @@ std::int16_t narrow_level(std::int64_t level){const auto bits=static_cast<std::u
 std::int32_t tile(std::int32_t x){return x>=0?x/16:-static_cast<std::int32_t>((-static_cast<std::int64_t>(x)+15)/16);}
 bool live(const World& world,Ts1PlacementIdentity identity){const auto* e=world.find(identity.id);return e&&identity.generation&&e->generation==identity.generation;}
 EntityPosition source_position(const World& world,Ts1PlacementIdentity identity){
-    const auto* e=world.find(identity.id);if(!e||e->generation!=identity.generation)throw std::runtime_error("SLOT entity identity changed");
+    const auto* e=world.resolve_reference({identity.id,identity.generation});if(!e)throw std::runtime_error("SLOT entity identity changed");
     if(!e->position)return {-32768,-32768,1,0};
     const auto p=*e->position;if(p.x<-32768||p.x>32767||p.y<-32768||p.y>32767||p.level<-128||p.level>127||p.direction>7)
         throw std::runtime_error("SLOT position outside source short/sbyte domain");
@@ -80,7 +80,10 @@ Ts1PlacementLocations ts1_find_slot_locations(const World& world,const Ts1Placem
         diagnostic.samples[diagnostic.sample_count++]={reason,position,error,blocker,1};
     };
     try{
-        const auto valid=[&]{return invocation.source_still_matches&&invocation.source_still_matches()&&live(world,target)&&live(world,caller);};
+        // The source parser reads its target's retained entity reference;
+        // only the caller receives PositionValid checks and must remain live.
+        const auto valid=[&]{return invocation.source_still_matches&&invocation.source_still_matches()&&
+            world.resolve_reference({target.id,target.generation})&&live(world,caller);};
         if(!valid()||!services.out_of_bounds||!services.room_at||!limits.candidates||!limits.group_members)
             throw std::runtime_error("SLOT source identities/geometry capability unavailable");
         const auto raw=slot.proximity.value_or(std::array<std::int32_t,3>{0,0,0});
