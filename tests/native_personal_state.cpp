@@ -30,6 +30,59 @@ void person(odh::World& w,std::int16_t id=1,std::int16_t nid=41){
  require(w.set_person_data(id,31,nid)&&w.set_person_data(id,61,21)&&w.set_person_data(id,32,4)&&w.set_motive(id,9,-73),"bind identity and independent needs/role");
 }
 odh::NativePersonalSource source(const odh::World& w,std::int16_t id=1,std::int16_t nid=41){return {identity(nid),{id,w.find(id)->generation}};}
+void matrix_resource_locators(){
+ for(const auto& source:std::vector<std::string>{"UserData/Characters/User1.iff","PlayerData/Characters/User1.iff"}){
+  const auto key=odh::native_personal_resource_key(source,{});require(key==source,"direct personal identity bytes unchanged");
+  const auto locator=odh::native_personal_resource_locator(key);require(locator.character_catalog&&locator.source==source&&locator.asset.empty(),"direct identity stays in its authenticated catalog");
+ }
+ require(odh::native_personal_resource_key("UserData8/Characters/User1.iff",{})=="UserData/Characters/User1.iff","installed neighborhood character aliases retain prior logical identity");
+ const std::string source="GameData/Objects/Objects.far",entry="People\\PaperCarrierF1.iff";
+ const auto key=odh::native_personal_resource_key(source,entry);const auto decoded=odh::native_personal_resource_locator(key);
+ require(!decoded.character_catalog&&decoded.source==source&&decoded.asset==entry,"packaged NPC locator preserves exact FAR entry bytes");
+ require(odh::native_personal_resource_key(decoded.source,decoded.asset)==key,"packaged locator canonical roundtrip");
+ require(odh::native_personal_resource_key("GameData/a!b","c.iff")!=odh::native_personal_resource_key("GameData/a","b!c.iff"),"source and entry separators cannot alias");
+ require(odh::native_personal_resource_key(source,"People/PaperCarrierF1.iff")!=key,"FAR slash and backslash names do not silently normalize");
+ for(const auto& invalid:std::vector<std::string>{"/outside.iff","C:/outside.iff","GameData/../Objects.far","GameData//Objects.far","GameData/./Objects.far","GameData\\Objects.far",std::string("GameData/a\0b",12)})
+  rejects([&]{odh::native_personal_resource_key(invalid,"People\\PaperCarrierF1.iff");});
+ for(const auto& invalid:std::vector<std::string>{"../People.iff","People\\..\\Carrier.iff","/People.iff","People//Carrier.iff","C:\\Carrier.iff"})
+  rejects([&]{odh::native_personal_resource_key(source,invalid);});
+ for(const auto& invalid:std::vector<std::string>{"Resource/v2/00/00","Resource/v1/1/00","Resource/v1/2F/00","Resource/v1/00/00","Resource/v1/abcd/00/00","UserData/Characters/../User1.iff","UserData/Characters/a/b.iff"})
+  rejects([&]{odh::native_personal_resource_locator(invalid);});
+ std::cout<<"direct and packaged personal resource locators passed\n";
+}
+void matrix_packaged_retirement(){
+ odh::World world;person(world);const auto before_world=world.snapshot();const auto needs=world.find(1)->motives;
+ const auto reference=odh::WorldEntityReference{1,world.find(1)->generation};auto packaged=identity();
+ packaged.character_asset=odh::native_personal_resource_key("GameData/Objects/Objects.far","People\\PaperCarrierF1.iff");
+ odh::NativePersonalState owner(seed(),digest());auto prepared=owner.prepare(world,{{packaged,reference}},odh::NativePersonalWriteSource::retirement);
+ require(owner.commit_retirement(std::move(prepared),world,[&]{return world.retire(1);}),"packaged seeded NPC retirement publishes exact personal bank");
+ require(!world.find(1)&&owner.snapshot().records.front().identity.character_asset==packaged.character_asset,"retired packaged identity is retained without a live body");
+ const auto wire=odh::encode_native_personal_snapshot(owner.snapshot());odh::NativePersonalState restored(seed(),digest());restored.restore(odh::decode_native_personal_snapshot(wire));
+ odh::NeighborContext neighbors(seed());neighbors.bind_personal_state(&restored);
+ require(neighbors.person_data(41,10)->value==110,"future packaged constructor reads persisted personal progress through shared neighbor owner");
+ odh::SessionBundle active;active.world=before_world;
+ odh::SessionNpcAvatar npc; npc.origin={1,reference.generation,packaged.guid,41,"GameData/Objects/Objects.far","People\\PaperCarrierF1.iff",128,packaged.character_fingerprint};
+ active.npc_avatars.push_back(npc);active.world.entities.front().person_data[10]=1;
+ const auto prior=active;odh::project_native_personal_session(active,restored.snapshot());
+ require(active.world.entities.front().person_data[10]==110&&active.world.entities.front().motives==needs,"exact packaged live projection updates personal data without needs mutation");
+ require(active.world.entities.front().person_data[32]==4&&active.world.entities.front().generation==reference.generation,"packaged projection preserves role and body identity");
+ odh::World live;require(live.restore_snapshot(prior.world)&&live.set_position(1,{24,24,1,2}),"restore packaged positioned body");
+ require(odh::publish_native_personal_session(live,prior,restored.snapshot())&&live.find(1)->person_data[10]==110&&live.find(1)->position==std::optional<odh::EntityPosition>{odh::EntityPosition{24,24,1,2}},"packaged live publication preserves physical position");
+ for(unsigned kind=0;kind<4;++kind){auto wrong=prior;
+  if(kind==0)wrong.npc_avatars.front().origin.asset="People\\Maid.iff";
+  if(kind==1)wrong.npc_avatars.front().origin.source="ExpansionPack/Objects.far";
+  if(kind==2)wrong.npc_avatars.front().origin.character_fingerprint[0]^=1;
+  if(kind==3)wrong.npc_avatars.front().origin.object_definition_id++;
+  const auto old=odh::encode_world_snapshot(wrong.world);rejects([&]{odh::project_native_personal_session(wrong,restored.snapshot());});
+  require(odh::encode_world_snapshot(wrong.world)==old&&!wrong.personal_state,"mismatched packaged resource projection remains atomic");
+ }
+ auto duplicate=prior;duplicate.npc_avatars.push_back(npc);rejects([&]{odh::project_native_personal_session(duplicate,restored.snapshot());});
+ auto missing=packaged;missing.neighbor_id=99;missing.guid=999;odh::World outsider;require(outsider.create(1,odh::EntityKind::avatar,{0,88,3,16})&&outsider.define_type(1,999)&&outsider.set_person_data(1,31,99),"bind unmatched literal source");
+ rejects([&]{restored.prepare(outsider,{{missing,{1,outsider.find(1)->generation}}},odh::NativePersonalWriteSource::retirement);});
+ require(odh::encode_native_personal_snapshot(restored.snapshot())==wire,"unseeded NPC cannot manufacture persistent neighborhood identity");
+ std::cout<<"packaged NPC retirement/shared restore/live projection passed\n";
+}
+
 void matrix_records(){
  for(const auto version:{4,10})for(const bool present:{false,true}){
   auto n=seed(version,present);const auto raw=odh::encode_nbrs(n);odh::NativePersonalState state(n,digest());odh::NeighborContext view(n);view.bind_personal_state(&state);odh::World w;person(w);
@@ -116,4 +169,4 @@ void matrix_travel(){
  std::cout<<"visited NPC/HOME carrier projection and envelope mismatch passed\n";
 }
 }
-int main(){try{matrix_records();matrix_atomicity();matrix_schema();matrix_shared();matrix_sessions();matrix_travel();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{matrix_resource_locators();matrix_packaged_retirement();matrix_records();matrix_atomicity();matrix_schema();matrix_shared();matrix_sessions();matrix_travel();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

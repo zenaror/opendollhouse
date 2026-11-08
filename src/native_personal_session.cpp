@@ -6,10 +6,8 @@ namespace odh {
 namespace {
 NativePersonalIdentity identity(const SessionHouseholdMember& m){return {m.neighbor_id,m.guid,m.object_definition_id,m.character_asset,m.character_fingerprint};}
 NativePersonalIdentity identity(const SessionNpcAvatarOrigin& m){
- const std::filesystem::path source(m.source);
- if(!m.asset.empty()||source.parent_path().filename()!="Characters")throw FormatError("personal projection NPC is not a direct character resource");
  return {m.neighbor_id,m.guid,m.object_definition_id,
-   std::string(m.source.rfind("PlayerData/",0)==0?"PlayerData/Characters/":"UserData/Characters/")+source.filename().string(),m.character_fingerprint};
+   native_personal_resource_key(m.source,m.asset),m.character_fingerprint};
 }
 }
 void project_native_personal_session(SessionBundle& destination,const NativePersonalSnapshot& shared){

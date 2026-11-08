@@ -2000,26 +2000,41 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         for(const auto& record:personal_state->snapshot().records){
             if(retired_neighbor_ids.count(record.identity.neighbor_id))continue;
             if(!session_context)throw odh::FormatError("personal record lacks selected character catalogs");
-            const std::filesystem::path logical(record.identity.character_asset);
-            const auto parent=logical.parent_path().generic_string();
-            const auto root=parent=="PlayerData/Characters"?session_context->player_character_root:
-                parent=="UserData/Characters"?std::filesystem::path(*neighborhood_path).parent_path()/"Characters":std::filesystem::path{};
-            if(root.empty()||logical.filename().empty())throw odh::FormatError("personal record has unsupported character catalog");
-            const auto path=std::filesystem::canonical(root/logical.filename());
-            if(path.parent_path()!=std::filesystem::canonical(root)||std::filesystem::is_symlink(root/logical.filename())||
-               !std::filesystem::is_regular_file(path))throw odh::FormatError("personal record character escaped authenticated catalog");
-            const auto pin=pinned_characters.find(path);
-            if(pin!=pinned_characters.end()&&pin->second.fingerprint!=record.identity.character_fingerprint)
-                throw odh::FormatError("personal projection differs from the already pinned household resource");
-            const auto size=std::filesystem::file_size(path);
-            if(size>remaining_personal_bytes)throw odh::FormatError("personal record resources exceed bounded64MiB budget");
-            remaining_personal_bytes-=size;
-            auto bytes=std::make_shared<std::string>(static_cast<std::size_t>(size),'\0');
-            std::ifstream stream(path,std::ios::binary);stream.read(bytes->data(),static_cast<std::streamsize>(size));
-            if(!stream||stream.peek()!=std::char_traits<char>::eof()||odh::sha256(bytes->data(),bytes->size())!=record.identity.character_fingerprint)
-                throw odh::FormatError("personal record character fingerprint differs");
+            const auto locator=odh::native_personal_resource_locator(record.identity.character_asset);
+            Resource resource;
+            if(locator.character_catalog){
+                // Preserve legacy character locations and their catalog/symlink
+                // checks. Installed UserDataN is bound by this neighborhood.
+                const std::filesystem::path logical(locator.source);
+                const auto parent=logical.parent_path().generic_string();
+                const auto root=parent=="PlayerData/Characters"?session_context->player_character_root:
+                    parent=="UserData/Characters"?std::filesystem::path(*neighborhood_path).parent_path()/"Characters":std::filesystem::path{};
+                if(root.empty()||logical.filename().empty())throw odh::FormatError("personal record has unsupported character catalog");
+                const auto path=std::filesystem::canonical(root/logical.filename());
+                if(path.parent_path()!=std::filesystem::canonical(root)||std::filesystem::is_symlink(root/logical.filename())||
+                   !std::filesystem::is_regular_file(path))throw odh::FormatError("personal record character escaped authenticated catalog");
+                const auto pin=pinned_characters.find(path);
+                if(pin!=pinned_characters.end()&&pin->second.fingerprint!=record.identity.character_fingerprint)
+                    throw odh::FormatError("personal projection differs from the already pinned household resource");
+                resource={path.string(),{},true};
+            }else{
+                if(!definition_index)throw odh::FormatError("personal record lacks the admitted resource catalog");
+                const auto& definition=exact_session_definition(*definition_index,record.identity.guid,
+                    locator.source,locator.asset,record.identity.definition_chunk_id,session_context->game_root);
+                resource={definition.source,definition.asset,definition.asset.empty()};
+            }
+            // An encoded locator grants no arbitrary file access. The selected
+            // direct catalog or exact admitted definition above is the owner.
+            with_resource(resource,[&](const auto& view){
+                if(view.size()>remaining_personal_bytes||(!locator.character_catalog&&view.size()>16u*1024u*1024u))
+                    throw odh::FormatError("personal record resources exceed bounded input budget");
+                remaining_personal_bytes-=view.size();
+                auto bytes=std::make_shared<std::string>(static_cast<std::size_t>(view.size()),'\0');
+                view.read(0,bytes->data(),bytes->size());resource.frozen=std::move(bytes);
+            });
+            if(odh::sha256(resource.frozen->data(),resource.frozen->size())!=record.identity.character_fingerprint)
+                throw odh::FormatError("personal record resource fingerprint differs");
             std::optional<std::uint32_t> guid;
-            const Resource resource{path.string(),{},true,bytes};
             with_resource(resource,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
                 if(chunk.type=="OBJD"&&chunk.id==record.identity.definition_chunk_id){
                     if(guid)throw odh::FormatError("personal record character definition is ambiguous");
@@ -6449,9 +6464,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(origin.neighbor_id!=nid||origin.guid!=body->definition->guid||!actor->resource.frozen||
                odh::sha256(actor->resource.frozen->data(),actor->resource.frozen->size())!=origin.character_fingerprint)
                 throw odh::FormatError("personal NPC source differs from construction provenance");
-            if(!origin.asset.empty()||std::filesystem::path(origin.source).parent_path().filename()!="Characters")
-                throw odh::FormatError("personal NPC writer requires a direct character IFF");
-            const auto asset=std::string(origin.source.rfind("PlayerData/",0)==0?"PlayerData/Characters/":"UserData/Characters/")+std::filesystem::path(origin.source).filename().string();
+            const auto asset=odh::native_personal_resource_key(origin.source,origin.asset);
             return {{nid,origin.guid,origin.object_definition_id,asset,origin.character_fingerprint},{id,body->generation}};
         }
         throw odh::FormatError("personal writer has no admitted character resource owner");
@@ -11641,8 +11654,8 @@ struct PlacementCandidateProbe {
         runtime.route_reason.clear();return true;
     };
     bool route_restore_in_progress=true;
-    const auto idle_npc_route_cache_releasable=[&](const ActorRuntime& actor){
-        if(!actor.npc_origin||!actor.vm||actor.vm->dispatch_active()||
+    const auto idle_auxiliary_actor_route_cache_releasable=[&](const ActorRuntime& actor){
+        if(!actor.vm||actor.vm->dispatch_active()||
            !actor.routing||!actor.routing->can_release_idle_cache()||
            !actor.room_portals.contexts.empty()||actor.go_here_cancel_pending)return false;
         if(route_restore_in_progress&&household_restore){
@@ -11698,21 +11711,43 @@ struct PlacementCandidateProbe {
         for(const auto* other:auxiliary_actors)
             if(other!=&runtime&&other->route_grid&&other->route_grid->grid)
                 existing_cells+=other->route_grid->grid->cells();
-        // Keep the same aggregate allocation limit. NPCs no longer pin unused
-        // derived grids for their whole visit. Stable actor order makes cache
+        // Keep the same aggregate allocation limit. Auxiliary actors do not pin
+        // unused derived grids. Stable actor order makes cache
         // reclamation deterministic; VM/queue/portal history stays untouched.
         for(auto* other:auxiliary_actors){
             if(existing_cells+grid.grid->cells()<=household_route_cell_budget)break;
             if(other==&runtime||!other->route_grid||!other->route_grid->grid||
-               !idle_npc_route_cache_releasable(*other))continue;
-            existing_cells-=other->route_grid->grid->cells();
+               !idle_auxiliary_actor_route_cache_releasable(*other))continue;
+            const auto released_cells=other->route_grid->grid->cells();
+            existing_cells-=released_cells;
             other->go_here.reset(); // Release its reference before Routing.
             other->routing.reset();other->route_grid.reset();
             other->route_spatial_revision.reset();++other->route_cache_evictions;
-            other->route_reason="idle_npc_route_cache_released";
+            other->route_reason="idle_auxiliary_actor_route_cache_released";
+            session_log.event("routing idle cache released actor="+std::to_string(other->id)+
+                " generation="+std::to_string(other->generation)+
+                " cells="+std::to_string(released_cells)+
+                " for_actor="+std::to_string(runtime.id)+
+                " remaining_cached_cells="+std::to_string(existing_cells)+
+                " candidate_cells="+std::to_string(grid.grid->cells())+
+                " budget="+std::to_string(household_route_cell_budget));
         }
         if(existing_cells+grid.grid->cells()>household_route_cell_budget){
-            runtime.route_reason="household_route_grid_aggregate_cell_budget_exceeded";return;
+            runtime.route_reason="household_route_grid_aggregate_cell_budget_exceeded actor="+
+                std::to_string(runtime.id)+" guid="+
+                std::to_string(actor->definition?actor->definition->guid:0)+
+                " room="+std::to_string(*room)+" candidate_cells="+
+                std::to_string(grid.grid->cells())+" windowed="+
+                std::to_string(grid.windowed)+" existing_cells="+
+                std::to_string(existing_cells)+" budget="+
+                std::to_string(household_route_cell_budget)+" caches=";
+            for(const auto* other:auxiliary_actors)
+                if(other!=&runtime&&other->route_grid&&other->route_grid->grid)
+                    runtime.route_reason+=std::to_string(other->id)+":"+
+                        std::to_string(other->route_grid->grid->cells())+":"+
+                        (other->npc_origin?"npc":"resident")+":"+
+                        (idle_auxiliary_actor_route_cache_releasable(*other)?"releasable":"retained")+",";
+            return;
         }
         runtime.route_grid.emplace(std::move(grid));
         ++runtime.route_cache_builds;
@@ -12179,6 +12214,7 @@ struct PlacementCandidateProbe {
         const bool primary=action.actor==runtime_avatar_id;
         if(!primary&&resident==household_runtime.end())
             throw odh::FormatError("resident Go Here actor is not a live household member");
+        if(!primary&&ensure_actor_routing)ensure_actor_routing(**resident);
         const auto* grid=primary?(primary_route_grid()?&*primary_route_grid():nullptr):((*resident)->route_grid?&*(*resident)->route_grid:nullptr);
         const auto* route=primary?primary_routing().get():(*resident)->routing.get();
         const odh::RoutePoint goal{static_cast<std::int32_t>(action.x*16+8),
@@ -17476,12 +17512,12 @@ struct PlacementCandidateProbe {
                         if(!record.native_personal)return;
                         const auto& records=personal_state->snapshot().records;
                         const auto found=std::find_if(records.begin(),records.end(),[&](const auto& r){return r.identity.neighbor_id==record.neighbor_id;});
-                        if(found==records.end()||!actor->npc_origin||!actor->npc_origin->asset.empty()||
+                        if(found==records.end()||!actor->npc_origin||
                            found->identity.guid!=actor->npc_origin->guid||found->identity.definition_chunk_id!=actor->npc_origin->object_definition_id||
                            found->identity.character_fingerprint!=actor->npc_origin->character_fingerprint)
                             throw odh::FormatError("NPC personal projection differs from exact character resource");
                         const auto& origin=*actor->npc_origin;
-                        const auto asset=std::string(origin.source.rfind("PlayerData/",0)==0?"PlayerData/Characters/":"UserData/Characters/")+std::filesystem::path(origin.source).filename().string();
+                        const auto asset=odh::native_personal_resource_key(origin.source,origin.asset);
                         if(asset!=found->identity.character_asset)throw odh::FormatError("NPC personal projection catalog changed");
                     };
                     authenticate_projection(pending.request.requested_neighbor);
@@ -21037,9 +21073,10 @@ struct PlacementCandidateProbe {
                         const auto* actor=world.find(active_household_actor);
                         const auto actor_room=actor&&actor->position?render_lot->runtime_room_at(*actor->position):std::nullopt;
                         const odh::WorldRoomRouteGrid* route_grid=nullptr;
-                        if(auto* member=selected_household_member();member&&member->route_grid)
-                            route_grid=&*member->route_grid;
-                        else if(primary_route_grid())route_grid=&*primary_route_grid();
+                        if(auto* member=selected_household_member()){
+                            if(ensure_actor_routing)ensure_actor_routing(*member);
+                            if(member->route_grid)route_grid=&*member->route_grid;
+                        }else if(primary_route_grid())route_grid=&*primary_route_grid();
                         const auto width=render_lot_evidence->pick_width;
                         const auto height=render_lot_evidence->pick_height;
                         if(actor_room&&route_grid&&route_grid->grid&&width&&height&&
@@ -22743,6 +22780,8 @@ struct PlacementCandidateProbe {
             std::cout<<",\"position\":";position_json(entity?entity->position:std::nullopt);
             std::cout<<",\"routing\":{\"reason\":"<<json_bytes(member.route_reason)
                 <<",\"active\":"<<(member.routing&&member.routing->active()?"true":"false")
+                <<",\"cache_builds\":"<<member.route_cache_builds
+                <<",\"cache_evictions\":"<<member.route_cache_evictions
                 <<",\"entry_point5_unknown\":";
             if(member.route_ep5_unknown_caller&&member.route_ep5_unknown_stack_object){
                 std::cout<<"{\"caller\":"<<*member.route_ep5_unknown_caller

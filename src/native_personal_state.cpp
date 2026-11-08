@@ -13,10 +13,39 @@ constexpr Field fields[]={{2,1},{3,1},{4,1},{5,1},{6,1},{7,1},{9,1},{10,1},{11,1
  {52,1},{53,1},{13,1},{14,1},{58,1},{60,1},{61,1},{56,2},{57,2},{63,2},{65,3},
  {67,4},{68,4},{69,5},{74,6},{54,7},{55,7},{75,7},{76,7},{80,1},{81,1},{82,1}};
 bool nonzero(const std::array<std::uint8_t,32>& hash){return std::any_of(hash.begin(),hash.end(),[](auto v){return v!=0;});}
+void portable_resource_name(const std::string& value,bool entry){
+ if(value.empty()||value.size()>4096||value.find('\0')!=std::string::npos||
+    value.find(':')!=std::string::npos||value.front()=='/'||value.front()=='\\'||
+    (!entry&&value.find('\\')!=std::string::npos))throw FormatError("personal resource name is not portable");
+ std::size_t start=0;
+ for(std::size_t at=0;at<=value.size();++at)if(at==value.size()||value[at]=='/'||(entry&&value[at]=='\\')){
+  const auto part=value.substr(start,at-start);
+  if(part.empty()||part=="."||part=="..")throw FormatError("personal resource name contains noncanonical components");
+  start=at+1;
+ }
+}
+bool character_source(const std::string& source){
+ const auto slash=source.find('/');
+ if(slash==std::string::npos||source.substr(slash,12)!="/Characters/")return false;
+ const auto root=source.substr(0,slash);
+ const bool installed=root=="UserData"||(root.size()==9&&root.compare(0,8,"UserData")==0&&root[8]>='1'&&root[8]<='8');
+ return (installed||root=="PlayerData")&&source.find('/',slash+12)==std::string::npos;
+}
+std::string hex_bytes(const std::string& value){
+ constexpr char hex[]="0123456789abcdef";std::string out;out.reserve(value.size()*2);
+ for(const unsigned char byte:value){out+=hex[byte>>4];out+=hex[byte&15];}return out;
+}
+std::string unhex_bytes(const std::string& value){
+ if(value.size()%2)throw FormatError("personal resource hex length is invalid");
+ const auto digit=[](char c)->unsigned{if(c>='0'&&c<='9')return static_cast<unsigned>(c-'0');if(c>='a'&&c<='f')return static_cast<unsigned>(c-'a'+10);throw FormatError("personal resource hex is not canonical");};
+ std::string out;out.reserve(value.size()/2);
+ for(std::size_t at=0;at<value.size();at+=2)out+=static_cast<char>((digit(value[at])<<4)|digit(value[at+1]));return out;
+}
 void identity(const NativePersonalIdentity& id){
  if(id.neighbor_id<=0||!id.guid||id.character_asset.empty()||id.character_asset.size()>4096||
     id.character_asset.find('\0')!=std::string::npos||!nonzero(id.character_fingerprint))
   throw FormatError("personal record has incomplete character provenance");
+ (void)native_personal_resource_locator(id.character_asset);
 }
 void projection(const NativePersonalProjection& p){
  if(p.profile!=1||p.schema_version<1||p.schema_version>9)throw FormatError("personal record schema/profile unsupported");
@@ -36,6 +65,33 @@ const Entity& source(const World& world,const NativePersonalSource& s){
  return *e;
 }
 std::int16_t signed16(std::uint16_t v){return static_cast<std::int16_t>(v<32768?v:static_cast<std::int32_t>(v)-65536);}
+}
+std::string native_personal_resource_key(const std::string& source,const std::string& asset){
+ portable_resource_name(source,false);
+ if(!asset.empty())portable_resource_name(asset,true);
+ if(asset.empty()&&character_source(source)){
+  const auto name=source.substr(source.find_last_of('/')+1);
+  return std::string(source.compare(0,11,"PlayerData/")==0?"PlayerData/Characters/":"UserData/Characters/")+name;
+ }
+ auto key=std::string("Resource/v1/")+hex_bytes(source)+"/"+hex_bytes(asset);
+ if(key.size()>4096)throw FormatError("personal resource locator exceeds bounded identity size");
+ return key;
+}
+NativePersonalResourceLocator native_personal_resource_locator(const std::string& key){
+ if(key.empty()||key.size()>4096)throw FormatError("personal resource locator size is invalid");
+ NativePersonalResourceLocator out;
+ if(key.compare(0,20,"UserData/Characters/")==0||key.compare(0,22,"PlayerData/Characters/")==0){
+  portable_resource_name(key,false);if(!character_source(key))throw FormatError("personal character locator is not canonical");
+  out.source=key;out.character_catalog=true;
+ }else{
+  constexpr std::size_t prefix=12;
+  if(key.compare(0,prefix,"Resource/v1/")!=0)throw FormatError("personal resource locator kind unsupported");
+  const auto slash=key.find('/',prefix);
+  if(slash==std::string::npos||key.find('/',slash+1)!=std::string::npos)throw FormatError("personal resource locator fields malformed");
+  out.source=unhex_bytes(key.substr(prefix,slash-prefix));out.asset=unhex_bytes(key.substr(slash+1));
+ }
+ if(native_personal_resource_key(out.source,out.asset)!=key)throw FormatError("personal resource locator has an alternate encoding");
+ return out;
 }
 bool same_native_personal_identity(const NativePersonalIdentity& a,const NativePersonalIdentity& b){
  return a.neighbor_id==b.neighbor_id&&a.guid==b.guid&&a.definition_chunk_id==b.definition_chunk_id&&

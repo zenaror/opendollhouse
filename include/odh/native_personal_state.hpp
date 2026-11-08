@@ -7,6 +7,16 @@
 #include <set>
 
 namespace odh {
+// Existing direct character keys retain their exact bytes. Other admitted
+// resources use Resource/v1/<hex portable source>/<hex exact archive entry>.
+// This locator is not authority: the host must resolve its exact GUID/OBJD in
+// the selected catalog and authenticate the immutable resource fingerprint.
+struct NativePersonalResourceLocator {
+    std::string source,asset;
+    bool character_catalog=false;
+};
+std::string native_personal_resource_key(const std::string& source,const std::string& asset);
+NativePersonalResourceLocator native_personal_resource_locator(const std::string& key);
 // This personal-record profile does not change the legacy NINV travel protocol.
 // Original executable 6e598c22, writer00425ab3/table0042385a/loader004258ed.
 // NBRS container/record versions are deliberately not personal schema versions.

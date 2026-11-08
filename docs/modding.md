@@ -199,6 +199,15 @@ recusar um save que contenha um formato novo.
 A interface interna está em [native_personal_state.hpp](../include/odh/native_personal_state.hpp).
 A cobertura disponível continua indicada no [progresso](progresso.md).
 
+Um NPC pode vir de um arquivo próprio ou de um pacote de recursos do jogo.
+O serviço de progresso usa seu cadastro, a definição do personagem e o conteúdo
+do recurso para reconhecê-lo depois que ele sai do lote. Isso também permite
+guardar os dados de personagens de serviço, como a entregadora de jornais.
+Ferramentas nativas podem usar `native_personal_resource_key` para obter essa
+identificação a partir da origem e da entrada do pacote. O motor confere esses
+dados ao gravar e reabrir a partida; esse identificador interno ainda não é uma
+API estável para mods.
+
 
 ### Viagens com acompanhantes (experimental)
 
