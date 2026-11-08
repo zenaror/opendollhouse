@@ -25,6 +25,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Continuação da simulação quando os dados originais pedem uma animação
+  comprovadamente ausente, preservando erros reais de leitura e recursos.
 - Posicionamento, circulação e retirada de objetos em casos de recuperação de
   partidas, permitindo continuidade de interações residenciais delimitadas.
 - Preservação de vínculos e ações em cenários de salvar e reabrir uma sessão.

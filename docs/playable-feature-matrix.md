@@ -21,7 +21,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Idiomas e conteúdo personalizado | Parcial | Uso real, fallback e continuação após salvar. |
 | Gozando a Vida e Fazendo a Festa | Em aberto | Objetos, eventos, convidados e atividades pelas regras dos dados. |
 | Encontro Marcado | Parcial | Percurso completo ao Centro com efeitos e retorno preservados. |
-| Em Férias | Partida e reserva parciais: presença da família, confirmações, cobrança, escolha do destino e roupas de frio apropriadas observadas. | O destino foi ativado com três familiares; a partida salva reabriu e continuou até a mensagem de boas-vindas da Diretora de Férias, sem falha de execução, em teste sem janela. Um aluguel de vara de pesca foi concluído com cobrança de §45; o novo salvamento reabriu e continuou. Validar a pesca com efeito nas necessidades, outras atividades, estadia e retorno, além da apresentação e dos controles. |
+| Em Férias | Partida, aluguel e retorno parciais: os três familiares viajaram com reserva e roupas de frio; o aluguel de uma vara de pesca cobrou §45, foi salvo e reaberto, e a família voltou à casa de origem com pessoas e dinheiro preservados. A chegada foi salva, reaberta e continuou. | A caminhada até o píer falhou, sem efeito da pesca nas necessidades. Validar outras atividades, hospedagem, estadia completa e apresentação/controles. |
 | O Bicho Vai Pegar | Em aberto | Cidade Velha, animais e persistência. |
 | Superstar | Em aberto | Estúdio, atividades, fama e retorno. |
 | Num Passe de Mágica | Em aberto | Cidade Mágica, inventário, moedas, feitiços e retorno/mudança elegível. |
