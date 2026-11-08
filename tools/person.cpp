@@ -6631,9 +6631,36 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_false,{}};
                     if(resolved.status!=odh::NpcAvatarRequestStatus::ready||!resolved.request)
                         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,resolved.diagnostic};
+                    if(d.check_mode||!d.origin->matches_active_primitive(f,i,d))
+                        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                            "NPC construction requires its actual ordinary primitive dispatch"};
+                    if(!process_lifecycle_npc_avatars)
+                        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                            "synchronous NPC constructor service is not installed"};
                     if(pending_npc_avatars.size()>=16)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"NPC creation queue is full"};
-                    pending_npc_avatars.push_back({const_cast<odh::Vm*>(d.origin),d.ticket,std::move(*resolved.request),entity_scheduler.running()||simulation_dispatch_running});
-                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+                    // Create42 publishes and inherits the avatar BEFORE the next
+                    // entity runs. Deferring the body to the end of the whole
+                    // scheduler pass lets two source 'not here already' scans
+                    // both miss it. Only newborn Main admission remains deferred.
+                    const auto run=d.origin->run_generation();
+                    const auto caller=odh::WorldEntityReference{resolved.request->caller,resolved.request->caller_generation};
+                    const auto current=[&,source=d.origin,run,caller,frame=f,instruction=i,dispatch=d]{
+                        const auto* body=world.resolve_reference(caller);
+                        return body&&!body->dead&&!body->ui_ghost&&source->run_generation()==run&&
+                            source->matches_active_primitive(frame,instruction,dispatch);
+                    };
+                    std::optional<std::int16_t> created;
+                    PendingNpcAvatar pending;pending.vm=const_cast<odh::Vm*>(d.origin);pending.ticket=d.ticket;
+                    pending.request=std::move(*resolved.request);
+                    pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
+                    pending.lifecycle_current=current;pending.lifecycle_result=&created;
+                    pending_npc_avatars.push_front(std::move(pending));process_lifecycle_npc_avatars();
+                    if(host_failed)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,last_npc_diagnostic};
+                    if(!current())return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                        "synchronous NPC constructor lost its exact ordinary source dispatch"};
+                    odh::PrimitiveOutcome out{created?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::goto_false,{}};
+                    if(created)out.stack_object_write=odh::VmStackObjectWrite{*created};
+                    return out;
                 }
                 // Database PersistID allocation has a separate neighborhood
                 // state contract. Never silently ignore the TS1 stub's effect.

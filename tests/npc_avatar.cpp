@@ -1,4 +1,6 @@
 #include "odh/npc_avatar.hpp"
+#include "odh/entity_scheduler.hpp"
+#include "odh/entity_next.hpp"
 #include "odh/avatar_constructor_metadata.hpp"
 #include <iostream>
 
@@ -153,8 +155,112 @@ void authentic_constructor_metadata_profiles(){
     require(limited.admit_restored(*cold.find(2),identity,true)&&rejects([&]{limited.admit_restored(*cold.resolve_reference(old),identity,true);}),"bounded metadata table rejects excess retained origins without dropping existing evidence");
 }
 
+// The source PedMarkers4099 pc15/17 scans EVERY live avatar's PD31,
+// including OOW bodies, before Create42. Exercise that real VM predicate
+// with two independent creators; the deferred comparison documents why
+// delaying body publication until after the scheduler creates a race.
+void source_two_creator_publication_order(){
+    for(const bool deferred:{false,true})for(const bool preexisting:{false,true}){
+        odh::World world{{},odh::AttributePolicy::ts1_bounded};
+        for(const std::int16_t id:{1,3})
+            require(world.create(id,odh::EntityKind::object)&&world.define_type(id,0x81e6bef9)&&
+                world.set_position(id,{96,128,1,2}),"two independent source creator bodies");
+        odh::NeighborContext neighbors({0,62,{neighbor(40,201,40)},0});
+        auto memory=world.vm_memory();
+        auto next=odh::entity_next_primitive(world,memory);
+        auto code=routine({assign(8,0,40,1),assign(10,0,0,2),
+            {31,3,4,{0,0,0,0,129,10,0,0}},
+            {2,255,2,{31,0,0,0,0,2,19,8}},
+            assign(10,0,40,5),{42,6,255,{0,0,0,0,6,4,0,0}},
+            {99,254,255,{}}});
+        const odh::RoutineSet parent_program{{odh::routine_key(4099),code}};
+        const odh::RoutineSet child_program{
+            {odh::routine_key(4096),routine({assign(0,0,77,254)})},
+            {odh::routine_key(4097),routine({assign(0,1,88,254)})},
+            {odh::routine_key(4098),routine({assign(8,3,999,254)})}};
+        odh::EntryPointTable table;table.entries.resize(9);
+        table.entries[0].action=4096;table.entries[8].action=4097;table.entries[1].action=4098;
+        auto inputs=body();odh::RandomState random{12345};
+        odh::EntityVmScheduler scheduler(8);
+        std::vector<std::unique_ptr<odh::Vm>> children;
+        std::vector<std::int16_t> child_ids;
+        std::vector<odh::NpcAvatarRequest> queued;
+        unsigned constructor_count=0,parent_after=0,enumerated_existing=0;
+        const auto construct=[&](const odh::NpcAvatarRequest& request){
+            const auto id=static_cast<std::int16_t>(10+constructor_count++);
+            require(odh::materialize_npc_avatar(world,id,request,definition(),table),"actual shared constructor publishes body");
+            auto child=std::make_unique<odh::Vm>(odh::RoutineSet{},memory,odh::VmLimits{},odh::VmPrimitive{},
+                odh::RoutineOwners{{owner,child_program}});
+            const auto result=odh::initialize_npc_avatar(world,*child,id,owner,request,table,inputs,random,{}, {},100,{},scheduler.running());
+            require(result.completed&&result.main_started&&result.inheritance.size()==2,
+                "real Init/EP8 and both constructor/requested inheritances complete");
+            const auto* actor=world.find(id);
+            require(actor&&!actor->position&&actor->person_data[31]==40&&actor->attributes==std::vector<std::int16_t>({77,88})&&
+                child->steps()==0&&child->temps()[3]==0,"published OOW body owns inherited NID and Init effects before Main dispatch");
+            if(scheduler.running())require(!scheduler.add(id,*child),"newborn scheduler registration remains refused during parent dispatch");
+            child_ids.push_back(id);children.push_back(std::move(child));return id;
+        };
+        if(preexisting){
+            odh::VmFrame f;f.context={1,1,40};
+            auto request=odh::resolve_npc_avatar_request({0,6,4,0,0},f,{},neighbors,world);
+            require(request.request.has_value(),"preexisting OOW fixture has authenticated neighbor request");
+            construct(*request.request);
+        }
+        odh::VmPrimitive primitive=[&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+            if(instruction.opcode==31){
+                const auto result=next(frame,instruction,temps,dispatch);
+                if(result.disposition==odh::PrimitiveDisposition::goto_true)++enumerated_existing;
+                return result;
+            }
+            if(instruction.opcode==42){
+                require(dispatch.origin&&dispatch.origin->matches_active_primitive(frame,instruction,dispatch)&&
+                    !dispatch.check_mode&&scheduler.running(),"ordinary source creation owns its active VM dispatch and scheduler slot");
+                auto request=odh::resolve_npc_avatar_request(odh::decode_create_object_instance(instruction),frame,temps,neighbors,world);
+                require(request.request.has_value(),"actual source request resolves before construction");
+                if(deferred){queued.push_back(*request.request);return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};}
+                const auto id=construct(*request.request);
+                require(dispatch.origin->matches_active_primitive(frame,instruction,dispatch)&&!dispatch.origin->pending(),
+                    "synchronous child startup preserves ordinary parent authority without pending completion");
+                odh::PrimitiveOutcome out{odh::PrimitiveDisposition::goto_true,{}};
+                out.stack_object_write=odh::VmStackObjectWrite{id};return out;
+            }
+            if(instruction.opcode==99){
+                ++parent_after;const auto* actor=world.find(frame.context.stack_object);
+                require(actor&&actor->person_data[31]==40&&actor->attributes[0]==77&&actor->attributes[1]==88&&
+                    constructor_count==1&&children.front()->steps()==0,
+                    "very next parent instruction sees Init/inheritance while newborn Main has not run");
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            }
+            return odh::PrimitiveOutcome{};
+        };
+        odh::Vm first(parent_program,memory,{},primitive),second(parent_program,memory,{},primitive);
+        require(first.start(odh::routine_key(4099),{1,1,1})==odh::VmStatus::running&&
+            second.start(odh::routine_key(4099),{3,3,3})==odh::VmStatus::running&&
+            scheduler.add(1,first)&&scheduler.add(3,second),"real independent creator VMs join shared scheduler");
+        require(scheduler.tick(1,200,100),"grouped source creator tick succeeds");
+        if(preexisting){
+            require(queued.empty()&&constructor_count==1&&parent_after==0&&enumerated_existing==2&&
+                first.status()==odh::VmStatus::returned_false&&second.status()==odh::VmStatus::returned_false,
+                "both source scans detect already indexed OOW neighbor and never request creation");
+        }else if(deferred){
+            require(queued.size()==2&&constructor_count==0&&parent_after==0&&enumerated_existing==0&&
+                first.status()==odh::VmStatus::waiting&&second.status()==odh::VmStatus::waiting,
+                "old deferred boundary lets both real source scans enqueue the same neighbor");
+            for(const auto& request:queued)construct(request);
+            require(constructor_count==2&&world.find(10)->person_data[31]==world.find(11)->person_data[31],
+                "component reproduction exposes duplicate bodies; host blanket guard must remain protective");
+        }else{
+            require(queued.empty()&&constructor_count==1&&parent_after==1&&enumerated_existing==1&&
+                first.status()==odh::VmStatus::returned_true&&second.status()==odh::VmStatus::returned_false,
+                "synchronous publication lets second source predicate avoid duplicate without altering creation flags");
+            require(scheduler.add(child_ids.front(),*children.front())&&scheduler.tick(2,200,100)&&
+                children.front()->temps()[3]==999,"newborn Main joins only at safe boundary and executes next tick");
+        }
+    }
 }
-int main(){try{authentic_constructor_metadata_profiles();
+
+}
+int main(){try{authentic_constructor_metadata_profiles();source_two_creator_publication_order();
     {
         odh::World candidate;
         require(odh::materialize_npc_avatar_base(candidate,2,definition(),entries(),std::int16_t{123}),
