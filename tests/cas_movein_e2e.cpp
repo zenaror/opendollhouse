@@ -278,7 +278,7 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
     std::cout<<R"(,"neighbor_inventory":)";
     if(!active.neighbor_inventory)std::cout<<"null";
     else{const auto& inventory=*active.neighbor_inventory;std::size_t neighbors=0,items=0;
-        std::cout<<R"({"neighbor_count":)"<<inventory.inventory_by_id.size()<<R"(,"neighbors_truncated":)"<<(inventory.inventory_by_id.size()>4096?"true":"false")<<R"(,"entries":[)";
+        std::cout<<R"({"version":)"<<inventory.version<<R"(,"neighbor_count":)"<<inventory.inventory_by_id.size()<<R"(,"neighbors_truncated":)"<<(inventory.inventory_by_id.size()>4096?"true":"false")<<R"(,"entries":[)";
         for(const auto& row:inventory.inventory_by_id){
             if(neighbors==4096)break;if(neighbors++)std::cout<<',';
             std::cout<<R"({"neighbor_id":)"<<row.first<<R"(,"item_count":)"<<row.second.size()<<R"(,"items":[)";

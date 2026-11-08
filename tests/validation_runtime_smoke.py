@@ -272,5 +272,102 @@ class RuntimeSmokeTests(unittest.TestCase):
         self.assertEqual(len(self.trace()), count)
 
 
+
+# Shared profile-authority tests use only synthetic decoder and application fixtures.
+import importlib.util
+from types import SimpleNamespace
+
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'tools'))
+import validate_runtime_smoke as v
+import validate_downtown_trip as downtown
+
+INSPECTOR='''#!PYTHON
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[2]);d=json.loads(p.read_text());mode=d.get('mode','ok')
+if mode=='corrupt':sys.exit(2)
+if mode=='mutate-checkpoint':p.write_text('changed')
+if mode=='mutate-profile':(p.parent/'new-file').write_text('changed')
+if mode=='mutate-inspector':Path(__file__).write_text('changed')
+r={'archive_path':str(p.resolve()),'occupancy_epoch':d.get('lease')}
+if mode=='wrong-path':r['archive_path']=str(p.parent/'other.odhs')
+if mode=='missing-key':del r['occupancy_epoch']
+if mode=='invalid-json':print('bad');sys.exit(0)
+print(json.dumps(r))
+'''
+APP='''#!PYTHON
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[sys.argv.index('--load-session')+1]);d=json.loads(p.read_text());tick=d['tick']
+print(json.dumps({'host_failed':False,'instruction_budget_exhausted':False,'scheduler_budget_yields':0,
+'runtime_policy':'gameplay_per_tick_per_entity','runtime_budget_scope':'per_tick','resumed_tick':tick,
+'ticks':tick,'saved_session_path':str(p.resolve())}))
+'''
+
+class AuthorityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.profile=self.root/'profile';self.profile.mkdir()
+        self.save=self.profile/'actual.odhs';self.save.write_text(json.dumps({'tick':0}))
+        self.inspector=self.root/'inspector';self.executable(self.inspector,INSPECTOR)
+    def executable(self,path,body):
+        path.write_text(body.replace('PYTHON',sys.executable));path.chmod(0o700)
+    def check(self,inspector=True):
+        return v.profile_checkpoint(self.profile,v.profile_files(self.profile),v.digest(self.save),self.inspector if inspector else None)
+    def test_unmanaged_home_and_trip_allow_explicit_decoder(self):
+        for trip in [False,True]:
+            with self.subTest(trip=trip):
+                self.save.write_text(json.dumps({'tick':0,'trip':trip}))
+                self.assertEqual(self.check(),self.save)
+    def test_default_missing_overlay_remains_rejected(self):
+        with self.assertRaisesRegex(ValueError,'occupancy'):self.check(False)
+    def test_managed_missing_overlay_and_incomplete_proof_rejected(self):
+        for change in [{'lease':1},{'lease':0},{'mode':'missing-key'},{'mode':'wrong-path'},
+                       {'mode':'corrupt'},{'mode':'invalid-json'}]:
+            with self.subTest(change=change):
+                self.save.write_text(json.dumps({'tick':0,**change}))
+                with self.assertRaises(ValueError):self.check()
+    def test_duplicate_checkpoint_rejected(self):
+        (self.profile/'duplicate.odhs').write_bytes(self.save.read_bytes())
+        with self.assertRaisesRegex(ValueError,'unique checkpoint'):self.check()
+    def test_inventory_mismatch_before_inspection_rejected(self):
+        inventory=v.profile_files(self.profile);self.save.write_text('changed')
+        with self.assertRaises(ValueError):v.profile_checkpoint(self.profile,inventory,inventory['actual.odhs'],self.inspector)
+    def test_inspector_checkpoint_profile_mutation_rejected(self):
+        for mode in ['mutate-checkpoint','mutate-profile','mutate-inspector']:
+            with self.subTest(mode=mode):
+                self.executable(self.inspector,INSPECTOR)
+                self.save.write_text(json.dumps({'tick':0,'mode':mode}))
+                with self.assertRaisesRegex(ValueError,'changed'):self.check()
+                if (self.profile/'new-file').exists():(self.profile/'new-file').unlink()
+    def test_existing_managed_overlay_retains_default_path(self):
+        self.save.write_text(json.dumps({'lease':1}));(self.profile/'occupancy.odhp').write_text('synthetic overlay')
+        self.assertEqual(self.check(False),self.save)
+    def test_smoke_validates_input_and_output_with_shared_decoder(self):
+        game=self.root/'game';game.mkdir();(game/'protected.dat').write_text('immutable')
+        protected={'protected.dat':v.digest(game/'protected.dat')};manifest=self.root/'protected.json';manifest.write_text(json.dumps(protected))
+        app=self.root/'app';self.executable(app,APP);out=self.root/'output';out.mkdir()
+        args=SimpleNamespace(binary=app,session_inspector=self.inspector,launcher_arg=[],game_root=game,
+            checkpoint=self.save,protected_manifest=manifest,output=out,require_integer=[],timeout_seconds=3)
+        smoke=v.Smoke(args);r=smoke.run('reopen',self.save,0,[],[],0,expected_source_hash=v.digest(self.save),
+            automatic_dialog_ok=False,profile_source=self.profile,expected_profile_hashes=v.profile_files(self.profile))
+        self.assertTrue(r['ok'],str(r));self.assertEqual(r['save_sha256'],v.digest(self.save));self.assertTrue(all(r['proofs'].values()))
+        self.assertEqual(r['session_inspector_sha256'],v.digest(self.inspector))
+    def test_downtown_preflight_uses_shared_explicit_decoder(self):
+        from unittest.mock import patch
+        import contextlib,io
+        manifest=self.root/'manifest.json';manifest.write_text(json.dumps({'checkpoint':str(self.save),'profile':str(self.profile),'sha256':v.digest(self.save)}))
+        recipe=self.root/'recipe.json';recipe.write_text(json.dumps({'steps':[{'id':'continue','kind':'continue','ticks':1}]}))
+        game=self.root/'game';game.mkdir()
+        argv=['driver','--manifest',str(manifest),'--recipe',str(recipe),'--binary',str(self.root/'not-executed'),
+              '--binary-sha256','a'*64,'--game-root',str(game),'--protected-manifest',str(self.root/'not-read'),
+              '--output',str(self.root/'output'),'--session-inspector',str(self.inspector)]
+        with patch.object(sys,'argv',argv),contextlib.redirect_stdout(io.StringIO()):self.assertEqual(downtown.main(),0)
+        self.save.write_text(json.dumps({'lease':1}))
+        manifest.write_text(json.dumps({'checkpoint':str(self.save),'profile':str(self.profile),'sha256':v.digest(self.save)}))
+        with patch.object(sys,'argv',argv),self.assertRaisesRegex(ValueError,'unmanaged'):downtown.main()
+
+
 if __name__ == "__main__":
     unittest.main()

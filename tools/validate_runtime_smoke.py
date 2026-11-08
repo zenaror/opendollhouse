@@ -50,13 +50,40 @@ def profile_files(root):
     return result
 
 
-def profile_checkpoint(root, files, checkpoint_hash):
-    if not any(Path(name).suffix == ".odhp" for name in files):
-        raise ValueError("profile source lacks neighborhood occupancy (.odhp)")
+def profile_checkpoint(root, files, checkpoint_hash, session_inspector=None):
     matches = [name for name, sha in files.items() if Path(name).suffix == ".odhs" and sha == checkpoint_hash]
     if len(matches) != 1:
         raise ValueError("profile source lacks a unique checkpoint matching the requested save")
-    return Path(root) / matches[0]
+    checkpoint = Path(root) / matches[0]
+    if not any(Path(name).suffix == ".odhp" for name in files):
+        if session_inspector is None:
+            raise ValueError("profile source lacks neighborhood occupancy (.odhp)")
+        # Original unmanaged homes (including their TRIP envelopes) intentionally
+        # have no overlay. Only the native decoder may establish that authority.
+        # A missing overlay for a managed FAML save remains a hard failure.
+        if profile_files(root) != files or digest(checkpoint) != checkpoint_hash:
+            raise ValueError("profile or checkpoint changed before native inspection")
+        inspector = Path(session_inspector).resolve(strict=True)
+        inspector_hash = digest(inspector)
+        try:
+            inspected = subprocess.run([str(inspector), "--inspect-session", str(checkpoint.resolve())],
+                capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ValueError("native session inspection failed: " + str(error)) from error
+        if (digest(inspector) != inspector_hash or profile_files(root) != files or
+                digest(checkpoint) != checkpoint_hash):
+            raise ValueError("native inspection changed inspector, profile or checkpoint")
+        if inspected.returncode != 0:
+            raise ValueError("native session inspection rejected checkpoint")
+        try:
+            authority = json.loads(inspected.stdout)
+        except (ValueError, TypeError) as error:
+            raise ValueError("native session inspection returned invalid JSON") from error
+        if (not isinstance(authority, dict) or
+                authority.get("archive_path") != str(checkpoint.resolve()) or
+                "occupancy_epoch" not in authority or authority["occupancy_epoch"] is not None):
+            raise ValueError("missing occupancy requires native proof of an unmanaged checkpoint at the exact path")
+    return checkpoint
 
 
 def integer(value):
@@ -95,6 +122,7 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--binary", required=True, type=Path)
     p.add_argument("--launcher-arg", action="append", default=[])
+    p.add_argument("--session-inspector", type=Path, help="native session decoder; permits authenticated unmanaged profiles without occupancy overlay")
     p.add_argument("--game-root", required=True, type=Path)
     p.add_argument("--checkpoint", required=True, type=Path)
     p.add_argument("--capture-ticks", required=True, type=int)
@@ -113,6 +141,8 @@ class Smoke:
         self.args = args
         self.output = args.output
         self.binary_hash = digest(args.binary)
+        self.session_inspector = getattr(args, "session_inspector", None)
+        self.session_inspector_hash = digest(self.session_inspector) if self.session_inspector is not None else None
         self.input_hash = digest(args.checkpoint)
         self.protected = protected_files(args.protected_manifest, args.game_root)
         self.result = {"schema": SCHEMA, "purpose": "iteration_only", "final_acceptance": False,
@@ -146,6 +176,8 @@ class Smoke:
         source_profile_before = None
         copied_profile_before = None
         try:
+            if self.session_inspector is not None and digest(self.session_inspector) != self.session_inspector_hash:
+                raise ValueError("native session inspector changed before launch")
             source_hash = digest(source)
             if expected_source_hash is not None and source_hash != expected_source_hash:
                 raise ValueError("source checkpoint differs from the recorded producer hash")
@@ -159,7 +191,7 @@ class Smoke:
                 record["source_profile_before"] = source_profile_before
                 if expected_profile_hashes is None or source_profile_before != expected_profile_hashes:
                     raise ValueError("source profile differs from the recorded producer inventory")
-                member = profile_checkpoint(profile_source, source_profile_before, source_hash)
+                member = profile_checkpoint(profile_source, source_profile_before, source_hash, self.session_inspector)
                 shutil.copytree(profile_source, profile, symlinks=True)
                 copied_profile_before = profile_files(profile)
                 if copied_profile_before != source_profile_before:
@@ -264,7 +296,7 @@ class Smoke:
             record["save_sha256"] = digest(saved)
             record["save_bytes"] = saved.stat().st_size
             if profile_source is not None:
-                profile_checkpoint(profile, after, record["save_sha256"])
+                profile_checkpoint(profile, after, record["save_sha256"], self.session_inspector)
                 record["profile_after"] = after
         except Exception as error:
             record["errors"].append(str(error))
@@ -289,6 +321,13 @@ class Smoke:
                     record["source_profile_after"] = profile_files(profile_source)
                 except Exception as error:
                     record["errors"].append("source_profile_after: " + str(error))
+            if self.session_inspector is not None:
+                try:
+                    record["session_inspector_sha256"] = digest(self.session_inspector)
+                    if record["session_inspector_sha256"] != self.session_inspector_hash:
+                        record["errors"].append("native session inspector changed during run")
+                except OSError as error:
+                    record["errors"].append("native session inspector unavailable: " + str(error))
             record["input_sha256_before"] = source_hash
             record["proofs"] = {
                 "binary_unchanged": record.get("binary_sha256_before") == self.binary_hash == record.get("binary_sha256_after"),

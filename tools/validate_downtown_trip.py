@@ -167,6 +167,7 @@ def main():
     p.add_argument('--resume-result',type=Path)
     p.add_argument('--adopt-run',type=Path,help='adopt an existing completed Smoke departure directory; never submit it again')
     p.add_argument('--binary',type=Path,required=True)
+    p.add_argument('--session-inspector',type=Path,help='native decoder for unmanaged profiles without occupancy overlay')
     p.add_argument('--binary-sha256',required=True)
     p.add_argument('--build-profile',choices=('normal','iteration'),default='normal')
     p.add_argument('--game-root',type=Path,required=True)
@@ -197,7 +198,7 @@ def main():
         ledger=prior['ledger'];completed=prior['executed_steps'];last=prior['latest_observation']
     require(sha(load)==expected and sha(origin)==manifest['sha256'],'source checkpoint differs from its producer')
     inventory=profile_files(source_profile)
-    member=profile_checkpoint(source_profile,inventory,expected)
+    member=profile_checkpoint(source_profile,inventory,expected,args.session_inspector)
     require(sha(member)==expected,'profile checkpoint differs from authenticated producer hash')
     # The durable checkpoint is allowed outside the complete profile. Bind its
     # unique existing exact-byte member; never overlay a save onto that profile.
@@ -210,6 +211,7 @@ def main():
     protected=protected_files(args.protected_manifest,args.game_root)
     original_tree=profile_files(source_profile)
     guards={str(origin):manifest['sha256'],str(args.manifest.resolve()):sha(args.manifest),str(args.recipe.resolve()):sha(args.recipe)}
+    if args.session_inspector:guards[str(args.session_inspector.resolve())]=sha(args.session_inspector)
     if args.resume_result:guards[str(args.resume_result.resolve())]=sha(args.resume_result)
     if prior and prior.get('adopted_producer'):
         producer=prior['adopted_producer']
@@ -232,6 +234,7 @@ def main():
                 validate_acknowledgement(last.get('blocking_dialog') if last else None,step)
             staged_ledger=json.loads(json.dumps(ledger))
             before_hash=sha(load);before_profile=profile_files(source_profile)
+            require(profile_checkpoint(source_profile,before_profile,before_hash,args.session_inspector).resolve()==load.resolve(),'current checkpoint differs from complete profile authority')
             directory=args.output/step['id'];directory.mkdir();profile=directory/'profile';shutil.copytree(source_profile,profile,symlinks=True)
             require(profile_files(profile)==before_profile,'full profile copy differs')
             copied=profile/load.relative_to(source_profile);require(sha(copied)==before_hash,'copied input differs')
@@ -265,6 +268,7 @@ def main():
             observation=docs[-1];saved=reported_save_path(observation,row['exit'],row['stderr_tail'])
             require(saved.is_relative_to(profile.resolve()) and saved.is_file(),'actual saved path escaped complete isolated profile')
             row['exit_profile_snapshot']=profile_files(profile);row['save']=str(saved);row['save_sha256']=sha(saved)
+            require(profile_checkpoint(profile,row['exit_profile_snapshot'],row['save_sha256'],args.session_inspector).resolve()==saved,'reported checkpoint differs from complete profile authority')
             row['forensic_observed_save']={'profile':str(profile),'path':str(saved),'sha256':sha(saved),'observation':observation,'eligible_for_resume':False}
             # A produced file is evidence, not authority, until every stage gate passes.
             record();require(row['exit']==0,'launcher failed; real emitted observations/save retained without promoting trip')
