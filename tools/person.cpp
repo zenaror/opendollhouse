@@ -11785,10 +11785,12 @@ struct PlacementCandidateProbe {
                 const auto portal_room=render_lot->runtime_room_at(*entity->position);
                 if(!portal_room||!*portal_room)return {};
             }
-            const auto architecture=build_runtime_attempt_walk_architecture(*restored_world,world,*definition_index,
+            const auto graph=build_runtime_room_portal_graph(*restored_world,world,*definition_index,
                 render_lot->runtime_architecture_resource(),*render_lot->prepared_architecture(),*room,
                 static_cast<std::uint8_t>(target.level-1));
-            if(!architecture.portal_inventory_complete||std::any_of(architecture.portal_edges.begin(),architecture.portal_edges.end(),
+            if(!graph.complete||!graph.inventory.complete||
+               odh::geometric_room_at_runtime(graph.rooms,target.x,target.y,target.level)!=room||
+               std::any_of(graph.inventory.edges.begin(),graph.inventory.edges.end(),
                 [](const auto& edge){return edge.source_room==0;}))return {};
             return room;
         });
@@ -11891,14 +11893,27 @@ struct PlacementCandidateProbe {
                 return {odh::RoutePortalStepStatus::destination_reached,{},{}};
             }
             try {
-                const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
+                // DoRoomRoute consumes only the authenticated live portal graph.
+                // Footprint/EP5 admission remains in the later AttemptWalk phase.
+                const auto graph=build_runtime_room_portal_graph(*restored_world,world,*definition_index,
                     render_lot->runtime_architecture_resource(),*render_lot->prepared_architecture(),*source_room,
-                    static_cast<std::uint8_t>(actor.level-1),actor_id,true,{},resolve_read_only_ep5);
-                if(!probe.portal_inventory_complete||probe.snapshot.state!=odh::AttemptWalkObstacleState::ready)
-                    return fail("room portal planner requires a complete live portal/obstacle inventory");
-                odh::RoomPortalInventory inventory;inventory.complete=probe.portal_inventory_complete;
-                inventory.edges=probe.portal_edges;
-                const auto route=odh::find_room_portal_route(inventory,*source_room,*destination_room,
+                    static_cast<std::uint8_t>(actor.level-1));
+                if(!graph.complete||!graph.inventory.complete){
+                    std::string diagnostic="room portal graph unavailable stage=";
+                    diagnostic+=runtime_geometry_failure_name(graph.diagnostic.failure);
+                    diagnostic+=" actor="+std::to_string(actor_id)+"/"+std::to_string(resident->generation)+
+                        " from_room="+std::to_string(*source_room)+" to_room="+std::to_string(*destination_room)+
+                        " actor_position="+std::to_string(actor.x)+","+std::to_string(actor.y)+","+std::to_string(actor.level)+
+                        " target_position="+std::to_string(target.x)+","+std::to_string(target.y)+","+std::to_string(target.level);
+                    if(graph.diagnostic.entity_id)diagnostic+=" entity="+std::to_string(graph.diagnostic.entity_id)+
+                        "/"+(graph.diagnostic.entity?std::to_string(graph.diagnostic.entity->generation):"unknown");
+                    if(!graph.diagnostic.detail.empty())diagnostic+=" detail="+graph.diagnostic.detail;
+                    return fail(std::move(diagnostic));
+                }
+                if(odh::geometric_room_at_runtime(graph.rooms,actor.x,actor.y,actor.level)!=source_room||
+                   odh::geometric_room_at_runtime(graph.rooms,target.x,target.y,target.level)!=destination_room)
+                    return fail("room portal graph differs from the authenticated live lot room pair");
+                const auto route=odh::find_room_portal_route(graph.inventory,*source_room,*destination_room,
                     actor,target,context->second.ignored);
                 if(route.status!=odh::RoomPortalRouteStatus::found||route.portals.empty())
                     return fail(std::string("room portal graph route ")+room_portal_route_status_name(route.status),
@@ -12311,14 +12326,15 @@ struct PlacementCandidateProbe {
         if(*from==*to)return odh::SourceRoomRoutePlan{true,{}};
         // DoRoomRoute reads RoomInfo only. Never run local clearance checks,
         // EP5, a portal BHAV, placement or RNG while selecting an alternative.
-        const auto architecture=build_runtime_attempt_walk_architecture(*restored_world,world,*definition_index,
+        const auto graph=build_runtime_room_portal_graph(*restored_world,world,*definition_index,
             render_lot->runtime_architecture_resource(),*render_lot->prepared_architecture(),*from,
             static_cast<std::uint8_t>(context.position.level-1));
-        if(!architecture.portal_inventory_complete)return {};
-        odh::RoomPortalInventory inventory;inventory.complete=true;inventory.edges=architecture.portal_edges;
+        if(!graph.complete||!graph.inventory.complete||
+           odh::geometric_room_at_runtime(graph.rooms,context.position.x,context.position.y,context.position.level)!=from||
+           odh::geometric_room_at_runtime(graph.rooms,target.x,target.y,target.level)!=to)return {};
         const std::vector<odh::IgnoredRoomPortal> empty;
         const auto& ignored=entry==host->contexts.end()?empty:entry->second.ignored;
-        const auto plan=odh::find_room_portal_route(inventory,*from,*to,context.position,target,ignored);
+        const auto plan=odh::find_room_portal_route(graph.inventory,*from,*to,context.position,target,ignored);
         if(plan.status==odh::RoomPortalRouteStatus::no_path)return odh::SourceRoomRoutePlan{false,{}};
         if(plan.status!=odh::RoomPortalRouteStatus::found||plan.portals.size()>32)return {};
         return odh::SourceRoomRoutePlan{true,plan.portals};

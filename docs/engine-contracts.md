@@ -57,6 +57,17 @@ objeto e outro reutilizar seu número, isso não autoriza executar a ação no
 substituto. Esses contratos são internos e experimentais; não definem uma nova
 API pública para mods.
 
+Planejar uma passagem entre cômodos e caminhar até ela são etapas diferentes.
+A primeira usa o mapa de passagens e confere se as portas e escadas ainda são
+as mesmas, nas posições esperadas. A caminhada verifica então os obstáculos
+e as permissões de passagem. Uma informação ausente continua sendo uma falha
+de dados; ela não pode ser tratada como um caminho livre ou como ausência
+comprovada de passagem.
+
+Por exemplo, escolher a porta que liga a sala ao corredor não deve antecipar
+todas as consultas de colisão dos móveis. Isso também não autoriza atravessar
+um móvel quando a caminhada começar.
+
 ## Scripts e tempo
 
 Ações, consultas e filas têm estados próprios. Uma consulta descartável não

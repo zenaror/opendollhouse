@@ -2279,6 +2279,14 @@ if(BUILD_TESTING)
   add_executable(odh-world-attempt-walk-tests tests/world_attempt_walk.cpp)
   target_link_libraries(odh-world-attempt-walk-tests PRIVATE odh_world_attempt_walk odh_world_room_route_grid odh_entry_point5_readonly)
   add_test(NAME world_attempt_walk COMMAND odh-world-attempt-walk-tests)
+
+  add_executable(odh-runtime-room-portal-graph-tests
+    tests/runtime_room_portal_graph.cpp tools/runtime_attempt_walk_probe.cpp)
+  target_include_directories(odh-runtime-room-portal-graph-tests PRIVATE tools)
+  target_link_libraries(odh-runtime-room-portal-graph-tests PRIVATE
+    odh_world_attempt_walk odh_wall_route_state odh_room_obstacles
+    odh_saved_world odh_definition_index odh_entry_points odh_rect_router)
+  add_test(NAME runtime_room_portal_graph COMMAND odh-runtime-room-portal-graph-tests)
   add_executable(odh-world-room-route-grid-tests tests/world_room_route_grid.cpp)
   target_link_libraries(odh-world-room-route-grid-tests PRIVATE odh_world_room_route_grid)
   add_test(NAME world_room_route_grid COMMAND odh-world-room-route-grid-tests)
