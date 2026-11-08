@@ -176,6 +176,7 @@ struct Options {
     std::optional<ResidentSit> headless_resident_sit;
     std::optional<ResidentInteraction> headless_resident_interaction;
     std::optional<std::pair<unsigned,unsigned>> headless_menu_query;
+    std::vector<std::pair<unsigned,unsigned>> headless_menu_queries;
     // Retain the first request for existing launch-profile guards; later
     // requests keep CLI order, including requests at the same relative tick.
     std::vector<ResidentInteraction> headless_resident_interactions;
@@ -439,11 +440,13 @@ Options parse_options(int argc, char** argv) {
             continue;
         }
         if(key=="--headless-menu-query"){
-            if(result.headless_menu_query||i+2>=argc)throw odh::FormatError("menu query needs one actor and target pair");
+            if(i+2>=argc||result.headless_menu_queries.size()>=32)
+                throw odh::FormatError("menu query needs actor/target pairs and permits at most thirty-two requests");
             const auto actor=parse_number(argv[++i],32767,"menu query actor");
             const auto target=parse_number(argv[++i],32767,"menu query target");
             if(!actor||!target)throw odh::FormatError("menu query identities must be nonzero");
-            result.headless_menu_query=std::make_pair(actor,target);continue;
+            if(!result.headless_menu_query)result.headless_menu_query=std::make_pair(actor,target);
+            result.headless_menu_queries.emplace_back(actor,target);continue;
         }
         if (key == "--headless-resident-interaction" || key == "--headless-resident-interaction-row" || key=="--headless-resident-interaction-variant" || key=="--headless-resident-interaction-variant-hex") {
             const bool variant_hex=key=="--headless-resident-interaction-variant-hex";
@@ -713,7 +716,7 @@ Options parse_options(int argc, char** argv) {
             "[--headless-resident-go-here ACTOR X Y LEVEL RELATIVE_TICK] "
             "[--headless-resident-interaction ACTOR TARGET TICK (repeat up to 32, nondecreasing ticks)] "
             "[--original-companion-protocol (experimental fresh original import only; persisted, no legacy upgrade)] "
-            "[--headless-menu-query ACTOR TARGET (zero ticks, actual selected actor)] [--headless-resident-interaction-variant ACTOR TARGET ROW PARAM0 LANGUAGE NAME TICK (exact observed dynamic choice)] [--headless-resident-interaction-variant-hex ACTOR TARGET ROW PARAM0 LANGUAGE NAME_HEX TICK (lossless observed source bytes)] [--headless-resident-interaction-row ACTOR TARGET ROW TICK (authored zero-based TTAB row)] "
+            "[--headless-menu-query ACTOR TARGET (repeat up to 32; zero ticks, actual selected actor)] [--headless-resident-interaction-variant ACTOR TARGET ROW PARAM0 LANGUAGE NAME TICK (exact observed dynamic choice)] [--headless-resident-interaction-variant-hex ACTOR TARGET ROW PARAM0 LANGUAGE NAME_HEX TICK (lossless observed source bytes)] [--headless-resident-interaction-row ACTOR TARGET ROW TICK (authored zero-based TTAB row)] "
             "[--headless-resident-stand ACTOR TICK (saved household seats only; repeat up to 8, nondecreasing ticks 1..N)] "
             "[--headless-stand (legacy saved single-resident seat)] "
             "[--audio | --no-audio] [--audio-drain-ms 1..5000] "
@@ -1286,7 +1289,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
         if(request.variant_param0)append(args,{std::to_string(*request.variant_param0),std::to_string(request.variant_language),request.variant_name});
         args.push_back(std::to_string(request.tick));
     };
-    if(options.headless_menu_query)append(args,{"--headless-menu-query",std::to_string(options.headless_menu_query->first),std::to_string(options.headless_menu_query->second)});
+    for(const auto& query:options.headless_menu_queries)
+        append(args,{"--headless-menu-query",std::to_string(query.first),std::to_string(query.second)});
     if (options.headless_resident_interaction)
         append_resident_interaction(*options.headless_resident_interaction);
     for(const auto& request:options.headless_resident_interactions)

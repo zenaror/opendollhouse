@@ -473,6 +473,32 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-go-here-resume-") as director
           query_report["ticks"] == query_report["resumed_tick"] and not query_report["player_submissions"] and
           Path(query_report["saved_session_path"]).read_bytes() == original,
           "zero-tick menu discovery submits no action and preserves actual whole-session bytes")
+    # Exercise the real resumed app and serialized session, including the batch
+    # limit. Repeated same-target queries must preserve legacy output exactly.
+    for count in (2, 32):
+        batch = subprocess.run(launch + ["--load-session", str(path), "--headless-ticks", "0"] +
+            ["--headless-menu-query", "1", "2"] * count + ["--save-session-on-exit"],
+            capture_output=True, text=True, env=env, timeout=30)
+        check(batch.returncode == 0, (count, batch.returncode, batch.stderr))
+        batch_report = json.loads(batch.stdout)
+        check(batch_report["menu_query"] == query_report["menu_query"] and
+              len(batch_report["menu_queries"]) == count and
+              all(item == query_report["menu_query"] for item in batch_report["menu_queries"]),
+              f"{count} actual menu queries preserve legacy first result and ordered exact output")
+        check(all(item["world_unchanged"] and item["random_unchanged"]
+                  for item in batch_report["menu_queries"]) and
+              batch_report["ticks"] == batch_report["resumed_tick"] == query_report["ticks"] and
+              not batch_report["player_submissions"] and
+              Path(batch_report["saved_session_path"]).read_bytes() == original and
+              path.read_bytes() == original,
+              f"{count} actual zero-tick queries preserve World/RNG, whole saved session and source bytes without actions")
+    excessive_queries = subprocess.run(launch + ["--load-session", str(path), "--headless-ticks", "0"] +
+        ["--headless-menu-query", "1", "2"] * 33 + ["--save-session-on-exit"],
+        capture_output=True, text=True, env=env, timeout=30)
+    check(excessive_queries.returncode == 2 and not excessive_queries.stdout.strip() and
+          "at most thirty-two requests" in excessive_queries.stderr and len(excessive_queries.stderr) < 4096 and
+          path.read_bytes() == original,
+          "thirty-third query rejects before runtime output with bounded diagnostic and untouched source bytes")
     hex_variant = subprocess.run(resume + ["--headless-resident-interaction-variant-hex", "1", "2", "65535", "-1", "14", "4e6f6d6520e1", "1"],
         capture_output=True, text=True, env=env, timeout=30)
     check(hex_variant.returncode == 3 and "requested TTAB row 65535 is absent" in

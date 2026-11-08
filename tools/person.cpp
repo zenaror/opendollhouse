@@ -801,6 +801,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::optional<SavedMenuVariant> variant;
     };
     std::optional<std::pair<std::int16_t,std::int16_t>> headless_menu_query;
+    std::vector<std::pair<std::int16_t,std::int16_t>> headless_menu_queries;
+    std::vector<std::string> headless_menu_queries_json;
     std::optional<std::string> headless_menu_query_json;
     std::vector<ScheduledPlayerInteraction> headless_player_interactions;
     std::size_t headless_player_interaction_index=0;
@@ -1044,10 +1046,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 throw odh::FormatError("cannot mix a single interaction schedule with resident sequence requests");
             headless_player_interactions.push_back({static_cast<std::int16_t>(actor),static_cast<std::int16_t>(id),tick,row,std::move(variant)});
         }
-        else if(option=="--headless-menu-query"&&!headless_menu_query&&n+2<argc){
+        else if(option=="--headless-menu-query"&&n+2<argc){
+            if(headless_menu_queries.size()>=32)throw odh::FormatError("menu query exceeds thirty-two requests");
             const auto actor=selector(argv[++n]),target=selector(argv[++n]);
             if(!actor||actor>32767||!target||target>32767)throw odh::FormatError("menu query identities outside World range");
-            headless_menu_query=std::make_pair(static_cast<std::int16_t>(actor),static_cast<std::int16_t>(target));
+            const auto query=std::make_pair(static_cast<std::int16_t>(actor),static_cast<std::int16_t>(target));
+            if(!headless_menu_query)headless_menu_query=query;
+            headless_menu_queries.push_back(query);
         }
         else if(option=="--headless-cancel-interaction"&&!headless_cancel_interaction_tick&&n+1<argc){
             const auto tick=selector(argv[++n]);
@@ -1306,7 +1311,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_selector||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--character-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..65535] [--render-frame NEW.ppm [--render-size WIDTH HEIGHT] --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window [--render-size WIDTH HEIGHT] --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-menu-query ACTOR TARGET (zero ticks, current selection)] [--headless-resident-interaction-variant ACTOR TARGET ROW PARAM0 LANGUAGE NAME TICK] [--headless-resident-interaction-variant-hex ACTOR TARGET ROW PARAM0 LANGUAGE NAME_HEX TICK] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID [--headless-window-stand-tick TICK [--headless-window-go-here TILE_X TILE_Y LEVEL TICK]] | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-hide-lot-objects for diagnostic captures] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--character-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..65535] [--render-frame NEW.ppm [--render-size WIDTH HEIGHT] --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window [--render-size WIDTH HEIGHT] --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-menu-query ACTOR TARGET (repeat up to 32; zero ticks, current selection)] [--headless-resident-interaction-variant ACTOR TARGET ROW PARAM0 LANGUAGE NAME TICK] [--headless-resident-interaction-variant-hex ACTOR TARGET ROW PARAM0 LANGUAGE NAME_HEX TICK] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID [--headless-window-stand-tick TICK [--headless-window-go-here TILE_X TILE_Y LEVEL TICK]] | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-hide-lot-objects for diagnostic captures] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
     if(probe_instruction_limit&&(!ticks_set||render_window))
         throw odh::FormatError("--instruction-budget requires a bounded headless run with --ticks");
     std::optional<odh::BitmapImage> pie_menu_background;
@@ -20795,44 +20800,53 @@ struct PlacementCandidateProbe {
     if(headless_menu_query){
         if(!restoring_session||session_policy.tick_limit()!=0||headless_interaction||!headless_dialog_responses.empty()||headless_dialog_ok||render_window||headless_window_interaction)
             throw odh::FormatError("menu query requires an otherwise read-only zero-tick headless run");
-        const auto [actor_id,target_id]=*headless_menu_query;
-        const auto* actor=world.find(actor_id);const auto* target=world.find(target_id);
-        const auto* definition=target&&target->definition&&definition_index?definition_index->unique(target->definition->guid):nullptr;
-        if(actor_id!=active_household_actor||!actor||!actor_services_for(actor_id)||!supported_menu_target(target)||!definition)
-            throw odh::FormatError("menu query requires the actual selected admitted actor and a verified target");
-        // This query is admitted only for a restored installed-lot session.
-        // Use that owner's existing serialization policy, exactly as canonical
-        // session capture does; generic library defaults bound smaller worlds.
-        const auto query_world_limits=odh::SessionBundleLimits{}.world;
-        const auto before=odh::encode_world_snapshot(world.snapshot(),query_world_limits);const auto seed=random.seed();
-        prepare_selected_object(SavedObjectSelection{target_id,target->definition->guid,target->generation,definition->definition.tree_table_id});
-        const auto after=odh::encode_world_snapshot(world.snapshot(),query_world_limits);
-        if(before!=after||seed!=random.seed()){
-            const auto mismatch=std::mismatch(before.begin(),before.end(),after.begin(),after.end());
-            throw odh::FormatError("read-only menu query mutated World or source RNG: world_changed="+
-                std::to_string(before!=after)+" rng_changed="+std::to_string(seed!=random.seed())+
-                " seed_before="+std::to_string(seed)+" seed_after="+std::to_string(random.seed())+
-                " world_size_before="+std::to_string(before.size())+" world_size_after="+std::to_string(after.size())+
-                " first_world_byte="+std::to_string(std::distance(before.begin(),mismatch.first)));
-        }
-        const auto name_hex=[](const std::string& name){std::string hex;hex.reserve(name.size()*2);constexpr char digits[]="0123456789abcdef";
-            for(const unsigned char byte:name){hex.push_back(digits[byte>>4]);hex.push_back(digits[byte&15]);}return hex;};
-        std::ostringstream out;out<<"{\"actor\":"<<actor_id<<",\"actor_generation\":"<<actor->generation
-            <<",\"target\":"<<target_id<<",\"target_generation\":"<<target->generation
-            <<",\"world_unchanged\":true,\"random_unchanged\":true,\"rows\":[";
-        if(render_interactions&&render_interactions->table)for(std::size_t i=0;i<render_interactions->table->interactions.size();++i){
-            if(i)out<<',';const auto& row=render_interactions->table->interactions[i];
-            const auto* test=i<render_test_results.size()?&render_test_results[i]:nullptr;
-            out<<"{\"row\":"<<i<<",\"action\":"<<row.action<<",\"test\":"<<row.test
-                <<",\"eligibility\":"<<json_bytes(!test?"unsupported":test->state==SavedTestFunctionResult::State::eligible?"eligible":test->state==SavedTestFunctionResult::State::ineligible?"ineligible":"unsupported")
-                <<",\"diagnostic\":"<<json_bytes(test?test->diagnostic:"TestFunction not evaluated")<<",\"variants\":[";
-            if(test)for(std::size_t j=0;j<test->variants.size();++j){
-                if(j)out<<',';const auto& variant=test->variants[j];
-                out<<"{\"param0\":"<<variant.param0<<",\"language\":"<<unsigned(variant.language)
-                    <<",\"name\":"<<(variant.name?json_bytes(*variant.name):"null")
-                    <<",\"name_bytes_hex\":"<<(variant.name?json_bytes(name_hex(*variant.name)):"null")<<'}';
+        for(const auto& query:headless_menu_queries){
+            const auto [actor_id,target_id]=query;
+            const auto* actor=world.find(actor_id);const auto* target=world.find(target_id);
+            const auto* definition=target&&target->definition&&definition_index?definition_index->unique(target->definition->guid):nullptr;
+            if(actor_id!=active_household_actor||!actor||!actor_services_for(actor_id)||!supported_menu_target(target)||!definition)
+                throw odh::FormatError("menu query requires the actual selected admitted actor and a verified target");
+            // This query is admitted only for a restored installed-lot session.
+            // Use that owner's existing serialization policy, exactly as canonical
+            // session capture does; generic library defaults bound smaller worlds.
+            const auto actor_generation=actor->generation,target_generation=target->generation;
+            const auto query_world_limits=odh::SessionBundleLimits{}.world;
+            const auto before=odh::encode_world_snapshot(world.snapshot(),query_world_limits);const auto seed=random.seed();
+            prepare_selected_object(SavedObjectSelection{target_id,target->definition->guid,target->generation,definition->definition.tree_table_id});
+            const auto after=odh::encode_world_snapshot(world.snapshot(),query_world_limits);
+            if(before!=after||seed!=random.seed()){
+                const auto mismatch=std::mismatch(before.begin(),before.end(),after.begin(),after.end());
+                throw odh::FormatError("read-only menu query mutated World or source RNG: world_changed="+
+                    std::to_string(before!=after)+" rng_changed="+std::to_string(seed!=random.seed())+
+                    " seed_before="+std::to_string(seed)+" seed_after="+std::to_string(random.seed())+
+                    " world_size_before="+std::to_string(before.size())+" world_size_after="+std::to_string(after.size())+
+                    " first_world_byte="+std::to_string(std::distance(before.begin(),mismatch.first)));
+            }
+            const auto* current_actor=world.find(actor_id);const auto* current_target=world.find(target_id);
+            if(!current_actor||current_actor->generation!=actor_generation||
+               !current_target||current_target->generation!=target_generation)
+                throw odh::FormatError("read-only menu query changed actor or target identity");
+            const auto name_hex=[](const std::string& name){std::string hex;hex.reserve(name.size()*2);constexpr char digits[]="0123456789abcdef";
+                for(const unsigned char byte:name){hex.push_back(digits[byte>>4]);hex.push_back(digits[byte&15]);}return hex;};
+            std::ostringstream out;out<<"{\"actor\":"<<actor_id<<",\"actor_generation\":"<<actor_generation
+                <<",\"target\":"<<target_id<<",\"target_generation\":"<<target_generation
+                <<",\"world_unchanged\":true,\"random_unchanged\":true,\"rows\":[";
+            if(render_interactions&&render_interactions->table)for(std::size_t i=0;i<render_interactions->table->interactions.size();++i){
+                if(i)out<<',';const auto& row=render_interactions->table->interactions[i];
+                const auto* test=i<render_test_results.size()?&render_test_results[i]:nullptr;
+                out<<"{\"row\":"<<i<<",\"action\":"<<row.action<<",\"test\":"<<row.test
+                    <<",\"eligibility\":"<<json_bytes(!test?"unsupported":test->state==SavedTestFunctionResult::State::eligible?"eligible":test->state==SavedTestFunctionResult::State::ineligible?"ineligible":"unsupported")
+                    <<",\"diagnostic\":"<<json_bytes(test?test->diagnostic:"TestFunction not evaluated")<<",\"variants\":[";
+                if(test)for(std::size_t j=0;j<test->variants.size();++j){
+                    if(j)out<<',';const auto& variant=test->variants[j];
+                    out<<"{\"param0\":"<<variant.param0<<",\"language\":"<<unsigned(variant.language)
+                        <<",\"name\":"<<(variant.name?json_bytes(*variant.name):"null")
+                        <<",\"name_bytes_hex\":"<<(variant.name?json_bytes(name_hex(*variant.name)):"null")<<'}';
+                }out<<"]}";
             }out<<"]}";
-        }out<<"]}";headless_menu_query_json=out.str();
+            headless_menu_queries_json.push_back(out.str());
+        }
+        headless_menu_query_json=headless_menu_queries_json.front();
     }
     queue_headless_window_interaction();
     const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
@@ -24709,6 +24723,13 @@ struct PlacementCandidateProbe {
         std::cout<<'}';
     }else std::cout<<"null";
     std::cout<<",\"menu_query\":"<<(headless_menu_query_json?*headless_menu_query_json:"null");
+    if(headless_menu_queries_json.size()>1){
+        std::cout<<",\"menu_queries\":[";
+        for(std::size_t i=0;i<headless_menu_queries_json.size();++i){
+            if(i)std::cout<<',';std::cout<<headless_menu_queries_json[i];
+        }
+        std::cout<<']';
+    }
     std::cout<<",\"render\":";
     if(render_evidence){const auto& v=*render_evidence;
         std::cout<<"{\"kind\":"<<json_bytes(v.animation_sample?(render_window?"windowed_Main_Playback_preview":"headless_Main_Playback_sample"):(render_window?"windowed_World_base_pose":"headless_World_base_pose"))<<",\"output\":"<<(render_output?json_bytes(*render_output):"null")

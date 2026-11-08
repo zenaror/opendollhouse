@@ -100,6 +100,24 @@ mesmo formato para os estados da casa, da visita e da prévia do retorno. Esses
 dados descrevem o arquivo salvo; não substituem a conferência dos arquivos do
 jogo instalado.
 
+## Consultar menus sem executar ações
+
+Para conferir várias opções em uma única abertura de uma partida salva, repita
+`--headless-menu-query`. Cada par indica o Sim selecionado e o alvo da consulta:
+
+```sh
+./build/native/odh-person --game-root "$GAME_ROOT" --mode 1 \
+  --load-session partida.odhs --headless-ticks 0 \
+  --headless-menu-query 1 2 --headless-menu-query 1 3
+```
+
+Os números são exemplos; use os identificadores da partida inspecionada. As
+consultas usam o Sim atualmente selecionado, sem avançar o tempo nem enviar
+ações. O limite é de 32 consultas por execução. O JSON conserva a primeira em
+`menu_query`; quando há mais de uma, `menu_queries` contém todas na ordem pedida.
+Assim é possível conferir vários menus sem recarregar a partida para cada alvo.
+Uma opção oferecida ainda precisa ser testada em execução para demonstrar seu efeito.
+
 ## Diagnóstico
 
 Os verificadores `tools/validate_runtime_smoke.py` e
