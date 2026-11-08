@@ -2,11 +2,16 @@ include_guard(GLOBAL)
 
 option(ODH_BUILD_FAST_PERSON
   "Add an explicit host-only odh-person-fast iteration target (not release acceptance)" OFF)
+option(ODH_FAST_PERSON_ALL_TRAVEL_DESTINATIONS
+  "Allow all installed expansion destinations in the host iteration executable only" OFF)
 
 # Include only after odh-person's final source/property/dependency declarations.
 # This duplicates application translation units, never the shared engine graph.
 function(odh_add_fast_person)
   if(NOT ODH_BUILD_FAST_PERSON)
+    if(ODH_FAST_PERSON_ALL_TRAVEL_DESTINATIONS)
+      message(FATAL_ERROR "ODH_FAST_PERSON_ALL_TRAVEL_DESTINATIONS requires ODH_BUILD_FAST_PERSON")
+    endif()
     return()
   endif()
   if(CMAKE_CROSSCOMPILING OR MSVC OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
@@ -73,6 +78,10 @@ function(odh_add_fast_person)
   get_property(person_dependencies TARGET odh-person PROPERTY MANUALLY_ADDED_DEPENDENCIES)
   if(person_dependencies)
     add_dependencies(odh-person-fast ${person_dependencies})
+  endif()
+
+  if(ODH_FAST_PERSON_ALL_TRAVEL_DESTINATIONS)
+    target_compile_definitions(odh-person-fast PRIVATE ODH_TEST_PINNED_TRAVEL_LIFECYCLE=1)
   endif()
 
   # Only this executable's sources get iteration flags. Engine libraries retain

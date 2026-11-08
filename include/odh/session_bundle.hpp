@@ -1,4 +1,5 @@
 #pragma once
+#include "odh/family_vacation.hpp"
 #include "odh/installed_lot_limits.hpp"
 
 #include "odh/entity_scheduler_snapshot_codec.hpp"
@@ -372,6 +373,7 @@ struct SessionBundle {
     // HLST v1 required when present. Bound on wire to HOST house and META
     // resource identity. Legacy absence remains unknown, never a zero baseline.
     std::optional<HouseLayoutHistory> house_layout_history;
+    std::optional<FamilyVacationSnapshot> family_vacation; // Required FVAC when present; no head pointers.
 };
 
 struct SessionBundleLimits {

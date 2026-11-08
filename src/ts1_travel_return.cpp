@@ -2,9 +2,49 @@
 #include "odh/original_companion_protocol.hpp"
 #include "odh/sha256.hpp"
 #include "odh/native_personal_session.hpp"
+#include "odh/original_frontend_personal.hpp"
 #include <algorithm>
 #include <sstream>
 namespace odh {
+void validate_original_family_departure_personal(const SessionBundle& envelope,
+        const OriginalFrontendPersonalSource& immutable){
+ const auto source=envelope.travel_visited_session?decode_session_bundle(*envelope.travel_visited_session):envelope;
+ validate_original_travel_capture(source);
+ const auto& trip=*source.travel;const auto& pending=*trip.pending;
+ if(pending.original->source_temps[2]!=1||trip.neighborhood_identity!=immutable.neighborhood_identity())
+  throw FormatError("vacation family departure lacks original family1/source identity");
+ const auto bound=(source.personal_state&&source.personal_state->catalog)?immutable.with_catalog(*source.personal_state->catalog):immutable;
+ NativePersonalState validated(bound.neighbors(),bound.neighborhood_identity(),{},bound.catalog());
+ if(source.personal_state)validated.restore(*source.personal_state);
+ for(const auto& departing:pending.departure_members){const auto& id=departing.member;
+  // NativePersonalState::by_id exposes only the mutable record overlay. The
+  // immutable family seed remains a separate authenticated source when no
+  // writer was needed. Never infer a zero bank from an absent mutable row.
+  const NeighborRecord* seed=nullptr;
+  for(const auto& entry:bound.neighbors().entries)if(entry.record&&entry.record->neighbor_id==id.neighbor_id){
+   if(seed)throw FormatError("vacation departure immutable neighbor is ambiguous");
+   seed=&*entry.record;
+  }
+  if(!seed||seed->guid!=id.guid)throw FormatError("vacation departure neighbor seed identity differs");
+  const auto body=std::find_if(source.world.entities.begin(),source.world.entities.end(),[&](const auto& e){return e.id==departing.avatar.id&&e.generation==departing.avatar.generation;});
+  if(body==source.world.entities.end()||body->person_data.size()!=256)throw FormatError("vacation departure body profile differs");
+  auto projection=original_neighbor_seed_projection(*seed);
+  if(source.personal_state){const auto record=std::find_if(source.personal_state->records.begin(),source.personal_state->records.end(),[&](const auto& r){return r.identity.neighbor_id==id.neighbor_id;});
+   if(record!=source.personal_state->records.end()){
+    const NativePersonalIdentity identity{id.neighbor_id,id.guid,id.definition_chunk_id,id.character_asset,id.character_fingerprint};
+    if(!same_native_personal_identity(identity,record->identity))throw FormatError("vacation departure personal resource differs");
+    projection=record->projection;
+   }
+  }
+  // Compare the complete original selective writer contract. Existing records
+  // and exact immutable seed projection are equally valid: no artificial fresh
+  // writer/revision requirement when the source is already equal.
+  for(std::size_t n=0;n<88;++n)if(native_personal_v9_field(n)&&
+      (!projection||!projection->present[n]||projection->values[n]!=body->person_data[n]))
+    throw FormatError("vacation family departure personal projection incomplete or changed at word "+std::to_string(n));
+ }
+}
+
 Ts1TravelPersonInheritanceSource read_ts1_travel_person_inheritance(const View& source){
  constexpr std::uint64_t max_bytes=64u*1024u*1024u;
  if(source.size()>max_bytes)throw FormatError("travel personal inheritance IFF exceeds bounded source size");
@@ -146,9 +186,18 @@ PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionBundle& envelope,
  result.home_.host.family_budget=active.host.family_budget;result.home_.neighbor_inventory=active.neighbor_inventory;
  if(result.home_.type_attributes&&!active.type_attributes)throw FormatError("return dropped shared neighborhood type attributes");
  result.home_.type_attributes=active.type_attributes;
+ if(result.home_.family_vacation&&!active.family_vacation)throw FormatError("return dropped shared vacation state");
+ if(active.family_vacation){
+  if(result.home_.family_vacation){
+   validate_family_vacation_successor(*result.home_.family_vacation,*active.family_vacation);
+   if(result.home_.family_spells)project_family_spells_vacation_successor(*result.home_.family_spells,*result.home_.family_vacation,*active.family_vacation);
+  }else if(result.home_.family_spells)project_family_spells_vacation(*result.home_.family_spells,*active.family_vacation);
+  result.home_.family_vacation=active.family_vacation;
+ }
  if(result.home_.family_spells&&!active.family_spells)throw FormatError("return session dropped its originating family spell carrier");
  if(active.family_spells){
   auto merged=*active.family_spells;
+  if(active.family_vacation)project_family_spells_vacation_successor(merged,*active.family_vacation,*active.family_vacation);
   if(result.home_.family_spells){
    const auto& home=*result.home_.family_spells;
    if(home.family_chunk_id!=merged.family_chunk_id||home.family_number!=merged.family_number||

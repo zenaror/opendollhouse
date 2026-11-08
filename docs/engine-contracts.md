@@ -119,6 +119,26 @@ importar identidades de objetos do destino para a casa. Diferenças pessoais ain
 não resolvidas devem bloquear a publicação, em vez de serem descartadas.
 Uma falha de chegada/retorno conserva o último estado recuperável.
 
+## Reservas de férias compartilhadas
+
+As reservas pertencem à vizinhança. Cada família guarda sua identidade de origem
+e seu número de reserva nesse cadastro; a cópia dentro de uma sessão serve para
+conferir a restauração. Uma casa guardada antes da viagem não pode desfazer uma
+reserva mais recente quando for reaberta.
+
+Por exemplo: sair de casa com reserva zero e chegar ao lote 40 produz uma mudança
+validada de zero para 40. A casa suspensa conserva seus bytes originais. No retorno,
+a liberação da reserva exige a transição de retorno autorizada; abrir um save
+comum não basta. Os seis valores de magia da família são preservados separadamente.
+
+O [serviço de reservas](../include/odh/family_vacation.hpp) valida a identidade,
+a sequência das alterações e os registros de todas as famílias. A publicação da
+reserva e da referência para a sessão aceita acontece numa única atualização;
+uma gravação antiga ou concorrente deve ser recusada, preservando a anterior.
+Gravações antigas precisam de admissão explícita: ausência de dados não comprova
+que todas as famílias estão sem reserva. O contrato permanece experimental e não
+substitui a validação de uma viagem completa no aplicativo.
+
 ## Construção e apresentação
 
 Alterações de arquitetura precisam atualizar geometria, cômodos, passagem,

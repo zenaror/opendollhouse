@@ -155,7 +155,7 @@ void validate_overlay(const FamilyOverlay& overlay) {
             overlay.creations.size() - overlay.archives.size() - overlay.deletions.size())
         throw FormatError("family overlay exceeds assignment limit");
     const auto ordinary_count=overlay.assignments.size()+overlay.creations.size()+overlay.archives.size()+
-        overlay.deletions.size()+overlay.names.size()+(overlay.type_attributes?1U:0U)+(overlay.personal_state?1U:0U);
+        overlay.deletions.size()+overlay.names.size()+(overlay.type_attributes?1U:0U)+(overlay.personal_state?1U:0U)+(overlay.family_vacation?1U:0U);
     if(ordinary_count>max_assignments||overlay.property_releases.size()>max_assignments-ordinary_count)
         throw FormatError("family property release history exceeds record budget");
     std::uint32_t prior_release=0;bool have_release=false;
@@ -181,6 +181,11 @@ void validate_overlay(const FamilyOverlay& overlay) {
         (void)encode_type_attributes_snapshot(overlay.type_attributes->state);
         if(overlay.assignments.size()+overlay.creations.size()+overlay.archives.size()+overlay.deletions.size()+overlay.names.size()>=max_assignments)
             throw FormatError("family overlay has no room for shared type attributes");
+    }
+    if(overlay.family_vacation){
+        validate_family_vacation_overlay_state(*overlay.family_vacation);
+        if(overlay.family_vacation->state.neighborhood_identity!=overlay.neighborhood_identity)
+            throw FormatError("vacation bank neighborhood differs");
     }
     if(overlay.personal_state){
         validate_native_personal_snapshot(*overlay.personal_state);
@@ -433,14 +438,14 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
         [](const auto& value) { return value.final_state.has_value(); });
     const bool managed = std::any_of(overlay.assignments.begin(), overlay.assignments.end(),
         [](const auto& operation) { return operation.state.has_value(); });
-    if (overlay.personal_state || !overlay.property_releases.empty() || overlay.type_attributes || !overlay.names.empty() || managed || !overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
-        const auto version = overlay.personal_state?11U:!overlay.property_releases.empty()?10U:terminal ? 9U : overlay.type_attributes ? 8U : !overlay.names.empty() ? 7U : managed ? 6U : !overlay.deletions.empty() ? 5U :
+    if (overlay.family_vacation || overlay.personal_state || !overlay.property_releases.empty() || overlay.type_attributes || !overlay.names.empty() || managed || !overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
+        const auto version = overlay.family_vacation?12U:overlay.personal_state?11U:!overlay.property_releases.empty()?10U:terminal ? 9U : overlay.type_attributes ? 8U : !overlay.names.empty() ? 7U : managed ? 6U : !overlay.deletions.empty() ? 5U :
             (overlay.archives.empty() ? 3U : 4U);
         std::vector<std::uint8_t> out{'O','D','H','F'};
         put16(out, static_cast<std::uint16_t>(version)); put16(out, 0);
         out.insert(out.end(), overlay.neighborhood_identity.begin(), overlay.neighborhood_identity.end());
         put32(out, static_cast<std::uint32_t>(overlay.creations.size() +
-            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size() + overlay.names.size() + overlay.property_releases.size() + (overlay.type_attributes?1U:0U) + (overlay.personal_state?1U:0U)));
+            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size() + overlay.names.size() + overlay.property_releases.size() + (overlay.type_attributes?1U:0U) + (overlay.personal_state?1U:0U)+(overlay.family_vacation?1U:0U)));
         const auto append = [&](std::uint16_t tag, const std::vector<std::uint8_t>& payload) {
             if (tag == 2 && payload.size() > max_creation_bytes)
                 throw FormatError("family creation record exceeds byte limit");
@@ -521,6 +526,7 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
             append(10,payload);
         }
         if(overlay.personal_state)append(11,encode_native_personal_snapshot(*overlay.personal_state));
+        if(overlay.family_vacation)append(12,encode_family_vacation_overlay_state(*overlay.family_vacation));
         if(overlay.type_attributes) {
             std::vector<std::uint8_t> payload;put64(payload,overlay.type_attributes->revision);
             const auto state=encode_type_attributes_snapshot(overlay.type_attributes->state);
@@ -551,7 +557,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
     if (bytes[0] != 'O' || bytes[1] != 'D' || bytes[2] != 'H' || bytes[3] != 'F')
         throw FormatError("invalid family overlay signature");
     const auto version = get16(bytes, 4);
-    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 && version != 11) || get16(bytes, 6) != 0)
+    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != 12) || get16(bytes, 6) != 0)
         throw FormatError("unsupported family overlay version or flags");
     const auto count = get32(bytes, 40);
     if (count > max_assignments || ((version == 1 || version == 2) &&
@@ -559,7 +565,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
         throw FormatError("family overlay record count or extent is invalid");
     FamilyOverlay result;
     std::copy_n(bytes.begin() + 8, result.neighborhood_identity.size(), result.neighborhood_identity.begin());
-    if (version >= 3 && version <= 11) {
+    if (version >= 3 && version <= 12) {
         std::size_t at = header_size;
         bool saw_assignment = false;
         bool saw_archive = false;
@@ -573,10 +579,11 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
             const auto length = get32(bytes, at + 2); at += 6;
             if (length > bytes.size() - at) throw FormatError("truncated tagged family overlay record");
             const auto end = at + length;
-            if(result.personal_state&&tag!=7)throw FormatError("personal state must precede only final shared type attributes");
+            if(result.personal_state&&tag!=7&&tag!=12)throw FormatError("personal state must precede only final shared type attributes");
+            if(result.family_vacation&&tag!=7)throw FormatError("vacation state must precede only final shared attributes");
             if(result.type_attributes)throw FormatError("shared type attributes must be the final overlay record");
-            if(saw_property&&tag!=10&&tag!=7&&tag!=11)throw FormatError("property releases must follow family records and precede shared attributes");
-            if (saw_name && tag != 6 && tag != 7 && tag != 10 && tag != 11) throw FormatError("family names must follow the family operation records");
+            if(saw_property&&tag!=10&&tag!=7&&tag!=11&&tag!=12)throw FormatError("property releases must follow family records and precede shared attributes");
+            if (saw_name && tag != 6 && tag != 7 && tag != 10 && tag != 11 && tag != 12) throw FormatError("family names must follow the family operation records");
             if (tag == 1 || (tag == 5 && version >= 6)) {
                 if (saw_archive || saw_deletion) throw FormatError("family assignments must precede archives and deletions");
                 if (length != (tag == 5 ? managed_record_size : record_size)) throw FormatError("invalid family operation extent");
@@ -694,6 +701,9 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
             } else if(tag==11&&version>=11) {
                 result.personal_state=decode_native_personal_snapshot(std::vector<std::uint8_t>(
                     bytes.begin()+static_cast<std::ptrdiff_t>(at),bytes.begin()+static_cast<std::ptrdiff_t>(end)));
+            } else if(tag==12&&version>=12) {
+                result.family_vacation=decode_family_vacation_overlay_state(std::vector<std::uint8_t>(
+                    bytes.begin()+static_cast<std::ptrdiff_t>(at),bytes.begin()+static_cast<std::ptrdiff_t>(end)));
             } else if(tag==7&&version>=8) {
                 if(length<16)throw FormatError("truncated neighborhood type attribute record");
                 NeighborhoodTypeAttributes shared;shared.revision=get64(bytes,at);
@@ -708,6 +718,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
         if (version == 9 && !saw_terminal) throw FormatError("v9 overlay lacks terminal removal state");
         if(version==10&&!saw_property)throw FormatError("v10 overlay lacks property release history");
         if(version==11&&!result.personal_state)throw FormatError("v11 overlay lacks personal carrier");
+        if(version==12&&!result.family_vacation)throw FormatError("v12 overlay lacks vacation carrier");
         validate_overlay(result);
         return result;
     }
@@ -920,6 +931,14 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
     states.erase(std::remove_if(states.begin(), states.end(), [&](const auto& entry) {
         return archived_ids.count(entry.family_chunk_id) != 0 || deleted_ids.count(entry.family_chunk_id) != 0;
     }), states.end());
+    if(overlay.family_vacation){
+        std::vector<FamilyVacationRow> seeds;
+        for(const auto& entry:originals)seeds.push_back(family_vacation_seed(entry,family_overlay_identity(entry),
+            !archived_ids.count(entry.chunk_id)&&!deleted_ids.count(entry.chunk_id)));
+        FamilyVacationState bank(std::move(seeds),neighborhood_identity);
+        bank.restore(overlay.family_vacation->state);
+        result=project_family_vacation_families(result,bank.snapshot());
+    }
     std::vector<FamilyPropertyHead> properties;for(const auto& pair:property_heads)properties.push_back(pair.second);
     return {std::move(result), std::move(states),std::move(properties)};
 }
@@ -1186,6 +1205,7 @@ FamilyOverlay plan_family_creation_overlay(const std::vector<FamilyEntry>& sourc
     (void)creation_family(creation); // Bound nested storage before appending a copy.
     FamilyOverlay result = current_overlay ? *current_overlay : FamilyOverlay{neighborhood_identity, {}, {}};
     result.creations.push_back(creation);
+    result=reconcile_family_vacation_overlay(source,neighborhood_identity,result);
     (void)apply_family_overlay(source, neighborhood_identity, result);
     (void)apply_neighbor_overlay(neighbors, neighborhood_identity, result);
     return result;
@@ -1228,6 +1248,7 @@ FamilyOverlay plan_family_archive_overlay(const std::vector<FamilyEntry>& source
         archive.final_state = FamilyOverlayRemovalState{state->occupancy_epoch, state->budget,
             state->value_in_arch, state->checkpoint_sha256};
     result.archives.push_back(std::move(archive));
+    result=reconcile_family_vacation_overlay(source,neighborhood_identity,result);
     (void)apply_family_overlay(source, neighborhood_identity, result);
     (void)apply_neighbor_overlay(neighbors, neighborhood_identity, result);
     return result;
@@ -1298,9 +1319,107 @@ FamilyOverlay plan_family_delete_overlay(const std::vector<FamilyEntry>& source,
             state->value_in_arch, state->checkpoint_sha256};
     }
     result.deletions.push_back(std::move(deletion));
+    result=reconcile_family_vacation_overlay(source,neighborhood_identity,result);
     (void)apply_family_overlay(source, neighborhood_identity, result);
     (void)apply_neighbor_overlay(neighbors, neighborhood_identity, result);
     return result;
+}
+
+namespace {
+std::vector<FamilyVacationRow> vacation_source_rows(const std::vector<FamilyEntry>& source,
+        const std::array<std::uint8_t,32>& identity,const FamilyOverlay* overlay){
+    auto bare=overlay?*overlay:FamilyOverlay{};bare.neighborhood_identity=identity;bare.family_vacation.reset();
+    // Reuse the complete overlay validator before deriving identities/lifetimes.
+    (void)replay_family_overlay(source,identity,bare);
+    auto entries=source;for(const auto& c:bare.creations)entries.push_back({c.family_chunk_id,creation_family(c),c.family_name});
+    std::vector<FamilyVacationRow> rows;
+    for(const auto& f:entries){const bool active=std::none_of(bare.archives.begin(),bare.archives.end(),[&](const auto& a){return a.family_chunk_id==f.chunk_id;})&&
+        std::none_of(bare.deletions.begin(),bare.deletions.end(),[&](const auto& a){return a.family_chunk_id==f.chunk_id;});
+        rows.push_back(family_vacation_seed(f,family_overlay_identity(f),active));}
+    return rows;
+}
+const FamilyVacationRow* vacation_row(const FamilyVacationSnapshot& s,std::uint16_t id){const auto i=std::find_if(s.families.begin(),s.families.end(),[&](const auto& f){return f.family_chunk_id==id;});return i==s.families.end()?nullptr:&*i;}
+bool vacation_seed_equal(const FamilyVacationRow& a,const FamilyVacationRow& b){return a.family_chunk_id==b.family_chunk_id&&a.family_identity==b.family_identity&&a.serialized_family_number==b.serialized_family_number&&a.fami_version==b.fami_version&&a.seed_word==b.seed_word;}
+}
+FamilyVacationState make_family_vacation_state(const std::vector<FamilyEntry>& source,
+        const FamilyVacationDigest& identity,const FamilyOverlay* current){
+    FamilyVacationState out(vacation_source_rows(source,identity,current),identity);
+    if(current&&current->family_vacation)out.restore(current->family_vacation->state);
+    return out;
+}
+FamilyOverlay reconcile_family_vacation_overlay(const std::vector<FamilyEntry>& source,
+        const FamilyVacationDigest& identity,const FamilyOverlay& replacement){
+    auto out=replacement;if(!out.family_vacation)return out;
+    auto rows=vacation_source_rows(source,identity,&replacement);auto& owned=*out.family_vacation;auto next=owned.state;bool changed=false;
+    for(auto& f:rows){const auto* prior=vacation_row(owned.state,f.family_chunk_id);
+        if(prior){if(!vacation_seed_equal(*prior,f)||(!prior->active&&f.active))throw FormatError("vacation lifecycle rebinds prior family");if(prior->active!=f.active)changed=true;f.current_word=prior->current_word;}
+        else changed=true;}
+    for(const auto& f:owned.state.families)if(std::none_of(rows.begin(),rows.end(),[&](const auto& r){return r.family_chunk_id==f.family_chunk_id;}))throw FormatError("vacation lifecycle discarded a reserved family");
+    next.families=std::move(rows);if(changed){if(next.revision==std::numeric_limits<std::uint64_t>::max())throw FormatError("vacation lifecycle revision exhausted");++next.revision;}
+    validate_family_vacation_successor(owned.state,next);owned.state=std::move(next);
+    const auto inactive=[&](std::uint16_t id){const auto* f=vacation_row(owned.state,id);return !f||!f->active;};
+    owned.private_heads.erase(std::remove_if(owned.private_heads.begin(),owned.private_heads.end(),[&](const auto& h){return inactive(h.family_chunk_id);}),owned.private_heads.end());
+    owned.phases.erase(std::remove_if(owned.phases.begin(),owned.phases.end(),[&](const auto& p){return inactive(p.family_chunk_id);}),owned.phases.end());
+    (void)replay_family_overlay(source,identity,out);return out;
+}
+FamilyOverlay plan_family_vacation_overlay(const std::vector<FamilyEntry>& source,
+        const FamilyVacationDigest& identity,const FamilyOverlay* current,const FamilyVacationOverlayState& replacement){
+    auto bank=make_family_vacation_state(source,identity,current);validate_family_vacation_overlay_state(replacement);
+    if(current&&current->family_vacation)for(const auto& h:current->family_vacation->private_heads)
+        if(!family_vacation_private_head(replacement,h.family_chunk_id))throw FormatError("vacation publication dropped an adopted private owner");
+    // Every historical row and immutable source binding must survive normal publication.
+    FamilyVacationState checked(vacation_source_rows(source,identity,current),identity);checked.restore(replacement.state);
+    const auto before=encode_family_vacation_snapshot(bank.snapshot());const auto after=encode_family_vacation_snapshot(replacement.state);
+    if(before!=after){bool admitted=false;
+        for(const auto& phase:replacement.phases){if(phase.before_bank!=family_vacation_digest(bank.snapshot()))continue;
+            auto prepared=bank.prepare(phase);if(encode_family_vacation_snapshot(prepared.preview_snapshot())==after){admitted=true;break;}}
+        if(!admitted)throw FormatError("vacation bank change lacks exact prepared phase");
+    }
+    for(const auto& phase:replacement.phases){
+        const auto* prior=current&&current->family_vacation?family_vacation_phase(*current->family_vacation,phase.family_chunk_id):nullptr;
+        if(prior&&family_vacation_phase_matches(*current->family_vacation,phase))continue;
+        auto prepared=bank.prepare(phase);
+        if(encode_family_vacation_snapshot(prepared.preview_snapshot())!=after)throw FormatError("vacation phase receipt does not produce bank");
+        bool accepted=false;
+        const auto* private_head=family_vacation_private_head(replacement,phase.family_chunk_id);
+        if(private_head)accepted=private_head->family_identity==phase.family_identity&&private_head->checkpoint_sha256==phase.source_head;
+        if(current){const auto replay=replay_family_overlay(source,identity,*current);for(const auto& f:replay.states)
+            if(f.family_chunk_id==phase.family_chunk_id&&f.family_identity==phase.family_identity&&f.checkpoint_sha256==std::optional<FamilyVacationDigest>{phase.source_head})accepted=true;}
+        if(!accepted)throw FormatError("vacation phase lacks its exact accepted source head");
+    }
+    auto out=current?*current:FamilyOverlay{};out.neighborhood_identity=identity;out.family_vacation=replacement;
+    (void)replay_family_overlay(source,identity,out);(void)encode_family_overlay(out);return out;
+}
+std::optional<FamilyVacationSnapshot> select_family_vacation_snapshot(const std::vector<FamilyEntry>& source,
+        const FamilyVacationDigest& identity,const std::optional<FamilyVacationSnapshot>& saved,const FamilyOverlay* current,
+        const std::optional<FamilyVacationRestoreHead>& head){
+    auto bank=make_family_vacation_state(source,identity,current);
+    if(saved){
+        validate_family_vacation_snapshot(*saved);
+        if(saved->neighborhood_identity!=identity)throw FormatError("vacation saved neighborhood differs");
+        const auto rows=vacation_source_rows(source,identity,current);
+        for(const auto& f:saved->families){const auto i=std::find_if(rows.begin(),rows.end(),[&](const auto& r){return r.family_chunk_id==f.family_chunk_id;});
+            if(i==rows.end()||!vacation_seed_equal(f,*i)||(!f.active&&i->active))throw FormatError("vacation saved seed/lifetime differs");}
+    }
+    if(!current||!current->family_vacation)return saved; // Legacy absence stays absent until explicit adoption.
+    const auto& owned=*current->family_vacation;
+    if(saved&&saved->revision>owned.state.revision)throw FormatError("vacation saved bank is ahead of accepted authority");
+    if(saved&&encode_family_vacation_snapshot(*saved)==encode_family_vacation_snapshot(owned.state))return owned.state;
+    if(!head)throw FormatError("vacation stale/legacy snapshot requires exact accepted checkpoint");
+    const auto* f=vacation_row(owned.state,head->family_chunk_id);
+    if(!f||!f->active||f->family_identity!=head->family_identity)throw FormatError("vacation restore family identity differs");
+    bool accepted=false;
+    if(head->kind==FamilyVacationHeadKind::private_travel){const auto* p=family_vacation_private_head(owned,head->family_chunk_id);accepted=p&&p->family_identity==head->family_identity&&p->checkpoint_sha256==head->archive_sha256;}
+    else {const auto replay=replay_family_overlay(source,identity,*current);const auto i=std::find_if(replay.states.begin(),replay.states.end(),[&](const auto& s){return s.family_chunk_id==head->family_chunk_id;});accepted=i!=replay.states.end()&&i->family_identity==head->family_identity&&i->checkpoint_sha256==std::optional<FamilyVacationDigest>{head->archive_sha256};}
+    if(!accepted)throw FormatError("vacation restore archive is not the accepted head");
+    const auto* old=saved?vacation_row(*saved,head->family_chunk_id):nullptr;
+    const auto before=old?old->current_word:f->seed_word;
+    if(before==f->current_word)return owned.state; // Other families may advance independently.
+    const auto* phase=family_vacation_phase(owned,head->family_chunk_id);
+    if(!phase||phase->source_head!=head->archive_sha256||phase->family_identity!=head->family_identity||
+       before!=std::optional<std::uint32_t>{phase->before_word}||f->current_word!=std::optional<std::uint32_t>{phase->after_word})
+        throw FormatError("vacation restore bank differs without exact source phase");
+    return owned.state;
 }
 
 } // namespace odh

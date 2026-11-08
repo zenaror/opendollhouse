@@ -20,6 +20,19 @@ Com `-DODH_X11=OFF`, a configuração dispensa a janela. Sem PangoCairo, o texto
 usa uma alternativa bitmap com limitações de alfabetos. Essas opções não comprovam
 funcionamento em outra plataforma; veja [portabilidade](portability.md).
 
+## Compilação para desenvolvimento
+
+Em um build nativo com GCC ou Clang, `-DODH_BUILD_FAST_PERSON=ON` acrescenta o
+alvo opcional `odh-person-fast`. Ele reutiliza as bibliotecas do motor e compila
+o aplicativo com menos otimização para reduzir o tempo entre alterações. Para
+gerá-lo, use `cmake --build build/native --target odh-person-fast --parallel 2`.
+
+Para investigar viagens ainda em desenvolvimento, acrescente
+`-DODH_FAST_PERSON_ALL_TRAVEL_DESTINATIONS=ON` à configuração. Essa opção exige
+o alvo rápido e permite nele os destinos instalados; o aplicativo `odh-person`
+continua com sua política normal. A disponibilidade nesse build de diagnóstico
+não declara uma expansão completa. Ambas as opções ficam desligadas por padrão.
+
 ## Iniciar
 
 Forneça uma pasta extraída da Complete Collection, separada do código:

@@ -69,6 +69,7 @@ FamilySpells::FamilySpells(const FamilyEntry& entry) {
         state_.words=entry.family.original_v9_extension->spell_words;
         state_.loaded_presence=true;
     }
+    seed_extension_dword_=state_.extension_dword;
 }
 void FamilySpells::restore(const FamilySpellsSnapshot& value) {
     validate_family_spells_snapshot(value);
@@ -152,4 +153,33 @@ FamilySpellsOutcome capture_family_spells(const World& world,FamilySpells& state
     state.restore(candidate);
     return {true,changed,{}};
 }
+bool project_family_spells_vacation(FamilySpellsSnapshot& value,const FamilyVacationSnapshot& bank,
+        const FamilyVacationPhase* phase){
+    validate_family_spells_snapshot(value);validate_family_vacation_snapshot(bank);
+    const auto i=std::find_if(bank.families.begin(),bank.families.end(),[&](const auto& f){return f.family_chunk_id==value.family_chunk_id;});
+    if(i==bank.families.end()||!i->active||i->serialized_family_number!=value.family_number||!i->seed_word||!i->current_word||value.loaded_presence!=(i->fami_version==9))
+        throw FormatError("family spells vacation provenance/profile differs");
+    const bool prior_phase=phase&&phase->family_chunk_id==i->family_chunk_id&&phase->family_identity==i->family_identity&&phase->after_word==*i->current_word&&value.extension_dword==phase->before_word;
+    if(value.extension_dword!=*i->seed_word&&value.extension_dword!=*i->current_word&&!prior_phase)
+        throw FormatError("family spells vacation value lacks seed/current/phase authority");
+    const bool changed=value.extension_dword!=*i->current_word;value.extension_dword=*i->current_word;return changed;
+}
+bool project_family_spells_vacation_successor(FamilySpellsSnapshot& value,
+        const FamilyVacationSnapshot& before,const FamilyVacationSnapshot& after){
+    validate_family_spells_snapshot(value);validate_family_vacation_successor(before,after);
+    const auto prior=std::find_if(before.families.begin(),before.families.end(),[&](const auto& f){return f.family_chunk_id==value.family_chunk_id;});
+    if(prior==before.families.end()||!prior->active||prior->serialized_family_number!=value.family_number||
+       !prior->current_word||value.loaded_presence!=(prior->fami_version==9)||value.extension_dword!=*prior->current_word)
+        throw FormatError("saved family spells do not match before vacation authority");
+    const auto next=std::find_if(after.families.begin(),after.families.end(),[&](const auto& f){return f.family_chunk_id==value.family_chunk_id;});
+    if(next==after.families.end()||!next->active||next->family_identity!=prior->family_identity||!next->current_word)
+        throw FormatError("saved family spells lack current vacation family authority");
+    const bool changed=value.extension_dword!=*next->current_word;value.extension_dword=*next->current_word;return changed;
+}
+void FamilySpells::admit_vacation(const FamilyVacationSnapshot& bank,const FamilyVacationPhase* phase){
+    const auto i=std::find_if(bank.families.begin(),bank.families.end(),[&](const auto& f){return f.family_chunk_id==state_.family_chunk_id;});
+    if(i==bank.families.end()||i->seed_word!=std::optional<std::uint32_t>{seed_extension_dword_})throw FormatError("family spells vacation immutable seed differs");
+    (void)project_family_spells_vacation(state_,bank,phase);
+}
+
 } // namespace odh

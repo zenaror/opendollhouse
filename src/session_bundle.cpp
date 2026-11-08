@@ -21,6 +21,7 @@ constexpr std::array<char,4> inventory_id{{'N','I','N','V'}};
 constexpr std::array<char,4> build_buy_id{{'B','B','U','Y'}};
 constexpr std::array<char,4> house_layout_id{{'H','L','S','T'}};
 constexpr std::array<char,4> family_spells_id{{'F','S','P','L'}};
+constexpr std::array<char,4> family_vacation_id{{'F','V','A','C'}};
 constexpr std::array<char,4> personal_state_id{{'N','P','E','R'}};
 constexpr std::array<char,4> type_attributes_id{{'T','A','T','T'}};
 constexpr std::array<char,4> object_groups_id{{'O','G','R','P'}};
@@ -3022,6 +3023,17 @@ const SessionArchiveSection& required_section(const SessionArchive& archive,
     return *it;
 }
 void validate_family_lease(const SessionBundle& bundle) {
+    if(bundle.family_vacation){
+        validate_family_vacation_snapshot(*bundle.family_vacation);
+        if((bundle.family_lease&&bundle.family_vacation->neighborhood_identity!=bundle.family_lease->neighborhood_identity)||
+           (bundle.travel&&bundle.family_vacation->neighborhood_identity!=bundle.travel->neighborhood_identity))
+            throw FormatError("vacation snapshot neighborhood differs from session");
+        const auto row=std::find_if(bundle.family_vacation->families.begin(),bundle.family_vacation->families.end(),[&](const auto& f){return f.family_chunk_id==bundle.host.family_chunk_id;});
+        if(row==bundle.family_vacation->families.end()||!row->active||row->serialized_family_number!=bundle.host.family_number||
+           (bundle.family_lease&&row->family_identity!=bundle.family_lease->family_identity)||
+           (bundle.travel&&row->family_identity!=bundle.travel->family_identity))
+            throw FormatError("vacation snapshot selected family provenance differs");
+    }
     if(bundle.personal_state){
         validate_native_personal_snapshot(*bundle.personal_state);
         if((bundle.family_lease&&bundle.personal_state->neighborhood_identity!=bundle.family_lease->neighborhood_identity)||
@@ -3656,7 +3668,7 @@ void validate_architecture_object_links(const SessionBundle& bundle){
     }
 }
 bool recognized(const std::array<char,4>& id) {
-    return id==personal_state_id||id==house_layout_id||id==object_groups_id||id==type_attributes_id||id==family_spells_id||id==build_buy_id||id==travel_id||id==inventory_id||id==visited_id||id==home_id||id==simulation_id||id==meta_id||id==host_id||id==world_id||id==relation_id||
+    return id==family_vacation_id||id==personal_state_id||id==house_layout_id||id==object_groups_id||id==type_attributes_id||id==family_spells_id||id==build_buy_id||id==travel_id||id==inventory_id||id==visited_id||id==home_id||id==simulation_id||id==meta_id||id==host_id||id==world_id||id==relation_id||
            id==household_id||id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||
            id==seated_id||id==route_id||id==route_stack_id||id==object_vm_id||id==dynamic_owner_id||id==generic_execution_id||id==object_trade_id||id==runtime_globals_id||id==object_history_id||id==family_lease_id||id==ui_state_id||id==dialog_id||id==headline_id||id==npc_avatar_id||id==architecture_id||id==architecture_support_id||id==architecture_objects_id;
 }
@@ -3938,6 +3950,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
     };
     if(bundle.house_layout_history)archive.sections.push_back({house_layout_id,true,
         encode_house_layout_section(bundle,limits.archive.max_section_bytes)});
+    if(bundle.family_vacation)archive.sections.push_back({family_vacation_id,true,encode_family_vacation_snapshot(*bundle.family_vacation)});
     if(bundle.family_spells)archive.sections.push_back({family_spells_id,true,encode_family_spells_snapshot(*bundle.family_spells)});
     if(bundle.personal_state){
         if(bundle.family_lease&&bundle.personal_state->neighborhood_identity!=bundle.family_lease->neighborhood_identity)
@@ -4118,6 +4131,7 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
     for(const auto& section:archive.sections){
         if(section.id==house_layout_id){if(!section.required)throw FormatError("House layout history must be required");
             result.house_layout_history=decode_house_layout_section(section.data,result);}
+        if(section.id==family_vacation_id){if(!section.required)throw FormatError("vacation carrier must be required");result.family_vacation=decode_family_vacation_snapshot(section.data);}
         if(section.id==family_spells_id){if(!section.required)throw FormatError("family spell carrier must be required");result.family_spells=decode_family_spells_snapshot(section.data);}
         if(section.id==personal_state_id){if(!section.required)throw FormatError("personal state must be required");result.personal_state=decode_native_personal_snapshot(section.data);}
         if(section.id==type_attributes_id){if(!section.required)throw FormatError("type attributes must be required");result.type_attributes=decode_type_attributes_snapshot(section.data);}
@@ -4159,7 +4173,7 @@ ActorlessObjectTradeState actorless_object_trade_from_components(const SessionBu
        b.host.resident_guid||b.host.resident_neighbor_id||b.host.runtime_avatar_id||b.host.family_budget||b.family_lease||
        !b.host.global_values.empty()||!b.household_roster.empty()||!b.runtime_entities.empty()||!b.npc_avatars.empty()||
        b.travel||b.neighbor_inventory||!b.deferred_removals.empty()||b.dialog||!b.headlines.empty()||
-       b.seated_continuation||!b.household_seated_continuations.empty()||b.family_spells||b.type_attributes||b.personal_state||b.house_layout_history||
+       b.seated_continuation||!b.household_seated_continuations.empty()||b.family_spells||b.type_attributes||b.personal_state||b.family_vacation||b.house_layout_history||
        b.architecture||b.ui_state||b.travel_visited_session||b.travel_home_session||
        !b.runtime_globals||!b.object_history||!b.object_trade||!b.generic_execution||
        (b.simulation&&!b.simulation->avatars.empty()))

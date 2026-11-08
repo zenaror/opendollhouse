@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/family.hpp"
+#include "odh/family_vacation.hpp"
 #include "odh/neighborhood.hpp"
 #include "odh/type_attributes.hpp"
 #include "odh/native_personal_state.hpp"
@@ -141,6 +142,7 @@ struct FamilyOverlay {
     std::optional<NeighborhoodTypeAttributes> type_attributes;
     std::vector<FamilyPropertyRelease> property_releases{}; // Chronological v10 records.
     std::optional<NativePersonalSnapshot> personal_state; // v11, shared neighborhood authority.
+    std::optional<FamilyVacationOverlayState> family_vacation; // v12, one neighborhood owner.
 
 };
 

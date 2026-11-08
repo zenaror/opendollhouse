@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 #include "odh/family.hpp"
+#include "odh/family_vacation.hpp"
 #include "odh/lot_context.hpp"
 #include "odh/world.hpp"
 
@@ -18,6 +19,13 @@ struct FamilySpellsSnapshot {
 void validate_family_spells_snapshot(const FamilySpellsSnapshot&);
 std::vector<std::uint8_t> encode_family_spells_snapshot(const FamilySpellsSnapshot&);
 FamilySpellsSnapshot decode_family_spells_snapshot(const std::vector<std::uint8_t>&);
+// Explicit already-authenticated shared-bank projection; six spell words stay untouched.
+bool project_family_spells_vacation(FamilySpellsSnapshot&,const FamilyVacationSnapshot&,
+    const FamilyVacationPhase* authorized_phase=nullptr);
+// Saved carrier projection across two authenticated shared snapshots. Unlike
+// fresh constructor admission, the before DWORD must equal before.current.
+bool project_family_spells_vacation_successor(FamilySpellsSnapshot&,
+    const FamilyVacationSnapshot& before,const FamilyVacationSnapshot& after);
 class FamilySpells {
 public:
     FamilySpells()=default; // Authenticated known absence of an active family.
@@ -26,8 +34,10 @@ public:
     // Transactional; private identity and loaded flag/extension metadata cannot
     // change through a save. Runtime capture changes only the six words.
     void restore(const FamilySpellsSnapshot&);
+    void admit_vacation(const FamilyVacationSnapshot&,const FamilyVacationPhase* =nullptr);
 private:
     FamilySpellsSnapshot state_;
+    std::uint32_t seed_extension_dword_=0;
 };
 using FamilySpellsGlobals=std::function<std::optional<std::int16_t>(std::int16_t)>;
 struct FamilySpellsOutcome {

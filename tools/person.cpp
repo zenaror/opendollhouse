@@ -76,6 +76,7 @@
 #include "odh/native_personal_state.hpp"
 #include "odh/native_personal_session.hpp"
 #include "odh/original_frontend_personal.hpp"
+#include "odh/family_vacation.hpp"
 #include "original_frontend_catalog_resources.hpp"
 #include "odh/neighbor_info.hpp"
 #include "odh/npc_avatar.hpp"
@@ -1564,6 +1565,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         build_buy_permission_dirty=true;build_buy_redraw_requested=true;++build_buy_notifications;
     };
     const auto build_buy_handler=odh::build_buy_permission_primitive(build_buy_permission,build_buy_notify);
+    std::optional<odh::FamilyVacationSnapshot> restored_family_vacation;
+    std::optional<odh::FamilyVacationState> family_vacation;
+    bool family_vacation_active=false;
+    std::vector<odh::FamilyEntry> vacation_family_source;
+    std::optional<odh::FamilyVacationPhase> vacation_authorized_phase;
     std::optional<odh::FamilySpellsSnapshot> restored_family_spells;
     std::optional<odh::FamilySpells> family_spells;
     std::vector<std::uint8_t> initial_family_spells;
@@ -1621,11 +1627,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         restored_personal_state=source.personal_state;
         restored_type_attributes=source.type_attributes;
         restored_family_spells=source.family_spells;
+        restored_family_vacation=source.family_vacation;
     }
     std::optional<odh::HouseLayoutHistory> runtime_house_layout_history;
     std::optional<odh_host::HousePanelResources> house_panel_resources;
     if(session_context&&!session_context->restore_archive.empty()){
         auto restored_architecture_state=odh::decode_session_bundle(session_context->restore_archive,session_context->resources);
+        restored_family_vacation=restored_architecture_state.family_vacation;
         runtime_house_layout_history=restored_architecture_state.house_layout_history;
         restored_travel_present=restored_architecture_state.travel.has_value();
         if(restored_travel_present){
@@ -1932,6 +1940,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(chunk.type!="NBRS"||chunk.id!=1)return;
         if(nbrs)throw odh::FormatError("ambiguous NBRS1");nbrs=odh::read_nbrs(chunk.payload);
     });});
+    vacation_family_source=family_records; // Immutable FAMI/creation provenance never comes from booking projection.
     if(neighborhood_path&&!nbrs)throw odh::FormatError("NBRS1 absent");
     if(restored_type_attributes&&!neighborhood_path)
         throw odh::FormatError("saved type attributes require authenticated neighborhood resources");
@@ -1978,6 +1987,78 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         type_attributes_was_saved=restored_type_attributes.has_value();
 #endif
     }
+#ifdef __linux__
+    const auto read_vacation_source_checkpoint=[&]()->std::pair<odh::SessionBundle,odh_host::TravelCheckpointDigest>{
+        if(!session_context)throw odh::FormatError("vacation source checkpoint has no host context");
+        std::vector<std::uint8_t> bytes;
+        if(session_context->family_journal){
+            const auto path=session_context->family_journal->checkpoint_path();
+            if(!path)throw odh::FormatError("vacation source has no managed checkpoint");
+            bytes=odh::encode_session_archive(odh_host::read_session_archive(*path));
+            session_context->family_journal->validate_restore(bytes);
+        }else if(session_context->private_vacation_session){
+            bytes=session_context->private_vacation_session->read_current();
+            session_context->private_vacation_session->validate_restore(bytes);
+        }else{
+            if(session_context->travel_checkpoint_path.empty()||!session_context->travel_checkpoint_head)
+                throw odh::FormatError("vacation source has no accepted private checkpoint");
+            bytes=odh::encode_session_archive(odh_host::read_session_archive(session_context->travel_checkpoint_path));
+            if(odh::sha256(bytes.data(),bytes.size())!=*session_context->travel_checkpoint_head)
+                throw odh::FormatError("vacation private source head changed");
+        }
+        const auto digest=odh::sha256(bytes.data(),bytes.size());
+        return {odh::decode_session_bundle(bytes),digest};
+    };
+    if(session_context&&activate_family&&type_attributes_neighborhood_identity){
+        auto current=type_attributes_open_overlay;
+        // A known legacy HOME becomes an explicit private pointer only when a
+        // shared bank already exists. No empty FVAC bank is created by cold.
+        if(current&&current->family_vacation&&!session_context->family_journal&&
+           !session_context->private_vacation_session&&!session_context->restore_archive.empty()&&
+           !session_context->travel_return&&!actorless_arrival&&
+           !session_context->travel_checkpoint_path.empty()&&session_context->travel_checkpoint_head){
+            const auto saved=odh::decode_session_bundle(session_context->restore_archive);
+            if(!saved.travel&&!saved.family_lease){
+                auto owner=std::make_shared<odh_host::PrivateVacationSession>(vacation_family_source,
+                    *type_attributes_neighborhood_identity,current,session_context->family_chunk_id,
+                    session_context->house_number,session_context->neighborhood_mode,session_context->travel_checkpoint_path,
+                    session_context->travel_checkpoint_head,neighborhood_storage);
+                owner->adopt_legacy_home();session_context->private_vacation_session=std::move(owner);
+                current=session_context->private_vacation_session->expected_overlay();
+                type_attributes_open_overlay=current;
+            }
+        }
+        family_vacation.emplace(odh::make_family_vacation_state(vacation_family_source,
+            *type_attributes_neighborhood_identity,current?&*current:nullptr));
+        family_vacation_active=restored_family_vacation.has_value()||(current&&current->family_vacation);
+        if(restored_family_vacation||((!session_context->restore_archive.empty()||actorless_arrival)&&current&&current->family_vacation)){
+            std::optional<odh::FamilyVacationRestoreHead> head;
+            if(session_context->family_journal||session_context->private_vacation_session){
+                const auto accepted=read_vacation_source_checkpoint();
+                const auto& outer=accepted.first;
+                const auto source=outer.travel_visited_session?odh::decode_session_bundle(*outer.travel_visited_session):outer;
+                bool bound=false;
+                if(actorless_arrival)bound=odh::encode_session_bundle(source)==session_context->travel_departure_archive;
+                else if(session_context->travel_return)bound=accepted.second==session_context->travel_return->source_checkpoint_sha256();
+                else bound=odh::encode_session_bundle(source)==session_context->restore_archive;
+                if(!bound)throw odh::FormatError("vacation restore payload is not bound to its accepted source head");
+                head=odh::FamilyVacationRestoreHead{session_context->family_journal?
+                    odh::FamilyVacationHeadKind::managed:odh::FamilyVacationHeadKind::private_travel,
+                    session_context->family_chunk_id,
+                    session_context->family_journal?session_context->family_journal->lease().family_identity:
+                        odh::family_vacation_private_head(*current->family_vacation,session_context->family_chunk_id)->family_identity,
+                    accepted.second};
+            }
+            const auto selected=odh::select_family_vacation_snapshot(vacation_family_source,
+                *type_attributes_neighborhood_identity,restored_family_vacation,current?&*current:nullptr,head);
+            if(selected)family_vacation->restore(*selected);
+        }
+        if(current&&current->family_vacation){
+            if(const auto* phase=odh::family_vacation_phase(*current->family_vacation,session_context->family_chunk_id))
+                vacation_authorized_phase=*phase;
+        }
+    }
+#endif
     std::unique_ptr<odh::CareerCatalog> suit_careers;
     const auto load_careers=[&]{
             if(!suit_careers){
@@ -2127,7 +2208,23 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
     }
     if(active_family){
-        family_spells.emplace(*active_family);
+        auto seed=*active_family;
+        const auto original=std::find_if(vacation_family_source.begin(),vacation_family_source.end(),
+            [&](const auto& row){return row.chunk_id==active_family->chunk_id;});
+        if(original!=vacation_family_source.end())seed=*original;
+        else if(type_attributes_open_overlay){
+            const auto created=std::find_if(type_attributes_open_overlay->creations.begin(),type_attributes_open_overlay->creations.end(),
+                [&](const auto& row){return row.family_chunk_id==active_family->chunk_id;});
+            if(created==type_attributes_open_overlay->creations.end())throw odh::FormatError("family spells immutable creation seed missing");
+            const std::string raw(created->fami_payload.begin(),created->fami_payload.end());std::istringstream input(raw);
+            seed={created->family_chunk_id,odh::read_fami(odh::View(input,raw.size()))};
+        }
+        family_spells.emplace(seed);
+        if(family_vacation&&family_vacation_active){
+            family_spells->admit_vacation(family_vacation->snapshot(),vacation_authorized_phase?&*vacation_authorized_phase:nullptr);
+            if(restored_family_spells)(void)odh::project_family_spells_vacation(*restored_family_spells,
+                family_vacation->snapshot(),vacation_authorized_phase?&*vacation_authorized_phase:nullptr);
+        }
         initial_family_spells=odh::encode_family_spells_snapshot(family_spells->snapshot());
         if(restored_family_spells){family_spells->restore(*restored_family_spells);family_spells_was_saved=true;}
     }else if(restored_family_spells)throw odh::FormatError("private family spells require the authenticated originating FAMI record");
@@ -6606,6 +6703,26 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     const auto family_spell_handler=odh::family_spells_primitive(world,family_spells?&*family_spells:nullptr,
         explicit_family_spell_zoning?&*explicit_family_spell_zoning:nullptr,family_spell_globals);
     const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        if(i.opcode==1&&i.operands[0]==27){
+            if(i.operands[1]||!d.origin||!d.origin->matches_active_query(f,i,d)||!family_vacation)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Generic27 requires its real active source and complete family booking bank"};
+            try{
+#ifdef __linux__
+                if(session_context&&session_context->family_journal)session_context->family_journal->verify_current();
+                else if(session_context&&session_context->private_vacation_session)session_context->private_vacation_session->verify_current();
+                else if(neighborhood_path){
+                    const auto current=odh_host::read_linux_family_overlay_for_neighborhood(*neighborhood_path,neighborhood_storage);
+                    if(current.has_value()!=type_attributes_open_overlay.has_value()||
+                       (current&&odh::encode_family_overlay(*current)!=odh::encode_family_overlay(*type_attributes_open_overlay)))
+                        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Generic27 shared neighborhood revision changed"};
+                }
+#endif
+                const auto count=family_vacation->available_count();
+                if(!count)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Generic27 family booking source is unknown"};
+                odh::PrimitiveOutcome out{odh::PrimitiveDisposition::goto_true,{}};
+                out.temp_write=odh::VmTempWrite{0,*count};return out;
+            }catch(const std::exception& error){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,error.what()};}
+        }
         if(i.opcode==1&&i.operands[0]==43)return family_spell_handler(f,i,t,d);
         if(i.opcode==1&&(i.operands[0]==10||i.operands[0]==11))return build_buy_handler(f,i,t,d);
         if(i.opcode==10){
@@ -14598,6 +14715,7 @@ struct PlacementCandidateProbe {
         if(build_buy_permission_was_saved||build_buy_permission_dirty||!build_buy_permission.enabled())
             bundle.build_buy_permission=build_buy_permission.snapshot();
         if(trip_started)bundle.travel=travel_state;
+        if(family_vacation&&family_vacation_active)bundle.family_vacation=family_vacation->snapshot();
         if(family_spells&&(family_spells_was_saved||trip_started||
            odh::encode_family_spells_snapshot(family_spells->snapshot())!=initial_family_spells))
             bundle.family_spells=family_spells->snapshot();
@@ -15039,6 +15157,17 @@ struct PlacementCandidateProbe {
         // Apply the loader's complete supported-profile validation before any
         // filesystem mutation. A previous usable save must survive rejection.
         validate_session_candidate(bundle,encoded);
+        if(bundle.travel&&bundle.travel->pending&&bundle.travel->protocol==odh::Ts1TravelProtocol::original_6e598&&
+           bundle.travel->current_house>=40&&bundle.travel->current_house<=49){
+            const auto selected=runtime_globals?runtime_globals->read(9):std::nullopt;
+            if(!selected)throw odh::FormatError("Vacation personal persistence lacks actual selected family");
+            if(*selected!=0&&!frontend_save){
+                if(!neighborhood_path)throw odh::FormatError("Vacation family capture lacks authenticated personal source");
+                std::optional<odh::OriginalFrontendPersonalSource> source;
+                with_iff_file(*neighborhood_path,[&](const auto& view){source.emplace(odh::read_original_frontend_personal_source(view));});
+                odh::validate_original_family_departure_personal(bundle,*source);
+            }
+        }
         if(frontend_save){
             // Validation/codec preparation runs before CAS. No live NPER
             // revision is published until the exact durable candidate wins.
@@ -15049,7 +15178,25 @@ struct PlacementCandidateProbe {
         }
         if(captured)*captured=bundle;
         if(validate_only)return {}; // Complete codec and restore validation, no filesystem publication.
-        if(!session_context->family_journal&&(bundle.type_attributes||bundle.personal_state)&&
+        if(!session_context->family_journal&&family_vacation_active&&bundle.family_vacation){
+            if(!session_context->private_vacation_session){
+                session_context->private_vacation_session=std::make_shared<odh_host::PrivateVacationSession>(
+                    vacation_family_source,*type_attributes_neighborhood_identity,type_attributes_open_overlay,
+                    session_context->family_chunk_id,travel_state?travel_state->home_house:session_context->house_number,
+                    travel_state?travel_state->home_mode:session_context->neighborhood_mode,
+                    session_context->travel_checkpoint_path.empty()?std::nullopt:std::optional<std::filesystem::path>{session_context->travel_checkpoint_path},
+                    session_context->travel_checkpoint_head,neighborhood_storage);
+            }
+            auto published=bundle;
+            if(bundle.travel&&bundle.travel->current_house!=bundle.travel->home_house){
+                if(session_context->suspended_home.empty())throw odh::FormatError("private vacation visited save lacks immutable HOME");
+                published=odh_host::make_travel_session_envelope(session_context->suspended_home,bundle);
+            }
+            save_path=session_context->private_vacation_session->publish(std::move(published));
+            session_context->travel_checkpoint_path=save_path;
+            session_context->travel_checkpoint_head=session_context->private_vacation_session->head();
+            type_attributes_open_overlay=session_context->private_vacation_session->expected_overlay();
+        }else if(!session_context->family_journal&&(bundle.type_attributes||bundle.personal_state)&&
            (!bundle.travel||bundle.travel->current_house==bundle.travel->home_house)){
             if(!neighborhood_path||!type_attributes_neighborhood_identity)
                 throw odh::FormatError("shared type attributes publication requires authenticated neighborhood identity");
@@ -15077,9 +15224,9 @@ struct PlacementCandidateProbe {
                 if(bundle.travel&&bundle.travel->current_house!=bundle.travel->home_house){
                     if(session_context->suspended_home.empty())throw odh::FormatError("unmanaged visited save requires its exact suspended home checkpoint");
                     session_context->travel_checkpoint_head=odh_host::publish_private_travel_session_checkpoint(save_path,
-                        session_context->travel_checkpoint_head,session_context->suspended_home,bundle,*travel_state);
+                        session_context->travel_checkpoint_head,session_context->suspended_home,bundle,*travel_state,{},neighborhood_storage);
                 }else session_context->travel_checkpoint_head=odh_host::publish_private_home_session_checkpoint(save_path,
-                    session_context->travel_checkpoint_head,bundle,*travel_state);
+                    session_context->travel_checkpoint_head,bundle,*travel_state,{},neighborhood_storage);
             }else{
                 if(bundle.travel&&bundle.travel->current_house!=bundle.travel->home_house)
                     throw odh::FormatError("unmanaged visited travel save requires the guarded permanent-home checkpoint authority");
@@ -19991,7 +20138,81 @@ struct PlacementCandidateProbe {
         if(residential_property_arrival)residential_household_activated=true;
         ensure_primary_presentation();
     }
+#ifdef __linux__
+    const auto publish_vacation_frontend_phase=[&](bool entering){
+        if(!family_vacation||!session_context||!runtime_globals||!type_attributes_neighborhood_identity)
+            throw odh::FormatError("vacation frontend phase lacks its shared owner and actual globals");
+        const auto accepted=read_vacation_source_checkpoint();
+        const auto source=accepted.first.travel_visited_session?
+            odh::decode_session_bundle(*accepted.first.travel_visited_session):accepted.first;
+        auto owned=session_context->family_journal?session_context->family_journal->runtime_overlay():
+            session_context->private_vacation_session?session_context->private_vacation_session->expected_overlay():type_attributes_open_overlay;
+        const auto selected=runtime_globals->read(9);
+        if(!entering&&(!selected||*selected==0))return;
+        const auto klass=odh::classify_original_lot(explicit_family_spell_zoning?&*explicit_family_spell_zoning:nullptr,
+            static_cast<std::int16_t>(session_context->house_number));
+        if(!entering&&(!klass||*klass!=odh::OriginalLotClass::residential))return;
+        auto phase=entering?odh_host::prepare_vacation_entry_phase(accepted.first,accepted.second,family_vacation->snapshot()):
+            odh_host::prepare_vacation_clear_phase(accepted.first,accepted.second,family_vacation->snapshot(),
+                static_cast<std::uint16_t>(*selected),session_context->house_number,*klass);
+        if(entering){
+            if(!actorless_arrival||!travel_state||travel_state->current_house!=phase.destination||
+               !source.travel||!source.travel->pending||odh::encode_session_bundle(source)!=session_context->travel_departure_archive)
+                throw odh::FormatError("vacation set phase is not its exact fresh incoming sealed departure");
+            if(!neighborhood_path)throw odh::FormatError("vacation family departure personal source is absent");
+            std::optional<odh::OriginalFrontendPersonalSource> personal_source;
+            with_iff_file(*neighborhood_path,[&](const auto& view){personal_source.emplace(odh::read_original_frontend_personal_source(view));});
+            odh::validate_original_family_departure_personal(source,*personal_source);
+        }else if(!session_context->travel_return||session_context->travel_return->source_checkpoint_sha256()!=accepted.second)
+            throw odh::FormatError("vacation clear is not an authenticated typed frontend return");
+        const odh::FamilyVacationPhase* prior=owned&&owned->family_vacation?
+            odh::family_vacation_phase(*owned->family_vacation,phase.family_chunk_id):nullptr;
+        if(prior&&prior->kind==phase.kind&&prior->family_identity==phase.family_identity&&
+           prior->destination==phase.destination&&prior->source_head==phase.source_head&&
+           odh::family_vacation_phase_matches(*owned->family_vacation,*prior)){
+            vacation_authorized_phase=*prior;family_vacation_active=true;return;
+        }
+        // Original clear does not write when its DWORD is already zero.
+        if(!entering&&phase.before_word==0)return;
+        auto prepared=family_vacation->prepare(phase);
+        if(!family_vacation->source_current(prepared))throw odh::FormatError("vacation phase source changed before publication");
+        if(session_context->family_journal){
+            session_context->family_journal->publish_vacation_phase(phase,prepared.preview_snapshot());
+            type_attributes_open_overlay=session_context->family_journal->expected_overlay();
+        }else{
+            if(!session_context->private_vacation_session){
+                if(!travel_state)throw odh::FormatError("private vacation phase lacks permanent origin");
+                session_context->private_vacation_session=std::make_shared<odh_host::PrivateVacationSession>(
+                    vacation_family_source,*type_attributes_neighborhood_identity,type_attributes_open_overlay,
+                    phase.family_chunk_id,travel_state->home_house,travel_state->home_mode,
+                    session_context->travel_checkpoint_path,session_context->travel_checkpoint_head,neighborhood_storage);
+            }
+            session_context->private_vacation_session->publish_phase(phase,prepared.preview_snapshot());
+            type_attributes_open_overlay=session_context->private_vacation_session->expected_overlay();
+            session_context->travel_checkpoint_path=*session_context->private_vacation_session->checkpoint_path();
+            session_context->travel_checkpoint_head=session_context->private_vacation_session->head();
+        }
+        if(!family_vacation->commit(prepared))
+            throw odh::FormatError("vacation phase was durably accepted; reopen its current accepted checkpoint before continuing");
+        vacation_authorized_phase=phase;family_vacation_active=true;
+        family_records=odh::project_family_vacation_families(family_records,family_vacation->snapshot());
+        if(families){
+            const auto projected=odh::project_family_vacation_families(families->source(),family_vacation->snapshot());
+            for(const auto& value:projected)if(auto* actual=families->by_id(value.chunk_id)){
+                actual->family.tail_bytes=value.family.tail_bytes;
+                actual->family.original_v9_extension=value.family.original_v9_extension;
+            }
+        }
+        if(family_spells)family_spells->admit_vacation(family_vacation->snapshot(),&*vacation_authorized_phase);
+    };
+    if(actorless_arrival&&travel_state&&travel_state->protocol==odh::Ts1TravelProtocol::original_6e598&&
+       travel_state->current_house>=40&&travel_state->current_house<=49&&travel_state->transit_info==1)
+        publish_vacation_frontend_phase(true);
+#endif
     if(session_context&&session_context->travel_return){
+#ifdef __linux__
+        publish_vacation_frontend_phase(false);
+#endif
         if(!restoring_session)throw odh::FormatError("typed travel return requires complete HOME execution graph restoration");
         // The original Magic controller Load runs Generic43. Native typed HOME
         // return restores its graph instead of replaying Init/Load, so hydrate
@@ -24444,7 +24665,9 @@ struct PlacementCandidateProbe {
     if(diagnostics.truncated())session_log.event("runtime diagnostic retention truncated; see diagnostics_dropped in result JSON");
     if(owned_session_log)session_log.finish(exit_code);
 #endif
-    return {exit_code,std::move(neighborhood_transition),std::move(temporary_travel),session_context?session_context->family_journal:nullptr,return_to_neighborhood,window_pacer.speed()};
+    odh_host::PersonRunResult result{exit_code,std::move(neighborhood_transition),std::move(temporary_travel),session_context?session_context->family_journal:nullptr,return_to_neighborhood,window_pacer.speed()};
+    if(session_context)result.private_vacation_session=session_context->private_vacation_session;
+    return result;
  }catch(const std::exception& e){
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
     const bool log_available=session_log.enabled();const auto log_path=session_log.path();

@@ -180,6 +180,36 @@ int inspect_property(const fs::path& game,std::uint16_t house){
             <<R"(,"avatar":)"<<(entity.kind==odh::EntityKind::avatar?"true":"false")<<'}';}
     std::cout<<"]}\n";return 0;
 }
+void print_family_vacation(const std::optional<odh::FamilyVacationSnapshot>& saved){
+    if(!saved){std::cout<<"null";return;}
+    const auto& state=*saved;
+    odh::validate_family_vacation_snapshot(state);
+    const auto available=odh::family_vacation_available_count(state);
+    std::cout<<R"({"version":)"<<state.version
+        <<R"(,"neighborhood_identity":)"<<json_string(hex_digest(state.neighborhood_identity))
+        <<R"(,"revision":)"<<state.revision
+        <<R"(,"family_count":)"<<state.families.size()
+        <<R"(,"canonical_codec_sha256":)"<<json_string(hex_digest(odh::family_vacation_digest(state)))
+        <<R"(,"available_lots":)";
+    if(available)std::cout<<*available;else std::cout<<"null";
+    std::cout<<R"(,"truncated":false,"entries":[)";
+    bool comma=false;
+    for(const auto& row:state.families){
+        if(comma)std::cout<<',';comma=true;
+        std::cout<<R"({"family_chunk_id":)"<<row.family_chunk_id
+            <<R"(,"family_identity":)"<<json_string(hex_digest(row.family_identity))
+            <<R"(,"serialized_family_number":)"<<row.serialized_family_number
+            <<R"(,"fami_version":)"<<row.fami_version
+            <<R"(,"active":)"<<(row.active?"true":"false")
+            <<R"(,"seed_word":)";
+        if(row.seed_word)std::cout<<*row.seed_word;else std::cout<<"null";
+        std::cout<<R"(,"current_word":)";
+        if(row.current_word)std::cout<<*row.current_word;else std::cout<<"null";
+        std::cout<<'}';
+    }
+    std::cout<<"]}";
+}
+
 int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authenticated=nullptr){
     std::ifstream input(path,std::ios::binary);if(!input)throw std::runtime_error("cannot inspect session");
     const auto size=fs::file_size(path);if(size>256u*1024u*1024u)throw std::runtime_error("session inspector input exceeds limit");
@@ -335,6 +365,7 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
             }std::cout<<"}}";
         }std::cout<<"]}";
     }
+    std::cout<<R"(,"family_vacation":)";print_family_vacation(active.family_vacation);
     std::cout<<R"(,"blocking_dialog":)";
     if(active.dialog){
         const auto& dialog=*active.dialog;

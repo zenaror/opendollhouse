@@ -159,15 +159,27 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
   if(original.personal_state&&!active.personal_state)throw FormatError("travel active state dropped personal records");
   if(original.personal_state&&active.personal_state)validate_native_personal_successor(*original.personal_state,*active.personal_state);
   if(original.type_attributes&&!active.type_attributes)throw FormatError("travel active state dropped its originating type attributes");
-  if(original.family_spells&&active.family_spells&&
-     (original.family_spells->loaded_presence!=active.family_spells->loaded_presence||
-      original.family_spells->extension_dword!=active.family_spells->extension_dword))
-   throw FormatError("travel family spell carrier changed immutable FAMI source metadata");
+  if(original.family_vacation&&!active.family_vacation)throw FormatError("travel active state dropped shared vacation state");
+  if(original.family_vacation&&active.family_vacation)validate_family_vacation_successor(*original.family_vacation,*active.family_vacation);
+  if(active.family_vacation&&active.family_spells){
+   auto exact=*active.family_spells;
+   (void)project_family_spells_vacation_successor(exact,*active.family_vacation,*active.family_vacation);
+  }
+  if(original.family_spells&&active.family_spells){
+   auto source_metadata=*original.family_spells;
+   if(active.family_vacation){
+    if(original.family_vacation)(void)project_family_spells_vacation_successor(source_metadata,*original.family_vacation,*active.family_vacation);
+    else (void)project_family_spells_vacation(source_metadata,*active.family_vacation);
+   }
+   if(source_metadata.family_chunk_id!=active.family_spells->family_chunk_id||source_metadata.family_number!=active.family_spells->family_number||
+      source_metadata.loaded_presence!=active.family_spells->loaded_presence||source_metadata.extension_dword!=active.family_spells->extension_dword)
+    throw FormatError("travel family spell carrier lacks compatible vacation/source metadata");
+  }
   NeighborInventory ai(Ngbh{}),bi(Ngbh{});ai.restore(*active.neighbor_inventory);bi.restore(*b.neighbor_inventory);
   // Compare through the existing canonical bundle codec, preserving unknown
   // inventory item order/duplicates rather than normalizing semantic keys.
-  auto normalized=b;normalized.travel.reset();normalized.travel_visited_session.reset();normalized.travel_home_session.reset();normalized.host.family_budget=original.host.family_budget;normalized.neighbor_inventory=original.neighbor_inventory;normalized.family_spells=original.family_spells;normalized.type_attributes=original.type_attributes;normalized.personal_state=original.personal_state;
-  auto active_check=active;active_check.travel.reset();active_check.neighbor_inventory=b.neighbor_inventory;active_check.family_spells=b.family_spells;active_check.type_attributes=b.type_attributes;active_check.personal_state=b.personal_state;
+  auto normalized=b;normalized.travel.reset();normalized.travel_visited_session.reset();normalized.travel_home_session.reset();normalized.host.family_budget=original.host.family_budget;normalized.neighbor_inventory=original.neighbor_inventory;normalized.family_spells=original.family_spells;normalized.type_attributes=original.type_attributes;normalized.personal_state=original.personal_state;normalized.family_vacation=original.family_vacation;
+  auto active_check=active;active_check.travel.reset();active_check.neighbor_inventory=b.neighbor_inventory;active_check.family_spells=b.family_spells;active_check.type_attributes=b.type_attributes;active_check.personal_state=b.personal_state;active_check.family_vacation=b.family_vacation;
   auto active_original=active;active_original.travel.reset();
   original.travel.reset();
   if(original.host.house_number!=s.home_house||original.host.neighborhood_mode!=s.home_mode||encode_session_bundle(normalized,limits)!=encode_session_bundle(original,limits)||encode_session_bundle(active_check,limits)!=encode_session_bundle(active_original,limits))throw FormatError("suspended home bytes or authoritative family/inventory carrier changed");

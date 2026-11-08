@@ -2246,6 +2246,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             std::filesystem::path home_path;
             std::optional<odh_host::TravelCheckpointDigest> head;
             std::shared_ptr<odh_host::FamilySessionJournal> journal;
+            std::shared_ptr<odh_host::PrivateVacationSession> private_vacation;
             std::shared_ptr<const odh::PreparedTs1TravelReturn> returning;
             bool arrival=false;
         };
@@ -2285,7 +2286,17 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     trip.origin.home_mode,trip.origin.home_house,trip.origin.family_number,storage);
                 if(storage.number()==1&&!std::filesystem::exists(trip.home_path))
                     legacy_trip=trip.home_path.parent_path().parent_path()/trip.home_path.filename();
-                checkpoint=odh_host::reopen_private_travel_session_checkpoint(legacy_trip.value_or(trip.home_path),digest,trip.origin);
+                const auto source=odh::load_neighborhood_family_source(userdata/"Neighborhood.iff");
+                const auto overlay=odh_host::read_linux_family_overlay_for_neighborhood(userdata/"Neighborhood.iff",storage);
+                if(overlay&&overlay->family_vacation&&odh::family_vacation_private_head(*overlay->family_vacation,trip.origin.family_chunk_id)){
+                    trip.private_vacation=std::make_shared<odh_host::PrivateVacationSession>(source.families,source.identity,overlay,
+                        trip.origin.family_chunk_id,trip.origin.home_house,trip.origin.home_mode,std::nullopt,std::nullopt,storage);
+                    trip.private_vacation->validate_restore(bytes);
+                    trip.home_path=*trip.private_vacation->checkpoint_path();legacy_trip.reset();
+                    const auto saved=odh::decode_session_bundle(bytes);
+                    checkpoint=saved.travel_visited_session?odh_host::reopen_travel_session_envelope(saved):
+                        odh_host::TravelSessionCheckpoint{bytes,saved};
+                }else checkpoint=odh_host::reopen_private_travel_session_checkpoint(legacy_trip.value_or(trip.home_path),digest,trip.origin,{},storage);
             }
             trip.head=digest;trip.checkpoint=bytes;trip.state=*checkpoint.active.travel;trip.suspended_home=std::move(checkpoint.suspended_home);
 #ifdef ODH_HAVE_TS1_TRAVEL_CATALOG
@@ -2467,12 +2478,14 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }
                 if(temporary_trip){
                     (void)fresh_origin(temporary_trip->origin,temporary_trip->journal);
-                    const auto path=temporary_trip->journal?temporary_trip->journal->checkpoint_path():std::optional<std::filesystem::path>{temporary_trip->home_path};
+                    const auto path=temporary_trip->journal?temporary_trip->journal->checkpoint_path():
+                        temporary_trip->private_vacation?temporary_trip->private_vacation->checkpoint_path():std::optional<std::filesystem::path>{temporary_trip->home_path};
                     if(!path)throw odh::FormatError("temporary travel has lost its permanent home checkpoint");
                     const auto bytes=read_travel_checkpoint_bytes(*path);
                     if(odh::sha256(bytes.data(),bytes.size())!=*temporary_trip->head)throw odh::FormatError("temporary travel checkpoint head changed before candidate preparation");
                     if(temporary_trip->journal)temporary_trip->journal->validate_restore(bytes);
-                    else (void)odh_host::reopen_private_travel_session_checkpoint(temporary_trip->home_path,*temporary_trip->head,temporary_trip->origin);
+                    else if(temporary_trip->private_vacation)temporary_trip->private_vacation->validate_restore(bytes);
+                    else (void)odh_host::reopen_private_travel_session_checkpoint(temporary_trip->home_path,*temporary_trip->head,temporary_trip->origin,{},storage);
                 }
                 if (family_journal) {
                     family_journal->verify_current();
@@ -2502,6 +2515,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 #endif
 #ifdef __linux__
                 std::filesystem::path private_home_path;
+                std::shared_ptr<odh_host::PrivateVacationSession> private_vacation_session;
                 std::optional<odh_host::TravelCheckpointDigest> private_home_head;
                 std::optional<std::filesystem::path> legacy_home;
                 std::optional<odh_host::TravelCheckpointDigest> private_neighborhood;
@@ -2509,13 +2523,21 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     const auto neighborhood=odh_host::linux_neighborhood_identity(userdata/"Neighborhood.iff");
                     private_neighborhood=neighborhood;
                     private_home_path=permanent_travel_checkpoint_path(game,neighborhood,options.mode,house,session.family_number,storage);
-                    const bool scoped=std::filesystem::exists(private_home_path);
-                    const auto candidate=(scoped||storage.number()!=1)?private_home_path:private_home_path.parent_path().parent_path()/private_home_path.filename();
+                    if(family_overlay&&family_overlay->family_vacation&&
+                       odh::family_vacation_private_head(*family_overlay->family_vacation,session.family_chunk_id)){
+                        const auto source=odh::load_neighborhood_family_source(userdata/"Neighborhood.iff");
+                        private_vacation_session=std::make_shared<odh_host::PrivateVacationSession>(source.families,source.identity,
+                            family_overlay,session.family_chunk_id,static_cast<std::uint16_t>(house),static_cast<std::uint8_t>(options.mode),
+                            std::nullopt,std::nullopt,storage);
+                    }
+                    const bool scoped=private_vacation_session||std::filesystem::exists(private_home_path);
+                    const auto candidate=private_vacation_session?*private_vacation_session->checkpoint_path():
+                        (scoped||storage.number()!=1)?private_home_path:private_home_path.parent_path().parent_path()/private_home_path.filename();
                     std::optional<odh::SessionBundle> accepted;
                     std::vector<std::uint8_t> current;
                     if(scoped||std::filesystem::is_regular_file(std::filesystem::symlink_status(candidate))){
                         try{
-                            current=read_travel_checkpoint_bytes(candidate);
+                            current=private_vacation_session?private_vacation_session->read_current():read_travel_checkpoint_bytes(candidate);
                             auto saved=odh::decode_session_bundle(current);
                             if(scoped||legacy_matches_home(saved,session,neighborhood)){
                                 accepted=std::move(saved);
@@ -2782,6 +2804,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     session_context.travel_checkpoint_path=temporary_trip->home_path;
                     session_context.travel_checkpoint_head=temporary_trip->head;
                     session_context.travel_return=temporary_trip->returning;
+                    session_context.private_vacation_session=temporary_trip->private_vacation;
                 }else if(!session_context.single_resident_session){
                     session_context.travel_state=identify_travel_origin(session_context,userdata/"Neighborhood.iff");
                     session_context.travel_state->protocol=session_context.travel_protocol;
@@ -2792,7 +2815,9 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         session_context.travel_checkpoint_head=private_home_head;
                     }
                 }
+                if(!temporary_trip)session_context.private_vacation_session=private_vacation_session;
                 auto running_family_journal=session_context.family_journal;
+                auto running_private_vacation=session_context.private_vacation_session;
 #endif
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
                 if(session_log)session_log->stage("lot-runtime");
@@ -2822,6 +2847,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 #endif
 #ifdef __linux__
                 if(result.family_journal)running_family_journal=result.family_journal;
+                if(result.private_vacation_session)running_private_vacation=result.private_vacation_session;
 #endif
                 if (result.exit_code != 0) {
 #ifdef __linux__
@@ -2858,6 +2884,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     const auto& request=*result.temporary_travel;
                     const auto origin=fresh_origin(request.state,running_family_journal);
                     const auto authority=running_family_journal?running_family_journal->checkpoint_path():
+                        running_private_vacation?running_private_vacation->checkpoint_path():
                         std::optional<std::filesystem::path>{permanent_travel_checkpoint_path(game,origin.neighborhood_identity,origin.home_mode,origin.home_house,origin.family_number,storage)};
                     if(!authority||request.saved_session_path.lexically_normal()!=authority->lexically_normal())throw odh::FormatError("temporary travel result does not identify its canonical permanent-home checkpoint");
                     const auto bytes=read_travel_checkpoint_bytes(*authority);auto accepted=authenticate_trip(bytes,running_family_journal);
@@ -2870,10 +2897,12 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     // committed its home checkpoint before its first tick.
                     // An unresolved receipt could never reach this point.
                     const auto& expected_home=temporary_trip->returning->home();
-                    const auto path=running_family_journal?running_family_journal->checkpoint_path():std::optional<std::filesystem::path>{temporary_trip->home_path};
+                    const auto path=running_family_journal?running_family_journal->checkpoint_path():
+                        running_private_vacation?running_private_vacation->checkpoint_path():std::optional<std::filesystem::path>{temporary_trip->home_path};
                     if(!path)throw odh::FormatError("validated temporary return did not publish a home checkpoint");
                     const auto committed=read_travel_checkpoint_bytes(*path);
                     if(running_family_journal)running_family_journal->validate_restore(committed);
+                    else if(running_private_vacation)running_private_vacation->validate_restore(committed);
                     const auto home=odh::decode_session_bundle(committed);
                     if(home.travel||home.host.house_number!=temporary_trip->origin.home_house||home.host.family_chunk_id!=expected_home.host.family_chunk_id||home.host.family_number!=expected_home.host.family_number||odh::sha256(committed.data(),committed.size())==temporary_trip->returning->source_checkpoint_sha256())throw odh::FormatError("temporary return did not replace the authenticated trip head with its permanent home");
                     temporary_trip.reset();

@@ -63,6 +63,8 @@ public:
     // occupancy/head CAS. It never adds cash; absence preserves legacy cache.
     std::filesystem::path publish(odh::SessionBundle bundle,
         std::optional<std::int32_t> property_value = std::nullopt);
+    void publish_vacation_phase(const odh::FamilyVacationPhase&,
+        const odh::FamilyVacationSnapshot& preview);
 private:
     FamilySessionJournal(std::vector<odh::FamilyEntry>,std::array<std::uint8_t,32>,
         std::optional<odh::FamilyOverlay>,std::uint16_t,std::uint16_t,

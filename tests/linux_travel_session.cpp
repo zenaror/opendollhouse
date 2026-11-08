@@ -3,6 +3,8 @@
 #include "linux_session_archive_store.hpp"
 #include "travel_session_fixture.hpp"
 #include "odh/sha256.hpp"
+#include "odh/original_companion_protocol.hpp"
+#include "odh/family_spells.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -30,8 +32,180 @@ void original_frontend_global_phase(){
  rejects([&]{odh_host::reset_original_frontend_load_globals(globals,destination,false);},"ordinary active gameplay is not a fresh load phase");
  require(globals.read(32)==1,"refused phases do not normalize historical Simless state");
 }
+
+odh::FamilyEntry vacation_family(std::uint16_t id,std::int32_t number,std::int32_t house,std::uint32_t guid){
+ odh::Family f;f.version=9;f.family_number=number;f.house_number=house;f.budget=7000;f.member_guids={guid};
+ f.remaining_bytes=16;f.tail_bytes.resize(16);odh::FamilyV9Extension ext;ext.spell_words={1,-2,3,-4,5,-6};
+ f.original_v9_extension=ext;
+ for(std::size_t n=0;n<6;++n){const auto word=static_cast<std::uint16_t>(ext.spell_words[n]);f.tail_bytes[4+n*2]=static_cast<std::uint8_t>(word);f.tail_bytes[5+n*2]=static_cast<std::uint8_t>(word>>8);}
+ return {id,f};
+}
+odh::SessionBundle original_family_departure(odh::SessionBundle b,const odh::FamilyVacationSnapshot& bank,
+ std::int16_t destination,std::optional<odh::Ts1TravelState> previous={}){
+ odh::World world;require(world.restore_snapshot(b.world),"restore real source World for Vacation Generic17");
+ const auto member=b.household_roster.front();auto words=world.find(member.id)->person_data;words.resize(88);
+ require(world.replace_person_data(member.id,words)&&world.set_person_data(member.id,61,static_cast<std::int16_t>(b.host.family_chunk_id)),
+  "actual CallerPD61 is FAMI chunk21, distinct from serialized FamilyNumber12");
+ odh::Ts1TravelState state=previous.value_or(odh::Ts1TravelState{});
+ if(!previous){state.home_house=b.host.house_number;state.current_house=b.host.house_number;state.home_mode=b.host.neighborhood_mode;state.current_mode=b.host.neighborhood_mode;
+  state.family_chunk_id=b.host.family_chunk_id;state.family_number=b.host.family_number;state.neighborhood_identity=bank.neighborhood_identity;
+  state.family_identity=bank.families.front().family_identity;for(const auto& row:bank.families)if(row.family_chunk_id==state.family_chunk_id)state.family_identity=row.family_identity;
+  state.occupancy_epoch=b.family_lease?b.family_lease->occupancy_epoch:0;
+  for(const auto& r:b.household_roster)state.permanent_roster.push_back({r.guid,r.neighbor_id,r.object_definition_id,r.character_asset,r.character_fingerprint});
+  state.travelers=state.permanent_roster;state.caller_guid=member.guid;state.caller_neighbor_id=member.neighbor_id;
+ }
+ state.protocol=odh::Ts1TravelProtocol::original_6e598;state.pending.reset();
+ odh::Nbrs nbrs{};nbrs.version=62;odh::NeighborRecord record{};record.version=10;record.name="iffname";record.person_mode=1;
+ record.neighbor_id=member.neighbor_id;record.guid=member.guid;record.person_data=std::vector<std::int16_t>(256);nbrs.entries.push_back({1,record});
+ odh::NeighborContext neighbors(nbrs);odh::NeighborInventory inventory(odh::Ngbh{}, {},odh::Ts1TravelProtocol::original_6e598);
+ const auto identity=state.permanent_roster.front();
+ odh::Bhav code{0x8002,{{1,1,255,{17,0,0,0,0,0,0,0}},{0,254,255,{}}},{},odh::Bhav::Metadata{0,4,4,0}};
+ odh::Vm vm({{odh::routine_key(4096),code}},world.vm_memory(),{},[&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+  odh::Ts1TravelRequest request;request.destination=temps[0];request.thread_owner={member.id,member.generation};request.run_generation=dispatch.origin->run_generation();
+  request.ticket=dispatch.ticket;request.source_frame=frame;request.source_instruction=instruction;request.departure_transit=temps[3];request.departure_members={{identity,{member.id,member.generation}}};
+  const auto resolve=[&](odh::WorldEntityReference ref){require(ref==request.thread_owner,"capture exact source generation");return identity;};
+  auto captured=odh::prepare_original_travel_capture(world,inventory,neighbors,request.thread_owner,request.departure_members,temps,
+   b.simulation->clock.hour,b.simulation->clock.minute,state.current_house==state.home_house,resolve);
+  request.original=std::move(captured.receipt);require(inventory.commit_replacement(std::move(captured.inventory)),"commit real original source inventory capture");
+  state.pending=std::move(request);return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true_next_tick,{}};
+ });
+ require(vm.start(odh::routine_key(4096),{member.id,member.id,member.id,0})==odh::VmStatus::running,"start real Vacation source Generic17");
+ vm.temps()[0]=destination;vm.temps()[3]=1;require(vm.run(1)==odh::VmStatus::next_tick,"seal actual family1 Generic17 next-tick boundary");
+ odh::EntityThreadControllers controllers(world,member.id);require(controllers.bind(vm),"bind actual sealed source controllers");
+ b.runtime_entities.front().vm=vm.snapshot();b.runtime_entities.front().controllers=controllers.snapshot();b.world=world.snapshot();
+ for(auto& e:b.scheduler.entities)if(e.id==member.id){e.status=vm.status();e.steps=vm.steps();e.run_generation=vm.run_generation();}
+ b.travel=state;b.neighbor_inventory=inventory.snapshot();b.family_vacation=bank;odh::seal_ts1_travel_request(*b.travel,b);odh::validate_ts1_travel_bundle(b);return b;
+}
+void vacation_publication_matrix(){
+ const auto directory=std::filesystem::temp_directory_path()/("odh-vacation-owner-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+ std::filesystem::create_directory(directory);setenv("XDG_DATA_HOME",directory.c_str(),1);setenv("XDG_CONFIG_HOME",directory.c_str(),1);
+ auto home=travel_test::managed_home();const auto neighborhood=home.family_lease->neighborhood_identity;home.family_lease.reset();
+ // This whole matrix is an original-protocol fixture from its first HOME, not a conversion of a legacy save.
+ home.neighbor_inventory=odh::NeighborInventory(odh::Ngbh{}, {},odh::Ts1TravelProtocol::original_6e598).snapshot();
+ std::vector<odh::FamilyEntry> families{vacation_family(21,12,7,123456),vacation_family(22,13,8,123457)};
+ auto bank=odh::make_family_vacation_state(families,neighborhood,nullptr);home.family_vacation=bank.snapshot();
+ home.family_spells=odh::FamilySpells(families.front()).snapshot();const auto spells=home.family_spells->words;
+ odh_host::PrivateVacationSession owner(families,neighborhood,std::nullopt,21,7,1);
+ const auto first_path=owner.publish(home);
+ require(owner.adopted()&&!odh::decode_session_bundle(owner.read_current()).family_lease&&owner.checkpoint_path()==first_path,
+  "unmanaged ordinary HOME publishes immutable pointer and shared bank without occupancy lease");
+ auto stale=owner;
+ auto departure=original_family_departure(home,bank.snapshot(),40);const auto source_path=owner.publish(departure);const auto source_head=*owner.head();
+ rejects([&]{stale.publish(home);},"stale private overlay publisher cannot overwrite newer source head");
+ auto phase=odh_host::prepare_vacation_entry_phase(departure,source_head,bank.snapshot());
+ require(phase.family_chunk_id==21&&phase.destination==40&&phase.before_word==0&&phase.after_word==40,
+  "actual source CallerPD61 proves family21 instead of serialized FamilyNumber12");
+ auto prepared=bank.prepare(phase);auto forged=prepared.preview_snapshot();++forged.revision;
+ const auto before=odh::encode_family_overlay(*owner.expected_overlay());
+ rejects([&]{owner.publish_phase(phase,forged);},"private publisher refuses a forged preview before archive/head mutation");
+ require(odh::encode_family_overlay(*owner.expected_overlay())==before,"forged preview leaves entire overlay untouched");
+ owner.publish_phase(phase,prepared.preview_snapshot());require(bank.commit(prepared),"commit live owner only after accepted overlay CAS");
+ require(owner.head()==std::optional<odh_host::TravelCheckpointDigest>{source_head}&&owner.checkpoint_path()==source_path&&
+  odh::encode_session_bundle(odh::decode_session_bundle(owner.read_current()))==odh::encode_session_bundle(departure),
+  "preavatar phase retains exact sealed source bytes even while shared bank has advanced");
+ const auto selected=odh::select_family_vacation_snapshot(families,neighborhood,departure.family_vacation,&*owner.expected_overlay(),
+  odh::FamilyVacationRestoreHead{odh::FamilyVacationHeadKind::private_travel,21,phase.family_identity,source_head});
+ require(selected&&selected->revision==bank.snapshot().revision&&selected->families.front().current_word==std::optional<std::uint32_t>{40},
+  "cold source selects new bank only through its exact accepted pointer and phase receipt");
+ // First entry must retain the real prebooking HOME (word0), while the
+ // active destination carries the admitted bank/spell word40. A later40->40
+ // envelope cannot substitute for this transition test.
+ auto first_active=departure;first_active.host.house_number=40;first_active.host.neighborhood_mode=3;
+ first_active.travel->current_house=40;first_active.travel->current_mode=3;
+ first_active.travel->family_activated=true;first_active.travel->pending.reset();
+ first_active.family_vacation=bank.snapshot();
+ (void)odh::project_family_spells_vacation(*first_active.family_spells,bank.snapshot(),&phase);
+ const auto first_home_bytes=odh::encode_session_bundle(departure);
+ const auto first_envelope=odh_host::make_travel_session_envelope(first_home_bytes,first_active);
+ const auto first_cold=odh_host::reopen_travel_session_envelope(odh::decode_session_bundle(odh::encode_session_bundle(first_envelope)));
+ require(first_cold.suspended_home==first_home_bytes&&first_cold.active.family_spells->extension_dword==40&&
+  odh::decode_session_bundle(first_cold.suspended_home).family_spells->extension_dword==0&&
+  first_cold.active.family_spells->words==spells&&first_cold.active.family_vacation->families.front().current_word==std::optional<std::uint32_t>{40},
+  "first0-to40 entry preserves exact prebooking HOME and six spells across active envelope/cold decode");
+ const auto idempotent=odh::encode_family_overlay(*owner.expected_overlay());owner.publish_phase(phase,bank.snapshot());
+ require(odh::encode_family_overlay(*owner.expected_overlay())==idempotent,"same accepted phase does not advance bank or publish twice");
+ auto progressed=home;progressed.family_vacation=bank.snapshot();progressed.host.family_budget=6990;
+ (void)odh::project_family_spells_vacation(*progressed.family_spells,bank.snapshot(),&phase);
+ const auto normal=owner.publish(progressed);
+ require(owner.head()!=std::optional<odh_host::TravelCheckpointDigest>{source_head}&&owner.checkpoint_path()==normal&&
+  !odh::family_vacation_phase(owner.vacation_overlay(),21)&&odh::decode_session_bundle(owner.read_current()).host.family_budget==6990,
+  "ordinary postadoption save advances sole immutable pointer and clears only accepted family's phase");
+ require(progressed.family_spells->words==spells,"booking updates preserve all six spell words");
+ auto origin=departure.travel.value();origin.pending.reset();origin.current_house=origin.home_house;origin.current_mode=origin.home_mode;
+ rejects([&]{odh_host::publish_private_home_session_checkpoint(directory/"legacy.odhs",std::nullopt,home,origin);},
+  "legacy mutable private writer cannot create a second head after typed adoption");
+ auto bad_head=source_head;bad_head[0]^=1;rejects([&]{odh_host::prepare_vacation_entry_phase(departure,bad_head,bank.snapshot());},
+  "entry proof rejects changed source hash before family mutation");
+ auto other=departure;other.world.entities.front().person_data[61]=22;
+ rejects([&]{const auto wire=odh::encode_session_bundle(other);const auto digest=odh::sha256(wire.data(),wire.size());
+  odh_host::prepare_vacation_entry_phase(other,digest,bank.snapshot());},
+  "actual CallerPD61 and authenticated source family mismatch cannot change another family's booking");
+ owner.validate_restore(owner.read_current());
+ // Another installed family adopts a proven legacy HOME without changing bank,
+ // archive bytes, or occupancy; subsequent ordinary writes share the same CAS.
+ auto legacy=home;legacy.family_vacation.reset();legacy.host.house_number=8;legacy.host.family_chunk_id=22;
+ legacy.host.family_number=13;legacy.host.resident_guid=123457;legacy.household_roster.front().guid=123457;
+ legacy.world.entities.front().definition->guid=123457;legacy.world.entities.front().person_data[61]=22;
+ legacy.family_spells=odh::FamilySpells(families[1]).snapshot();
+ const auto legacy_bytes=odh::encode_session_bundle(legacy);const auto legacy_digest=odh::sha256(legacy_bytes.data(),legacy_bytes.size());
+ const auto legacy_path=directory/"legacy-family22.odhs";
+ odh_host::write_session_archive_atomic(legacy_path,odh::decode_session_archive(legacy_bytes));
+ const auto old_bank=odh::family_vacation_digest(owner.vacation_overlay().state);
+ odh_host::PrivateVacationSession adopted(families,neighborhood,owner.expected_overlay(),22,8,1,legacy_path,legacy_digest);
+ adopted.adopt_legacy_home();
+ require(adopted.adopted()&&adopted.head()==std::optional<odh_host::TravelCheckpointDigest>{legacy_digest}&&
+  adopted.read_current()==legacy_bytes&&odh::family_vacation_digest(adopted.vacation_overlay().state)==old_bank,
+  "legacy HOME admission adds only typed pointer while retaining exact old bytes and existing multi-family bank");
+ require(odh::encode_session_archive(odh_host::read_session_archive(legacy_path))==legacy_bytes,
+  "legacy mutable file remains untouched after explicit overlay-pointer admission");
+ auto next=legacy;next.family_vacation=adopted.vacation_overlay().state;next.host.family_budget=6998;
+ const auto changed=adopted.publish(next);require(adopted.checkpoint_path()==changed&&adopted.head()!=std::optional<odh_host::TravelCheckpointDigest>{legacy_digest}&&
+  adopted.vacation_overlay().state.families.front().current_word==std::optional<std::uint32_t>{40},
+  "ordinary save by another adopted family cannot roll back previous family's booking");
+ rejects([&]{owner.publish(progressed);},"other-family accepted overlay update invalidates old private publisher rather than merging stale state");
+ // A genuine sealed visited return is anchored to its outer immutable head;
+ // clearing is an explicit typed residential phase, never ordinary cold.
+ owner=odh_host::PrivateVacationSession(families,neighborhood,adopted.expected_overlay(),21,7,1);
+ auto next_departure=original_family_departure(progressed,bank.snapshot(),40);owner.publish(next_departure);
+ const auto immutable_home=odh::encode_session_bundle(next_departure);
+ auto active=progressed;auto active_state=*next_departure.travel;active_state.current_house=40;active_state.current_mode=3;
+ active_state.family_activated=true;active_state.pending.reset();active.travel=active_state;active.host.house_number=40;active.host.neighborhood_mode=3;
+ owner.publish(odh_host::make_travel_session_envelope(immutable_home,active));
+ auto return_active=original_family_departure(active,bank.snapshot(),-1,active_state);
+ const auto return_envelope=odh_host::make_travel_session_envelope(immutable_home,return_active);
+ owner.publish(return_envelope);const auto return_head=*owner.head();
+ auto clear=odh_host::prepare_vacation_clear_phase(return_envelope,return_head,bank.snapshot(),21,7,odh::OriginalLotClass::residential);
+ require(clear.before_word==40&&clear.after_word==0&&clear.source_head==return_head,
+  "real visited Generic17 return binds clear to outer head and actual residential family");
+ rejects([&]{odh_host::prepare_vacation_clear_phase(return_envelope,return_head,bank.snapshot(),21,7,odh::OriginalLotClass::community);},
+  "community or ordinary cold cannot masquerade as residential clear phase");
+ auto clear_prepared=bank.prepare(clear);owner.publish_phase(clear,clear_prepared.preview_snapshot());require(bank.commit(clear_prepared),"live clear commits after durable source-bound phase");
+ const auto clear_selected=odh::select_family_vacation_snapshot(families,neighborhood,return_envelope.family_vacation,&*owner.expected_overlay(),
+  odh::FamilyVacationRestoreHead{odh::FamilyVacationHeadKind::private_travel,21,clear.family_identity,return_head});
+ require(clear_selected&&clear_selected->families.front().current_word==std::optional<std::uint32_t>{0}&&bank.available_count()==9,
+  "cold return source accepts cleared bank only through exact typed before/after phase");
+ auto returned_home=progressed;returned_home.family_vacation=bank.snapshot();
+ (void)odh::project_family_spells_vacation(*returned_home.family_spells,bank.snapshot(),&clear);owner.publish(returned_home);
+ require(!odh::decode_session_bundle(owner.read_current()).travel&&returned_home.family_spells->words==spells,
+  "HOME ordinary publication after clear preserves spells and closes source travel");
+ // Managed uses the same bank/phase CAS, not a second neighborhood state store.
+ const auto managed_dir=directory/"managed";std::filesystem::create_directory(managed_dir);setenv("XDG_DATA_HOME",managed_dir.c_str(),1);setenv("XDG_CONFIG_HOME",managed_dir.c_str(),1);
+ auto managed_home=home;auto journal=odh_host::FamilySessionJournal::adopt_original_session(families,neighborhood,std::nullopt,7,21,
+  managed_home,[](const auto&,const auto& bytes){(void)odh::decode_session_bundle(bytes);});
+ managed_home.family_lease=journal.lease();auto managed_bank=odh::make_family_vacation_state(families,neighborhood,&*journal.expected_overlay());
+ auto managed_departure=original_family_departure(managed_home,managed_bank.snapshot(),49);const auto managed_source=journal.publish(managed_departure);
+ const auto managed_bytes=odh::encode_session_archive(odh_host::read_session_archive(managed_source));const auto managed_head=odh::sha256(managed_bytes.data(),managed_bytes.size());
+ auto managed_phase=odh_host::prepare_vacation_entry_phase(managed_departure,managed_head,managed_bank.snapshot());auto managed_prepared=managed_bank.prepare(managed_phase);
+ auto wrong=managed_prepared.preview_snapshot();wrong.families.front().current_word=48;
+ rejects([&]{journal.publish_vacation_phase(managed_phase,wrong);},"managed publisher rejects forged phase preview");
+ journal.publish_vacation_phase(managed_phase,managed_prepared.preview_snapshot());require(managed_bank.commit(managed_prepared),"managed live bank commits once after phase publication");
+ require(journal.checkpoint_path()==managed_source&&managed_bank.available_count()==9,
+  "managed phase keeps sealed source and preserves original house49 exclusion from Generic27");
+ journal.validate_restore(managed_bytes);
+ std::filesystem::remove_all(directory);
+}
 int main(){try{
- original_frontend_global_phase();
+ original_frontend_global_phase();vacation_publication_matrix();
  auto home=travel_test::managed_home();odh::Family f;f.house_number=7;f.family_number=12;f.budget=7000;f.member_guids={123456};std::vector<odh::FamilyEntry> source{{21,f}};
  const auto directory=std::filesystem::temp_directory_path()/("odh-travel-checkpoint-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));std::filesystem::create_directory(directory);setenv("XDG_DATA_HOME",directory.c_str(),1);setenv("XDG_CONFIG_HOME",directory.c_str(),1);
  const auto identity=home.family_lease->neighborhood_identity;home.family_lease.reset();

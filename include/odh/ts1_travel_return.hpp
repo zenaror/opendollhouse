@@ -3,6 +3,9 @@
 #include "odh/neighbor_context.hpp"
 #include <optional>
 namespace odh {
+class OriginalFrontendPersonalSource;
+// Pure sealed-family1 proof; accepts existing equal selective writer/seed values.
+void validate_original_family_departure_personal(const SessionBundle&,const OriginalFrontendPersonalSource&);
 class PreparedTs1TravelReturn;
 // Constructed only by hashing and parsing the same owned, bounded IFF bytes.
 // The host must still authenticate the checkpoint and visited resource manifest.

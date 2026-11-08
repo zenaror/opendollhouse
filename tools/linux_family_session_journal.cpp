@@ -131,6 +131,12 @@ FamilySessionJournal FamilySessionJournal::adopt_original_session(std::vector<od
     if(capture.personal_state)adopted=odh::plan_neighborhood_personal_overlay(identity,&adopted,*capture.personal_state);
     if(capture.type_attributes)
         adopted=odh::plan_neighborhood_type_attributes_overlay(identity,&adopted,*capture.type_attributes);
+    if(capture.family_vacation){
+        odh::FamilyVacationOverlayState vacation;
+        if(expected&&expected->family_vacation)vacation=*expected->family_vacation;
+        vacation.state=*capture.family_vacation;odh::clear_family_vacation_phase(vacation,family_id);
+        adopted=odh::plan_family_vacation_overlay(source,identity,&adopted,vacation);
+    }
     (void)odh::encode_family_overlay(adopted); // Budget/type validation before any archive publication.
     FamilySessionJournal journal(std::move(source),identity,adopted,house,family_id,std::nullopt,false,storage);
     journal.validate_bundle(capture);
@@ -277,6 +283,15 @@ std::filesystem::path FamilySessionJournal::publish(odh::SessionBundle bundle,
     if(bundle.personal_state)replacement=odh::plan_neighborhood_personal_overlay(identity_,&replacement,*bundle.personal_state);
     if(bundle.type_attributes)
         replacement=odh::plan_neighborhood_type_attributes_overlay(identity_,&replacement,*bundle.type_attributes);
+    if(expected_->family_vacation&&!bundle.family_vacation)
+        throw odh::FormatError("checkpoint cannot omit shared family vacation state");
+    if(bundle.family_vacation){
+        odh::FamilyVacationOverlayState vacation;
+        if(expected_->family_vacation)vacation=*expected_->family_vacation;
+        vacation.state=*bundle.family_vacation;
+        odh::clear_family_vacation_phase(vacation,state_.family_chunk_id);
+        replacement=odh::plan_family_vacation_overlay(source_,identity_,&replacement,vacation);
+    }
     (void)odh::encode_family_overlay(replacement); // Fail before I/O if combined checkpoint/bank cannot fit.
     ensure_directory(archive_directory_.parent_path());
     ensure_directory(archive_directory_);
@@ -292,4 +307,29 @@ std::filesystem::path FamilySessionJournal::publish(odh::SessionBundle bundle,
     carry_members_.clear();
     return path;
 }
+void FamilySessionJournal::publish_vacation_phase(const odh::FamilyVacationPhase& phase,
+        const odh::FamilyVacationSnapshot& preview){
+    verify_current();
+    if(!state_.checkpoint_sha256||phase.source_head!=*state_.checkpoint_sha256||
+       phase.family_chunk_id!=state_.family_chunk_id||phase.family_identity!=state_.family_identity)
+        throw odh::FormatError("managed vacation phase differs from accepted family checkpoint");
+    const auto path=checkpoint_path();
+    if(!path)throw odh::FormatError("managed vacation phase has no current source archive");
+    const auto bytes=odh::encode_session_archive(read_session_archive(*path));validate_restore(bytes);
+    odh::FamilyVacationOverlayState vacation;
+    if(expected_->family_vacation)vacation=*expected_->family_vacation;
+    if(expected_->family_vacation&&odh::family_vacation_phase_matches(vacation,phase)){
+        if(odh::encode_family_vacation_snapshot(preview)!=odh::encode_family_vacation_snapshot(vacation.state))
+            throw odh::FormatError("idempotent managed vacation phase cannot change accepted bank");
+        return;
+    }
+    auto checked=odh::make_family_vacation_state(source_,identity_,&*expected_);
+    const auto exact=checked.prepare(phase);
+    if(odh::encode_family_vacation_snapshot(exact.preview_snapshot())!=odh::encode_family_vacation_snapshot(preview))
+        throw odh::FormatError("managed vacation preview is not its exact prepared phase");
+    vacation.state=preview;odh::set_family_vacation_phase(vacation,phase);
+    const auto replacement=odh::plan_family_vacation_overlay(source_,identity_,&*expected_,vacation);
+    (void)odh::encode_family_overlay(replacement);commit_overlay(replacement);
+}
+
 } // namespace odh_host

@@ -30,6 +30,7 @@ class LinuxWindow;
 class OriginalCursorPresentation;
 class LinuxSessionLog;
 class FamilySessionJournal;
+class PrivateVacationSession;
 class PreparedPropertyRelease;
 struct CommunityLotIdentity;
 struct CommunityLotDocument;
@@ -64,6 +65,7 @@ struct PersonRunResult {
     // Host presentation selection only; not part of the save or travel state.
     std::optional<std::uint8_t> presentation_speed;
     std::shared_ptr<const PreparedPropertyRelease> prepared_property_release;
+    std::shared_ptr<PrivateVacationSession> private_vacation_session;
 };
 
 // Stable launch identity retained by the Linux runtime for save metadata.
@@ -123,6 +125,7 @@ struct IntegratedSessionContext {
     // with the same expected source head before allowing its first tick.
     std::shared_ptr<const odh::PreparedTs1TravelReturn> travel_return;
     std::shared_ptr<FamilySessionJournal> family_journal;
+    std::shared_ptr<PrivateVacationSession> private_vacation_session;
     std::shared_ptr<const odh::PreparedHouseholdTransfer> family_transfer;
     std::shared_ptr<const odh::InstalledOccupancyRetirement> occupancy_retirement;
     // Empty only for the explicit single-resident save/restore test profile.
