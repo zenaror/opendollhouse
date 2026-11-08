@@ -309,7 +309,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  # AnimateSim44 is implemented, so it is not an unknown-opcode fixture.
  # Unknown primitive remains a coherent runtime failure, with owner/PC/provenance.
  setup(global_rows=[(240,254,255,bytes(8))]);r=run();d=json.loads(r.stdout)
- assert r.returncode==3 and d['status']=='fault' and d['diagnostic']=='unsupported primitive 240'
+ assert r.returncode==3 and d['status']=='fault' and d['diagnostic']=='unsupported primitive 240 operands=[0,0,0,0,0,0,0,0]',dict(returncode=r.returncode,status=d.get('status'),diagnostic=d.get('diagnostic'),stderr=r.stderr,stack=d.get('stack'))
  assert d['stack'][-1]['owner']==1 and d['stack'][-1]['routine']==256 and d['stack'][-1]['caller']==1
  setup(main=[expr(0,1,0)]);r=run();d=json.loads(r.stdout)
  assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==10000 and len(d['trace'])==10000
@@ -329,7 +329,11 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==0 and d['flags_initial']==65535 and d['actor_state']['flags']==-129 and d['actor_state']['age']==27,(r.returncode,d.get('diagnostic'),d.get('actor_state'))
  setup(main=[expr(0,1,0)]);r=run(['--ticks','1','--instruction-budget','12000']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==12000 and d['runtime_instruction_budget']==12000
- for extra in [['--ticks','4097'],['--age','32768'],['--flags','0','--flags','1'],['--routine','9999'],['--routine','256'],
+ # These returned programs prove argument acceptance, not a simulated full day.
+ for long_ticks in [4097,43200,65535]:
+  setup(main=[expr(0,1)]);r=run(['--ticks',str(long_ticks)]);d=json.loads(r.stdout)
+  assert r.returncode==0 and d['runtime_tick_limit']==long_ticks and d['runtime_instruction_budget']==10000,(long_ticks,r.stderr,d.get('diagnostic'))
+ for extra in [['--ticks','65536'],['--age','32768'],['--flags','0','--flags','1'],['--routine','9999'],['--routine','256'],
                ['--instruction-budget','0'],['--instruction-budget','1000001'],['--instruction-budget','12000','--instruction-budget','13000'],
                ['--instruction-budget','12000']]:
   setup();r=run(extra);assert r.returncode==2 and not r.stdout and r.stderr
@@ -407,7 +411,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  neighborhood_file([]);setup(main=[(2,254,255,[0,0,61,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
  assert r.returncode==0 and d['neighbor_reads']==[dict(neighbor=1,index=61,value=0,source='missing_neighbor_reference_zero')]
  r=run();d=json.loads(r.stdout);assert r.returncode==3 and unsupported_read(d,32,61)
- setup(main=[(31,254,255,[0,0,0,0,133,10,0,0])]);r=run();d=json.loads(r.stdout);assert r.returncode==3 and d['diagnostic']=='unsupported primitive 31'
+ setup(main=[(31,254,255,[0,0,0,0,133,10,0,0])]);r=run();d=json.loads(r.stdout);assert r.returncode==3 and d['diagnostic']=='unsupported primitive 31 operands=[0,0,0,0,133,10,0,0]'
  neighborhood_file([neighbor_record(11),neighbor_record(11)]);r=run(['--neighborhood',str(neighborhood)]);assert r.returncode==2 and 'ambiguous active neighbor ID' in r.stderr
  plain_iff(neighborhood,[]);r=run(['--neighborhood',str(neighborhood)]);assert r.returncode==2 and 'NBRS1 absent' in r.stderr
  payload=struct.pack('<II4sI',0,62,b'SRBN',0);plain_iff(neighborhood,[('NBRS',1,payload),('NBRS',1,payload)]);r=run(['--neighborhood',str(neighborhood)]);assert r.returncode==2 and 'ambiguous NBRS1' in r.stderr
@@ -442,7 +446,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  startup_setup(init=[expr(0,1,255)],dynamic_id=0);r=run(['--initialize']);d=json.loads(r.stdout)
  assert r.returncode==0 and d['startup_stages'][0]['status']=='returned_false' and d['body_initialized']
  startup_setup(init=[(240,254,255,bytes(8))]);r=run(['--initialize']);d=json.loads(r.stdout)
- assert r.returncode==3 and d['host_failed'] and d['status']=='fault' and d['diagnostic']=='unsupported primitive 240' and not d['body_initialized']
+ assert r.returncode==3 and d['host_failed'] and d['status']=='fault' and d['diagnostic']=='unsupported primitive 240 operands=[0,0,0,0,0,0,0,0]' and not d['body_initialized']
  assert len(d['startup_stages'])==1 and [v['phase'] for v in d['trace']]==['init'] and d['startup_steps']==0 and d['steps']==1
  startup_setup(init=[(2,1,255,[0,0,2,0,0,5,9,7]),(0,254,255,bytes(8))]);r=run(['--initialize']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['host_failed'] and d['status']=='waiting' and d['ticks']==0 and not d['body_initialized']
@@ -558,7 +562,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert d['relationship_records'][0]['value_after'] is None and d['relationship_records'][0]['created']
  # An unbound neighborhood remains unsupported, rather than an implicit empty save.
  startup_setup(main=[relationship_row()]);r=run(['--initialize']);d=json.loads(r.stdout)
- assert r.returncode==3 and d['diagnostic']=='unsupported primitive 26' and d['relationship_state'] is None
+ assert r.returncode==3 and d['diagnostic']=='unsupported primitive 26 operands=[0,0,3,0,8,0,0,0]' and d['relationship_state'] is None
  # VM bootstrap globals exist before private Init, even without a lot. They
  # override serialized runtime fields and persist across vm.start into Main.
  bootstrap_saved=struct.pack('<II4s',0,0x3e,b'IMIS')+struct.pack('<32h',*([123]*32))+bytes(34+24)
@@ -765,8 +769,13 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert tail['state']['multitile']['parent_id']==0 and tail['state']['unknown_int']==0
  assert tail['state']['consumed_bits']>d['saved_common_records'][0]['consumed_bits']
  assert not tail['world_entities_restored'] and not tail['saved_threads_restored']
+ # Repeating one canonical source is idempotent; distinct files with equal
+ # bytes are still different provenances and must retain genuine ambiguity.
  r=run(['--initialize','--lot',str(house),'7']+['--object-definition-file',str(definitions)]*2);d=json.loads(r.stdout)
- assert r.returncode==0 and d['saved_definition_records'][0]['status']=='ambiguous' and len(d['saved_definition_records'][0]['candidates'])==2
+ assert r.returncode==0 and d['saved_definition_records'][0]['status']=='unique' and len(d['saved_definition_records'][0]['candidates'])==1
+ other_definitions=root/'DefinitionsOther.iff';other_definitions.write_bytes(definitions.read_bytes())
+ r=run(['--initialize','--lot',str(house),'7','--object-definition-file',str(definitions),'--object-definition-file',str(other_definitions)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['saved_definition_records'][0]['status']=='ambiguous' and len(d['saved_definition_records'][0]['candidates'])==2,dict(returncode=r.returncode,status=d.get('status'),diagnostic=d.get('diagnostic'),host_failed=d.get('host_failed'),records=d.get('saved_definition_records'),stderr=r.stderr)
  assert d['saved_tail_records'][0]['state'] is None and d['saved_tail_records'][0]['status']=='definition_unavailable'
  struct.pack_into('<I',definition,28,88);plain_iff(definitions,[('OBJD',321,definition)])
  r=run(['--initialize','--lot',str(house),'7','--object-definition-file',str(definitions)]);d=json.loads(r.stdout)

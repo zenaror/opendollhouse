@@ -30,6 +30,11 @@ int main(){try{
             !window.limit_reached(4096,10000)&&!window.limit_reached(6200,1000000)&&
             window.limit_reached(std::numeric_limits<std::uint32_t>::max(),0),
             "default window has only the existing uint32 controller clock horizon");
+    const PersonSessionPolicy full_day{false,true,30U*60U*24U,10000,PersonWorkBudgetPolicy::per_tick_gameplay};
+    require(full_day.tick_limit()==43200&&full_day.tick_limit()<=PersonSessionPolicy::max_headless_ticks&&
+            !full_day.limit_reached(43199,100000000)&&full_day.limit_reached(43200,100000000)&&
+            full_day.entity_budget(100000000)==PersonSessionPolicy::instructions,
+            "continuous day remains finite with the unchanged per-entity tick grant");
     const auto largest_count=std::numeric_limits<std::size_t>::max();
     const auto maximum_work=std::numeric_limits<std::uint64_t>::max();
     const auto largest_funded=maximum_work/PersonSessionPolicy::instructions;

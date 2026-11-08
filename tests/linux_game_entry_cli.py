@@ -227,9 +227,23 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
         rejected_dialog = subprocess.run(dialog_base + extra + ["--headless-dialog-ok"],
                                          capture_output=True, text=True, env=env)
         check(rejected_dialog.returncode == 2 and
-              "--headless-dialog-ok requires execution with --headless-ticks 1..4096" in rejected_dialog.stderr,
+              "--headless-dialog-ok requires execution with --headless-ticks 1..65535" in rejected_dialog.stderr,
               "explicit one-shot dialog response rejects absent/zero ticks and plan-only")
-    for ticks in ["1", "4096"]:
+    oversized_horizon = subprocess.run(dialog_base + ["--headless-ticks", "65536"],
+                                       capture_output=True, text=True, env=env)
+    check(oversized_horizon.returncode == 2 and "headless tick count" in oversized_horizon.stderr,
+          "continuous execution still rejects a horizon beyond the finite CLI bound")
+    late_travel = subprocess.run(dialog_base + ["--headless-ticks", "65535",
+        "--headless-travel-house", "8", "--headless-travel-tick", "65534"],
+        capture_output=True, text=True, env=env)
+    check(late_travel.returncode == 2 and "unsupported FAR signature/version" in late_travel.stderr,
+          "late travel scheduling reaches resource loading within the extended finite horizon")
+    endpoint_travel = subprocess.run(dialog_base + ["--headless-ticks", "43200",
+        "--headless-travel-house", "8", "--headless-travel-tick", "43200"],
+        capture_output=True, text=True, env=env)
+    check(endpoint_travel.returncode == 2 and "tick below the per-visit limit" in endpoint_travel.stderr,
+          "travel remains strictly before the end even in a full-day run")
+    for ticks in ["1", "4096", "43200", "65535"]:
         accepted_dialog = subprocess.run(dialog_base + ["--headless-ticks", ticks, "--headless-dialog-ok"],
                                          capture_output=True, text=True, env=env)
         # These resources deliberately cannot execute a VM. Reaching the FAR

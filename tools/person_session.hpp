@@ -15,6 +15,8 @@ enum class PersonWorkBudgetPolicy { total_probe,per_tick_gameplay };
 struct PersonSessionPolicy {
     bool windowed=false,explicit_ticks=false;
     std::uint64_t requested_ticks=256;
+    // Finite CLI horizon; long runs do not increase any per-tick work grant.
+    static constexpr std::uint32_t max_headless_ticks=65535;
     static constexpr std::uint64_t instructions=10000;
     static constexpr std::uint64_t max_probe_instructions=1000000;
     std::uint64_t probe_instructions=instructions;

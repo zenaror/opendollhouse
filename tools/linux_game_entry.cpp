@@ -1,4 +1,5 @@
 #include "person_runtime.hpp"
+#include "person_session.hpp"
 #include "property_release_session.hpp"
 #include "residential_property_scene.hpp"
 #include "simulation_speed.hpp"
@@ -359,7 +360,7 @@ Options parse_options(int argc, char** argv) {
             continue;
         }
         if(key=="--headless-travel-tick"&&!result.headless_travel_tick&&i+1<argc){
-            result.headless_travel_tick=parse_number(argv[++i],4095,"lot switch tick");
+            result.headless_travel_tick=parse_number(argv[++i],odh_host::PersonSessionPolicy::max_headless_ticks-1,"lot switch tick");
             if(!*result.headless_travel_tick)throw odh::FormatError("lot switch tick must be positive");
             continue;
         }
@@ -372,7 +373,7 @@ Options parse_options(int argc, char** argv) {
             if (result.headless_resident_stands.size() >= 8)
                 throw odh::FormatError("resident Stand sequence exceeds eight requests");
             const auto actor_id=parse_number(argv[++i],32767,"resident Stand actor ID");
-            const auto tick=parse_number(argv[++i],4096,"resident Stand tick");
+            const auto tick=parse_number(argv[++i], odh_host::PersonSessionPolicy::max_headless_ticks, "resident Stand tick");
             if (!actor_id || !tick)
                 throw odh::FormatError("resident Stand actor and tick must be nonzero");
             if (!result.headless_resident_stands.empty() && tick < result.headless_resident_stands.back().tick)
@@ -390,7 +391,7 @@ Options parse_options(int argc, char** argv) {
             const auto x=parse_number(argv[++i],2046,"resident Go Here tile X");
             const auto y=parse_number(argv[++i],2046,"resident Go Here tile Y");
             const auto level=parse_number(argv[++i],2,"resident Go Here level");
-            const auto tick=parse_number(argv[++i],4096,"resident Go Here tick");
+            const auto tick=parse_number(argv[++i], odh_host::PersonSessionPolicy::max_headless_ticks, "resident Go Here tick");
             if(!entity_id||level==0||tick==0)
                 throw odh::FormatError("resident Go Here entity, level, or tick is outside the supported profile");
             if(result.single_resident_session)
@@ -404,7 +405,7 @@ Options parse_options(int argc, char** argv) {
             const auto x=parse_number(argv[++i],2046,"Go Here tile X");
             const auto y=parse_number(argv[++i],2046,"Go Here tile Y");
             const auto level=parse_number(argv[++i],2,"Go Here level");
-            const auto tick=parse_number(argv[++i],4096,"Go Here tick");
+            const auto tick=parse_number(argv[++i], odh_host::PersonSessionPolicy::max_headless_ticks, "Go Here tick");
             if(!level||!tick)throw odh::FormatError("single-resident Go Here level or tick is outside the supported profile");
             result.headless_single_resident_go_here=Options::SingleResidentGoHere{0,x,y,level,tick};
             continue;
@@ -413,7 +414,7 @@ Options parse_options(int argc, char** argv) {
             if (i + 3 >= argc) throw odh::FormatError("missing resident Sit values");
             const auto actor_id=parse_number(argv[++i],32767,"resident Sit actor ID");
             const auto object_id=parse_number(argv[++i],32767,"resident Sit object ID");
-            const auto stand_tick=parse_number(argv[++i],4096,"resident Stand tick");
+            const auto stand_tick=parse_number(argv[++i], odh_host::PersonSessionPolicy::max_headless_ticks, "resident Stand tick");
             if(!actor_id||!object_id||stand_tick<2)
                 throw odh::FormatError("resident Sit actor, object, or Stand tick is outside the supported profile");
             result.headless_resident_sit=Options::ResidentSit{actor_id,object_id,stand_tick};
@@ -427,7 +428,7 @@ Options parse_options(int argc, char** argv) {
             const auto y=parse_number(argv[++i],32767,"entity move Y");
             const auto level=parse_number(argv[++i],2,"entity move level");
             const auto direction=parse_number(argv[++i],7,"entity move direction");
-            const auto tick=parse_number(argv[++i],4096,"entity move tick");
+            const auto tick=parse_number(argv[++i], odh_host::PersonSessionPolicy::max_headless_ticks, "entity move tick");
             if(!id||!level||!tick)throw odh::FormatError("entity move ID, level and tick must be nonzero");
             result.headless_entity_move=Options::EntityMove{id,x,y,level,direction,tick};
             continue;
@@ -462,7 +463,7 @@ Options parse_options(int argc, char** argv) {
                     throw odh::FormatError("invalid menu variant name hex");
                 if(!variant_language||variant_name.empty()||variant_name.size()>(variant_hex?8192U:4096U))throw odh::FormatError("invalid observed menu variant language/name");
             }
-            const auto tick=parse_number(argv[++i],4096,"resident interaction tick");
+            const auto tick=parse_number(argv[++i], odh_host::PersonSessionPolicy::max_headless_ticks, "resident interaction tick");
             if(!actor_id||!object_id||!tick)
                 throw odh::FormatError("resident interaction actor, object, or tick is outside the supported profile");
             const Options::ResidentInteraction request{actor_id,object_id,tick,row,variant_param,variant_language,std::move(variant_name),variant_hex};
@@ -478,7 +479,7 @@ Options parse_options(int argc, char** argv) {
         }
         if (key == "--headless-cancel-interaction" && !result.headless_cancel_interaction_tick) {
             if (i + 1 >= argc) throw odh::FormatError("missing interaction cancel tick");
-            const auto tick=parse_number(argv[++i],4096,"interaction cancel tick");
+            const auto tick=parse_number(argv[++i], odh_host::PersonSessionPolicy::max_headless_ticks, "interaction cancel tick");
             if(!tick)throw odh::FormatError("interaction cancel tick must be nonzero");
             result.headless_cancel_interaction_tick=tick;
             continue;
@@ -512,7 +513,7 @@ Options parse_options(int argc, char** argv) {
         } else if (key == "--load-session" && !result.load_session) {
             result.load_session = value;
         } else if (key == "--headless-ticks" && !result.headless_ticks) {
-            result.headless_ticks = parse_number(value, 4096, "headless tick count");
+            result.headless_ticks = parse_number(value, odh_host::PersonSessionPolicy::max_headless_ticks, "headless tick count");
         } else if (key == "--headless-stop-route-depth" && !result.stop_route_depth) {
             result.stop_route_depth=parse_number(value,16,"routing checkpoint depth");
         } else if (key == "--headless-move-out-family" && !result.headless_move_out_family) {
@@ -522,7 +523,7 @@ Options parse_options(int argc, char** argv) {
         } else if (key == "--headless-status-frame" && !result.status_frame) {
             result.status_frame = value;
         } else if (key == "--headless-status-tick" && !result.status_tick) {
-            result.status_tick = parse_number(value, 4096, "status capture tick");
+            result.status_tick = parse_number(value, odh_host::PersonSessionPolicy::max_headless_ticks, "status capture tick");
         } else if (key == "--instruction-budget" && !result.instruction_budget) {
             result.instruction_budget = parse_number(value, 1000000, "instruction budget");
         } else if (key == "--resident-id" && !result.resident_id) {
@@ -530,7 +531,7 @@ Options parse_options(int argc, char** argv) {
         } else if (key == "--headless-sit-object" && !result.headless_sit_object) {
             result.headless_sit_object = parse_number(value, 32767, "Sit object ID");
         } else if (key == "--headless-stand-tick" && !result.headless_stand_tick) {
-            result.headless_stand_tick = parse_number(value, 4096, "Stand tick");
+            result.headless_stand_tick = parse_number(value, odh_host::PersonSessionPolicy::max_headless_ticks, "Stand tick");
         } else {
             throw odh::FormatError("unknown or duplicate integrated game option");
         }
@@ -676,7 +677,7 @@ Options parse_options(int argc, char** argv) {
          result.single_resident_session || !result.house))
         throw odh::FormatError("--headless-travel-house requires a new whole-household run with --headless-ticks at least 2");
     if(result.headless_dialog_ok && (!result.headless_ticks || !*result.headless_ticks || result.plan_only))
-        throw odh::FormatError("--headless-dialog-ok requires execution with --headless-ticks 1..4096, without --plan-only");
+        throw odh::FormatError("--headless-dialog-ok requires execution with --headless-ticks 1..65535, without --plan-only");
     if(!result.headless_dialog_responses.empty()&&
        (result.headless_dialog_ok||!result.headless_ticks||!*result.headless_ticks||result.plan_only))
         throw odh::FormatError("--headless-dialog-response requires bounded execution and cannot mix with --headless-dialog-ok");
@@ -711,7 +712,7 @@ Options parse_options(int argc, char** argv) {
             "[--headless-stand (legacy saved single-resident seat)] "
             "[--audio | --no-audio] [--audio-drain-ms 1..5000] "
             "[--headless-travel-house HOUSE (repeat)] [--headless-travel-tick 1..N-1] "
-            "[--neighborhood 1..8] [--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--headless-dialog-ok | --headless-dialog-response CODE TEXT (repeat up to32; positive ticks)] [--instruction-budget 1..1000000] [--headless-status-frame PATH --headless-status-tick 1..N] [--save-session-on-exit]]");
+            "[--neighborhood 1..8] [--load-session PATH] [--plan-only | --headless-ticks 0..65535 [--headless-dialog-ok | --headless-dialog-response CODE TEXT (repeat up to32; positive ticks)] [--instruction-budget 1..1000000] [--headless-status-frame PATH --headless-status-tick 1..N] [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
     odh_host::LinuxUserConfig saved;

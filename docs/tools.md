@@ -67,6 +67,13 @@ Os verificadores `tools/validate_runtime_smoke.py` e
 `--help`. Use-os com um perfil isolado e resultados fora dos arquivos-fonte.
 A [validação](validation-workflow.md) explica os limites de cada verificação.
 
+Para uma execução contínua sem janela, `--headless-ticks` aceita de 0 a 65535
+atualizações. Um dia no relógio do jogo corresponde a 43200 atualizações.
+Esse limite permite testar o dia inteiro no mesmo processo; ele não aumenta
+o trabalho permitido por personagem em cada atualização. A execução ainda
+pode parar por erro ou por uma escolha do jogador pendente. Use cópias do
+perfil completo e confira o salvamento em um novo processo ao terminar.
+
 `ODH_TRACE_MOTIVE_CHANGES=1` habilita observação limitada das alterações de
 necessidades: até 256 registros, com contagem de excedentes. O registro não
 altera o save e não representa todos os valores ao longo da partida. Compare
