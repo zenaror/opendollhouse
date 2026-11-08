@@ -60,6 +60,23 @@ O inspetor lê estruturas e emite diagnósticos; não executa scripts nem compro
 que os recursos funcionam no jogo. Instalações diferentes podem ter contagens
 legitimamente diferentes. Consulte [formatos e limites](formats.md).
 
+Para examinar um salvamento nativo sem iniciar a simulação, o utilitário dos
+testes de integração oferece comandos de leitura:
+
+```sh
+cmake --build build/native --target odh-cas-movein-e2e --parallel 2
+./build/native/odh-cas-movein-e2e --inspect-runtime-entity partida.odhs 42
+./build/native/odh-cas-movein-e2e --inspect-travel-return partida.odhs "$GAME_ROOT/UserData/Neighborhood.iff"
+```
+
+O primeiro comando de inspeção aceita de 1 a 16 números internos de objetos ou
+personagens e mostra seus dados, ações e esperas em JSON. Um número pode ter
+mais de uma geração preservada; cada corpo aparece separado. O segundo mostra
+as diferenças de dados pessoais entre a casa e o destino de uma viagem, com a
+origem de cada valor. Essa prévia não publica o retorno nem altera o salvamento.
+Use o arquivo da vizinhança correspondente à partida; uma origem incompatível
+é rejeitada. A leitura do estado não comprova que uma ação funciona no jogo.
+
 ## Diagnóstico
 
 Os verificadores `tools/validate_runtime_smoke.py` e

@@ -12,6 +12,7 @@
 #include "odh/lot_locations.hpp"
 #include "odh/session_entry.hpp"
 #include "odh/session_bundle.hpp"
+#include "odh/ts1_travel_return.hpp"
 #include "odh/animation.hpp"
 #include "odh/character_catalog.hpp"
 #ifdef ODH_HAVE_MANAGEMENT_LAYOUT
@@ -23,6 +24,7 @@
 #include "odh/sha256.hpp"
 
 #include <algorithm>
+#include <set>
 #include <filesystem>
 #include <cstdlib>
 #include <charconv>
@@ -545,6 +547,101 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
     std::cout<<"]}\n";return 0;
 }
 
+// Observe the exact unpublished return projection; home() remains guarded.
+int inspect_travel_return(const fs::path& path,const fs::path& neighborhood){
+    const auto size=fs::file_size(path);if(size>256u*1024u*1024u)throw std::runtime_error("return inspector archive exceeds 256 MiB");
+    std::ifstream input(path,std::ios::binary);if(!input)throw std::runtime_error("cannot open return archive");
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));if(!bytes.empty()&&!input.read(reinterpret_cast<char*>(bytes.data()),bytes.size()))throw std::runtime_error("short return archive read");
+    const auto envelope=odh::decode_session_bundle(bytes);
+    std::ifstream source(neighborhood,std::ios::binary);if(!source)throw std::runtime_error("cannot open inheritance neighborhood IFF");
+    const auto inheritance=odh::read_ts1_travel_person_inheritance(odh::View(source,fs::file_size(neighborhood)));
+    const auto prepared=odh::prepare_ts1_travel_return(envelope,{},&inheritance);
+    const auto home=odh::decode_session_bundle(*envelope.travel_home_session);
+    const auto visited=odh::decode_session_bundle(*envelope.travel_visited_session);
+    const auto& preview=prepared.preview_home();
+    const auto optional=[](const std::optional<std::int16_t>& v){if(v)std::cout<<*v;else std::cout<<"null";};
+    const auto body=[&](const odh::SessionBundle& bundle,const odh::Ts1TravelMember& m)->const odh::Entity*{
+        if(&bundle==&visited)return &odh::resolve_ts1_travel_departure_avatar(bundle,m);
+        const odh::SessionHouseholdMember* binding=nullptr;
+        for(const auto& h:bundle.household_roster)if(h.neighbor_id==m.neighbor_id&&h.guid==m.guid&&h.object_definition_id==m.definition_chunk_id&&h.character_asset==m.character_asset&&h.character_fingerprint==m.character_fingerprint){if(binding)throw std::runtime_error("ambiguous diagnostic return member");binding=&h;}
+        if(!binding)return nullptr;
+        for(const auto& e:bundle.world.entities)if(e.id==binding->id&&e.generation==binding->generation)return &e;
+        return nullptr;
+    };
+    const auto value=[&](const odh::SessionBundle& b,const odh::Ts1TravelMember& m,std::size_t i)->std::optional<std::int16_t>{const auto* e=body(b,m);return e&&i<e->person_data.size()?std::optional<std::int16_t>{e->person_data[i]}:std::nullopt;};
+    std::cout<<"{\"archive_path\":"<<json_string(fs::canonical(path).string())<<",\"archive_sha256\":"<<json_string(hex_digest(odh::sha256(bytes.data(),bytes.size())))<<",\"prepared_source_sha256\":"<<json_string(hex_digest(prepared.source_checkpoint_sha256()))<<",\"home_sha256\":"<<json_string(hex_digest(prepared.suspended_home_sha256()))<<",\"neighborhood_path\":"<<json_string(fs::canonical(neighborhood).string())<<",\"neighborhood_sha256\":"<<json_string(hex_digest(inheritance.neighborhood_identity()))<<",\"home_tick\":"<<home.host.tick<<",\"visited_tick\":"<<visited.host.tick<<",\"requires_resolution\":"<<(prepared.requires_original_personal_persistence_resolution()?"true":"false");
+    const auto deltas=[&](const auto& list){std::cout<<'[';bool comma=false;for(const auto& d:list){if(comma)std::cout<<',';comma=true;
+        std::cout<<"{\"neighbor_id\":"<<d.member.neighbor_id<<",\"guid\":"<<d.member.guid<<",\"objd\":"<<d.member.definition_chunk_id<<",\"character_asset\":"<<json_string(d.member.character_asset)<<",\"character_sha256\":"<<json_string(hex_digest(d.member.character_fingerprint))<<",\"index\":"<<d.index<<",\"compared_home_value\":";optional(d.home_value);std::cout<<",\"compared_visited_value\":";optional(d.visited_value);
+        std::cout<<",\"raw_home_value\":";optional(value(home,d.member,d.index));std::cout<<",\"raw_visited_value\":";optional(value(visited,d.member,d.index));std::cout<<",\"preview_home_value\":";optional(value(preview,d.member,d.index));
+        const auto* old=body(home,d.member);const auto* current=body(visited,d.member);std::cout<<",\"home_body\":";if(old)std::cout<<'['<<old->id<<','<<old->generation<<']';else std::cout<<"null";std::cout<<",\"visited_body\":";if(current)std::cout<<'['<<current->id<<','<<current->generation<<']';else std::cout<<"null";std::cout<<'}';}std::cout<<']';};
+    std::cout<<",\"unresolved_personal_deltas\":";deltas(prepared.unresolved_personal_deltas());std::cout<<",\"retained_runtime_deltas\":";deltas(prepared.retained_runtime_deltas());std::cout<<",\"unchanged_inherited_deltas\":";deltas(prepared.unchanged_inherited_personal_deltas());
+    const auto records=[](const std::optional<odh::NativePersonalSnapshot>& state){if(!state){std::cout<<"null";return;}
+        std::cout<<"{\"version\":"<<state->version<<",\"neighborhood_sha256\":"<<json_string(hex_digest(state->neighborhood_identity))<<",\"records\":[";bool comma=false;
+        for(const auto& r:state->records){if(comma)std::cout<<',';comma=true;std::cout<<"{\"neighbor_id\":"<<r.identity.neighbor_id<<",\"guid\":"<<r.identity.guid<<",\"objd\":"<<r.identity.definition_chunk_id<<",\"character_asset\":"<<json_string(r.identity.character_asset)<<",\"character_sha256\":"<<json_string(hex_digest(r.identity.character_fingerprint))<<",\"revision\":"<<r.revision<<",\"writer\":"<<unsigned(r.writer)<<",\"profile\":"<<unsigned(r.projection.profile)<<",\"schema_version\":"<<unsigned(r.projection.schema_version)<<",\"projection\":[";bool next=false;
+            for(std::size_t i=0;i<r.projection.present.size();++i)if(r.projection.present[i]){if(next)std::cout<<',';next=true;std::cout<<'['<<i<<','<<r.projection.values[i]<<']';}
+            std::cout<<"],\"seed_words\":";if(r.seed_words){std::cout<<'[';for(std::size_t i=0;i<r.seed_words->size();++i){if(i)std::cout<<',';std::cout<<r.seed_words->at(i);}std::cout<<']';}else std::cout<<"null";std::cout<<'}';}std::cout<<"]}";};
+    std::cout<<",\"home_personal_state\":";records(home.personal_state);std::cout<<",\"visited_personal_state\":";records(visited.personal_state);std::cout<<",\"preview_personal_state\":";records(preview.personal_state);std::cout<<"}\n";return 0;
+}
+
+// Bounded read-only observation of exact saved generations; never restore/run a VM.
+int inspect_runtime_entities(const fs::path& path,const std::set<std::int16_t>& ids){
+    const auto size=fs::file_size(path);
+    if(size>256u*1024u*1024u)throw std::runtime_error("runtime inspector archive exceeds 256 MiB");
+    std::ifstream input(path,std::ios::binary);if(!input)throw std::runtime_error("cannot open runtime archive");
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    if(!bytes.empty()&&!input.read(reinterpret_cast<char*>(bytes.data()),bytes.size()))throw std::runtime_error("short runtime archive read");
+    const auto envelope=odh::decode_session_bundle(bytes);
+    std::optional<odh::SessionBundle> visited;
+    if(envelope.travel_visited_session)visited=odh::decode_session_bundle(*envelope.travel_visited_session);
+    const auto& active=visited?*visited:envelope;
+    std::vector<const odh::Entity*> bodies;
+    for(const auto id:ids){bool found=false;
+        for(const auto& e:active.world.entities)if(e.id==id){bodies.push_back(&e);found=true;}
+        for(const auto& e:active.world.retained_entities)if(e.id==id){bodies.push_back(&e);found=true;}
+        if(!found)throw std::runtime_error("runtime entity absent from active live/retained World: "+std::to_string(id));
+    }
+    if(bodies.size()>64)throw std::runtime_error("runtime inspector selected generations exceed 64");
+    const auto words=[](const auto& v){if(v.size()>65536)throw std::runtime_error("runtime inspector word limit exceeded");std::cout<<'[';bool c=false;for(const auto x:v){if(c)std::cout<<',';c=true;std::cout<<+x;}std::cout<<']';};
+    const auto ref=[](const auto& r){std::cout<<"{\"id\":"<<r.id<<",\"generation\":"<<r.generation<<'}';};
+    const auto pairs=[](const auto& v){if(v.size()>65536)throw std::runtime_error("runtime inspector word limit exceeded");std::cout<<'[';bool c=false;for(const auto& x:v){if(c)std::cout<<',';c=true;std::cout<<'['<<x.first<<','<<x.second<<']';}std::cout<<']';};
+    const auto sleep=[](const odh::SleepSnapshot& s){std::cout<<"{\"clock\":"<<s.clock<<",\"last_tick\":";if(s.last_tick)std::cout<<*s.last_tick;else std::cout<<"null";
+        std::cout<<",\"interrupted\":"<<(s.interrupted?"true":"false")<<",\"notify_resume\":"<<(s.notify_resume?"true":"false")<<",\"diagnostic\":"<<json_string(s.diagnostic)<<",\"actor\":";
+        if(s.actor)std::cout<<"{\"id\":"<<s.actor->id<<",\"generation\":"<<s.actor->generation<<",\"run_generation\":"<<s.actor->run_generation<<'}';else std::cout<<"null";
+        std::cout<<",\"job\":";if(s.job){const auto& j=*s.job;std::cout<<"{\"ticket\":"<<j.ticket<<",\"argument\":"<<j.argument<<",\"idle_start\":"<<j.idle_start<<",\"deadline\":"<<j.deadline<<",\"next_evaluation\":";if(j.next_evaluation)std::cout<<*j.next_evaluation;else std::cout<<"null";std::cout<<'}';}else std::cout<<"null";std::cout<<'}';};
+    const auto context_refs=[](const odh::VmContext& c){std::cout<<"{\"bound\":"<<(c.entity_references_bound?"true":"false")<<",\"caller_generation\":";if(c.entity_references_bound)std::cout<<c.caller_generation;else std::cout<<"null";std::cout<<",\"callee_generation\":";if(c.entity_references_bound)std::cout<<c.callee_generation;else std::cout<<"null";std::cout<<",\"stack_object_generation\":";if(c.entity_references_bound)std::cout<<c.stack_object_generation;else std::cout<<"null";std::cout<<'}';};
+    const auto pending=[&](const odh::VmPending& p){std::cout<<"{\"ticket\":"<<p.ticket<<",\"depth\":"<<p.instruction.depth<<",\"routine\":"<<p.instruction.key.id<<",\"pc\":"<<p.instruction.pc<<",\"owner\":"<<p.instruction.code_owner<<",\"opcode\":"<<p.instruction.instruction.opcode<<",\"operands\":";words(p.instruction.instruction.operands);std::cout<<",\"context_references\":";context_refs(p.context);std::cout<<'}';};
+    const auto vm=[&](const odh::VmSnapshot& v){if(v.stack.size()>1024||v.suspended_pending.size()>1024)throw std::runtime_error("runtime inspector frame limit exceeded");
+        std::cout<<"{\"status\":"<<json_string(odh::vm_status_name(v.status))<<",\"diagnostic\":"<<json_string(v.diagnostic)<<",\"steps\":"<<v.steps<<",\"run_generation\":"<<v.run_generation<<",\"temps\":";words(v.temps);std::cout<<",\"temp_xl\":";words(v.temp_xl);std::cout<<",\"frames\":[";bool c=false;
+        for(const auto& f:v.stack){if(c)std::cout<<',';c=true;std::cout<<"{\"routine\":"<<f.key.id<<",\"scope\":"<<unsigned(f.key.scope)<<",\"pc\":"<<f.pc<<",\"owner\":"<<f.context.code_owner<<",\"caller\":"<<f.context.caller<<",\"callee\":"<<f.context.callee<<",\"stack_object\":"<<f.context.stack_object<<",\"arguments\":";words(f.arguments);std::cout<<",\"locals\":";words(f.locals);std::cout<<",\"context_references\":";context_refs(f.context);std::cout<<'}';}
+        std::cout<<"],\"pending\":";if(v.pending)pending(*v.pending);else std::cout<<"null";std::cout<<",\"suspended_pending\":[";c=false;for(const auto& p:v.suspended_pending){if(c)std::cout<<',';c=true;pending(p);}std::cout<<"]}";};
+    const auto owners=[](const auto& values){if(values.size()>4096)throw std::runtime_error("runtime inspector owner limit exceeded");std::cout<<'[';bool c=false;for(const auto& o:values){if(c)std::cout<<',';c=true;std::cout<<"{\"owner\":"<<o.owner<<",\"guid\":"<<o.resource_guid<<",\"source\":"<<json_string(o.source)<<",\"asset\":"<<json_string(o.asset)<<",\"objd\":"<<o.definition_chunk_id<<",\"root_routine\":"<<o.root_routine<<'}';}std::cout<<']';};
+    const auto queue=[&](const odh::InteractionQueueSnapshot& q){if(q.actions.size()>1024)throw std::runtime_error("runtime inspector queue limit exceeded");std::cout<<"{\"actor_id\":"<<q.actor_id<<",\"actor_generation\":"<<q.actor_generation<<",\"run_generation\":"<<q.run_generation<<",\"clock\":"<<q.clock<<",\"idle_start\":"<<q.idle_start<<",\"interrupted\":"<<(q.interrupted?"true":"false")<<",\"diagnostic\":"<<json_string(q.diagnostic)<<",\"active\":";
+        if(q.active)std::cout<<"{\"uid\":"<<q.active->uid<<",\"ticket\":"<<q.active->ticket<<'}';else std::cout<<"null";
+        std::cout<<",\"last_completion\":";if(q.completion)std::cout<<"{\"uid\":"<<q.completion->uid<<",\"ticket\":"<<q.completion->ticket<<",\"tick\":"<<q.completion->tick<<",\"result\":"<<(q.completion->result?"true":"false")<<'}';else std::cout<<"null";
+        std::cout<<",\"wait\":";if(q.wait)std::cout<<"{\"ticket\":"<<q.wait->ticket<<",\"deadline\":"<<q.wait->deadline<<'}';else std::cout<<"null";
+        std::cout<<",\"suspended_active\":[";bool sc=false;for(const auto& a:q.suspended_active){if(sc)std::cout<<',';sc=true;std::cout<<"{\"uid\":"<<a.uid<<",\"ticket\":"<<a.ticket<<'}';}std::cout<<']';
+        std::cout<<",\"actions\":[";bool c=false;for(const auto& a:q.actions){if(c)std::cout<<',';c=true;std::cout<<"{\"uid\":"<<a.uid<<",\"target_generation\":"<<a.target_generation<<",\"routine\":"<<a.call.key.id<<",\"owner\":"<<a.call.context.code_owner<<",\"caller\":"<<a.call.context.caller<<",\"callee\":"<<a.call.context.callee<<",\"stack_object\":"<<a.call.context.stack_object<<",\"priority\":"<<a.priority<<",\"notify_idle\":"<<(a.notify_idle?"true":"false")<<",\"arguments\":";words(a.call.arguments);std::cout<<'}';}std::cout<<"]}";};
+    std::cout<<"{\"archive_path\":"<<json_string(fs::canonical(path).string())<<",\"visited_envelope\":"<<(visited?"true":"false")<<",\"tick\":"<<active.host.tick<<",\"house\":"<<active.host.house_number<<",\"entities\":[";bool comma=false;
+    for(const auto* body:bodies){const auto& e=*body;bool retained=false;for(const auto& r:active.world.retained_entities)if(&r==body)retained=true;if(comma)std::cout<<',';comma=true;
+        std::cout<<"{\"id\":"<<e.id<<",\"generation\":"<<e.generation<<",\"retained\":"<<(retained?"true":"false")<<",\"dead\":"<<(e.dead?"true":"false")<<",\"guid\":"<<(e.definition?e.definition->guid:0)<<",\"attributes\":";words(e.attributes);std::cout<<",\"object_words\":";pairs(e.object_words);std::cout<<",\"definition_words\":";pairs(e.definition_words);std::cout<<",\"person_data\":";words(e.person_data);std::cout<<",\"motives\":";words(e.motives);
+        std::cout<<",\"position\":";if(e.position)std::cout<<'['<<e.position->x<<','<<e.position->y<<','<<e.position->level<<','<<unsigned(e.position->direction)<<']';else std::cout<<"null";
+        std::cout<<",\"attachment\":";if(e.attachment)std::cout<<"{\"container\":"<<e.attachment->container<<",\"slot\":"<<e.attachment->slot<<",\"positioned\":"<<(e.attachment->positioned?"true":"false")<<'}';else std::cout<<"null";
+        std::cout<<",\"native_slot0\":";if(e.native_slot0)ref(*e.native_slot0);else std::cout<<"null";std::cout<<",\"nonempty_slots\":[";bool c=false;for(std::size_t i=0;i<e.slots.size();++i)if(e.slots[i]){if(c)std::cout<<',';c=true;std::cout<<'['<<i<<','<<e.slots[i]<<']';}std::cout<<']';
+        const odh::SessionObjectThread* object=nullptr;for(const auto& t:active.object_threads)if(t.id==e.id&&t.generation==e.generation){if(object)throw std::runtime_error("ambiguous runtime object thread");object=&t;}
+        const odh::SessionRuntimeEntity* actor=nullptr;for(const auto& r:active.runtime_entities)if(r.id==e.id&&r.controllers.interactions.actor_generation==e.generation){if(actor)throw std::runtime_error("ambiguous runtime actor");actor=&r;}
+        for(const auto& n:active.npc_avatars)if(n.origin.id==e.id&&n.origin.generation==e.generation){if(actor)throw std::runtime_error("ambiguous NPC runtime actor");actor=&n.runtime;}
+        if(object&&actor)throw std::runtime_error("ambiguous object/avatar runtime");
+        std::cout<<",\"runtime_kind\":"<<json_string(object?"object":actor?"avatar":"none")<<",\"primary_owner\":";if(object)std::cout<<object->primary_owner;else std::cout<<"null";
+        std::cout<<",\"vm\":";if(object)vm(object->vm);else if(actor)vm(actor->vm);else std::cout<<"null";
+        std::cout<<",\"sleep\":";if(object)sleep(object->sleep);else if(actor)sleep(actor->controllers.sleep);else std::cout<<"null";
+        std::cout<<",\"thread_interrupt\":";if(actor)std::cout<<(actor->controllers.thread_interrupt?"true":"false");else std::cout<<"null";
+        std::cout<<",\"schedule_idle_start\":";if(actor&&actor->controllers.schedule_idle_start)std::cout<<*actor->controllers.schedule_idle_start;else std::cout<<"null";
+        std::cout<<",\"queue\":";if(actor)queue(actor->controllers.interactions);else std::cout<<"null";
+        std::cout<<",\"resource_owners\":";if(object)owners(object->resource_owners);else if(actor)owners(actor->resource_owners);else std::cout<<"[]";
+        std::cout<<",\"scheduler\":[";c=false;for(const auto& s:active.scheduler.entities)if(!retained&&s.id==e.id){if(c)std::cout<<',';c=true;std::cout<<"{\"run_generation\":"<<s.run_generation<<",\"status\":"<<json_string(odh::vm_status_name(s.status))<<",\"steps\":"<<s.steps<<",\"before\":"<<(s.before?"true":"false")<<",\"after\":"<<(s.after?"true":"false")<<",\"interrupt\":"<<(s.interrupt?"true":"false")<<'}';}std::cout<<"]}";
+    }std::cout<<"]}\n";return 0;
+}
+
 // Read-only observation for the existing CAS integration executable.
 int inspect_management(const fs::path& game,bool layout){
     const auto neighborhood=game/"UserData/Neighborhood.iff";
@@ -637,6 +734,20 @@ int inspect_management(const fs::path& game,bool layout){
 }
 
 int main(int argc, char** argv) try {
+    if(argc>=2&&std::string(argv[1])=="--inspect-travel-return"){
+        if(argc!=4)throw std::runtime_error("usage: --inspect-travel-return ARCHIVE NEIGHBORHOOD_IFF");
+        return inspect_travel_return(argv[2],argv[3]);
+    }
+    if(argc>=2&&std::string(argv[1])=="--inspect-runtime-entity"){
+        if(argc<4||argc>19)throw std::runtime_error("usage: --inspect-runtime-entity ARCHIVE ID [ID ...], maximum16");
+        std::set<std::int16_t> ids;
+        for(int n=3;n<argc;++n){const std::string text=argv[n];
+            if(text.empty()||text.find_first_not_of("0123456789")!=std::string::npos)throw std::runtime_error("runtime entity ID must be decimal1..32767");
+            std::size_t used=0;const auto id=std::stoul(text,&used);
+            if(used!=text.size()||!id||id>32767||!ids.insert(static_cast<std::int16_t>(id)).second)throw std::runtime_error("runtime entity ID invalid or repeated");
+        }
+        return inspect_runtime_entities(argv[2],ids);
+    }
     if((argc==3||argc==4)&&std::string(argv[1])=="--inspect-family-management"){
         if(argc==4&&std::string(argv[3])!="--map-layout")throw std::runtime_error("invalid management observation option");
         return inspect_management(fs::canonical(argv[2]),argc==4);
