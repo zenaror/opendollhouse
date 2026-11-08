@@ -27,7 +27,9 @@ void validate_original_family_departure_personal(const SessionBundle& envelope,
   }
   if(!seed||seed->guid!=id.guid)throw FormatError("vacation departure neighbor seed identity differs");
   const auto body=std::find_if(source.world.entities.begin(),source.world.entities.end(),[&](const auto& e){return e.id==departing.avatar.id&&e.generation==departing.avatar.generation;});
-  if(body==source.world.entities.end()||body->person_data.size()!=256)throw FormatError("vacation departure body profile differs");
+  if(body==source.world.entities.end()||body->dead||body->ui_ghost||body->kind!=EntityKind::avatar||
+     !body->definition||body->definition->guid!=id.guid||body->person_data.size()<=31||body->person_data[31]!=id.neighbor_id)
+   throw FormatError("vacation departure body identity/profile differs");
   auto projection=original_neighbor_seed_projection(*seed);
   if(source.personal_state){const auto record=std::find_if(source.personal_state->records.begin(),source.personal_state->records.end(),[&](const auto& r){return r.identity.neighbor_id==id.neighbor_id;});
    if(record!=source.personal_state->records.end()){
@@ -38,9 +40,12 @@ void validate_original_family_departure_personal(const SessionBundle& envelope,
   }
   // Compare the complete original selective writer contract. Existing records
   // and exact immutable seed projection are equally valid: no artificial fresh
-  // writer/revision requirement when the source is already equal.
+  // writer/revision requirement when the source is already equal. Physical
+  // saved88, constructor101 and original256 storage all carry these exact44
+  // selected values. Require every actual source word; never synthesize a
+  // missing word or expand the body just to satisfy this verifier.
   for(std::size_t n=0;n<88;++n)if(native_personal_v9_field(n)&&
-      (!projection||!projection->present[n]||projection->values[n]!=body->person_data[n]))
+      (n>=body->person_data.size()||!projection||!projection->present[n]||projection->values[n]!=body->person_data[n]))
     throw FormatError("vacation family departure personal projection incomplete or changed at word "+std::to_string(n));
  }
 }

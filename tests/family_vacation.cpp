@@ -111,9 +111,9 @@ void lifecycle(){
 std::string neighborhood_iff(const odh::Nbrs& neighbors){
  const auto payload=odh::encode_nbrs(neighbors);std::string bytes="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";bytes.resize(64,'\0');bytes+="NBRS";const auto size=static_cast<std::uint32_t>(76+payload.size());for(int shift:{24,16,8,0})bytes.push_back(static_cast<char>(size>>shift));bytes.append("\0\1\0\0",4);bytes.append(64,'\0');bytes.append(reinterpret_cast<const char*>(payload.data()),payload.size());return bytes;
 }
-void family_personal_proof(bool progress){
- auto b=travel_test::managed_home();auto& person=b.world.entities.front();const auto oldsize=person.person_data.size();person.person_data.resize(256);b.world.word_count+=256-oldsize;person.person_data[10]=progress?123:0;person.person_data[80]=progress?77:0;
- odh::World world;require(world.restore_snapshot(b.world),"restore actual256 source for family1 writer");const auto resident=b.household_roster.front();
+void family_personal_proof(bool progress,std::size_t physical_words){
+ auto b=travel_test::managed_home();auto& person=b.world.entities.front();const auto oldsize=person.person_data.size();person.person_data.resize(physical_words);b.world.word_count+=physical_words-oldsize;person.person_data[10]=progress?123:0;person.person_data[80]=progress?77:0;
+ odh::World world;require(world.restore_snapshot(b.world),"restore actual physical saved/constructor source for family1 writer");const auto resident=b.household_roster.front();
  odh::Nbrs neighbors{};neighbors.version=62;odh::NeighborRecord seed{};seed.version=10;seed.name="iffname";seed.unknown3=9;seed.person_mode=9;seed.person_data=std::vector<std::int16_t>(256);(*seed.person_data)[31]=resident.neighbor_id;(*seed.person_data)[61]=b.host.family_chunk_id;seed.neighbor_id=resident.neighbor_id;seed.guid=resident.guid;neighbors.entries.push_back({1,seed});
  const auto bytes=neighborhood_iff(neighbors);std::istringstream stream(bytes,std::ios::binary);const auto source=odh::read_original_frontend_personal_source(odh::View(stream,bytes.size()));
  b.family_lease->neighborhood_identity=source.neighborhood_identity();odh::NeighborContext context(neighbors);odh::NativePersonalState personal(neighbors,source.neighborhood_identity());
@@ -130,6 +130,11 @@ void family_personal_proof(bool progress){
  b.neighbor_inventory=inventory.snapshot();if(progress)b.personal_state=personal.snapshot();b.travel=state;odh::seal_ts1_travel_request(*b.travel,b);
  const auto before=odh::encode_session_bundle(b);odh::validate_original_family_departure_personal(b,source);odh::validate_original_family_departure_personal(b,source);require(odh::encode_session_bundle(b)==before,"personal proof idempotent and has no source/World/revision mutation");
  if(progress){auto missing=b;missing.personal_state.reset();rejects([&]{odh::validate_original_family_departure_personal(missing,source);},"unpersisted actual skill/fame delta cannot pass via immutable seed");}
+ auto truncated=b;truncated.world.word_count-=truncated.world.entities.front().person_data.size()-82;truncated.world.entities.front().person_data.resize(82);rejects([&]{odh::validate_original_family_departure_personal(truncated,source);},"missing selected physical fame word cannot be supplied as invented zero");
+ auto wrong_kind=b;wrong_kind.world.entities.front().kind=odh::EntityKind::object;rejects([&]{odh::validate_original_family_departure_personal(wrong_kind,source);},"numeric bank on an object cannot impersonate exact avatar source");
+ auto wrong_generation=b;wrong_generation.world.entities.front().generation++;rejects([&]{odh::validate_original_family_departure_personal(wrong_generation,source);},"same numeric id with another generation cannot satisfy sealed source");
+ auto wrong_neighbor=b;wrong_neighbor.world.entities.front().person_data[31]++;rejects([&]{odh::validate_original_family_departure_personal(wrong_neighbor,source);},"different actual neighbor cannot satisfy sealed resource identity");
+ auto irrelevant=b;irrelevant.world.entities.front().person_data[87]=1234;odh::validate_original_family_departure_personal(irrelevant,source);require(irrelevant.world.entities.front().person_data.size()==physical_words&&irrelevant.world.entities.front().person_data[87]==1234,"finite selective proof preserves unselected actual words and physical extent");
  auto stale=b;stale.world.entities.front().person_data[10]++;rejects([&]{odh::validate_original_family_departure_personal(stale,source);},"actual personal value changed after writer is refused without whitelist");
  if(progress){auto wrong=b;wrong.personal_state->records.front().identity.character_fingerprint[0]++;rejects([&]{odh::validate_original_family_departure_personal(wrong,source);},"exact resource ownership remains enforced");
  auto prior=b;prior.personal_state->records.front().writer=odh::NativePersonalWriteSource::retirement;odh::validate_original_family_departure_personal(prior,source);require(prior.personal_state->records.front().revision==b.personal_state->records.front().revision,"equal prior selective writer accepted without artificial family17 freshness");}
@@ -137,4 +142,4 @@ void family_personal_proof(bool progress){
 }
 
 }
-int main(){try{seed_and_codec();prepare_publish_restore();projection_and_legacy();saved_carrier_successor();lifecycle();family_personal_proof(true);family_personal_proof(false);std::cout<<"family_vacation checks="<<checks<<'\n';return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{seed_and_codec();prepare_publish_restore();projection_and_legacy();saved_carrier_successor();lifecycle();for(const auto words:{88U,101U,256U}){family_personal_proof(true,words);family_personal_proof(false,words);}std::cout<<"family_vacation checks="<<checks<<'\n';return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

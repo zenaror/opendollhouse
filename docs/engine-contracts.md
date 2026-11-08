@@ -139,6 +139,29 @@ Gravações antigas precisam de admissão explícita: ausência de dados não co
 que todas as famílias estão sem reserva. O contrato permanece experimental e não
 substitui a validação de uma viagem completa no aplicativo.
 
+## Roupas dos personagens
+
+Personagens antigos podem não ter as opções de roupa adicionadas pelas expansões.
+O motor prepara uma cópia dessas opções pelas regras do original, usando idade,
+sexo, corpo e tom de pele do recurso de origem. Os arquivos comerciais permanecem
+intactos. Algumas opções são atualizadas em grupo; não completar cada campo por
+uma regra independente.
+
+Por exemplo, uma menina que viaja para um destino frio precisa da roupa infantil
+correta. Usar uma roupa adulta, a roupa cotidiana ou esconder o corpo não substitui
+essa atualização. Uma escolha personalizada existente é preservada quando a regra
+do original não autoriza substituí-la.
+
+As opções aceitas pertencem ao mesmo serviço de dados pessoais e acompanham o
+salvamento e as viagens. Cada escolha identifica os recursos realmente usados pelo
+desenho do personagem. Adicionar outra roupa ao catálogo não deve refazer uma escolha
+salva; retirar ou modificar um recurso escolhido exige tratamento explícito.
+
+O [produtor de roupas](../include/odh/wardrobe.hpp) prepara e confere as opções;
+o [serviço de dados pessoais](../include/odh/native_personal_state.hpp) conserva o
+estado. A consulta que desenha a aparência apenas lê esse estado. Esses contratos
+são experimentais e não oferecem uma operação pública para comprar ou editar roupas.
+
 ## Construção e apresentação
 
 Alterações de arquitetura precisam atualizar geometria, cômodos, passagem,

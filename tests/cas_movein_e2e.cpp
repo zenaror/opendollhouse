@@ -365,6 +365,41 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
             }std::cout<<"}}";
         }std::cout<<"]}";
     }
+    std::cout<<R"(,"personal_wardrobes":)";
+    if(!active.personal_state||active.personal_state->version<3)std::cout<<"null";
+    else{
+        const auto& personal=*active.personal_state;
+        if(personal.wardrobes.size()>4096)throw std::runtime_error("wardrobe inspector record limit exceeded");
+        const auto bytes=odh::encode_native_personal_snapshot(personal);
+        const auto checksum=odh::sha256(bytes.data(),bytes.size());
+        const auto asset=[](const odh::WardrobeCatalogAsset& a){
+            std::cout<<R"({"kind":)"<<unsigned(a.kind)<<R"(,"name":)"<<json_string(a.name)
+                <<R"(,"source":)"<<json_string(a.source)<<R"(,"asset":)"<<json_string(a.asset)
+                <<R"(,"fingerprint":)"<<json_string(hex_digest(a.fingerprint))
+                <<R"(,"producer_ordinal":)"<<a.producer_ordinal<<'}';
+        };
+        const auto strings=[](const auto& values){
+            std::cout<<'[';bool comma=false;for(const auto& v:values){if(comma)std::cout<<',';comma=true;
+                if(v)std::cout<<json_string(*v);else std::cout<<"null";
+            }std::cout<<']';
+        };
+        std::cout<<R"({"record_count":)"<<personal.wardrobes.size()<<R"(,"personal_codec_sha256":)"<<json_string(hex_digest(checksum))<<R"(,"entries":[)";
+        bool comma=false;for(const auto& record:personal.wardrobes){
+            if(comma)std::cout<<',';comma=true;const auto& w=record.wardrobe;
+            std::cout<<R"({"neighbor_id":)"<<record.identity.neighbor_id<<R"(,"guid":)"<<record.identity.guid
+                <<R"(,"definition_chunk_id":)"<<record.identity.definition_chunk_id
+                <<R"(,"character_asset":)"<<json_string(record.identity.character_asset)
+                <<R"(,"character_fingerprint":)"<<json_string(hex_digest(record.identity.character_fingerprint))
+                <<R"(,"revision":)"<<record.revision<<R"(,"rule_profile":)"<<w.rule_profile<<R"(,"body_str_id":)"<<w.body_str_id
+                <<R"(,"source_fields":)";strings(w.source_fields);
+            std::cout<<R"(,"seed":)";strings(w.seed);std::cout<<R"(,"strings":)";strings(w.strings);
+            std::cout<<R"(,"chosen":[)";for(std::size_t n=0;n<w.chosen.size();++n){
+                if(n)std::cout<<',';if(!w.chosen[n]){std::cout<<"null";continue;}
+                const auto& c=*w.chosen[n];std::cout<<R"({"literal":)"<<json_string(c.literal)<<R"(,"appearance":)";asset(c.appearance);
+                std::cout<<R"(,"texture":)";asset(c.texture);std::cout<<'}';
+            }std::cout<<"]}";
+        }std::cout<<"]}";
+    }
     std::cout<<R"(,"family_vacation":)";print_family_vacation(active.family_vacation);
     std::cout<<R"(,"blocking_dialog":)";
     if(active.dialog){

@@ -132,6 +132,7 @@
 #include "odh/distance_to.hpp"
 #include "odh/direction_to.hpp"
 #include "odh/change_suit.hpp"
+#include "native_wardrobe_resources.hpp"
 #include "saved_autonomy.hpp"
 #include "odh/slot_scoring.hpp"
 #include "odh/world_room_info.hpp"
@@ -2092,7 +2093,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<odh::Nbrs> original_neighbor_seed;
     // Select shared personal owner BEFORE admitting a v2 catalog. A cold v1
     // runtime never acquires positive NPC identities through this fresh path.
-    const bool legacy_cold_personal=session_context&&!session_context->restore_archive.empty()&&(!restored_personal_state||restored_personal_state->version==1);
+    const bool legacy_cold_personal=session_context&&!session_context->restore_archive.empty()&&(!restored_personal_state||!restored_personal_state->catalog);
     if(nbrs&&type_attributes_neighborhood_identity){
         if(type_attributes_open_overlay&&type_attributes_open_overlay->personal_state){
             const auto& shared=*type_attributes_open_overlay->personal_state;
@@ -2114,8 +2115,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(!persisted&&restored_personal_state){
                 // Explicit new paid pending next-load admission, before any new
                 // body/VM. Records/revisions are preserved; no old World upgrade.
-                if(!fresh_original||restored_personal_state->version!=1)throw odh::FormatError("hydrated neighbor catalog has no fresh admission");
-                restored_personal_state->version=2;restored_personal_state->catalog=*original_neighbor_catalog;
+                if(!fresh_original||(restored_personal_state->version!=1&&restored_personal_state->version!=3))throw odh::FormatError("hydrated neighbor catalog has no fresh admission");
+                if(restored_personal_state->version!=3)restored_personal_state->version=2;restored_personal_state->catalog=*original_neighbor_catalog;
                 odh::validate_native_personal_snapshot(*restored_personal_state);
             }
         }
@@ -5839,6 +5840,52 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             return odh::Ts1SuitStringResult{odh::Ts1SuitResourceState::ready,entry?entry->value:std::string{}, {}};
         }catch(const std::exception& error){return odh::Ts1SuitStringResult{odh::Ts1SuitResourceState::unsupported,{},error.what()};}
     };
+    std::unique_ptr<odh_host::NativeWardrobeResources> wardrobe_resources;
+    std::function<odh::NativePersonalSource(std::int16_t)> wardrobe_personal_source;
+    const auto wardrobe_catalog=[&]()->odh_host::NativeWardrobeResources&{
+        if(!session_context)throw odh::FormatError("wardrobe provider lacks selected installation");
+        if(!wardrobe_resources)wardrobe_resources=std::make_unique<odh_host::NativeWardrobeResources>(session_context->game_root,animation_sources);
+        return *wardrobe_resources;
+    };
+    const auto wardrobe_source=[&](const odh::NativePersonalIdentity& identity){
+        if(!session_context||!definition_index)throw odh::FormatError("wardrobe source lacks admitted resource catalogs");
+        const auto locator=odh::native_personal_resource_locator(identity.character_asset);Resource resource;
+        if(locator.character_catalog){
+            const auto logical=std::filesystem::path(locator.source);const auto parent=logical.parent_path().generic_string();
+            const auto root=parent=="PlayerData/Characters"?session_context->player_character_root:
+                parent=="UserData/Characters"&&neighborhood_path?std::filesystem::path(*neighborhood_path).parent_path()/"Characters":std::filesystem::path{};
+            if(root.empty())throw odh::FormatError("wardrobe character source has no trusted root");
+            const auto raw=root/logical.filename(),path=std::filesystem::canonical(raw);
+            if(path.parent_path()!=std::filesystem::canonical(root)||std::filesystem::is_symlink(raw)||!std::filesystem::is_regular_file(path))
+                throw odh::FormatError("wardrobe character escaped trusted catalog");
+            resource={path.string(),{},true};
+        }else{
+            const auto& exact=exact_session_definition(*definition_index,identity.guid,locator.source,locator.asset,identity.definition_chunk_id,session_context->game_root);
+            resource={exact.source,exact.asset,exact.asset.empty()};
+        }
+        odh::OriginalWardrobeSource out;
+        with_resource(resource,[&](const auto& view){
+            if(view.size()>16u*1024u*1024u)throw odh::FormatError("wardrobe character source exceeds bounded input");
+            std::string bytes(static_cast<std::size_t>(view.size()),'\0');view.read(0,bytes.data(),bytes.size());
+            if(odh::sha256(bytes.data(),bytes.size())!=identity.character_fingerprint)throw odh::FormatError("wardrobe character fingerprint changed");
+            std::optional<odh::ObjdStartup> startup;
+            odh::iff_chunks(view,[&](const auto& chunk){if(chunk.type=="OBJD"&&chunk.id==identity.definition_chunk_id){
+                if(startup||odh::read_object_definition(chunk.payload).guid!=identity.guid)throw odh::FormatError("wardrobe exact OBJD identity changed");
+                startup=odh::read_objd_startup(chunk.payload);
+            }});
+            if(!startup||!startup->body_strings)throw odh::FormatError("wardrobe exact BodySTR ID unavailable");
+            out.body_str_id=startup->body_strings;std::optional<odh::StringTable> table;
+            odh::iff_chunks(view,[&](const auto& chunk){if(chunk.type=="STR#"&&chunk.id==out.body_str_id){
+                if(table)throw odh::FormatError("wardrobe BodySTR ambiguous");table=odh::read_strings(chunk.payload);
+            }});
+            if(!table||table->state!=odh::StringTableState::decoded)throw odh::FormatError("wardrobe BodySTR undecodable");
+            std::size_t total=0;
+            for(std::size_t index=0;index<257;++index){const auto* entry=odh::string_in_ts1_language_set(*table,1,index);if(!entry)break;
+                if(index==256||entry->value.size()>4096||entry->value.size()>65536-total)throw odh::FormatError("wardrobe raw BodySTR exceeds bound");
+                total+=entry->value.size();out.strings.push_back(entry->value);
+            }
+        });return out;
+    };
     std::map<std::uint32_t,odh::Ts1PersonSuitStrings> suit_body_strings;
     suit_services.person=[&](const odh::World& source,std::int16_t id){
         try{
@@ -5875,7 +5922,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 for(std::size_t i=0;i<5;++i)strings.expanded[i]=get(static_cast<std::uint16_t>(30+i));
                 found=suit_body_strings.emplace(entity->definition->guid,std::move(strings)).first;
             }
-            return odh::Ts1PersonSuitResult{odh::Ts1SuitResourceState::ready,found->second,{}};
+            auto effective=found->second;
+            const auto nid=entity->person_data.size()>31?entity->person_data[31]:0;
+            if(personal_state)if(const auto* wardrobe=personal_state->wardrobe_by_id(nid)){
+                if(!wardrobe_personal_source||!odh::same_native_personal_identity(wardrobe_personal_source(id).identity,wardrobe->identity))
+                    throw odh::FormatError("wardrobe suit source differs from exact live owner");
+                effective.expanded=wardrobe->wardrobe.strings;
+            }
+            return odh::Ts1PersonSuitResult{odh::Ts1SuitResourceState::ready,std::move(effective),{}};
         }catch(const std::exception& error){return odh::Ts1PersonSuitResult{odh::Ts1SuitResourceState::unsupported,{},error.what()};}
     };
     next_career=[&](std::int16_t cursor)->std::optional<std::int16_t>{
@@ -6668,6 +6722,30 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
         throw odh::FormatError("personal writer has no admitted character resource owner");
     };
+    wardrobe_personal_source=personal_source;
+    const auto admit_person_wardrobe=[&](std::int16_t id){
+        if(!personal_state)return;
+        const auto actual=personal_source(id);
+        const auto raw=wardrobe_source(actual.identity);
+        if(const auto* accepted=personal_state->wardrobe_by_id(actual.identity.neighbor_id)){
+            if(!odh::same_native_personal_identity(accepted->identity,actual.identity))throw odh::FormatError("live wardrobe resource owner changed");
+            odh::validate_original_wardrobe_source(accepted->wardrobe,raw);
+            odh::validate_original_wardrobe_assets(accepted->wardrobe,[&](const auto& asset){return wardrobe_catalog().resolve(asset);});
+            return;
+        }
+        auto prepared=personal_state->prepare_wardrobes({{actual.identity,raw}},wardrobe_catalog().catalog());
+        if(!personal_state->commit(std::move(prepared)))throw odh::FormatError("wardrobe source epoch changed during safe-point admission");
+    };
+    // Authenticate every stored wardrobe, including currently retired bodies.
+    if(personal_state)for(const auto& saved:personal_state->snapshot().wardrobes){
+        if(retired_neighbor_ids.count(saved.identity.neighbor_id))continue;
+        odh::validate_original_wardrobe_source(saved.wardrobe,wardrobe_source(saved.identity));
+        odh::validate_original_wardrobe_assets(saved.wardrobe,[&](const auto& asset){return wardrobe_catalog().resolve(asset);});
+    }
+    if(personal_state){const auto existing=world.snapshot();
+        for(const auto& actor:existing.entities)if(actor.kind==odh::EntityKind::avatar&&!actor.ui_ghost&&!actor.dead&&
+            actor.person_data.size()>31&&actor.person_data[31]>0)admit_person_wardrobe(actor.id);
+    }
     const auto original_source_residential=[&]()->bool{
         if(!session_context)throw odh::FormatError("original constructor source lot unavailable");
         if(!session_context->house_number)return true;
@@ -18013,6 +18091,7 @@ struct PlacementCandidateProbe {
                 if(world.lockout_count_clock()&&!world.admit_lockout_count_state(id,generation,true,0))
                     throw odh::FormatError("NPC source Thread lockout state could not be admitted");
                 auto* bound=actor.get();npc_runtime.push_back(std::move(actor));register_auxiliary_actor(*bound);
+                if(world.find(id)->person_data.size()>31&&world.find(id)->person_data[31]>0)admit_person_wardrobe(id);
                 configure_actor_execution(*bound,nullptr,true);
                 const auto creator_run=pending.vm?pending.vm->run_generation():0;
                 const auto current=[&,id,generation,creator_run]{const auto* e=world.find(id);
@@ -20058,6 +20137,7 @@ struct PlacementCandidateProbe {
                 private_animation_tables.emplace(id,load_strings(actor->resource,
                     {animation_base,static_cast<std::uint16_t>(animation_base+1),129,130}));
                 auto* bound=actor.get();household_runtime.push_back(std::move(actor));register_auxiliary_actor(*bound);
+                if(world.find(id)->person_data.size()>31&&world.find(id)->person_data[31]>0)admit_person_wardrobe(id);
                 configure_actor_execution(*bound,nullptr,true);
                 constructor_people.emplace(id,odh::WorldEntityReference{id,entity->generation});
                 auto* registry=current_position_registry();

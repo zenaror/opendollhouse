@@ -1,7 +1,9 @@
 #pragma once
+#include <filesystem>
 #include "scene_renderer.hpp"
 #include "odh/objm_tail.hpp"
 #include "odh/avatar_body.hpp"
+#include "odh/wardrobe.hpp"
 
 struct SavedAnimationAppearance {
     std::string raw, entry, cfp_entry;
@@ -37,6 +39,13 @@ public:
     SavedAppearanceResources& operator=(SavedAppearanceResources&&) noexcept;
     SavedAppearance resolve(const odh::ObjmPersonState&);
     const SavedAppearanceCatalogDiagnostics& diagnostics() const;
+    // Metadata-only export of THIS provider's selected outfit names/files.
+    // No skeleton, scene, mesh, image or animation execution is required.
+    static std::vector<odh::WardrobeCatalogAsset> wardrobe_catalog(
+        const std::filesystem::path& game_root,const std::string& animation_far,
+        const std::string& textures_far,const std::string& skins_directory,
+        const std::vector<std::string>& far_sources,const std::vector<std::string>& extra_skin_directories);
+
     // Construct visual parts directly from BodySTR body/head and six hand
     // records, without a saved person or saved animation state. Each record is
     // appearance[,label=texture]; all eight appearances are required. Reuses

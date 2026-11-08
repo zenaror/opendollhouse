@@ -128,7 +128,7 @@ void apply_native_personal_projection(const NativePersonalProjection& p,std::vec
  for(const auto f:fields)if(f.minimum<=p.schema_version&&p.present[f.index])bank[f.index]=p.values[f.index];
 }
 void validate_native_personal_snapshot(const NativePersonalSnapshot& s){
- if((s.version!=1&&s.version!=2)||bool(s.catalog)!=(s.version==2)||!nonzero(s.neighborhood_identity)||s.records.size()>4096)throw FormatError("personal snapshot header unsupported");
+ if((s.version!=1&&s.version!=2&&s.version!=3)||(s.version==1&&s.catalog)||(s.version==2&&!s.catalog)||(s.version!=3&&!s.wardrobes.empty())||(s.version==3&&s.wardrobes.empty())||!nonzero(s.neighborhood_identity)||s.records.size()>4096||s.wardrobes.size()>4096)throw FormatError("personal snapshot header unsupported");
  if(s.catalog){validate_native_personal_catalog(*s.catalog);if(s.catalog->neighborhood_identity!=s.neighborhood_identity)throw FormatError("personal catalog neighborhood differs");}
  std::int16_t previous=0;
  for(const auto& r:s.records){identity(r.identity);projection(r.projection);
@@ -140,11 +140,46 @@ void validate_native_personal_snapshot(const NativePersonalSnapshot& s){
   }
   if(r.seed_words&&r.seed_words->size()!=80&&r.seed_words->size()!=256)throw FormatError("personal seed bank shape unsupported");
  }
+ std::size_t wardrobe_bytes=0;
+ previous=0;
+ for(const auto& r:s.wardrobes){
+  identity(r.identity);validate_original_wardrobe_projection(r.wardrobe);
+  const auto account=[&](std::size_t n){if(n>24u*1024u*1024u-wardrobe_bytes)throw FormatError("wardrobe collection exceeds bounded size");wardrobe_bytes+=n;};
+  account(56+r.identity.character_asset.size());
+  const auto text=[&](const std::string& v){account(2+v.size());};
+  const auto optional_text=[&](const std::optional<std::string>& v){account(1);if(v)text(*v);};
+  for(const auto& v:r.wardrobe.source_fields)optional_text(v);for(const auto& v:r.wardrobe.seed)optional_text(v);for(const auto& v:r.wardrobe.strings)optional_text(v);
+  for(const auto& v:r.wardrobe.chosen){account(1);if(v){text(v->literal);for(const auto* a:{&v->appearance,&v->texture}){account(41);text(a->name);text(a->source);text(a->asset);}}}
+
+  if(r.identity.neighbor_id<=previous||!r.revision)throw FormatError("wardrobe record order/revision invalid");
+  previous=r.identity.neighbor_id;
+  const auto numeric=std::lower_bound(s.records.begin(),s.records.end(),r.identity.neighbor_id,
+      [](const auto& record,auto nid){return record.identity.neighbor_id<nid;});
+  if(numeric!=s.records.end()&&numeric->identity.neighbor_id==r.identity.neighbor_id&&
+     !same_native_personal_identity(numeric->identity,r.identity))throw FormatError("wardrobe and numeric identity differ");
+  if(s.catalog)for(std::size_t i=0;i<s.catalog->bindings.size();++i)if(s.catalog->bindings[i].neighbor_id==r.identity.neighbor_id){const auto& d=s.catalog->definitions[i];
+   if(d.guid!=r.identity.guid||d.definition_chunk_id!=r.identity.definition_chunk_id||d.fingerprint!=r.identity.character_fingerprint||native_personal_resource_key(d.source,d.asset)!=r.identity.character_asset)throw FormatError("wardrobe differs from admitted hydrated resource binding");
+  }
+ }
+
 }
 void validate_native_personal_successor(const NativePersonalSnapshot& before,const NativePersonalSnapshot& after){
  validate_native_personal_snapshot(before);validate_native_personal_snapshot(after);
- if(before.version==2&&(after.version!=2||encode_native_personal_catalog(*before.catalog)!=encode_native_personal_catalog(*after.catalog)))throw FormatError("personal successor changes or removes its admitted hydrated catalog");
+ if(before.catalog&&(!after.catalog||encode_native_personal_catalog(*before.catalog)!=encode_native_personal_catalog(*after.catalog)))throw FormatError("personal successor changes or removes its admitted hydrated catalog");
  if(before.neighborhood_identity!=after.neighborhood_identity)throw FormatError("personal successor neighborhood changed");
+ if(before.version==3&&after.version!=3)throw FormatError("personal successor removes wardrobe profile");
+ for(const auto& old:before.wardrobes){
+  const auto next=std::lower_bound(after.wardrobes.begin(),after.wardrobes.end(),old.identity.neighbor_id,
+      [](const auto& r,auto nid){return r.identity.neighbor_id<nid;});
+  if(next==after.wardrobes.end()||next->identity.neighbor_id!=old.identity.neighbor_id||
+     !same_native_personal_identity(old.identity,next->identity)||next->revision<old.revision)
+   throw FormatError("personal successor drops, rolls back or rebinds wardrobe");
+  auto a=before,b=after;a.records.clear();b.records.clear();a.catalog.reset();b.catalog.reset();
+  a.wardrobes={old};b.wardrobes={*next};b.wardrobes.front().revision=old.revision;
+  if(encode_native_personal_snapshot(a)!=encode_native_personal_snapshot(b))
+   throw FormatError("personal successor changes accepted wardrobe seed or choice");
+ }
+
  for(const auto& old:before.records){
   const auto next=std::lower_bound(after.records.begin(),after.records.end(),old.identity.neighbor_id,
       [](const auto& r,auto nid){return r.identity.neighbor_id<nid;});
@@ -175,8 +210,12 @@ NativePersonalState::NativePersonalState(const Nbrs& seed,const std::array<std::
 }
 std::map<std::int16_t,NeighborRecord> NativePersonalState::materialize(const NativePersonalSnapshot& s) const {
  validate_native_personal_snapshot(s);
- if(s.version!=state_.version||bool(s.catalog)!=bool(state_.catalog)||(s.catalog&&encode_native_personal_catalog(*s.catalog)!=encode_native_personal_catalog(*state_.catalog)))throw FormatError("personal restore catalog was not admitted before seed construction");
+ if((s.version!=3&&s.version!=state_.version)||bool(s.catalog)!=bool(state_.catalog)||(s.catalog&&encode_native_personal_catalog(*s.catalog)!=encode_native_personal_catalog(*state_.catalog)))throw FormatError("personal restore catalog was not admitted before seed construction");
  if(s.neighborhood_identity!=state_.neighborhood_identity)throw FormatError("personal snapshot neighborhood differs");
+ for(const auto& r:s.wardrobes){const auto seed=seeds_.find(r.identity.neighbor_id);
+  if(seed==seeds_.end()&&retired_.count(r.identity.neighbor_id))continue;
+  if(seed==seeds_.end()||seed->second.guid!=r.identity.guid)throw FormatError("wardrobe immutable NBRS identity differs");
+ }
  std::map<std::int16_t,NeighborRecord> out;
  for(const auto& r:s.records){const auto seed=seeds_.find(r.identity.neighbor_id);
   // Explicit family deletion/archive tombstones retain historical records;
@@ -196,6 +235,43 @@ void NativePersonalState::restore(const NativePersonalSnapshot& s){
  auto effective=materialize(s);auto candidate=s;
  if(epoch_==std::numeric_limits<std::uint64_t>::max())throw FormatError("personal epoch exhausted");
  state_=std::move(candidate);effective_=std::move(effective);++epoch_;
+}
+const NativeWardrobeRecord* NativePersonalState::wardrobe_by_id(std::int16_t nid) const {
+ const auto found=std::lower_bound(state_.wardrobes.begin(),state_.wardrobes.end(),nid,
+     [](const auto& r,auto key){return r.identity.neighbor_id<key;});
+ return found!=state_.wardrobes.end()&&found->identity.neighbor_id==nid?&*found:nullptr;
+}
+PreparedNativeWardrobeCommit NativePersonalState::prepare_wardrobes(const std::vector<NativeWardrobeSource>& input,
+ const std::vector<WardrobeCatalogAsset>& catalog) const {
+ if(input.empty()||input.size()>4096||epoch_==std::numeric_limits<std::uint64_t>::max())
+  throw FormatError("wardrobe admission requires bounded explicit sources and live epoch");
+ PreparedNativeWardrobeCommit out;out.owner_=this;out.epoch_=epoch_;out.candidate_=state_;
+ std::set<std::int16_t> unique;
+ for(const auto& item:input){identity(item.identity);
+  if(!unique.insert(item.identity.neighbor_id).second)throw FormatError("wardrobe admission repeats neighbor");
+  const auto seed=seeds_.find(item.identity.neighbor_id);
+  if(seed==seeds_.end()||retired_.count(item.identity.neighbor_id)||seed->second.guid!=item.identity.guid)
+   throw FormatError("wardrobe admission lacks exact active NBRS identity");
+  auto found=std::lower_bound(out.candidate_.wardrobes.begin(),out.candidate_.wardrobes.end(),item.identity.neighbor_id,
+      [](const auto& r,auto nid){return r.identity.neighbor_id<nid;});
+  if(found!=out.candidate_.wardrobes.end()&&found->identity.neighbor_id==item.identity.neighbor_id){
+   if(!same_native_personal_identity(found->identity,item.identity))throw FormatError("wardrobe admission resource changed");
+   validate_original_wardrobe_source(found->wardrobe,item.source);
+  }else{
+   NativeWardrobeRecord fresh;fresh.identity=item.identity;
+   fresh.wardrobe=prepare_original_wardrobe_upgrade(item.source,catalog);
+   out.candidate_.wardrobes.insert(found,std::move(fresh));
+  }
+ }
+ out.candidate_.version=3;validate_native_personal_successor(state_,out.candidate_);
+ (void)materialize(out.candidate_);(void)encode_native_personal_snapshot(out.candidate_);return out;
+}
+bool NativePersonalState::source_current(const PreparedNativeWardrobeCommit& p) const {
+ return p.owner_==this&&p.epoch_==epoch_&&!p.candidate_.wardrobes.empty()&&epoch_!=std::numeric_limits<std::uint64_t>::max();
+}
+bool NativePersonalState::commit(PreparedNativeWardrobeCommit&& p){
+ if(!source_current(p))return false;
+ state_=std::move(p.candidate_);++epoch_;p.owner_=nullptr;return true;
 }
 PreparedNativePersonalCommit NativePersonalState::prepare(const World& world,const std::vector<NativePersonalSource>& input,NativePersonalWriteSource writer) const {
  if(static_cast<unsigned>(writer)<1||static_cast<unsigned>(writer)>4)throw FormatError("personal writer source is unsupported");
@@ -244,7 +320,10 @@ bool NativePersonalState::commit_retirement(PreparedNativePersonalCommit&& p,Wor
 }
 std::vector<std::uint8_t> encode_native_personal_snapshot(const NativePersonalSnapshot& s){
  validate_native_personal_snapshot(s);std::vector<std::uint8_t> b;
- const auto put=[&](std::uint64_t v,unsigned n){for(unsigned i=0;i<n;++i)b.push_back(static_cast<std::uint8_t>(v>>(8*i)));};
+ const auto put=[&](std::uint64_t v,unsigned n){if(n>24u*1024u*1024u-b.size())throw FormatError("personal snapshot exceeds bounded size");for(unsigned i=0;i<n;++i)b.push_back(static_cast<std::uint8_t>(v>>(8*i)));};
+ const auto text=[&](const std::string& v){if(v.size()>4096||v.find('\0')!=std::string::npos)throw FormatError("wardrobe text outside bound");put(v.size(),2);if(v.size()>24u*1024u*1024u-b.size())throw FormatError("personal snapshot exceeds bounded size");b.insert(b.end(),v.begin(),v.end());};
+ const auto optional_text=[&](const std::optional<std::string>& v){put(v.has_value(),1);if(v)text(*v);};
+ const auto asset=[&](const WardrobeCatalogAsset& a){put(static_cast<unsigned>(a.kind),1);text(a.name);text(a.source);text(a.asset);b.insert(b.end(),a.fingerprint.begin(),a.fingerprint.end());put(a.producer_ordinal,8);};
  put(s.version,4);b.insert(b.end(),s.neighborhood_identity.begin(),s.neighborhood_identity.end());put(s.records.size(),4);
  for(const auto& r:s.records){const auto& id=r.identity;put(static_cast<std::uint16_t>(id.neighbor_id),2);put(id.guid,4);put(id.definition_chunk_id,2);
   put(id.character_asset.size(),2);b.insert(b.end(),id.character_asset.begin(),id.character_asset.end());
@@ -253,12 +332,23 @@ std::vector<std::uint8_t> encode_native_personal_snapshot(const NativePersonalSn
   if(r.seed_words)for(auto word:*r.seed_words)put(static_cast<std::uint16_t>(word),2);
   for(std::size_t i=0;i<r.projection.present.size();++i){put(r.projection.present[i],1);if(r.projection.present[i])put(static_cast<std::uint16_t>(r.projection.values[i]),2);}
  }
- if(s.version==2){const auto catalog=encode_native_personal_catalog(*s.catalog);put(catalog.size(),4);b.insert(b.end(),catalog.begin(),catalog.end());}
- return b;
+ if(s.version==2||s.version==3){const auto catalog=s.catalog?encode_native_personal_catalog(*s.catalog):std::vector<std::uint8_t>{};put(catalog.size(),4);b.insert(b.end(),catalog.begin(),catalog.end());}
+ if(s.version==3){put(s.wardrobes.size(),4);for(const auto& r:s.wardrobes){const auto& id=r.identity;
+  put(static_cast<std::uint16_t>(id.neighbor_id),2);put(id.guid,4);put(id.definition_chunk_id,2);text(id.character_asset);
+  b.insert(b.end(),id.character_fingerprint.begin(),id.character_fingerprint.end());put(r.revision,8);
+  const auto& w=r.wardrobe;put(w.rule_profile,4);put(w.body_str_id,2);
+  for(const auto& v:w.source_fields)optional_text(v);for(const auto& v:w.seed)optional_text(v);for(const auto& v:w.strings)optional_text(v);
+  for(const auto& v:w.chosen){put(v.has_value(),1);if(v){text(v->literal);asset(v->appearance);asset(v->texture);}}
+ }}
+ if(b.size()>24u*1024u*1024u)throw FormatError("personal snapshot exceeds bounded size");return b;
 }
 NativePersonalSnapshot decode_native_personal_snapshot(const std::vector<std::uint8_t>& b){
  if(b.size()>24u*1024u*1024u)throw FormatError("personal snapshot exceeds bounded size");std::size_t at=0;
  const auto get=[&](unsigned n){if(n>b.size()-at)throw FormatError("truncated personal snapshot");std::uint64_t v=0;for(unsigned i=0;i<n;++i)v|=std::uint64_t{b[at++]}<<(8*i);return v;};
+ const auto boolean=[&](){const auto v=get(1);if(v>1)throw FormatError("wardrobe boolean invalid");return v!=0;};
+ const auto text=[&](){const auto n=get(2);if(n>4096||n>b.size()-at)throw FormatError("wardrobe text outside bound");std::string out(reinterpret_cast<const char*>(b.data()+at),static_cast<std::size_t>(n));at+=static_cast<std::size_t>(n);if(out.find('\0')!=std::string::npos)throw FormatError("wardrobe text contains NUL");return out;};
+ const auto optional_text=[&]()->std::optional<std::string>{if(!boolean())return {};return text();};
+ const auto asset=[&](){WardrobeCatalogAsset a;a.kind=static_cast<WardrobeAssetKind>(get(1));a.name=text();a.source=text();a.asset=text();for(auto& v:a.fingerprint)v=static_cast<std::uint8_t>(get(1));a.producer_ordinal=get(8);return a;};
  NativePersonalSnapshot s;s.version=static_cast<std::uint32_t>(get(4));for(auto& c:s.neighborhood_identity)c=static_cast<std::uint8_t>(get(1));
  const auto count=get(4);if(count>4096)throw FormatError("personal snapshot record count exceeds limit");
  for(std::uint64_t n=0;n<count;++n){NativePersonalRecord r;auto& id=r.identity;id.neighbor_id=signed16(static_cast<std::uint16_t>(get(2)));id.guid=static_cast<std::uint32_t>(get(4));id.definition_chunk_id=static_cast<std::uint16_t>(get(2));
@@ -271,7 +361,15 @@ NativePersonalSnapshot decode_native_personal_snapshot(const std::vector<std::ui
   for(std::size_t i=0;i<r.projection.present.size();++i){r.projection.present[i]=static_cast<std::uint8_t>(get(1));if(r.projection.present[i])r.projection.values[i]=signed16(static_cast<std::uint16_t>(get(2)));}
   s.records.push_back(std::move(r));
  }
- if(s.version==2){const auto n=get(4);if(n>3u*1024u*1024u||n>b.size()-at)throw FormatError("personal catalog outside bounded snapshot");std::vector<std::uint8_t> raw(b.begin()+at,b.begin()+at+n);at+=n;s.catalog=decode_native_personal_catalog(raw);}
+ if(s.version==2||s.version==3){const auto n=get(4);if(n>3u*1024u*1024u||n>b.size()-at)throw FormatError("personal catalog outside bounded snapshot");std::vector<std::uint8_t> raw(b.begin()+at,b.begin()+at+n);at+=n;if(n)s.catalog=decode_native_personal_catalog(raw);}
+ if(s.version==3){const auto n=get(4);if(n>4096)throw FormatError("wardrobe record count exceeds limit");
+  for(std::uint64_t i=0;i<n;++i){NativeWardrobeRecord r;auto& id=r.identity;id.neighbor_id=signed16(static_cast<std::uint16_t>(get(2)));id.guid=static_cast<std::uint32_t>(get(4));id.definition_chunk_id=static_cast<std::uint16_t>(get(2));id.character_asset=text();for(auto& v:id.character_fingerprint)v=static_cast<std::uint8_t>(get(1));r.revision=get(8);
+   auto& w=r.wardrobe;w.rule_profile=static_cast<std::uint32_t>(get(4));w.body_str_id=static_cast<std::uint16_t>(get(2));
+   for(auto& v:w.source_fields)v=optional_text();for(auto& v:w.seed)v=optional_text();for(auto& v:w.strings)v=optional_text();
+   for(auto& v:w.chosen)if(boolean()){v.emplace();v->literal=text();v->appearance=asset();v->texture=asset();}
+   s.wardrobes.push_back(std::move(r));
+  }
+ }
  if(at!=b.size())throw FormatError("personal snapshot trailing bytes");validate_native_personal_snapshot(s);return s;
 }
 VmPrimitive native_personal_write_primitive(World& world,NativePersonalState* state,NativePersonalSourceResolver resolve){

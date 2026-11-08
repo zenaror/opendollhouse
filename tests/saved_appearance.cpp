@@ -1,4 +1,5 @@
 #include "saved_appearance.hpp"
+#include "odh/sha256.hpp"
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -165,6 +166,34 @@ int main(int argc,char** argv){try{
  SavedAppearanceResources overrides(a.string(),t.string(),"rig.bcf","adult",skins.string(),with_override);
  check(overrides.resolve_body(expansion_body).parts.front().texture_far==override_far.string()&&
        overrides.resolve_body(expansion_body).parts.front().texture_entry=="Later/LOOSE-TEXTURE.BMP");
+ // Wardrobe receipts come from the renderer's actual selected mapping,
+ // not an independent filename census. Exercise both FAR-vs-loose texture
+ // aliases and a later container whose internal appearance name is unchanged.
+ const auto alias_far=dir.path/"logical-alias.far";
+ const auto alias_bytes=appearance("ExpansionBody",{"xskin-loose"});
+ far(alias_far,{{"DifferentFilename.cmx.bcf",alias_bytes}});
+ auto alias_sources=with_override;alias_sources.push_back(alias_far.string());
+ SavedAppearanceResources aliased(a.string(),t.string(),"rig.bcf","adult",skins.string(),alias_sources);
+ const auto alias_scene=aliased.resolve_body(expansion_body);
+ const auto wardrobe=SavedAppearanceResources::wardrobe_catalog(dir.path,a.string(),t.string(),skins.string(),alias_sources,{});
+ const auto receipt=[&](odh::WardrobeAssetKind kind,const std::string& name)->const odh::WardrobeCatalogAsset&{
+  const odh::WardrobeCatalogAsset* found=nullptr;
+  for(const auto& value:wardrobe)if(value.kind==kind&&value.name==name){check(!found,"selected logical wardrobe name has one receipt");found=&value;}
+  check(found!=nullptr,"selected renderer resource appears in wardrobe export");return *found;
+ };
+ const auto& outfit_receipt=receipt(odh::WardrobeAssetKind::appearance,"ExpansionBody");
+ const auto& texture_receipt=receipt(odh::WardrobeAssetKind::texture,"loose-texture");
+ check((dir.path/outfit_receipt.source).string()==alias_scene.parts.front().appearance_far&&
+       outfit_receipt.asset==alias_scene.parts.front().appearance_entry&&outfit_receipt.asset=="DifferentFilename.cmx.bcf"&&
+       outfit_receipt.fingerprint==odh::sha256(alias_bytes.data(),alias_bytes.size()),
+       "internal-name alias receipt authenticates exact renderer-selected later container");
+ const auto texture_bytes=loose_bitmap();
+ check((dir.path/texture_receipt.source).string()==alias_scene.parts.front().texture_far&&
+       texture_receipt.asset==alias_scene.parts.front().texture_entry&&texture_receipt.asset=="Later/LOOSE-TEXTURE.BMP"&&
+       texture_receipt.fingerprint==odh::sha256(texture_bytes.data(),texture_bytes.size()),
+       "FAR-over-loose texture receipt authenticates same exact bytes and path as renderer");
+ for(std::size_t index=1;index<wardrobe.size();++index)check(wardrobe[index-1].producer_ordinal<wardrobe[index].producer_ordinal,
+       "native provider exports strict candidate ordinals rather than one ordinal per container");
  // Compiled BMF is preferred to SKN across sources, not only siblings.
  const auto compiled=dir.path/"compiled-mesh.far";
  far(compiled,{{"Elsewhere/xskin-loose.bmf",mesh("xskin-loose","loose-texture")}});

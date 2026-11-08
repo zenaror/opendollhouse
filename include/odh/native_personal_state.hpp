@@ -3,6 +3,7 @@
 #include "odh/neighborhood.hpp"
 #include "odh/native_personal_catalog.hpp"
 #include "odh/world.hpp"
+#include "odh/wardrobe.hpp"
 #include <array>
 #include <map>
 #include <set>
@@ -39,11 +40,21 @@ struct NativePersonalRecord {
     // It is not an inferred v9 field table, nor a bank to copy into live actors.
     std::optional<std::vector<std::int16_t>> seed_words;
 };
+struct NativeWardrobeRecord {
+    NativePersonalIdentity identity;
+    std::uint64_t revision=1;
+    OriginalWardrobeProjection wardrobe;
+};
+struct NativeWardrobeSource {
+    NativePersonalIdentity identity;
+    OriginalWardrobeSource source;
+};
 struct NativePersonalSnapshot {
     std::uint32_t version=1;
     std::array<std::uint8_t,32> neighborhood_identity{};
     std::vector<NativePersonalRecord> records; // Strict ascending positive NID.
-    std::optional<NativePersonalCatalog> catalog; // Present only in explicit v2.
+    std::optional<NativePersonalCatalog> catalog; // Required in v2; optional in explicit v3.
+    std::vector<NativeWardrobeRecord> wardrobes; // Independent ascending positive NID, explicit v3 only.
 };
 void validate_native_personal_snapshot(const NativePersonalSnapshot&);
 void validate_native_personal_successor(const NativePersonalSnapshot&,const NativePersonalSnapshot&);
@@ -73,6 +84,16 @@ private:
     std::map<std::int16_t,NeighborRecord> effective_;
     friend class NativePersonalState;
 };
+class PreparedNativeWardrobeCommit {
+public:
+    PreparedNativeWardrobeCommit()=default;
+    const NativePersonalSnapshot& preview_snapshot() const {return candidate_;}
+private:
+    const NativePersonalState* owner_=nullptr;
+    std::uint64_t epoch_=0;
+    NativePersonalSnapshot candidate_;
+    friend class NativePersonalState;
+};
 // One mutable owner per neighborhood runtime. NeighborContext holds a non-owning
 // read view; the host owns lifetime, safe points and durable save transactions.
 class NativePersonalState {
@@ -83,7 +104,13 @@ public:
     NativePersonalState& operator=(const NativePersonalState&)=delete;
     const NeighborRecord* by_id(std::int16_t) const;
     const NativePersonalSnapshot& snapshot() const {return state_;}
-    bool changed() const {return !state_.records.empty()||state_.catalog.has_value();}
+    bool changed() const {return !state_.records.empty()||state_.catalog.has_value()||!state_.wardrobes.empty();}
+    const NativeWardrobeRecord* wardrobe_by_id(std::int16_t) const;
+    PreparedNativeWardrobeCommit prepare_wardrobes(const std::vector<NativeWardrobeSource>&,
+        const std::vector<WardrobeCatalogAsset>&) const;
+    bool source_current(const PreparedNativeWardrobeCommit&) const;
+    // Safe-point memory commit only; durable publication remains existing whole-overlay checkpoint CAS.
+    bool commit(PreparedNativeWardrobeCommit&&);
     // Restore is transactional and authenticates all immutable seed words.
     void restore(const NativePersonalSnapshot&);
     PreparedNativePersonalCommit prepare(const World&,const std::vector<NativePersonalSource>&,

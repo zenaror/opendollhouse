@@ -168,5 +168,45 @@ void matrix_travel(){
  auto mismatch=envelope;mismatch.personal_state.reset();rejects([&]{odh::encode_session_bundle(mismatch);});
  std::cout<<"visited NPC/HOME carrier projection and envelope mismatch passed\n";
 }
+void matrix_wardrobe_owner(){
+ auto n=seed(10,false);odh::NativePersonalState owner(n,digest());const auto legacy=odh::encode_native_personal_snapshot(owner.snapshot());
+ odh::OriginalWardrobeSource raw;raw.body_str_id=200;raw.strings.resize(35);
+ raw.strings[0]="adult";raw.strings[1]="b004mafit_01,BODY=b004mafitlgt_rat";
+ raw.strings[12]="male";raw.strings[13]="27";raw.strings[14]="lgt";
+ raw.strings[30]="f100mafit_original,BODY=f100mafitlgt_original";
+ raw.strings[31]="s100mafit_original,BODY=s100mafitlgt_original";
+ raw.strings[32]="l100mafit_original,BODY=l100mafitlgt_original";
+ raw.strings[33]="w100mafit_original,BODY=w100mafitlgt_original";
+ raw.strings[34]="h533mafit_zoot,BODY=h533mafitlgt_zoot";
+ const std::vector<odh::NativeWardrobeSource> sources{{identity(),raw},{identity(42),raw}};
+ auto p=owner.prepare_wardrobes(sources,{});require(owner.snapshot().version==1&&owner.snapshot().records.empty()&&owner.snapshot().wardrobes.empty(),"wardrobe preview never fabricates schema0 numeric data or mutates owner");
+ require(owner.commit(std::move(p))&&!owner.commit(std::move(p)),"wardrobe admission commits once at same-owner safe point");
+ require(owner.changed()&&owner.snapshot().version==3&&owner.snapshot().records.empty()&&owner.snapshot().wardrobes.size()==2,"wardrobe-only v3 bank retains independent numeric absence");
+ const auto wire=odh::encode_native_personal_snapshot(owner.snapshot());const auto decoded=odh::decode_native_personal_snapshot(wire);
+ require(odh::encode_native_personal_snapshot(decoded)==wire,"v3 wardrobe exact codec roundtrip");
+ odh::NativePersonalState restored(n,digest());restored.restore(decoded);require(restored.wardrobe_by_id(41)&&!restored.wardrobe_by_id(43),"cold owner restores wardrobe without invented numeric records");
+ auto idempotent=restored.prepare_wardrobes(sources,{});require(odh::encode_native_personal_snapshot(idempotent.preview_snapshot())==wire,"existing accepted wardrobe is not resampled or revision-bumped");
+ odh::World world;person(world);auto numeric=restored.prepare(world,{source(world)},odh::NativePersonalWriteSource::generic25);
+ require(restored.commit(std::move(numeric),world)&&!restored.commit(std::move(idempotent)),"actual numeric commit invalidates pending wardrobe through same epoch");
+ require(restored.snapshot().wardrobes.size()==2&&restored.snapshot().records.size()==1,"numeric writer retains all independent wardrobe records");
+ auto concurrent=restored.prepare(world,{source(world)},odh::NativePersonalWriteSource::generic25);auto wardrobe=restored.prepare_wardrobes(sources,{});
+ require(restored.commit(std::move(wardrobe))&&!restored.commit(std::move(concurrent),world),"wardrobe commit invalidates prepared numeric writer atomically");
+ for(unsigned mode=0;mode<5;++mode){auto bad=decoded;
+  if(mode==0)bad.wardrobes.pop_back();
+  if(mode==1)--bad.wardrobes.front().revision;
+  if(mode==2)bad.wardrobes.front().identity.character_fingerprint[0]^=1;
+  if(mode==3)bad.wardrobes.front().wardrobe.seed[3]="changed";
+  if(mode==4)bad.wardrobes.front().wardrobe.strings[3]="w200mafit_custom,BODY=w200mafitlgt_custom";
+  rejects([&]{odh::validate_native_personal_successor(decoded,bad);});
+ }
+ auto changed=sources;changed.front().source.strings[14]="med";rejects([&]{restored.prepare_wardrobes(changed,{});});
+ const auto before=odh::encode_native_personal_snapshot(restored.snapshot());
+ auto duplicate=sources;duplicate.push_back(sources.front());rejects([&]{restored.prepare_wardrobes(duplicate,{});});
+ require(odh::encode_native_personal_snapshot(restored.snapshot())==before,"failed grouped wardrobe admission is atomic");
+ for(std::size_t cut=0;cut<wire.size();++cut){auto truncated=wire;truncated.resize(cut);rejects([&]{odh::decode_native_personal_snapshot(truncated);});}
+ auto old=odh::decode_native_personal_snapshot(legacy);require(old.version==1&&odh::encode_native_personal_snapshot(old)==legacy,"absent wardrobe keeps legacy v1 bytes exact");
+ std::cout<<"wardrobe-only v3 owner/epoch/codec/antirollback matrix passed\n";
 }
-int main(){try{matrix_resource_locators();matrix_packaged_retirement();matrix_records();matrix_atomicity();matrix_schema();matrix_shared();matrix_sessions();matrix_travel();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+
+}
+int main(){try{matrix_wardrobe_owner();matrix_resource_locators();matrix_packaged_retirement();matrix_records();matrix_atomicity();matrix_schema();matrix_shared();matrix_sessions();matrix_travel();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

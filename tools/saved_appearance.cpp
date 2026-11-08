@@ -1,5 +1,6 @@
 #include "saved_appearance.hpp"
 #include "odh/mesh.hpp"
+#include "odh/sha256.hpp"
 #include <charconv>
 #include <filesystem>
 #include <fstream>
@@ -101,9 +102,10 @@ struct SavedAppearanceResources::Impl {
         return decoder(odh::View(input,std::filesystem::file_size(selected.entry)));
     }
     Impl(const std::string& a,const std::string& t,const std::string& se,const std::string& sn,
-         const std::string& skins,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots)
+         const std::string& skins,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots,bool metadata_only=false)
          :animations(a),textures(t) {
-        config.animation_far=a;config.textures_far=t;config.skeleton_entry=animations.select(se).name;config.skeleton_name=sn;bounded_name(sn);
+        config.animation_far=a;config.textures_far=t;
+        if(!metadata_only){config.skeleton_entry=animations.select(se).name;config.skeleton_name=sn;bounded_name(sn);}
         catalog_mode=!sources.empty()||!loose_roots.empty();
         if(sources.size()>128||loose_roots.size()>16)throw odh::FormatError("saved appearance source count exceeds bound");
         std::uint64_t count=0,bytes=0,file_count=0,file_bytes=0;
@@ -385,4 +387,42 @@ SavedAppearance SavedAppearanceResources::resolve_gestures(const odh::ObjmPerson
     auto out=impl_->body_head_animation(person);
     impl_->hands(out.scene,variants);
     return out;
+}
+
+std::vector<odh::WardrobeCatalogAsset> SavedAppearanceResources::wardrobe_catalog(
+ const std::filesystem::path& game_root,const std::string& animation_far,const std::string& textures_far,
+ const std::string& skins_directory,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots){
+ if(sources.empty()&&loose_roots.empty())throw odh::FormatError("wardrobe metadata requires the admitted catalog-mode provider");
+ Impl provider(animation_far,textures_far,{},{},skins_directory,sources,loose_roots,true);
+ const auto root=std::filesystem::canonical(game_root);
+ std::vector<odh::WardrobeCatalogAsset> result;
+ std::size_t text_bytes=0;std::uint64_t content_bytes=0;
+ std::map<std::pair<std::string,std::string>,std::array<std::uint8_t,32>> hashes;
+ const auto add=[&](odh::WardrobeAssetKind kind,const std::string& name,const Named& selected){
+  const auto path=std::filesystem::canonical(selected.archive?selected.archive->path:selected.entry);
+  const auto relative=path.lexically_relative(root);
+  if(relative.empty()||relative.is_absolute()||*relative.begin()=="..")throw odh::FormatError("wardrobe selected resource escaped trusted game root");
+  const auto source=relative.generic_string(),asset=selected.archive?selected.entry:std::string{};
+  const auto growth=name.size()+source.size()+asset.size();
+  if(name.empty()||name.size()>256||source.size()>1024||asset.size()>1024||result.size()>=32768||growth>16u*1024u*1024u-text_bytes)
+   throw odh::FormatError("wardrobe selected provider metadata exceeds bounds");
+  text_bytes+=growth;const auto key=std::make_pair(source,asset);auto hash=hashes.find(key);
+  if(hash==hashes.end()){
+   const auto digest=provider.decode(selected,[&](const odh::View& view){
+    if(view.size()>16u*1024u*1024u||view.size()>512u*1024u*1024u-content_bytes)throw odh::FormatError("wardrobe selected content census exceeds bounds");
+    content_bytes+=view.size();std::string bytes(static_cast<std::size_t>(view.size()),'\0');view.read(0,bytes.data(),bytes.size());return odh::sha256(bytes.data(),bytes.size());
+   });hash=hashes.emplace(key,digest).first;
+  }
+  result.push_back({kind,name,source,asset,hash->second,static_cast<std::uint64_t>(result.size())});
+ };
+ for(const auto& names:provider.appearances){
+  const auto& selected=provider.named(provider.appearances,names.first);
+  add(odh::WardrobeAssetKind::appearance,selected.name,selected);
+ }
+ // The same file() selects FAR winners before loose files, just as texture_file().
+ std::set<std::string> textures;
+ for(const auto& item:provider.files)if(item.first.size()>=4&&item.first.substr(item.first.size()-4)==".bmp")textures.insert(item.first);
+ for(const auto& item:provider.skin_files)if(item.first.size()>=4&&item.first.substr(item.first.size()-4)==".bmp")textures.insert(item.first);
+ for(const auto& name:textures)add(odh::WardrobeAssetKind::texture,name.substr(0,name.size()-4),provider.file(provider.textures,name));
+ return result;
 }
