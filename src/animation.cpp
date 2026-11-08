@@ -1,4 +1,5 @@
 #include "odh/animation.hpp"
+#include <algorithm>
 #include "read_cursor.hpp"
 #include "bcf_sections.hpp"
 #include <cmath>
@@ -43,41 +44,15 @@ const StringEntry* string_in_language_or_english(const StringTable& table,std::u
     if(language==0||language==1)return nullptr;
     return string_in_language(table,1,index);
 }
-namespace {
-std::uint32_t bounded(detail::Cursor& c,std::uint32_t& budget,std::uint32_t minimum){const auto n=c.u32();
-    if(n>budget || n>c.remaining()/minimum)throw FormatError("animation count exceeds payload or configured budget");
-    budget-=n;return n;}
-AnimationProperties pairs(detail::Cursor& c,std::uint32_t& budget) {
-    const auto n=bounded(c,budget,2);AnimationProperties result;result.reserve(n);
-    for(std::uint32_t i=0;i<n;++i){auto key=c.pascal();auto value=c.pascal();result.emplace_back(std::move(key),std::move(value));}return result;
-}
-}
 AnimationCollection read_bcf_animations(const View& view,AnimationLimits limits) {
     detail::Cursor c(view,limits.text_bytes);
-    // All binary BCF profiles share these bounded sections. Validate/discard
-    // prefix metadata before indexing animations, including proven-empty files.
-    detail::bcf_skeleton_section(c,SkeletonLimits{});
-    detail::bcf_appearance_section(c,MeshLimits{});
-    const auto count=bounded(c,limits.animations,26);AnimationCollection result{{},0};result.animations.reserve(count);
-    for(std::uint32_t n=0;n<count;++n){AnimationHeader a{};a.name=c.pascal();a.xskill=c.pascal();
-        a.duration_bits=c.u32();a.distance_bits=c.u32();a.moving=c.u32();a.translations=c.u32();a.rotations=c.u32();
-        if(a.translations>limits.samples || a.rotations>limits.samples)throw FormatError("animation sample count exceeds configured limit");
-        const auto motions=bounded(c,limits.motions,33);a.motions.reserve(motions);
-        for(std::uint32_t m=0;m<motions;++m){BoneMotion b{};b.bone=c.pascal();b.frames=c.u32();b.duration_bits=c.u32();
-            b.has_translation=c.u32();b.has_rotation=c.u32();b.first_translation=c.i32();b.first_rotation=c.i32();
-            if(b.has_translation>1 || b.has_rotation>1 || b.frames>limits.samples)throw FormatError("unsupported animation motion flags or frame limit");
-            for(const auto active:{true,false}){const auto present=active?b.has_translation:b.has_rotation;
-                const auto first=active?b.first_translation:b.first_rotation;const auto total=active?a.translations:a.rotations;
-                if(present && (first<0 || static_cast<std::uint32_t>(first)>total || b.frames>total-static_cast<std::uint32_t>(first)))
-                    throw FormatError("animation motion sample range outside declared arrays");}
-            const auto props=bounded(c,limits.properties,4);b.properties.reserve(props);
-            for(std::uint32_t p=0;p<props;++p)b.properties.push_back(pairs(c,limits.properties));
-            const auto groups=bounded(c,limits.properties,4);b.time_properties.reserve(groups);
-            for(std::uint32_t g=0;g<groups;++g){const auto events=bounded(c,limits.properties,8);std::vector<AnimationTimeProperty> group;group.reserve(events);
-                for(std::uint32_t e=0;e<events;++e){const auto id=c.i32();group.push_back({id,pairs(c,limits.properties)});}b.time_properties.push_back(std::move(group));}
-            a.motions.push_back(std::move(b));}
-        result.animations.push_back(std::move(a));}
-    result.remaining_bytes=c.remaining();return result;
+    auto result=detail::bcf_resources(c,SkeletonLimits{},MeshLimits{},limits);
+    return {std::move(result.animations),result.remaining_bytes};
+}
+BcfResources read_bcf_resources(const View& view,SkeletonLimits skeleton_limits,
+        MeshLimits mesh_limits,AnimationLimits animation_limits) {
+    detail::Cursor c(view,std::min({skeleton_limits.text_bytes,mesh_limits.text_bytes,animation_limits.text_bytes}));
+    return detail::bcf_resources(c,skeleton_limits,mesh_limits,animation_limits);
 }
 CfpPlanes read_cfp(const View& view,std::uint32_t translations,std::uint32_t rotations,AnimationLimits limits) {
     static_assert(sizeof(float)==4 && std::numeric_limits<float>::is_iec559,"CFP requires IEEE-754 binary32");

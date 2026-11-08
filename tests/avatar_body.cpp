@@ -21,7 +21,33 @@ std::vector<std::string> fields(){
 }
 void avatar(odh::World& world,std::int16_t id=1){check(world.create(id,odh::EntityKind::avatar,{0,101,3,16}));}
 }
-int main(){try{
+void species_descriptors(){
+    for(const auto& profile:std::vector<std::pair<std::string,odh::AvatarBodyType>>{
+        {"adult",odh::AvatarBodyType::adult},{"child",odh::AvatarBodyType::child},
+        {"dog",odh::AvatarBodyType::dog},{"cat",odh::AvatarBodyType::cat},{"kat",odh::AvatarBodyType::cat}}){
+        odh::World world;avatar(world);odh::RandomState random{91};auto values=fields();
+        values[0]=profile.first;values[12]=profile.first=="dog"?"dogmale":profile.second==odh::AvatarBodyType::cat?"catfemale":"female";
+        values[13]="27";for(unsigned i=17;i<=22;++i)values[i].clear();
+        const auto body=odh::parse_avatar_body_strings(table(values));const auto seed=random.seed();
+        const auto descriptor=odh::derive_avatar_body_descriptor(world,1,random,body,
+            table({"global-walk","global-turn"}),table({"global-swim"}),table({"","authored-turn","authored-run"}));
+        check(descriptor.body_type==profile.second&&descriptor.body->avatar_type==profile.first&&
+            !descriptor.child&&descriptor.global_walk_id==150&&descriptor.global_swim_id==158&&
+            descriptor.walk[0]=="global-walk"&&descriptor.walk[1]=="authored-turn"&&descriptor.walk[2]=="authored-run"&&
+            descriptor.swim[0]=="global-swim"&&random.seed()==seed);
+        const auto applied=odh::apply_avatar_body(world,1,random,body,table({"global-walk"}),table({"global-swim"}));
+        check(applied.body_type==profile.second&&world.find(1)->person_data[58]==27&&
+            world.find(1)->person_data[65]==(profile.first=="dog"?8:profile.second==odh::AvatarBodyType::cat?17:1));
+    }
+    for(const auto& type:std::vector<std::string>{"","DOG","unknown",std::string("dog\0bad",7)}){
+        check(!odh::avatar_body_type(type));odh::World world;avatar(world);odh::RandomState random{91};
+        auto values=fields();values[0]=type;const auto body=odh::parse_avatar_body_strings(table(values));
+        const auto person=world.find(1)->person_data,motives=world.find(1)->motives;const auto seed=random.seed();
+        rejects([&]{odh::apply_avatar_body(world,1,random,body,table({"walk"}),table({"swim"}));});
+        check(world.find(1)->person_data==person&&world.find(1)->motives==motives&&random.seed()==seed);
+    }
+}
+int main(){try{species_descriptors();
     const auto walk=table({"adult-walk","adult-run","adult-back"}),swim=table({"adult-swim"});
     const auto childwalk=table({"child-walk"}),childswim=table({"child-swim"});
     auto input=fields();

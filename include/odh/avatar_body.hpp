@@ -2,11 +2,25 @@
 #include "odh/animation.hpp"
 #include "odh/random.hpp"
 #include "odh/world.hpp"
+#include <string_view>
 
 namespace odh {
 inline constexpr std::size_t avatar_body_text_bytes=65536;
 inline constexpr std::size_t avatar_body_names=256;
 enum class AvatarPhenotype { ts1_light };
+enum class AvatarBodyType { adult,child,cat,dog };
+// Source BodySTR type comparisons are case-sensitive. Cat and kat select the
+// same avatar type, but the literal string still selects its skeleton name.
+inline std::optional<AvatarBodyType> avatar_body_type(std::string_view type) noexcept {
+    if(type=="adult")return AvatarBodyType::adult;
+    if(type=="child")return AvatarBodyType::child;
+    if(type=="cat"||type=="kat")return AvatarBodyType::cat;
+    if(type=="dog")return AvatarBodyType::dog;
+    return {};
+}
+inline bool human_avatar_body_type(AvatarBodyType type) noexcept {
+    return type==AvatarBodyType::adult||type==AvatarBodyType::child;
+}
 struct AvatarBodyStrings {
     std::optional<std::int16_t> age, gender;
     std::string avatar_type, body, head;
@@ -30,6 +44,7 @@ struct AvatarBodyDescriptor {
     std::array<std::string,50> walk, swim;
     bool child;
     std::uint16_t global_walk_id, global_swim_id;
+    std::optional<AvatarBodyType> body_type;
 };
 // Post-Init TS1 profile with DisableAvatarCollision=false. Caller explicitly
 // supplies global STR#150/158 for age>=18, STR#151/160 otherwise. Object STR#150

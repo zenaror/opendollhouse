@@ -72,6 +72,13 @@ int main(){try{
     require(read(many,limits).skeletons.size()==2,"budgets cumulative across skeletons at exact boundary");
     limits={};limits.text_bytes=13;rejects([&]{read(many,limits);});
     require(read(multiple(false,false)).skeletons[0].bones[0].parent=="bone","structural reader accepts self-parent for later pose validation");
+    auto mixed=f.bytes.substr(0,f.appearance);
+    put(mixed,1);text(mixed,"skin");put(mixed,0);put(mixed,0);put(mixed,1);
+    text(mixed,"ROOT");text(mixed,"body");put(mixed,0);put(mixed,0);put(mixed,0);
+    require(read(mixed).skeletons[0].bones[0].properties[0][1].second=="second","skeleton reader accepts and validates appearance suffix");
+    limits={};limits.text_bytes=text_bytes+12;
+    require(read(mixed,limits).remaining_bytes==0,"skeleton text cap covers mixed appearance names");
+    --limits.text_bytes;rejects([&]{read(mixed,limits);});
     std::string empty;put(empty,0);put(empty,0);put(empty,0);
     limits={};limits.skeletons=0;limits.bones=0;limits.skipped_records=0;limits.properties=0;limits.text_bytes=0;
     require(read(empty,limits).skeletons.empty(),"empty collection accepted with zero budgets");

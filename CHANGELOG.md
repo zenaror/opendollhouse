@@ -17,6 +17,8 @@ Ainda não há uma versão completa jogável publicada.
 - Registros de falhas com a identidade da ação, do alvo e da etapa de
   posicionamento envolvida.
 - Guias de arquitetura, formatos, requisitos jogáveis e futuras extensões.
+- Leitura compartilhada de arquivos BCF mistos e preparação da aparência de
+  animais com a estrutura corporal da espécie, sem mãos humanas.
 
 ### Modificado
 
@@ -27,6 +29,10 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Gestos de mãos explicitamente vazios nos dados originais, usados por algumas
+  fantasias, sem exigir peças inexistentes nem substituir o gesto pelo de repouso.
+- Tratamento da cabeça opcional de animais quando sua aparência está
+  comprovadamente ausente, mantendo os erros de recursos inválidos.
 - Leitura da posição e direção de alvos que saíram do lote durante uma
   caminhada, preservando a referência original quando seu número é reutilizado.
 - Tratamento da posição especial usada pelo jogo para retirar personagens do

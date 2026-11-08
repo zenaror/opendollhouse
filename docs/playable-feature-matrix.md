@@ -9,6 +9,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Scripts, objetos e interações | Parcial | Ciclo completo de criação, execução, cancelamento e retirada em mais perfis. |
 | Movimento e animação | Parcial | Escadas, obstáculos, personagens e ações nos percursos integrados. |
 | Necessidades e autonomia | Parcial | Dia residencial completo, sem ações falhando silenciosamente. |
+| Incêndios | Em aberto | A ação de fogo solicitada pelo fogão ainda encerra a execução. Migrar criação e propagação, estado do relógio, objetos afetados, combate e persistência. |
 | Relações e serviços | Parcial | Perfis sociais e serviços além dos casos já observados. |
 | Carreiras e habilidades | Parcial | Seleção, horários, pagamento, promoção e progressão mais amplos. |
 | Famílias e vizinhança | Parcial | Completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. Criação de rascunho, renomeação, exclusão elegível e cancelamentos já observados em percurso delimitado. |
@@ -17,7 +18,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Salvamento | Parcial | Estados ativos e transições de família/lote/destino do conjunto completo. |
 | Interface original | Parcial | Navegação, catálogos, diálogos, retratos e proporção em todas as telas. |
 | Gráficos e áudio | Parcial | Apresentação, iluminação, animações, vozes, música e efeitos integrados. |
-| Animais e ciclos de personagens | Em aberto | Aquisição, comportamento, serviços e persistência próprios. |
+| Animais e ciclos de personagens | Gambá original criado, salvo e reaberto em percurso curto; aparência por espécie e desenho observados em verificação delimitada. | Aquisição, comportamento, controle, serviços e persistência nos demais estados; validar os animais dentro dos percursos completos. |
 | Idiomas e conteúdo personalizado | Parcial | Uso real, fallback e continuação após salvar. |
 | Gozando a Vida e Fazendo a Festa | Em aberto | Objetos, eventos, convidados e atividades pelas regras dos dados. |
 | Encontro Marcado | Parcial | Percurso completo ao Centro com efeitos e retorno preservados. |

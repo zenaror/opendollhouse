@@ -77,6 +77,7 @@ std::optional<std::int16_t> gender_word(std::string value) {
     return {};
 }
 void validate_body(const AvatarBodyStrings& body) {
+    if(!avatar_body_type(body.avatar_type))throw FormatError("avatar body has an unsupported BodySTR type");
     std::size_t bytes=0;
     const auto consume=[&](const std::string& value){
         if(value.size()>avatar_body_text_bytes-bytes)throw FormatError("avatar body text exceeds bounded profile");
@@ -111,6 +112,7 @@ AvatarBodyDescriptor derive_avatar_body_descriptor(const World& world,std::int16
     const auto walk=us_strings(global_walk),swim=us_strings(global_swim);
     const auto special=object_walk?us_strings(*object_walk):std::vector<std::string>{};
     AvatarBodyDescriptor result{};result.body=body;
+    if(body)result.body_type=avatar_body_type(body->avatar_type);
     const auto age=body?*body->age:entity->person_data[58];
     result.child=age<18;result.global_walk_id=result.child?151:150;result.global_swim_id=result.child?160:158;
     if(body)result.phenotype=AvatarPhenotype::ts1_light;

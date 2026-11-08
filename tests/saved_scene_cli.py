@@ -220,9 +220,14 @@ with tempfile.TemporaryDirectory(prefix='odh-saved-scene-') as folder:
               run(resources + extra, base=only_args, success=False))
     check('--architecture-only requires --floors' in
           run(base=args[:5] + ['--architecture-only'], success=False))
-    for water_profile in [{'pool': True}, {'water': True}]:
+    # This fixture omits the required global liquid artwork. Each authored
+    # surface must reject its specific missing SPR2 before writing any output.
+    for water_profile, missing_sprite in [({'pool': True}, 0x420), ({'water': True}, 0x800)]:
         lot.write_bytes(house(**water_profile))
-        check('pool/water floor geometry unsupported' in run(resources, base=only_args, success=False))
+        error = run(resources, base=only_args, success=False)
+        expected = f'architecture material SPR2 missing for ID {missing_sprite}'
+        check(expected in error,
+              f'liquid profile={water_profile!r} expected missing SPR2={missing_sprite}; stderr={error!r}')
     lot.write_bytes(house(preferred=False))
     check(run(resources)['floor_map_resolved'] == 1, 'ID0 fallback failed')
     lot.write_bytes(house(floor_name='missing.flr'))

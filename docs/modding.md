@@ -71,6 +71,19 @@ Adultos e crianças usam estruturas corporais próprias. Animais também exigem
 aparência, ações e estado adequados: um gambá visitante não se torna membro
 da família apenas por compartilhar características de outro animal.
 
+Uma fantasia humana pode deixar vazias as peças separadas de alguns gestos das
+mãos. Preserve as seis posições da tabela, mesmo quando o valor for vazio.
+Esse gesto não acrescentará outra peça de mão; um nome preenchido continua
+precisando apontar para recursos válidos.
+
+Na aparência de um animal, informe o tipo e os recursos correspondentes à sua
+espécie. Por exemplo, um corpo do tipo `dog` precisa da estrutura `dog`, de uma
+aparência corporal e de suas texturas; ele não recebe mãos humanas. Uma cabeça
+separada pode ser opcional. Isso não torna opcionais a malha ou a textura de
+uma aparência encontrada. Veja os [contratos de aparência](engine-contracts.md#aparência-de-personagens).
+O suporte ainda é experimental e não comprova compatibilidade completa com
+animais personalizados nem com sua inclusão na família.
+
 ### Uma cafeteira e a ação “Preparar café”
 
 Prepare a definição, os desenhos, os textos, o preço e os lugares de uso.

@@ -22,15 +22,18 @@ necessário aperfeiçoar todos os objetos de uma casa antes de integrar viagens.
 
 ## Ordem de integração
 
-1. Fechar o percurso compartilhado de viagem ao Centro e de volta, reutilizando
+1. Completar as dependências residenciais que interrompem os percursos. Incêndios
+   precisam integrar relógio, criação e propagação, objetos afetados, combate e
+   salvamento; tratar essas partes como um serviço compartilhado.
+2. Fechar o percurso compartilhado de viagem ao Centro e de volta, reutilizando
    as partes existentes e conferindo familiares e convidados pelas regras de
    controle próprias de cada um. Preservar necessidades e progresso pessoal
    desde a saída, incluindo relações, habilidades, profissão, roupas e fama.
-2. Em paralelo, fechar o percurso integrado de criação de família e edição do
+3. Em paralelo, fechar o percurso integrado de criação de família e edição do
    lote, aproveitando os serviços de propriedade e transação existentes.
-3. Aplicar a base de viagem a Férias, Cidade Velha, Cidade Estúdio e Cidade Mágica;
+4. Aplicar a base de viagem a Férias, Cidade Velha, Cidade Estúdio e Cidade Mágica;
    registrar diferenças reais de cada destino e os recursos próprios das expansões.
-4. Completar as demais lacunas residenciais, animais, interface, áudio e conteúdo
+5. Completar as demais lacunas residenciais, animais, interface, áudio e conteúdo
    personalizado; reunir tudo em uma candidata com aceitação conjunta.
 
 O progresso pessoal precisa de um serviço compartilhado pela leitura e gravação
@@ -40,6 +43,12 @@ dados somente no retorno de uma viagem. Diferenças entre a referência e o orig
 continuam como requisitos a resolver.
 
 ## Método
+
+Conferir o conjunto de operações registrado pela referência TS1 e sua ligação
+ao motor nativo antes de ampliar os objetos de uma área. A existência de um
+tratador não comprova todas as formas de uso. Distinguir operações realmente
+usadas pelo TS1 de serviços exclusivos de The Sims Online, e migrar as lacunas
+com seus consumidores e estado, em vez de descobri-las objeto por objeto.
 
 Até duas frentes de implementação podem trabalhar com arquivos próprios. Os pontos
 compartilhados e os builds têm um responsável; a revisão é independente. Cada

@@ -48,16 +48,25 @@ public:
 
     // Construct visual parts directly from BodySTR body/head and six hand
     // records, without a saved person or saved animation state. Each record is
-    // appearance[,label=texture]; all eight appearances are required. Reuses
-    // the same resource ambiguity, naming and cumulative 16-part limits.
+    // appearance[,label=texture]; body/head are required. An authored empty
+    // hand record emits no geometry for that side/gesture, with no fallback.
+    // Nonempty records retain strict syntax/resource and cumulative limits.
     SceneConfig resolve_body(const odh::AvatarBodyStrings&);
     // Gameplay humans use the skeleton named by BodySTR[0], independently
     // of PersonData age and of the resolver's explicit tool-default rig.
     // Missing/unsupported profiles fail; never stretch child meshes on adult bones.
     SceneConfig resolve_human_body(const odh::AvatarBodyStrings&);
+    // Gameplay type selects its rig from installed skeleton names. Human
+    // profiles retain required body/head and optional authored hand gestures;
+    // cat/dog profiles have no human handgroup. Empty heads and a proved
+    // absent optional head appearance produce no head geometry; incomplete
+    // BCF/CMX name metadata and failures of selected resources remain errors.
+    // Cat/kat classification never substitutes another literal skeleton name.
+    SceneConfig resolve_avatar_body(const odh::AvatarBodyStrings&);
     // Add runtime BoundAppearances names using the same strict OBJM accessory resolver.
     void append_accessories(SceneConfig&, const std::vector<std::string>& names);
-    // All six BodySTR 17..22 variants are required and tagged for SceneState.
+    // Nonempty BodySTR 17..22 variants are tagged for SceneState; an empty
+    // record selects no hand geometry for that side/gesture, never idle fallback.
     // Raw saved hand fields are not interpreted or changed by this opt-in path.
     SavedAppearance resolve_gestures(const odh::ObjmPersonState&, const odh::AvatarBodyStrings&);
 private:

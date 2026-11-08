@@ -1,4 +1,5 @@
 #include "odh/animation.hpp"
+#include "odh/bcf.hpp"
 #include <iostream>
 #include <sstream>
 namespace {
@@ -15,6 +16,22 @@ std::string fixture(){std::string b;put(b,0);put(b,0);put(b,1);text(b,"clip");te
     for(auto n:{0x42C80000U,0U,0U,3U,3U,1U})put(b,n);text(b,"ROOT");
     for(auto n:{3U,0x42C80000U,1U,1U,0U,0U,1U,1U})put(b,n);text(b,"key");text(b,"value");
     put(b,1);put(b,1);put(b,0xFFFFFFFF);put(b,1);text(b,"xevt");text(b,"100");return b;}
+// Independently serialized records exercise every presence combination, including
+// the mixed rig/appearance/no-animation shape used by species resources.
+std::string mixed(bool skeleton,bool appearance,bool animation){
+    std::string b;put(b,skeleton?1U:0U);
+    if(skeleton){text(b,"rig");put(b,1,2);text(b,"ROOT");text(b,"NULL");put(b,0);
+        for(unsigned n=0;n<12;++n)put(b,0);}
+    put(b,appearance?1U:0U);
+    if(appearance){text(b,"skin");put(b,7);put(b,0);put(b,1);
+        text(b,"ROOT");text(b,"body");put(b,3);put(b,0);}
+    if(animation)b+=fixture().substr(8);else put(b,0);
+    return b;
+}
+auto resources(const std::string& b,odh::SkeletonLimits sk={},odh::MeshLimits mesh={},odh::AnimationLimits anim={}){
+    return view(b,[&](const auto& v){return odh::read_bcf_resources(v,sk,mesh,anim);});
+}
+
 }
 int main(){try{
     const auto b=fixture();const auto t=bcf(b);const auto& a=t.animations.at(0);const auto& m=a.motions.at(0);
@@ -27,6 +44,51 @@ int main(){try{
     auto bad=b;bad[0]=1;rejects([&]{bcf(bad);});bad=b;bad[4]=1;rejects([&]{bcf(bad);});
     odh::AnimationLimits limits;limits.motions=0;rejects([&]{bcf(b,limits);});limits={};limits.properties=4;rejects([&]{bcf(b,limits);});
     limits={};limits.text_bytes=2;rejects([&]{bcf(b,limits);});
+    for(unsigned mask=0;mask<8;++mask){
+        const bool sk=(mask&1)!=0,app=(mask&2)!=0,anim=(mask&4)!=0;
+        const auto bytes=mixed(sk,app,anim);const auto all=resources(bytes);
+        require(all.skeletons.size()==(sk?1U:0U) && all.appearances.size()==(app?1U:0U) &&
+                all.animations.size()==(anim?1U:0U) && all.remaining_bytes==0,"all eight BCF section combinations");
+        if(sk)require(all.skeletons[0].name=="rig" && all.skeletons[0].bones[0].parent=="NULL","mixed skeleton data preserved");
+        if(app)require(all.appearances[0].name=="skin" && all.appearances[0].bindings[0].mesh_name=="body" &&
+                       all.appearances[0].bindings[0].censor_flags==3,"mixed appearance data preserved");
+        if(anim)require(all.animations[0].motions[0].time_properties[0][0].pairs[0].second=="100","mixed animation events preserved");
+        auto skeletons=view(bytes,[](const auto& v){return odh::read_bcf_skeletons(v);});
+        auto appearances=view(bytes,[](const auto& v){return odh::read_bcf_appearances(v);});
+        require(skeletons.skeletons.size()==all.skeletons.size() && appearances.appearances.size()==all.appearances.size() &&
+                bcf(bytes).animations.size()==all.animations.size(),"legacy readers extract their section from every combination");
+        require(resources(bytes+"tail").remaining_bytes==4 && bcf(bytes+"tail").remaining_bytes==4 &&
+                view(bytes+"tail",[](const auto& v){return odh::read_bcf_skeletons(v);}).remaining_bytes==4 &&
+                view(bytes+"tail",[](const auto& v){return odh::read_bcf_appearances(v);}).remaining_bytes==4,"all readers report the same trailer");
+        for(std::size_t cut=0;cut<bytes.size();++cut){const auto truncated=bytes.substr(0,cut);
+            rejects([&]{resources(truncated);});rejects([&]{bcf(truncated);});
+            rejects([&]{view(truncated,[](const auto& v){return odh::read_bcf_skeletons(v);});});
+            rejects([&]{view(truncated,[](const auto& v){return odh::read_bcf_appearances(v);});});}
+    }
+    // A valid embedded appearance may have no mesh bindings (real rig files do).
+    auto empty_binding=mixed(true,false,false);empty_binding.resize(empty_binding.size()-8);
+    put(empty_binding,1);text(empty_binding,"rig");put(empty_binding,0);put(empty_binding,0);put(empty_binding,0);put(empty_binding,0);
+    const auto embedded=resources(empty_binding);
+    require(embedded.skeletons.size()==1 && embedded.appearances.size()==1 && embedded.appearances[0].bindings.empty() &&
+            embedded.animations.empty(),"mixed rig plus empty embedded appearance remains structural data");
+    const auto all_bytes=mixed(true,true,true);
+    odh::SkeletonLimits sk_limits;odh::MeshLimits mesh_limits;odh::AnimationLimits anim_limits;
+    sk_limits.skeletons=0;rejects([&]{resources(all_bytes,sk_limits);});
+    sk_limits={};sk_limits.bones=0;rejects([&]{resources(all_bytes,sk_limits);});
+    sk_limits={};mesh_limits.appearances=0;rejects([&]{resources(all_bytes,sk_limits,mesh_limits);});
+    mesh_limits={};mesh_limits.appearance_bindings=0;rejects([&]{resources(all_bytes,sk_limits,mesh_limits);});
+    mesh_limits={};anim_limits.animations=0;rejects([&]{resources(all_bytes,sk_limits,mesh_limits,anim_limits);});
+    anim_limits={};anim_limits.motions=0;rejects([&]{resources(all_bytes,sk_limits,mesh_limits,anim_limits);});
+    anim_limits={};anim_limits.properties=4;rejects([&]{resources(all_bytes,sk_limits,mesh_limits,anim_limits);});
+    anim_limits={};anim_limits.samples=2;rejects([&]{resources(all_bytes,sk_limits,mesh_limits,anim_limits);});
+    anim_limits={};sk_limits.text_bytes=52;
+    require(resources(all_bytes,sk_limits).animations.size()==1,"shared text budget exact across all sections");
+    --sk_limits.text_bytes;rejects([&]{resources(all_bytes,sk_limits);});
+    sk_limits={};mesh_limits.text_bytes=51;rejects([&]{resources(all_bytes,sk_limits,mesh_limits);});
+    mesh_limits={};anim_limits.text_bytes=51;rejects([&]{resources(all_bytes,sk_limits,mesh_limits,anim_limits);});
+    rejects([&]{bcf(all_bytes,anim_limits);});
+    sk_limits.text_bytes=51;rejects([&]{view(all_bytes,[&](const auto& v){return odh::read_bcf_skeletons(v,sk_limits);});});
+    mesh_limits.text_bytes=51;rejects([&]{view(all_bytes,[&](const auto& v){return odh::read_bcf_appearances(v,mesh_limits);});});
     std::string plain;put(plain,0,2);put(plain,1,2);text(plain,"abc");require(strings(plain).entries[0].value=="abc","Pascal strings");
     std::string terminated;put(terminated,65535,2);put(terminated,1,2);terminated+=std::string("abc\0",4);
     require(strings(terminated).entries[0].comment.empty(),"terminated single strings");

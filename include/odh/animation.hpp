@@ -39,7 +39,9 @@ struct AnimationHeader {
     std::vector<BoneMotion> motions;
 };
 struct AnimationCollection {std::vector<AnimationHeader> animations;std::uint64_t remaining_bytes;};
-// Binary BCF animation section after bounded skeleton/appearance metadata.
+// Binary BCF animations; all three sections are decoded and validated.
+// Other sections use default structural limits; text_bytes bounds all sections.
+// Bytes after the final animation are reported as remaining_bytes.
 // Transform data remains external CFP; properties are preserved, not executed.
 AnimationCollection read_bcf_animations(const View&,AnimationLimits limits={});
 struct CfpPlanes {std::array<std::vector<std::uint32_t>,7> bits;std::uint64_t remaining_bytes;};

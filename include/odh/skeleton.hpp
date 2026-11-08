@@ -15,7 +15,9 @@ struct SkeletonBone {
 };
 struct Skeleton {std::string name;std::vector<SkeletonBone> bones;};
 struct SkeletonCollection {std::vector<Skeleton> skeletons;std::uint64_t remaining_bytes;};
-// Skeleton-only binary BCF profile (zero appearance and animation counts).
+// Binary BCF skeletons; all three sections are decoded and structurally validated.
+// Other sections use default structural limits; text_bytes bounds all sections.
+// Bytes after the final animation are reported as remaining_bytes.
 // Empty-name bone records contain only the name and parent Pascal strings and
 // are skipped without advancing the declared decoded bone count. Limits are
 // cumulative across the collection; properties charges both groups and pairs.

@@ -11163,29 +11163,57 @@ struct PlacementCandidateProbe {
         if(!actor.body_state||!actor.body_state->body||!animation_catalog)return nullptr;
         const auto* entity=world.find(actor.id);
         if(!entity||entity->kind!=odh::EntityKind::avatar||entity->generation!=actor.generation)return nullptr;
+        const char* stage="catalog";
+        try{
         ensure_appearance_resources();
         const bool primary=primary_runtime.get()==&actor;
         auto& renderer=primary?render_renderer:actor.scene_renderer;
         auto& accessories=primary?rendered_bound_appearances:actor.rendered_bound_appearances;
         auto& appearance=primary?rendered_avatar_appearance:actor.rendered_avatar_appearance;
+        stage="effective_body";
         const auto current=odh::effective_avatar_accessories(*entity);
         const auto body=odh::effective_avatar_body(*actor.body_state->body,*entity);
         if(renderer&&current==accessories&&appearance==entity->avatar_appearance&&
            actor.rendered_avatar_type==body.avatar_type)return renderer.get();
         // Each resident/NPC keeps its authored body structure. The selected
         // adult tool-default must not become the rig for every Sim in a house.
-        auto config=session_context?render_appearances->resolve_human_body(body):render_appearances->resolve_body(body);
+        stage="body_parts";
+        auto config=session_context?render_appearances->resolve_avatar_body(body):render_appearances->resolve_body(body);
+        stage="accessories";
         render_appearances->append_accessories(config,current);
         const SceneCfpResolver provider=[&](const odh::AnimationHeader& selected){
             auto decoded=animation_catalog->decode(selected);
             const auto* planes=&decoded->planes;
             return std::shared_ptr<const odh::CfpPlanes>(std::move(decoded),planes);
         };
-        renderer=std::make_unique<SceneRenderer>(config,provider);
+        stage="scene";
+        try{renderer=std::make_unique<SceneRenderer>(config,provider);}
+        catch(const odh::FormatError& error){
+            const auto rig_source=config.skeleton_far.empty()?config.animation_far:config.skeleton_far;
+            throw odh::FormatError("avatar scene species="+body.avatar_type+" rig="+config.skeleton_name+
+                " source="+rig_source.substr(0,512)+" ["+config.skeleton_entry.substr(0,256)+"]: "+error.what());
+        }
         accessories=current;appearance=entity->avatar_appearance;
         actor.rendered_avatar_type=body.avatar_type;
         household_portrait_cache.erase(actor.id);npc_portrait_cache.erase(actor.id);
         return renderer.get();
+        }catch(const odh::FormatError& error){
+            const auto& authored=*actor.body_state->body;
+            const auto override=entity->avatar_appearance&&entity->avatar_appearance->body;
+            const auto position=entity->position
+                ?std::to_string(entity->position->x)+","+std::to_string(entity->position->y)+","+
+                 std::to_string(entity->position->level):std::string("out_of_world");
+            throw odh::FormatError(std::string("avatar initialization stage=")+stage+
+                " actor="+std::to_string(actor.id)+"/gen"+std::to_string(actor.generation)+
+                " guid="+std::to_string(entity->definition?entity->definition->guid:0)+
+                " owner="+std::to_string(actor.primary_owner)+" species="+authored.avatar_type.substr(0,32)+
+                " source="+actor.resource.archive.substr(0,256)+" ["+actor.resource.entry.substr(0,128)+"]"+
+                " body_str="+std::to_string(actor.data.startup?actor.data.startup->body_strings:0)+
+                " body_source="+(override?std::string("runtime_outfit"):std::string("authored"))+
+                " accessories="+std::to_string(entity->avatar_appearance&&entity->avatar_appearance->accessory_assets
+                    ?entity->avatar_appearance->accessory_assets->size():entity->bound_appearances.size())+
+                " position="+position+": "+error.what());
+        }
     };
     const auto follow_window_selection=[&]{
         if(!player_preferences.auto_center||!render_window||!render_lot||manual_lot_camera||special_effect_view.focused()||!selected_actor_reference)return;

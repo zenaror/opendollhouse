@@ -111,6 +111,11 @@ int main(){try{
     exact.appearance_bindings=2;exact.appearances=2;exact.text_bytes=36;
     require(appearances(a.bytes,exact).appearances.size()==2,"exact cumulative binding and text budgets accepted across appearances");
     --exact.text_bytes;rejects([&]{appearances(a.bytes,exact);});
+    std::string prefix;put(prefix,1);text(prefix,"rig");prefix+=std::string(2,'\0');
+    auto mixed=prefix+a.bytes.substr(4);
+    require(appearances(mixed).appearances[1].bindings[0].mesh_name=="body","appearance reader accepts and validates skeleton prefix");
+    exact={};exact.text_bytes=39;require(appearances(mixed,exact).remaining_bytes==0,"appearance text cap includes skeleton prefix");
+    --exact.text_bytes;rejects([&]{appearances(mixed,exact);});
     std::string empty_bcf;put(empty_bcf,0);put(empty_bcf,0);put(empty_bcf,0);
     zero.appearances=zero.appearance_bindings=0;
     require(appearances(empty_bcf,zero).appearances.empty(),"empty appearance collection accepted at zero budgets");

@@ -24,6 +24,11 @@ std::string loose_bitmap(){std::string b="BM";word(b,58);word(b,0);word(b,54);wo
  b.push_back(20);b.push_back(40);b.push_back(static_cast<char>(200));b.push_back(0);return b;}
 std::string appearance(const std::string& name,const std::vector<std::string>& meshes,const std::string& bone="ROOT"){std::string b;word(b,0);word(b,1);text(b,name);word(b,0);word(b,0);word(b,static_cast<std::uint32_t>(meshes.size()));for(const auto& m:meshes){text(b,bone);text(b,m);word(b,0);word(b,0);}word(b,0);return b;}
 std::string mesh(const std::string& name,const std::string& tex){std::string b;text(b,name);text(b,tex);for(int i=0;i<6;++i)word(b,0);return b;}
+std::string mixed_avatar(const std::string& species,const std::string& outfit,const std::vector<std::string>& meshes){
+ auto skeleton=rig(species);skeleton.resize(skeleton.size()-8);
+ const auto skin=appearance(outfit,meshes);
+ return skeleton+skin.substr(4); // Preserve skeleton and appearance sections plus zero animation count.
+}
 std::string clip(){std::string b;word(b,0);word(b,0);word(b,1);text(b,"clip");text(b,"pose");for(int i=0;i<5;++i)word(b,0);word(b,1);text(b,"ROOT");word(b,10);for(int i=0;i<7;++i)word(b,0);return b;}
 using Entry=std::pair<std::string,std::string>;
 void far(const std::filesystem::path& p,const std::vector<Entry>& entries){std::string b="FAR!byAZ";word(b,1);word(b,0);std::vector<std::uint32_t> offsets;for(const auto& e:entries){offsets.push_back(static_cast<std::uint32_t>(b.size()));b+=e.second;}auto offset=static_cast<std::uint32_t>(b.size());for(int i=0;i<4;++i)b[12+i]=static_cast<char>((offset>>(i*8))&255);word(b,static_cast<std::uint32_t>(entries.size()));for(std::size_t i=0;i<entries.size();++i){auto size=static_cast<std::uint32_t>(entries[i].second.size());word(b,size);word(b,size);word(b,offsets[i]);word(b,static_cast<std::uint32_t>(entries[i].first.size()));b+=entries[i].first;}std::ofstream out(p,std::ios::binary);out.write(b.data(),static_cast<std::streamsize>(b.size()));}
@@ -31,6 +36,28 @@ void save(const std::filesystem::path& path,const std::string& bytes){std::ofstr
 struct Temp {std::filesystem::path path;Temp(){path=std::filesystem::temp_directory_path()/("odh-saved-appearance-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));std::filesystem::create_directory(path);}~Temp(){std::error_code e;std::filesystem::remove_all(path,e);}};
 }
 int main(int argc,char** argv){try{
+ if(argc>=8&&std::string(argv[1])=="--commercial-animal-body"){
+  std::vector<std::string> sources;for(int i=8;i<argc;++i)sources.emplace_back(argv[i]);
+  const auto game_root=std::filesystem::path(argv[2]).parent_path().parent_path().parent_path();
+  std::vector<std::string> extra_skins;
+  for(const auto* relative:{"ExpansionShared/SkinsBuy","Downloads"}){
+   const auto path=game_root/relative;std::error_code error;
+   if(std::filesystem::is_directory(path,error)&&!error)extra_skins.push_back(path.string());
+  }
+  SavedAppearanceResources resources(argv[2],argv[3],"adult-skeleton.cmx.bcf","adult",argv[4],sources,extra_skins);
+  odh::AvatarBodyStrings body{};body.avatar_type=argv[5];body.body=argv[6];body.head=argv[7];
+  const auto scene=resources.resolve_avatar_body(body);SceneRenderer renderer(scene);
+  odh::WorldProjection camera;camera.width=320;camera.height=240;
+  const auto frame=renderer.render(SceneState{},camera);
+  std::cout<<"commercial animal body decoded: type="<<body.avatar_type<<" rig="<<scene.skeleton_name
+      <<" rig_far="<<scene.skeleton_far<<" rig_entry="<<scene.skeleton_entry<<" parts="<<scene.parts.size()
+      <<" vertices="<<renderer.vertices()<<" triangles="<<renderer.triangles()<<" texture_bytes="<<renderer.texture_bytes()
+      <<" raster_samples="<<frame.image.shaded_samples<<" catalog_malformed="<<resources.diagnostics().malformed_resources
+      <<" extra_skin_roots="<<extra_skins.size();
+  for(const auto& root:extra_skins)std::cout<<" ["<<root<<"]";
+  std::cout<<'\n';
+  return 0;
+ }
  if(argc==5&&std::string(argv[1])=="--commercial-skin"){
   SavedAppearanceResources resources(argv[2],argv[3],"adult-skeleton.cmx.bcf","adult",argv[4]);
   odh::AvatarBodyStrings body{};body.body="b010fafit_01";body.head=body.body;
@@ -73,6 +100,41 @@ int main(int argc,char** argv){try{
  check(loose_renderer.vertices()==24&&loose_renderer.triangles()==8&&loose_renderer.texture_bytes()==32);
  odh::WorldProjection loose_camera;loose_camera.width=160;loose_camera.height=160;
  check(loose_renderer.render(SceneState{},loose_camera).image.shaded_samples>0);
+ // TS1 hands are independent optional appearances. TragicClown authors only
+ // idle hands, but this contract applies to either side and every gesture.
+ // Render each absent selection and compare it with explicit no-hand state:
+ // body/head remain visible and no idle or opposite-side fallback is emitted.
+ for(std::size_t absent_index=0;absent_index<6;++absent_index){
+  auto partial=loose_body;partial.hands[absent_index].clear();const auto before=partial.hands;
+  const auto scene=loose_resources.resolve_body(partial);check(scene.parts.size()==7);
+  SceneRenderer renderer(scene);SceneState selected{};
+  selected.hands.left=selected.hands.right=odh::HandGesture::none;
+  const auto baseline=renderer.render(selected,loose_camera);
+  if(absent_index%2)selected.hands.right=static_cast<odh::HandGesture>(absent_index/2);
+  else selected.hands.left=static_cast<odh::HandGesture>(absent_index/2);
+  const auto absent_frame=renderer.render(selected,loose_camera);
+  check(baseline.image.shaded_samples>0&&absent_frame.image.tested_samples==baseline.image.tested_samples,
+      "an empty selected hand emits no fallback geometry while body/head render");
+  check(partial.hands==before,"resolving optional hands leaves authored slots unchanged");
+ }
+ auto idle_only=loose_body;for(std::size_t i=2;i<6;++i)idle_only.hands[i].clear();
+ const auto idle_scene=loose_resources.resolve_body(idle_only);
+ check(idle_scene.parts.size()==4&&idle_scene.parts[2].hand&&idle_scene.parts[3].hand);
+ SceneRenderer idle_renderer(idle_scene);SceneState idle_state{};
+ const auto idle_frame=idle_renderer.render(idle_state,loose_camera);
+ idle_state.hands.left=idle_state.hands.right=odh::HandGesture::pointing;
+ const auto pointing_frame=idle_renderer.render(idle_state,loose_camera);
+ idle_state.hands.left=idle_state.hands.right=odh::HandGesture::fist;
+ const auto fist_frame=idle_renderer.render(idle_state,loose_camera);
+ check(idle_frame.image.tested_samples>pointing_frame.image.tested_samples&&
+       pointing_frame.image.tested_samples==fist_frame.image.tested_samples&&pointing_frame.image.shaded_samples>0,
+       "idle-only authored handgroup renders idle hands and removes both on absent pointing/fist");
+ idle_state.hands.left=idle_state.hands.right=odh::HandGesture::idle;
+ check(idle_renderer.render(idle_state,loose_camera).image.tested_samples==idle_frame.image.tested_samples,
+       "returning from an absent gesture restores only the authored idle geometry");
+ auto no_hands=loose_body;for(auto& hand:no_hands.hands)hand.clear();
+ check(loose_resources.resolve_body(no_hands).parts.size()==2,
+       "explicitly absent hand slots do not suppress required body/head");
  // Gameplay selects the actual human rig from BodySTR[0]. Age is independent
  // simulation data; a child profile must never borrow the configured adult rig.
  {
@@ -137,6 +199,142 @@ int main(int argc,char** argv){try{
   rejects([&]{ambiguous_human.resolve_human_body(child);});
   check(ambiguous_human.resolve_human_body(adult).skeleton_entry=="adult-skeleton.cmx.bcf"&&
       ambiguous_human.resolve_body(child).skeleton_entry=="legacy-explicit.bcf");
+ }
+ // Gameplay animals share body/mesh/texture providers, but their rig has
+ // independent archive provenance and they do not receive human handgroups.
+ {
+  const auto base=dir.path/"species-base.far",animals=dir.path/"species-rigs.far";
+  far(base,{{"legacy-explicit.bcf",rig("adult")},{"adult-skeleton.cmx.bcf",rig("adult")},
+      {"child-skeleton.cmx.bcf",rig("child")}});
+  auto mixed_kat=mixed_avatar("kat","embedded-kat-body",{"xskin-loose"});
+  mixed_kat.resize(mixed_kat.size()-4);mixed_kat+=clip().substr(8);
+  far(animals,{{"Skeletons\\UnrelatedFilename.bcf",mixed_avatar("dog","embedded-dog-body",{"xskin-loose"})},
+      {"Skeletons\\kat_skeleton.cmx.bcf",mixed_kat}});
+  const std::vector<std::string> sources{base.string(),animals.string()};
+  SavedAppearanceResources species(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),sources);
+  auto human=loose_body;human.avatar_type="adult";
+  auto dog=loose_body;dog.avatar_type="dog";dog.age=27;dog.hands={};
+  auto kat=dog;kat.avatar_type="kat";
+  const auto dog_scene=species.resolve_avatar_body(dog),kat_scene=species.resolve_avatar_body(kat);
+  check(dog_scene.animation_far==base.string()&&dog_scene.skeleton_far==animals.string()&&
+      dog_scene.skeleton_entry=="Skeletons\\UnrelatedFilename.bcf"&&dog_scene.skeleton_name=="dog"&&
+      kat_scene.skeleton_name=="kat"&&kat_scene.skeleton_far==animals.string()&&
+      dog_scene.parts.size()==2&&kat_scene.parts.size()==2,
+      "animal rig resolves by installed internal name independently of filename and base CFP archive");
+  for(const auto& part:dog_scene.parts)check(!part.hand,"animals never receive tagged human hand geometry");
+  SceneRenderer dog_renderer(dog_scene),kat_renderer(kat_scene);
+  check(dog_renderer.vertices()==6&&kat_renderer.vertices()==6&&
+      dog_renderer.render(SceneState{},loose_camera).image.shaded_samples>0&&
+      kat_renderer.render(SceneState{},loose_camera).image.shaded_samples>0,
+      "animal rig provenance reaches actual scene decode, skinning and rasterization");
+  auto embedded_dog=dog;embedded_dog.body="embedded-dog-body";embedded_dog.head.clear();
+  auto embedded_kat=kat;embedded_kat.body="embedded-kat-body";embedded_kat.head.clear();
+  const auto embedded_dog_scene=species.resolve_avatar_body(embedded_dog),embedded_kat_scene=species.resolve_avatar_body(embedded_kat);
+  check(embedded_dog_scene.parts.size()==1&&embedded_dog_scene.parts[0].appearance_far==animals.string()&&
+      embedded_dog_scene.parts[0].appearance_entry=="Skeletons\\UnrelatedFilename.bcf"&&
+      embedded_kat_scene.parts[0].appearance_entry=="Skeletons\\kat_skeleton.cmx.bcf",
+      "mixed containers publish appearance names as well as their exact rigs");
+  SceneRenderer embedded_dog_renderer(embedded_dog_scene),embedded_kat_renderer(embedded_kat_scene);
+  check(embedded_dog_renderer.vertices()==3&&embedded_kat_renderer.vertices()==3&&
+      embedded_dog_renderer.render(SceneState{},loose_camera).image.shaded_samples>0&&
+      embedded_kat_renderer.render(SceneState{},loose_camera).image.shaded_samples>0,
+      "complete catalog/part/renderer pipeline consumes mixed1/1/0 and mixed1/1/1 resources");
+  auto without_head=dog;without_head.head.clear();
+  check(species.resolve_avatar_body(without_head).parts.size()==1,"explicit empty animal head has no separate source appearance");
+  auto ignored_hands=dog;for(auto& hand:ignored_hands.hands)hand="unparsed;animal-hand-field";
+  check(species.resolve_avatar_body(ignored_hands).parts.size()==dog_scene.parts.size(),
+      "source animal type ignores hand strings even when populated");
+  const auto human_after=species.resolve_avatar_body(human),legacy_after=species.resolve_body(human);
+  check(human_after.parts.size()==8&&human_after.skeleton_entry=="adult-skeleton.cmx.bcf"&&human_after.skeleton_far.empty()&&
+      legacy_after.skeleton_entry=="legacy-explicit.bcf"&&legacy_after.skeleton_far.empty(),
+      "animal resolution never changes human gameplay or explicitly configured tool rig state");
+  auto missing_human_hands=human;missing_human_hands.hands={};
+  const auto human_without_hands=species.resolve_avatar_body(missing_human_hands);
+  check(human_without_hands.parts.size()==2&&
+        !human_without_hands.parts[0].hand&&!human_without_hands.parts[1].hand,
+        "gameplay human with explicit absent gestures retains exactly body/head without hand fallback");
+  SceneRenderer human_without_hands_renderer(human_without_hands);
+  check(human_without_hands_renderer.render(SceneState{},loose_camera).image.shaded_samples>0,
+        "gameplay human body/head remain renderable with every hand slot absent");
+  auto required_human_body=human;required_human_body.body.clear();
+  rejects([&]{species.resolve_avatar_body(required_human_body);});
+  auto required_human_head=human;required_human_head.head.clear();
+  rejects([&]{species.resolve_avatar_body(required_human_head);});
+  auto missing_body=dog;missing_body.body.clear();rejects([&]{species.resolve_avatar_body(missing_body);});
+  auto missing_head=dog;missing_head.head="missing-animal-head";
+  check(species.resolve_avatar_body(missing_head).parts.size()==1&&species.diagnostics().malformed_resources==0,
+      "source-proved absent optional animal head adds no geometry");
+  auto missing_human_head=human;missing_human_head.head="missing-animal-head";
+  rejects([&]{species.resolve_avatar_body(missing_human_head);});
+  auto malformed_head=dog;malformed_head.head="missing-animal-head,BAD";rejects([&]{species.resolve_avatar_body(malformed_head);});
+  auto absent_head_texture=dog;absent_head_texture.head="b123mafat,HEAD=missing-texture";
+  rejects([&]{species.resolve_avatar_body(absent_head_texture);});
+  const auto unknown_head_far=dir.path/"unparsed-head-source.far";
+  far(unknown_head_far,{{"maybe-head.bcf","bad"}});
+  auto incomplete_sources=sources;incomplete_sources.push_back(unknown_head_far.string());
+  SavedAppearanceResources incomplete(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),incomplete_sources);
+  check(incomplete.diagnostics().malformed_resources==1&&incomplete.resolve_avatar_body(dog).parts.size()==2,
+      "known present animal head remains usable despite unrelated incomplete metadata");
+  rejects([&]{incomplete.resolve_avatar_body(missing_head);});
+  const auto bad_cmx_root=dir.path/"unparsed-cmx";std::filesystem::create_directory(bad_cmx_root);
+  save(bad_cmx_root/"maybe-head.cmx","unsupported CMX metadata");
+  SavedAppearanceResources incomplete_cmx(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),sources,{bad_cmx_root.string()});
+  check(incomplete_cmx.diagnostics().malformed_resources==1,"unparsed selected CMX also prevents absence authority");
+  rejects([&]{incomplete_cmx.resolve_avatar_body(missing_head);});
+  const auto legacy_rigs=dir.path/"legacy-animal-rigs.far",legacy_skins=dir.path/"legacy-animal-skins";
+  far(legacy_rigs,{{"rig.bcf",mixed_avatar("dog","unused-body",{"xskin-loose"})},
+      {"head1.bcf",appearance("ambiguous-animal-head",{"xskin-loose"})},
+      {"head2.bcf",appearance("ambiguous-animal-head",{"xskin-loose"})}});
+  std::filesystem::copy(skins,legacy_skins,std::filesystem::copy_options::recursive);
+  save(legacy_skins/"maybe-head.cmx","unsupported CMX metadata");
+  SavedAppearanceResources legacy_incomplete(legacy_rigs.string(),t.string(),"rig.bcf","dog",legacy_skins.string());
+  check(legacy_incomplete.diagnostics().malformed_resources==1,"legacy loose CMX failure also prevents absence authority");
+  rejects([&]{legacy_incomplete.resolve_avatar_body(missing_head);});
+  auto ambiguous_head=dog;ambiguous_head.head="ambiguous-animal-head";
+  try{legacy_incomplete.resolve_avatar_body(ambiguous_head);check(false);}
+  catch(const odh::FormatError& error){check(std::string(error.what()).find("named resource ambiguous")!=std::string::npos,
+      "present ambiguous animal head is never treated as absence");}
+  const auto missing_mesh_far=dir.path/"head-with-missing-mesh.far";
+  far(missing_mesh_far,{{"head.cmx.bcf",appearance("present-animal-head",{"not-installed-mesh"})}});
+  auto missing_mesh_sources=sources;missing_mesh_sources.push_back(missing_mesh_far.string());
+  SavedAppearanceResources missing_mesh(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),missing_mesh_sources);
+  auto present_broken_head=dog;present_broken_head.head="present-animal-head";
+  rejects([&]{missing_mesh.resolve_avatar_body(present_broken_head);});
+  for(const auto& type:std::vector<std::string>{"","DOG","unrecognized",std::string("dog\0junk",8)}){
+   auto invalid=dog;invalid.avatar_type=type;rejects([&]{species.resolve_avatar_body(invalid);});
+  }
+  auto cat=dog;cat.avatar_type="cat";rejects([&]{species.resolve_avatar_body(cat);});
+  const auto cat_file=dir.path/"literal-cat-rig.far";far(cat_file,{{"CatRig.bcf",rig("cat")}});
+  auto cat_sources=sources;cat_sources.push_back(cat_file.string());
+  SavedAppearanceResources literal_cat(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),cat_sources);
+  check(literal_cat.resolve_avatar_body(cat).skeleton_name=="cat"&&literal_cat.resolve_avatar_body(kat).skeleton_name=="kat",
+      "cat and kat share classification but require their own literal source skeleton names");
+  SavedAppearanceResources absent(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),{base.string()});
+  rejects([&]{absent.resolve_avatar_body(dog);});
+  try{absent.resolve_avatar_body(dog);check(false);}
+  catch(const odh::FormatError& error){const std::string why=error.what();
+   check(why.find("species=dog requested_rig=dog stage=rig")!=std::string::npos&&
+       why.find("selected_rig=unselected")!=std::string::npos,"missing animal rig names the actual type and lookup stage");}
+  const auto duplicate=dir.path/"duplicate-dog-rig.far";far(duplicate,{{"DifferentDogHost.bcf",rig("dog")}});
+  auto duplicates=sources;duplicates.push_back(duplicate.string());
+  SavedAppearanceResources ambiguous(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),duplicates);
+  rejects([&]{ambiguous.resolve_avatar_body(dog);});
+  try{ambiguous.resolve_avatar_body(dog);check(false);}
+  catch(const odh::FormatError& error){const std::string why=error.what();
+   check(why.find("selected_rig=ambiguous")!=std::string::npos&&why.find(animals.string())!=std::string::npos&&
+       why.find(duplicate.string())!=std::string::npos,"ambiguous animal rig retains both selected host provenances");}
+  const auto replacement=dir.path/"replaced-dog-file.far";
+  far(replacement,{{"Later\\UNRELATEDFILENAME.BCF",rig("other")}});
+  auto replaced=sources;replaced.push_back(replacement.string());
+  SavedAppearanceResources selected_missing(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),replaced);
+  rejects([&]{selected_missing.resolve_avatar_body(dog);});
+  check(selected_missing.resolve_avatar_body(kat).skeleton_name=="kat",
+      "later filename provider wins before rig indexing without resurrecting an earlier dog host");
+  auto broken_rig=rig("dog");broken_rig.push_back('x');const auto malformed=dir.path/"malformed-dog-rig.far";
+  far(malformed,{{"dog.bcf",broken_rig}});
+  SavedAppearanceResources bad_rig(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),{base.string(),malformed.string()});
+  rejects([&]{bad_rig.resolve_avatar_body(dog);});
+  check(bad_rig.resolve_avatar_body(human).skeleton_name=="adult","rejected animal rig never changes human selection");
  }
  // Expansion FAR names use Windows directory prefixes, while BCF bindings
  // reference global basenames. Resolve every component with exact provenance.
@@ -304,7 +502,14 @@ int main(int argc,char** argv){try{
  check(constructed.body==body_before&&constructed.head==head_before&&constructed.hands==hands_before);
  auto defaults=constructed;defaults.body="body";defaults.head="head";auto default_parts=gestures.resolve_body(defaults);
  check(default_parts.parts[0].texture_entry=="unmatched.bmp"&&default_parts.parts[1].texture_entry=="skinlgt.bmp"&&default_parts.parts[2].texture_entry=="unmatched.bmp"&&default_parts.parts[3].texture_entry=="x.bmp");
- for(std::size_t selected=0;selected<8;++selected){auto absent_body=constructed;if(selected==0)absent_body.body.clear();else if(selected==1)absent_body.head.clear();else absent_body.hands[selected-2].clear();rejects([&]{gestures.resolve_body(absent_body);});}
+ for(std::size_t selected=0;selected<8;++selected){
+  auto absent_body=constructed;
+  if(selected==0)absent_body.body.clear();else if(selected==1)absent_body.head.clear();else absent_body.hands[selected-2].clear();
+  if(selected<2)rejects([&]{gestures.resolve_body(absent_body);});
+  else {const auto scene=gestures.resolve_body(absent_body);check(scene.parts.size()==9);
+   for(const auto& part:scene.parts)check(!part.hand||part.hand->right!=((selected-2)%2==1)||
+       part.hand->gesture!=static_cast<odh::HandGesture>((selected-2)/2));}
+ }
  for(const auto& raw:std::vector<std::string>{",BODY=override","body,","body,BODY=","body,=override","body,BODY=override;other","body,BODY=override,extra","body=override","body;other",std::string(4097,'x'),std::string("body\0junk",9)}){
      auto bad=constructed;bad.body=raw;rejects([&]{gestures.resolve_body(bad);});bad=constructed;bad.head=raw;rejects([&]{gestures.resolve_body(bad);});}
  auto absent_body=constructed;absent_body.body="missing-body,BODY=override";rejects([&]{gestures.resolve_body(absent_body);});
@@ -313,7 +518,18 @@ int main(int argc,char** argv){try{
  absent_body=constructed;absent_body.hands[2]="leftPoint,HAND=missing-texture";rejects([&]{gestures.resolve_body(absent_body);});
  absent_body=constructed;absent_body.hands[2]="leftPoint,HAND=bad=second";rejects([&]{gestures.resolve_body(absent_body);});
  for(int i=0;i<20;++i)check(gestures.resolve_body(constructed).parts[7].texture_entry=="skinmed.bmp");
- for(const auto& raw:std::vector<std::string>{"",",HAND=override","leftIdle,","leftIdle,HAND=","leftIdle,=override","leftIdle,HAND=override;other","leftIdle,HAND=override,extra","leftIdle=override","leftIdle;other",std::string(4097,'x'),std::string("leftIdle\0junk",13)}){auto bad=body;bad.hands[0]=raw;rejects([&]{gestures.resolve_gestures(p,bad);});}
+ for(const auto& raw:std::vector<std::string>{",HAND=override","leftIdle,","leftIdle,HAND=","leftIdle,=override","leftIdle,HAND=override;other","leftIdle,HAND=override,extra","leftIdle=override","leftIdle;other",std::string(4097,'x'),std::string("leftIdle\0junk",13)}){auto bad=body;bad.hands[0]=raw;rejects([&]{gestures.resolve_gestures(p,bad);});}
+ auto optional_gestures=body;for(auto& hand:optional_gestures.hands)hand.clear();
+ const auto no_gestures=gestures.resolve_gestures(p,optional_gestures);
+ check(no_gestures.scene.parts.size()==4&&no_gestures.current->raw==p.animation.bytes&&
+       no_gestures.base->raw==p.base_animation.bytes&&p.left_hand.bytes=="unresolved-raw-left",
+       "saved gesture resolution accepts explicit empty hand slots without altering raw animations/hands");
+ auto invalid_hand=body;invalid_hand.hands[2]=std::string("bad\0hand",8);
+ bool hand_context=false;try{gestures.resolve_gestures(p,invalid_hand);}
+ catch(const odh::FormatError& error){const std::string message=error.what();
+  hand_context=message.find("BodySTR hand19 reference length=8 empty=0 embedded_nul=1")!=std::string::npos&&
+      message.find("saved appearance empty, oversized or embedded-NUL name")!=std::string::npos;}
+ check(hand_context,"invalid nonempty hand remains rejected with field and original cause");
  auto absent=body;absent.hands[2]="missing-gesture,HAND=override";rejects([&]{gestures.resolve_gestures(p,absent);});
  absent=body;absent.hands[2]="leftPoint,HAND=missing";rejects([&]{gestures.resolve_gestures(p,absent);});
  // No explicit texture map means use the appearance mesh's default texture.

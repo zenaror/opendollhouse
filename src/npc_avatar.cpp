@@ -210,8 +210,9 @@ NpcAvatarStartupResult initialize_npc_avatar(World& world,Vm& thread,std::int16_
         thread.status()!=VmStatus::ready || thread.run_generation()!=0)
         return fail("NPC startup requires a fresh bound VM and complete private constructor/placement inputs");
     const auto generation=actor->generation;
-    if(!inputs.body || (inputs.body->avatar_type!="adult" && inputs.body->avatar_type!="child"))
-        return fail("NPC startup supports resource-proven adult/child body profiles");
+    if(!inputs.body||!avatar_body_type(inputs.body->avatar_type))
+        return fail("NPC startup requires a resource-proven adult/child/cat/dog body profile; actual="+
+            (inputs.body?inputs.body->avatar_type.substr(0,32):std::string{"absent"}));
     try {
         // Validate body tables before any Init or RNG effects.
         (void)derive_avatar_body_descriptor(world,id,random,inputs.body,inputs.global_walk,inputs.global_swim,inputs.object_walk);

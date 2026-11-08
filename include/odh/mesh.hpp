@@ -47,9 +47,10 @@ Mesh read_bmf(const View&,MeshLimits limits={});
 // each blend record stored as other_vertex then weight. Numeric geometry is
 // retained as raw float bits for the same later skin validation as BMF.
 Mesh read_skn(const View&,MeshLimits limits={});
-// Appearance-only binary BCF: skeleton and animation counts must be zero.
-// Text and binding limits are cumulative across the collection. No text SKN
-// or mixed-section BCF inference is attempted.
+// Binary BCF appearances; all three sections are decoded and validated.
+// Other sections use default structural limits; text_bytes bounds all sections.
+// Binding limits are cumulative. Bytes after the animation section are reported
+// as remaining_bytes. Text CMX has its own explicit appearance-only reader.
 AppearanceCollection read_bcf_appearances(const View&,MeshLimits limits={});
 // Text CMX profile used for TS1 clothing appearances with no skeleton or
 // animation payload. Nonzero sections are rejected rather than guessed.

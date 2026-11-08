@@ -31,6 +31,9 @@ struct SceneConfig {
     std::string object_far, object_entry;
     std::uint16_t object_id = 0;
     std::vector<ScenePart> parts;
+    // Independent rig provenance. Empty retains the legacy animation FAR;
+    // CFP and unqualified part resolution keep animation_far unchanged.
+    std::string skeleton_far;
 };
 
 struct SceneAnimationLayer {

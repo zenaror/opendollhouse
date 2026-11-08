@@ -1,6 +1,7 @@
 #include "scene_renderer.hpp"
 #include "odh/skinning.hpp"
 #include "odh/mesh.hpp"
+#include "odh/bcf.hpp"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -232,7 +233,21 @@ struct SceneRenderer::Impl {
     explicit Impl(const SceneConfig& config, SceneCfpResolver resolver) : animation_archive(config.animation_far), cfp_resolver(std::move(resolver)) {
         if (config.parts.empty() || config.parts.size() > 16)
             throw odh::FormatError("scene renderer requires 1..16 avatar parts");
-        const auto collection = odh::read_bcf_skeletons(animation_archive.exact(config.skeleton_entry));
+        std::map<std::string,std::unique_ptr<Archive>> component_archives;
+        Archive* rig_source=&animation_archive;
+        if(!config.skeleton_far.empty()&&config.skeleton_far!=config.animation_far){
+            if(config.skeleton_far.size()>4096||config.skeleton_far.find('\0')!=std::string::npos)
+                throw odh::FormatError("scene skeleton archive path exceeds bound");
+            auto inserted=component_archives.emplace(config.skeleton_far,std::make_unique<Archive>(config.skeleton_far));
+            rig_source=inserted.first->second.get();
+        }
+        const auto collection=[&]{
+            if(config.skeleton_far.empty())return odh::read_bcf_skeletons(rig_source->exact(config.skeleton_entry));
+            auto decoded=odh::read_bcf_resources(rig_source->exact(config.skeleton_entry));
+            return odh::SkeletonCollection{std::move(decoded.skeletons),decoded.remaining_bytes};
+        }();
+        if(!config.skeleton_far.empty()&&collection.remaining_bytes)
+            throw odh::FormatError("scene renderer trailing skeleton BCF bytes");
         const odh::Skeleton* selected_skeleton = nullptr;
         for (const auto& candidate : collection.skeletons) {
             if (candidate.name != config.skeleton_name) continue;
@@ -242,7 +257,6 @@ struct SceneRenderer::Impl {
         if (!selected_skeleton) throw odh::FormatError("scene renderer exact skeleton name not found: " + config.skeleton_name);
         skeleton = *selected_skeleton;
         Archive texture_archive(config.textures_far);
-        std::map<std::string,std::unique_ptr<Archive>> component_archives;
         const auto archive_for=[&](const std::string& path,Archive& fallback)->Archive&{
             if(path.empty())return fallback;
             if(path.size()>4096||path.find('\0')!=std::string::npos)throw odh::FormatError("scene component archive path exceeds bound");
@@ -263,7 +277,11 @@ struct SceneRenderer::Impl {
             if(part.loose_skin_assets){
                 appearances=part.appearance_far.empty()?loose_cmx(part.appearance_entry):
                     odh::read_cmx_appearances(archive_for(part.appearance_far,animation_archive).exact(part.appearance_entry));
-            }else appearances=odh::read_bcf_appearances(archive_for(part.appearance_far,animation_archive).exact(part.appearance_entry));
+            }else{
+                auto decoded=odh::read_bcf_resources(archive_for(part.appearance_far,animation_archive).exact(part.appearance_entry));
+                if(decoded.remaining_bytes)throw odh::FormatError("scene renderer trailing appearance BCF bytes");
+                appearances={std::move(decoded.appearances),0};
+            }
             const odh::Appearance* appearance=nullptr;
             for(const auto& candidate:appearances.appearances)if(fold(candidate.name)==fold(part.appearance_name)){
                 if(appearance)throw odh::FormatError("scene renderer ambiguous selected appearance name");appearance=&candidate;}

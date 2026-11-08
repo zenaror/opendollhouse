@@ -81,6 +81,40 @@ struct Fixture {
         ++sync_calls;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
     };}
 };
+void species_constructor_profiles(){
+    for(const auto& type:std::vector<std::string>{"adult","child","dog","cat","kat"}){
+        Fixture fixture;
+        odh::NeighborContext neighbors({0,62,{},0});odh::Ts1Temps temps{};temps[0]=23;
+        const odh::VmFrame frame{odh::routine_key(4104),0,{1,1,0,999},{},{}};
+        auto request=odh::resolve_npc_avatar_guid_request({guid,5,0x10,0,0},frame,temps,neighbors,fixture.world);
+        require(request.status==odh::NpcAvatarRequestStatus::ready&&request.request,"literal species constructor resolves through shared source capture");
+        fixture.request=*request.request;fixture.input.body->avatar_type=type;fixture.input.body->age=27;
+        fixture.input.body->gender=type=="dog"?8:type=="cat"||type=="kat"?17:1;
+        fixture.input.body->raw_names.clear();fixture.input.body->names.clear();fixture.input.body->hands={};
+        fixture.input.object_walk=odh::StringTable{odh::StringTableState::decoded,-3,{{1,"",{}},{1,"authored-animal-turn",{}}},0};
+        auto vm=fixture.vm();unsigned placements=0;const auto seed=fixture.random.seed();
+        const auto place=[&](auto& world,auto id,const auto& point,auto,bool ignore){
+            ++placements;require(!ignore&&fixture.sync_calls==2&&vm->steps()==0,"species keeps Init/EP8 before placement and prepares Main without dispatch");
+            require(world.set_position(id,point),"species source placement publishes actual requested floor point");return odh::NpcPositionAttemptStatus::placed;
+        };
+        const auto result=odh::initialize_npc_avatar(fixture.world,*vm,2,owner,fixture.request,fixture.table,fixture.input,
+            fixture.random,{},place,100,fixture.synchronous(),true);
+        require(result.completed&&result.main_started&&result.body&&result.body->body_type==odh::avatar_body_type(type)&&
+            result.body->body->avatar_type==type&&result.body->walk[0]=="adult-walk"&&result.body->walk[1]=="authored-animal-turn"&&
+            placements==1&&fixture.sync_calls==2&&fixture.random.seed()==seed&&fixture.world.find(2)->person_data[65]==*fixture.input.body->gender,
+            "shared species startup retains authored type/gender/walk and source lifecycle without name RNG for empty names");
+    }
+    for(const auto& type:std::vector<std::string>{"","unknown","DOG"}){
+        Fixture fixture;auto vm=fixture.vm();fixture.input.body->avatar_type=type;const auto seed=fixture.random.seed();
+        const auto person=fixture.world.find(2)->person_data,motives=fixture.world.find(2)->motives;
+        const auto result=odh::initialize_npc_avatar(fixture.world,*vm,2,owner,fixture.request,fixture.table,fixture.input,
+            fixture.random,{},[](auto&,auto,const auto&,auto,bool){throw std::runtime_error("unknown species must not reach placement");return odh::NpcPositionAttemptStatus::unsupported;},
+            100,fixture.synchronous(),true);
+        require(!result.completed&&result.steps==0&&fixture.sync_calls==0&&fixture.random.seed()==seed&&
+            fixture.world.find(2)->person_data==person&&fixture.world.find(2)->motives==motives&&vm->status()==odh::VmStatus::ready,
+            "unknown species rejects before constructor execution, placement, World or RNG effects");
+    }
+}
 void authentic_constructor_metadata_profiles(){
     const auto rejects=[](const auto& action){try{action();}catch(const odh::FormatError&){return true;}return false;};
     odh::World world;
@@ -260,7 +294,7 @@ void source_two_creator_publication_order(){
 }
 
 }
-int main(){try{authentic_constructor_metadata_profiles();source_two_creator_publication_order();
+int main(){try{species_constructor_profiles();authentic_constructor_metadata_profiles();source_two_creator_publication_order();
     {
         odh::World candidate;
         require(odh::materialize_npc_avatar_base(candidate,2,definition(),entries(),std::int16_t{123}),

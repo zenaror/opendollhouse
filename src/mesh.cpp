@@ -238,11 +238,8 @@ Mesh read_skn(const View& view,MeshLimits limits) {
 
 AppearanceCollection read_bcf_appearances(const View& view,MeshLimits limits) {
     detail::Cursor c(view,limits.text_bytes);
-    if(c.u32()!=0)throw FormatError("BCF skeleton section outside appearance-only profile");
-    AppearanceCollection result{detail::bcf_appearance_section(c,limits),0};
-    if(c.i32()!=0)throw FormatError("BCF animation section outside appearance-only profile");
-    result.remaining_bytes=c.remaining();
-    return result;
+    auto result=detail::bcf_resources(c,SkeletonLimits{},limits,AnimationLimits{});
+    return {std::move(result.appearances),result.remaining_bytes};
 }
 
 AppearanceCollection read_cmx_appearances(const View& view,MeshLimits limits) {

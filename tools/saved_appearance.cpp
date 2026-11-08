@@ -1,5 +1,6 @@
 #include "saved_appearance.hpp"
 #include "odh/mesh.hpp"
+#include "odh/bcf.hpp"
 #include "odh/sha256.hpp"
 #include <charconv>
 #include <filesystem>
@@ -53,7 +54,11 @@ struct Archive {
 struct Named {std::string entry,name;Archive* archive=nullptr;};
 struct AppearanceResource {std::string appearance,texture_map;};
 AppearanceResource body_resource(const std::string& raw,const char* kind) {
-    bounded_name(raw);
+    try { bounded_name(raw); }
+    catch(const odh::FormatError& error) {
+        throw odh::FormatError(std::string("BodySTR ")+kind+" reference length="+std::to_string(raw.size())+
+            " empty="+std::to_string(raw.empty())+" embedded_nul="+std::to_string(raw.find('\0')!=std::string::npos)+": "+error.what());
+    }
     const auto comma=raw.find(',');
     AppearanceResource out{raw.substr(0,comma),comma==std::string::npos?std::string{}:raw.substr(comma+1)};
     bounded_name(out.appearance);
@@ -88,7 +93,7 @@ SavedAnimationAppearance saved_animation_appearance(const std::string& raw,const
 }
 struct SavedAppearanceResources::Impl {
     SceneConfig config;Archive animations,textures;
-    std::map<std::string,std::vector<Named>> appearances,loose_appearance_names,clips;
+    std::map<std::string,std::vector<Named>> appearances,loose_appearance_names,clips,skeletons;
     std::filesystem::path skins_root;
     std::map<std::string,std::vector<std::filesystem::path>> skin_files;
     bool catalog_mode=false;
@@ -101,6 +106,13 @@ struct SavedAppearanceResources::Impl {
         std::ifstream input(selected.entry,std::ios::binary);if(!input)throw odh::FormatError("saved appearance loose resource unavailable");
         return decoder(odh::View(input,std::filesystem::file_size(selected.entry)));
     }
+    void note_metadata_failure(const std::string& source,const odh::FormatError& error){
+        ++scan_diagnostics.malformed_resources;
+        if(scan_diagnostics.resource_errors.size()<16){
+            auto message=source+": "+error.what();if(message.size()>512)message.resize(512);
+            scan_diagnostics.resource_errors.push_back(std::move(message));
+        }
+    }
     Impl(const std::string& a,const std::string& t,const std::string& se,const std::string& sn,
          const std::string& skins,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots,bool metadata_only=false)
          :animations(a),textures(t) {
@@ -109,13 +121,13 @@ struct SavedAppearanceResources::Impl {
         catalog_mode=!sources.empty()||!loose_roots.empty();
         if(sources.size()>128||loose_roots.size()>16)throw odh::FormatError("saved appearance source count exceeds bound");
         std::uint64_t count=0,bytes=0,file_count=0,file_bytes=0;
-        auto add=[&](auto& index,const std::string& name,const std::string& entry,Archive* archive=nullptr){bounded_name(name);
+        auto add=[&](auto& index,const std::string& name,const std::string& entry,Archive* archive=nullptr,bool retain_duplicates=false){bounded_name(name);
             if(++count>8192||(bytes+=name.size()+entry.size())>(catalog_mode?4u*1024u*1024u:256u*1024u))
                 throw odh::FormatError("saved appearance named resource budget exceeded");
             auto& selected=index[fold(name)];
             // TS1Provider.BuildDictionary and TS1BCFProvider assign later
             // filename/name entries. The caller supplies a stable source order.
-            if(catalog_mode)selected.clear();
+            if(catalog_mode&&!retain_duplicates)selected.clear();
             selected.push_back({entry,name,archive});};
         std::vector<Archive*> archives{&animations,&textures};
         std::set<std::filesystem::path> admitted{std::filesystem::canonical(a),std::filesystem::canonical(t)};
@@ -133,37 +145,24 @@ struct SavedAppearanceResources::Impl {
         auto scan_bcf=[&](Archive& archive,const odh::FarEntry& entry){
             // Keep parser failures separate from index publication: a malformed
             // optional outfit must not swallow FAR/I/O or aggregate budgets.
-            std::vector<std::string> parsed_names;bool animation=false;
+            std::vector<std::string> parsed_skeletons,parsed_appearances,parsed_animations;
             try{
-                auto view=archive.view(entry);if(view.le32(0)!=0)return;
-                animation=view.le32(4)==0;
-                if(animation){
-                    // Playback owns the full animation catalog; this legacy
-                    // OBJM decoder retains its selected base-archive scope.
-                    if(&archive!=&animations)return;
-                    auto decoded=odh::read_bcf_animations(view);
-                    if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing animation BCF bytes");
-                    for(const auto& clip:decoded.animations)parsed_names.push_back(clip.name);
-                }else{
-                    auto decoded=odh::read_bcf_appearances(view);
-                    if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing appearance BCF bytes");
-                    for(const auto& appearance:decoded.appearances)parsed_names.push_back(appearance.name);
-                }
+                const auto decoded=odh::read_bcf_resources(archive.view(entry));
+                if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing BCF bytes");
+                for(const auto& rig:decoded.skeletons)parsed_skeletons.push_back(rig.name);
+                for(const auto& appearance:decoded.appearances)parsed_appearances.push_back(appearance.name);
+                // Playback owns the full animation catalog. Preserve this
+                // legacy OBJM animation index's explicit base-archive scope.
+                if(&archive==&animations)for(const auto& clip:decoded.animations)parsed_animations.push_back(clip.name);
             }catch(const odh::FormatError& error){
                 if(!catalog_mode||archive.stream.fail()||archive.stream.bad())throw;
-                ++scan_diagnostics.malformed_resources;
-                if(scan_diagnostics.resource_errors.size()<16){
-                    auto message=archive.path+" ["+entry.name+"]: "+error.what();
-                    if(message.size()>512)message.resize(512);
-                    scan_diagnostics.resource_errors.push_back(std::move(message));
-                }
+                note_metadata_failure(archive.path+" ["+entry.name+"]",error);
                 return;
             }
             // Bounds and name validation remain fatal, outside parser recovery.
-            for(const auto& name:parsed_names){
-                if(animation)add(clips,name,entry.name,&archive);
-                else add(appearances,name,entry.name,&archive);
-            }
+            for(const auto& name:parsed_skeletons)add(skeletons,name,entry.name,&archive,true);
+            for(const auto& name:parsed_appearances)add(appearances,name,entry.name,&archive);
+            for(const auto& name:parsed_animations)add(clips,name,entry.name,&archive);
         };
         if(catalog_mode){for(const auto& key:file_order)if(key.size()>=4&&key.substr(key.size()-4)==".bcf"){
             const auto& selected=files.at(key);scan_bcf(*selected.archive,selected.archive->select(selected.entry));}}
@@ -191,7 +190,7 @@ struct SavedAppearanceResources::Impl {
                     if(catalog_mode){const auto key=basename(path.string());if(cmx_seen.insert(key).second)cmx_order.push_back(key);continue;}
                     odh::AppearanceCollection decoded;
                     try{std::ifstream input(path,std::ios::binary);decoded=odh::read_cmx_appearances(odh::View(input,std::filesystem::file_size(path)));}
-                    catch(const odh::FormatError&){continue;}
+                    catch(const odh::FormatError& error){note_metadata_failure(path.string(),error);continue;}
                     for(const auto& appearance:decoded.appearances)add(loose_appearance_names,appearance.name,path.string());
                 }
             }
@@ -201,7 +200,10 @@ struct SavedAppearanceResources::Impl {
                 cmx_order.push_back(key);
             for(const auto& key:cmx_order){const auto selected=file(animations,key);odh::AppearanceCollection decoded;
                 try{decoded=decode(selected,[](const auto& view){return odh::read_cmx_appearances(view);});}
-                catch(const odh::FormatError&){continue;}
+                catch(const odh::FormatError& error){
+                    note_metadata_failure((selected.archive?selected.archive->path:std::string{"loose"})+" ["+selected.entry+"]",error);
+                    continue;
+                }
                 for(const auto& appearance:decoded.appearances)add(appearances,appearance.name,selected.entry,selected.archive);
             }
         }
@@ -270,7 +272,12 @@ struct SavedAppearanceResources::Impl {
               std::optional<SceneHandPart> hand={}) {
         bounded_name(name);const auto host=appearance_named(name);
         const auto filename=basename(host.entry);const bool cmx=filename.size()>=4&&filename.substr(filename.size()-4)==".cmx";
-        const auto collection=decode(host,[&](const auto& view){return cmx?odh::read_cmx_appearances(view):odh::read_bcf_appearances(view);});
+        const auto collection=decode(host,[&](const auto& view){
+            if(cmx)return odh::read_cmx_appearances(view);
+            auto decoded=odh::read_bcf_resources(view);
+            if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing selected BCF bytes");
+            return odh::AppearanceCollection{std::move(decoded.appearances),0};
+        });
         const odh::Appearance* appearance=nullptr;
         for(const auto& candidate:collection.appearances)if(fold(candidate.name)==fold(host.name)){
             if(appearance)throw odh::FormatError("saved appearance selected name is ambiguous");appearance=&candidate;}
@@ -300,6 +307,7 @@ struct SavedAppearanceResources::Impl {
     }
     void hands(SceneConfig& out,const std::array<AppearanceResource,6>& variants) {
         for(std::size_t i=0;i<variants.size();++i) {
+            if(variants[i].appearance.empty())continue;
             const bool right=(i%2)==1;
             // Pinned FreeSO TS1 ReloadHandgroup takes right pointing/fist
             // texture from RightHand.Idle but keeps each gesture's appearance.
@@ -346,7 +354,14 @@ SceneConfig SavedAppearanceResources::resolve_body(const odh::AvatarBodyStrings&
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
     const auto outfit=body_resource(body.body,"body"),head=body_resource(body.head,"head");
     std::array<AppearanceResource,6> variants;
-    for(std::size_t i=0;i<variants.size();++i)variants[i]=body_resource(body.hands[i],"hand");
+    for(std::size_t i=0;i<variants.size();++i) {
+        // Outfit.ToApr("") becomes ".apr", whose empty name has no content.
+        // ReloadHandgroup removes the previous hand and adds only a present
+        // selected appearance; an authored empty gesture has no geometry.
+        if(body.hands[i].empty())continue;
+        const auto field="hand"+std::to_string(17+i);
+        variants[i]=body_resource(body.hands[i],field.c_str());
+    }
     auto out=impl_->config;
     impl_->part(out,outfit.appearance,outfit.texture_map);
     impl_->part(out,head.appearance,head.texture_map);
@@ -361,6 +376,60 @@ SceneConfig SavedAppearanceResources::resolve_human_body(const odh::AvatarBodySt
     auto scene=resolve_body(body);
     scene.skeleton_entry=entry;scene.skeleton_name=body.avatar_type;
     return scene;
+}
+SceneConfig SavedAppearanceResources::resolve_avatar_body(const odh::AvatarBodyStrings& body) {
+    if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
+    const auto type=odh::avatar_body_type(body.avatar_type);
+    if(!type)throw odh::FormatError("avatar appearance unsupported BodySTR type: "+body.avatar_type.substr(0,32));
+    if(odh::human_avatar_body_type(*type))return resolve_human_body(body);
+    std::string stage="rig",rig_source="unselected",part;
+    try{
+        // TS1BCFProvider indexes the internal skeleton name, not an inferred
+        // filename. Selected-file precedence is already owned by this catalog;
+        // duplicate internal names remain ambiguous rather than replacing a rig.
+        const auto candidates=impl_->skeletons.find(fold(body.avatar_type));
+        if(candidates!=impl_->skeletons.end()&&candidates->second.size()!=1){
+            rig_source="ambiguous";
+            for(std::size_t i=0;i<candidates->second.size()&&i<2;++i){
+                const auto& candidate=candidates->second[i];
+                rig_source+=" "+(candidate.archive?candidate.archive->path:std::string{"loose"})+" ["+candidate.entry+"]";
+            }
+        }
+        const auto& rig=impl_->named(impl_->skeletons,body.avatar_type);
+        if(!rig.archive)throw odh::FormatError("avatar skeleton requires an indexed FAR source");
+        rig_source=rig.archive->path+" ["+rig.entry+":"+rig.name+"]";
+        auto scene=impl_->config;
+        scene.skeleton_far=rig.archive->path;scene.skeleton_entry=rig.entry;scene.skeleton_name=rig.name;
+        stage="body";part=body.body;
+        const auto outfit=body_resource(body.body,"body");
+        const auto& body_host=impl_->appearance_named(outfit.appearance);
+        part=outfit.appearance+" @"+(body_host.archive?body_host.archive->path:std::string{"loose"})+" ["+body_host.entry+"]";
+        impl_->part(scene,outfit.appearance,outfit.texture_map);
+        if(!body.head.empty()){
+            stage="head";part=body.head;
+            const auto head=body_resource(body.head,"head");
+            const auto key=fold(head.appearance);
+            const bool present=impl_->appearances.find(key)!=impl_->appearances.end()||
+                impl_->loose_appearance_names.find(key)!=impl_->loose_appearance_names.end();
+            if(present){
+                const auto& head_host=impl_->appearance_named(head.appearance);
+                part=head.appearance+" @"+(head_host.archive?head_host.archive->path:std::string{"loose"})+" ["+head_host.entry+"]";
+                impl_->part(scene,head.appearance,head.texture_map);
+            }else if(impl_->scan_diagnostics.malformed_resources){
+                throw odh::FormatError("animal head appearance absence is unproved: incomplete BCF/CMX name index");
+            }
+            // SimAvatar.ReloadHead adds nothing when the source appearance
+            // lookup returns null. Only complete name-index absence reaches
+            // this no-op; selected malformed/ambiguous parts still fail above.
+        }
+        // VMAvatar.BodyOutfit assigns Handgroup only for Adult/Child. Animal
+        // hand strings are not parsed or substituted with human default hands.
+        return scene;
+    }catch(const odh::FormatError& error){
+        throw odh::FormatError("avatar appearance species="+body.avatar_type+" requested_rig="+body.avatar_type+
+            " stage="+stage+" selected_rig="+rig_source.substr(0,768)+" part="+part.substr(0,256)+
+            " catalog_malformed="+std::to_string(impl_->scan_diagnostics.malformed_resources)+": "+error.what());
+    }
 }
 void SavedAppearanceResources::append_accessories(SceneConfig& scene,const std::vector<std::string>& names) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
@@ -383,7 +452,14 @@ void SavedAppearanceResources::append_accessories(SceneConfig& scene,const std::
 SavedAppearance SavedAppearanceResources::resolve_gestures(const odh::ObjmPersonState& person,const odh::AvatarBodyStrings& body) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
     std::array<AppearanceResource,6> variants;
-    for(std::size_t i=0;i<variants.size();++i)variants[i]=body_resource(body.hands[i],"hand");
+    for(std::size_t i=0;i<variants.size();++i) {
+        // Outfit.ToApr("") becomes ".apr", whose empty name has no content.
+        // ReloadHandgroup removes the previous hand and adds only a present
+        // selected appearance; an authored empty gesture has no geometry.
+        if(body.hands[i].empty())continue;
+        const auto field="hand"+std::to_string(17+i);
+        variants[i]=body_resource(body.hands[i],field.c_str());
+    }
     auto out=impl_->body_head_animation(person);
     impl_->hands(out.scene,variants);
     return out;

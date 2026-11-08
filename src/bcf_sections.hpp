@@ -1,8 +1,7 @@
 #pragma once
 // Internal shared binary BCF section decoders. Each caller owns its Cursor text
 // budget; section limits are cumulative within that section collection.
-#include "odh/skeleton.hpp"
-#include "odh/mesh.hpp"
+#include "odh/bcf.hpp"
 #include "read_cursor.hpp"
 namespace odh::detail {
 namespace bcf_sections {
@@ -93,5 +92,45 @@ inline std::vector<Appearance> bcf_appearance_section(Cursor& c,MeshLimits limit
         result.push_back(std::move(appearance));
     }
     return result;
+}
+namespace bcf_animation {
+inline std::uint32_t bounded(detail::Cursor& c,std::uint32_t& budget,std::uint32_t minimum){const auto n=c.u32();
+    if(n>budget || n>c.remaining()/minimum)throw FormatError("animation count exceeds payload or configured budget");
+    budget-=n;return n;}
+inline AnimationProperties pairs(detail::Cursor& c,std::uint32_t& budget) {
+    const auto n=bounded(c,budget,2);AnimationProperties result;result.reserve(n);
+    for(std::uint32_t i=0;i<n;++i){auto key=c.pascal();auto value=c.pascal();result.emplace_back(std::move(key),std::move(value));}return result;
+}
+}
+inline std::vector<AnimationHeader> bcf_animation_section(detail::Cursor& c,AnimationLimits limits) {
+    using namespace bcf_animation;
+    const auto count=bounded(c,limits.animations,26);std::vector<AnimationHeader> result;result.reserve(count);
+    for(std::uint32_t n=0;n<count;++n){AnimationHeader a{};a.name=c.pascal();a.xskill=c.pascal();
+        a.duration_bits=c.u32();a.distance_bits=c.u32();a.moving=c.u32();a.translations=c.u32();a.rotations=c.u32();
+        if(a.translations>limits.samples || a.rotations>limits.samples)throw FormatError("animation sample count exceeds configured limit");
+        const auto motions=bounded(c,limits.motions,33);a.motions.reserve(motions);
+        for(std::uint32_t m=0;m<motions;++m){BoneMotion b{};b.bone=c.pascal();b.frames=c.u32();b.duration_bits=c.u32();
+            b.has_translation=c.u32();b.has_rotation=c.u32();b.first_translation=c.i32();b.first_rotation=c.i32();
+            if(b.has_translation>1 || b.has_rotation>1 || b.frames>limits.samples)throw FormatError("unsupported animation motion flags or frame limit");
+            for(const auto active:{true,false}){const auto present=active?b.has_translation:b.has_rotation;
+                const auto first=active?b.first_translation:b.first_rotation;const auto total=active?a.translations:a.rotations;
+                if(present && (first<0 || static_cast<std::uint32_t>(first)>total || b.frames>total-static_cast<std::uint32_t>(first)))
+                    throw FormatError("animation motion sample range outside declared arrays");}
+            const auto props=bounded(c,limits.properties,4);b.properties.reserve(props);
+            for(std::uint32_t p=0;p<props;++p)b.properties.push_back(pairs(c,limits.properties));
+            const auto groups=bounded(c,limits.properties,4);b.time_properties.reserve(groups);
+            for(std::uint32_t g=0;g<groups;++g){const auto events=bounded(c,limits.properties,8);std::vector<AnimationTimeProperty> group;group.reserve(events);
+                for(std::uint32_t e=0;e<events;++e){const auto id=c.i32();group.push_back({id,pairs(c,limits.properties)});}b.time_properties.push_back(std::move(group));}
+            a.motions.push_back(std::move(b));}
+        result.push_back(std::move(a));}
+    return result;
+}
+inline BcfResources bcf_resources(Cursor& c,SkeletonLimits skeleton_limits,
+        MeshLimits mesh_limits,AnimationLimits animation_limits) {
+    BcfResources result;
+    result.skeletons=bcf_skeleton_section(c,skeleton_limits);
+    result.appearances=bcf_appearance_section(c,mesh_limits);
+    result.animations=bcf_animation_section(c,animation_limits);
+    result.remaining_bytes=c.remaining();return result;
 }
 } // namespace odh::detail

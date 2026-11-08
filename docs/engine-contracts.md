@@ -235,6 +235,34 @@ Retratos fixos não são a cabeça móvel do menu de ações. A interface origin
 exige proporção dos recursos e comportamento observado; um protótipo não
 estabelece regra visual. Gráficos e áudio permanecem substituíveis por plataforma.
 
+## Aparência de personagens
+
+Os dados do personagem escolhem sua estrutura corporal. Os tipos `adult` e
+`child` usam as estruturas humanas correspondentes; `dog`, `cat` e `kat` usam
+recursos de animais. `cat` e `kat` pertencem à mesma espécie, mas conservam o
+nome literal do recurso solicitado. O motor não substitui uma estrutura ausente
+pela de outra espécie.
+
+A estrutura pode vir de um arquivo de expansão, enquanto as animações e as
+texturas vêm de outros arquivos. Cada parte conserva sua origem. Estruturas,
+aparências e animações de um BCF misto passam pelo mesmo leitor limitado;
+nenhuma seção intermediária é pulada sem verificação.
+
+Somente humanos recebem o conjunto de gestos das mãos. As seis posições desse
+conjunto permanecem identificadas por lado e gesto. Um campo explicitamente
+vazio não acrescenta uma peça naquele gesto, e não reutiliza a mão de repouso.
+Campos preenchidos continuam exigindo aparência, malha e textura válidas.
+Animais usam seu corpo e, quando disponível, uma cabeça separada. Uma aparência de cabeça opcional
+comprovadamente ausente não acrescenta geometria. Isso exige um catálogo de
+nomes completo: metadados BCF ou CMX não interpretados impedem essa conclusão.
+Uma aparência presente continua exigindo malha e textura válidas, e nomes
+ambíguos continuam sendo erro. O corpo obrigatório, a cabeça humana e os recursos
+de gestos preenchidos permanecem estritos.
+
+Esses serviços de criação e apresentação não definem adoção, comportamento,
+controle ou participação do animal na família. Cada um desses fluxos precisa
+de implementação e validação próprias.
+
 ## Conferir uma mudança
 
 Testes de componentes delimitam regras. A aceitação exige consumidores ligados
