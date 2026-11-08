@@ -24,18 +24,26 @@
 namespace odh_host {
 bool publish_source_individual_position(odh::World& world,odh::WorldEntityReference target,
     const std::optional<odh::EntityPosition>& destination,std::uint8_t direction,
-    const std::function<bool()>& current){
-    if(!current||!current()||direction>7||!world.is_live_reference(target))return false;
+    const std::function<bool()>& current,std::string* diagnostic){
+    const auto reject=[&](const char* reason){if(diagnostic)*diagnostic=reason;return false;};
+    if(diagnostic)diagnostic->clear();
+    if(!current)return reject("source authority callback absent before scalar");
+    if(!current())return reject("source authority expired before scalar");
+    if(direction>7)return reject("direction outside 0..7");
+    if(!world.is_live_reference(target))return reject("target generation unavailable before scalar");
     const bool native_known=world.find(target.id)->native_slot0.has_value();
-    if(!world.place_individual_on_floor(target.id,destination,direction))return false;
-    if(!current()||!world.is_live_reference(target))return false;
+    if(!world.place_individual_on_floor(target.id,destination,direction))
+        return reject("World::place_individual_on_floor refused scalar publication");
+    if(!current())return reject("source authority expired after scalar");
+    if(!world.is_live_reference(target))return reject("target generation unavailable after scalar");
     const auto* actual=world.find(target.id);
-    if(actual->native_slot0.has_value()!=native_known)return false;
+    if(actual->native_slot0.has_value()!=native_known)return reject("native slot0 knownness changed after scalar");
     // FreeSO7e76 LotTilePos.cs128 defines the OOW sentinel with Level1;
     // VMEntity.SetIndivPosition copies that complete position. Native431b5e
     // and433ef5 likewise publish(-16,-16,1). Generic World null remains
     // geometry-only; this source consumer supplies the additional evidence.
-    return destination||world.set_native_out_of_world_level(target,1);
+    if(destination)return true;
+    return world.set_native_out_of_world_level(target,1)||reject("native out-of-world level publication refused");
 }
 namespace {
 using namespace odh;

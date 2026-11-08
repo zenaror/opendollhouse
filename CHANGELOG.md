@@ -14,6 +14,8 @@ Ainda não há uma versão completa jogável publicada.
   construção, com reconstrução parcial da aparência original.
 - Serviços iniciais de áudio, idiomas, conteúdo personalizado e viagens.
 - Verificadores de continuidade de partidas e ferramentas de inspeção de dados.
+- Registros de falhas com a identidade da ação, do alvo e da etapa de
+  posicionamento envolvida.
 - Guias de arquitetura, formatos, requisitos jogáveis e futuras extensões.
 
 ### Modificado
@@ -25,6 +27,10 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Tratamento da posição especial usada pelo jogo para retirar personagens do
+  lote, preservando a direção e os vínculos dos objetos carregados.
+- Referências de ações pendentes a objetos removidos, permitindo o encerramento
+  previsto pelo jogo sem atingir outro objeto que reutilize o mesmo número.
 - Continuação da simulação quando os dados originais pedem uma animação
   comprovadamente ausente, preservando erros reais de leitura e recursos.
 - Posicionamento, circulação e retirada de objetos em casos de recuperação de

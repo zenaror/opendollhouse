@@ -33,6 +33,33 @@ bool source_check_completed(const VmSubroutineResult& result){
     return result.started&&(result.status==VmStatus::returned_true||source_check_false(result));
 }
 struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}};
+// Failure-only bounded numeric context. Do not alter target admission or queues.
+std::string queued_target_diagnostic(const char* reason,const char* phase,
+    std::int16_t actor,std::uint64_t actor_generation,
+    const InteractionActionSnapshot& candidate,const Entity* actual,
+    const std::deque<InteractionActionSnapshot>& queue,std::size_t protected_count,
+    const std::optional<InteractionActiveSnapshot>& active,std::size_t suspended_count) {
+    return std::string{reason}+" phase="+phase+
+        " actor="+std::to_string(actor)+" actor_gen="+std::to_string(actor_generation)+
+        " candidate_uid="+std::to_string(candidate.uid)+
+        " target="+std::to_string(candidate.call.context.callee)+
+        " expected_gen="+std::to_string(candidate.target_generation)+
+        " actual_gen="+(actual?std::to_string(actual->generation):"missing")+
+        " actual_dead="+(actual?(actual->dead?"1":"0"):"missing")+
+        " refs_bound="+std::to_string(candidate.call.context.entity_references_bound)+
+        " bound_callee_gen="+std::to_string(candidate.call.context.callee_generation)+
+        " owner="+std::to_string(candidate.call.context.code_owner)+
+        " routine="+std::to_string(candidate.call.key.id)+
+        " priority="+std::to_string(candidate.priority)+
+        " mode="+std::to_string(static_cast<unsigned>(candidate.mode))+
+        " queue_size="+std::to_string(queue.size())+
+        " protected_count="+std::to_string(protected_count)+
+        " next_uid="+(queue.size()>protected_count?std::to_string(queue[protected_count].uid):"none")+
+        " active_uid="+(active?std::to_string(active->uid):"none")+
+        " active_ticket="+(active?std::to_string(active->ticket):"none")+
+        " suspended_count="+std::to_string(suspended_count);
+}
+
 constexpr std::uint32_t ttab_run_immediately=1U<<2;
 constexpr std::uint32_t ttab_must_run=1U<<10;
 constexpr std::uint32_t ttab_direct_control=1U<<27;
@@ -954,9 +981,13 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                         }
                     }
                 }
-                const auto* candidate_target=world_.find(candidate.call.context.callee);
+                // C# queued actions retain their exact Callee body after deletion.
+                // Admit only that generation; the existing ActionTree/Queue[0]
+                // dead-callee lifecycle decides whether source Reset is required.
+                const auto* candidate_target=world_.resolve_reference({candidate.call.context.callee,candidate.target_generation});
                 if(!candidate_target||candidate_target->generation!=candidate.target_generation){
-                    return unsupported("nested queued interaction target identity stale");
+                    return unsupported(queued_target_diagnostic("nested queued interaction target identity stale","nested/pre-check",
+                        actor_id_,actor_generation_,candidate,candidate_target,queue_,protected_count,active_,suspended_active_.size()));
                 }
                 if(candidate.check_permissions){
                     const auto permission=ts1_interaction_permission(world_.find(actor_id_),candidate.flags);
@@ -976,10 +1007,11 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                         queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
                     }
                 }
-                const auto* target=world_.find(candidate.call.context.callee);
+                const auto* target=world_.resolve_reference({candidate.call.context.callee,candidate.target_generation});
                 if(!target||target->generation!=candidate.target_generation||
                    queue_.size()<=protected_count||queue_[protected_count].uid!=candidate.uid)
-                    return unsupported("nested interaction target identity changed during eligibility check");
+                    return unsupported(queued_target_diagnostic("nested interaction target identity changed during eligibility check","nested/post-check",
+                        actor_id_,actor_generation_,candidate,target,queue_,protected_count,active_,suspended_active_.size()));
                 if(!vm_->can_accept_call(candidate.call))
                     return unsupported("interaction VM cannot accept the nested action frame");
                 // Allocate the suspended-parent slot before the VM publishes
@@ -1060,9 +1092,10 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                 }
             }
         }
-        const auto* candidate_target=world_.find(candidate.call.context.callee);
+        const auto* candidate_target=world_.resolve_reference({candidate.call.context.callee,candidate.target_generation});
         if(!candidate_target || candidate_target->generation!=candidate.target_generation)
-            return unsupported("queued interaction target identity stale");
+            return unsupported(queued_target_diagnostic("queued interaction target identity stale","main/pre-check",
+                actor_id_,actor_generation_,candidate,candidate_target,queue_,protected_count,active_,suspended_active_.size()));
         if(candidate.check_permissions){
             const auto permission=ts1_interaction_permission(world_.find(actor_id_),candidate.flags);
             if(permission==InteractionPermission::unsupported)
@@ -1083,9 +1116,10 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         }
         if(queue_.size()<=protected_count||queue_[protected_count].uid!=candidate.uid)
             return unsupported("queued action identity changed during eligibility check");
-        const auto& action=queue_[protected_count];const auto* target=world_.find(action.call.context.callee);
+        const auto& action=queue_[protected_count];const auto* target=world_.resolve_reference({action.call.context.callee,action.target_generation});
         if(!target || target->generation!=action.target_generation)
-            return unsupported("queued interaction target identity stale");
+            return unsupported(queued_target_diagnostic("queued interaction target identity stale","main/post-check",
+                actor_id_,actor_generation_,action,target,queue_,protected_count,active_,suspended_active_.size()));
         if(!vm_->can_accept_call(action.call))
             return unsupported("interaction VM cannot accept the queued action frame");
         const auto uid=action.uid;

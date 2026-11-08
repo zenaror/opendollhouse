@@ -12,6 +12,13 @@ lotes, personagens também precisam ser autenticados por sua identidade de
 vizinho, definição e origem do recurso. Não usar o Sim selecionado como dono
 implícito de todos os serviços do lote.
 
+Uma ação pendente pode continuar citando um objeto que já foi retirado. Nesse
+caso, a referência conserva o objeto antigo e sua geração para seguir o
+encerramento previsto pelo jogo. Por exemplo, se um carro vai embora antes de
+o Sim embarcar, sua ação não deve passar a usar outro objeto que recebeu o mesmo
+número. Um alvo antigo preservado e um alvo sem identidade recuperável são
+situações diferentes; a segunda continua sendo um erro.
+
 Recurso desconhecido, ausente e presente mas vazio são situações diferentes.
 A resolução de scripts locais, semiglobais e globais preserva a origem escolhida.
 A existência de um arquivo com nome semelhante não autoriza trocar seu conteúdo.
@@ -51,6 +58,14 @@ O estado espacial admite vários ocupantes no mesmo quadrado. A cadeia original
 de objetos do lote e o registro espacial vivo têm funções diferentes; não
 usar a cabeça de uma cadeia como substituto para todos os ocupantes.
 Uma posição fora do lote comprovada também difere de metadados desconhecidos.
+
+Os dados originais representam a posição especial fora do lote por
+`(-32768, -32768, 1)`. Na entrada dos serviços de posicionamento, esse valor é
+convertido para ausência de posição no mapa antes de preparar objetos carregados
+e atualizar os registros. O nível original e a direção permanecem preservados.
+Outras coordenadas negativas, valores incompletos e a mesma dupla em outro
+nível não recebem esse tratamento. As consultas e notificações anteriores e
+posteriores ao movimento continuam usando a sequência original.
 
 Contenção física e vínculos virtuais são distintos. Limpar um vínculo legado
 não deve colocar um móvel na mão de um Sim nem copiar coordenadas ou andares.

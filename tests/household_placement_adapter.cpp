@@ -259,11 +259,13 @@ void tests(){
         "actual animation event0 commits reciprocal storage transfer and prepared default carry through shared adapter");
 }
 void avatar_floor_lifecycle(){
-    for(bool native_known:{false,true})for(std::int16_t initial_level:{1,2})for(unsigned mode=0;mode<8;++mode){
-        if(initial_level==2&&mode!=2&&mode!=7)continue;
-        const bool contained=mode==3||mode==4||mode==7;
-        const bool out_of_world=mode==2||mode==7;
-        const bool blocked=mode==1||mode==3;
+    for(bool native_known:{false,true})for(std::int16_t initial_level:{1,2})for(unsigned mode=0;mode<14;++mode){
+        if(initial_level==2&&mode!=2&&mode!=7&&mode!=8&&mode!=12)continue;
+        const bool explicit_oow=mode==8||mode==12;
+        const bool contained=mode==3||mode==4||mode==7||mode==12;
+        const bool out_of_world=mode==2||mode==7||explicit_oow;
+        const bool outside_lot=mode==9||mode==10||mode==11||mode==13;
+        const bool blocked=mode==1||mode==3||outside_lot;
         const std::uint16_t opcode=contained?5:mode==1||mode==5?16:46;
         odh::World world;std::vector<std::string> events;std::map<std::int16_t,std::optional<odh::EntityPosition>> registered;
         odh::SavedArchitecture raw;raw.width=raw.height=4;odh::PreparedArchitecture architecture;architecture.width=architecture.height=4;
@@ -283,6 +285,8 @@ void avatar_floor_lifecycle(){
         require(world.attach(1,0,3)&&world.refresh_contained_position(3)&&world.attach(3,0,4)&&world.refresh_contained_position(4),"floor actual nested carried objects");
         if(contained)require(world.attach(2,0,1)&&world.refresh_contained_position(1)&&world.refresh_contained_position(3)&&world.refresh_contained_position(4),"Drop5 actual held avatar before Pre");
         const auto old=world.find(1)->position,child_old=world.find(3)->position;
+        if(explicit_oow)require(!world.place_individual_on_floor(1,odh::EntityPosition{-32768,-32768,1,6},6)&&
+            world.find(1)->position==old,"World geometry guard still refuses source sentinel as a nonnull floor point");
         for(std::int16_t id=1;id<=4;++id)registered[id]=world.find(id)->position;
         unsigned checks=0,ep9=0;bool in_publish=false;
         odh::AvatarPositionValidServices valid_services;
@@ -296,8 +300,9 @@ void avatar_floor_lifecycle(){
         bindings.source_architecture=&raw;
         bindings.object_context=[&](const auto& invocation){odh_host::SessionObjectPositionContext context;context.world=&world;
             context.source_still_matches=invocation.source_still_matches;
-            context.position_phase=[&](auto root,const auto&,auto phase,std::optional<std::uint8_t>,const std::function<bool()>& operation){
+            context.position_phase=[&](auto root,const auto& destination,auto phase,std::optional<std::uint8_t>,const std::function<bool()>& operation){
                 require(root.id==1,"floor scope is actual root");
+                if(out_of_world)require(!destination,"source sentinel is normalized before every lifecycle phase snapshot");
                 events.push_back(phase==odh_host::SessionPositionPhase::pre?"pre":phase==odh_host::SessionPositionPhase::publish?"publish":"post");
                 in_publish=phase==odh_host::SessionPositionPhase::publish;const bool result=operation();in_publish=false;return result;};return context;};
         bindings.slot_lifecycle=[&](const auto& invocation){odh_host::SessionObjectPositionServices result;
@@ -305,7 +310,7 @@ void avatar_floor_lifecycle(){
             change.room_at=[&](const auto& p){return odh::geometric_room_at_runtime(rooms,p.x,p.y,p.level);};
             change.admit_single_ordinary=[](auto)->std::optional<bool>{return true;};
             change.unregister_position=[&](auto id,bool room_change){
-                require(room_change==(contained||out_of_world||mode==6),"source roomChange comes from original geometry/container/Portal");
+                require(room_change==(contained||out_of_world||outside_lot||mode==6),"source roomChange comes from original geometry/container/Portal");
                 events.push_back("u"+std::to_string(id.id));registered.erase(id.id);return true;};
             change.register_position=[&](auto id,std::uint16_t room,bool){
                 require(world.find(id.id)->object_words.at(29)==static_cast<std::int16_t>(room-1),"Post publishes source Room29 before registration");
@@ -325,7 +330,12 @@ void avatar_floor_lifecycle(){
         odh::Vm vm({{odh::routine_key(4096),{0x8002,{{opcode,254,255,{}}},{},odh::Bhav::Metadata{0,4,0,0}}}},world.vm_memory(),{},
             [&](const auto& frame,const auto& instruction,const auto&,const auto& dispatch){
                 odh::Ts1PlacementInvocation invocation{frame,instruction,dispatch,[&]{return actual->matches_active_primitive(frame,instruction,dispatch);}};
-                const auto destination=out_of_world?std::optional<odh::EntityPosition>{}:std::optional<odh::EntityPosition>{{40,24,static_cast<std::int16_t>(mode==5?3:1),2}};
+                auto destination=out_of_world?std::optional<odh::EntityPosition>{}:std::optional<odh::EntityPosition>{{40,24,static_cast<std::int16_t>(mode==5?3:1),2}};
+                if(explicit_oow)destination=odh::EntityPosition{-32768,-32768,1,6};
+                if(mode==9)destination=odh::EntityPosition{-1,24,1,2};
+                if(mode==10)destination=odh::EntityPosition{-32768,-32768,2,2};
+                if(mode==11)destination=odh::EntityPosition{-32768,24,1,2};
+                if(mode==13)destination=odh::EntityPosition{24,-32768,1,2};
                 outcome=adapter.place(invocation,{1,world.find(1)->generation},destination,0);
                 return odh::PrimitiveOutcome{outcome.status==odh::Ts1PlacementStatus::success?odh::PrimitiveDisposition::goto_true:
                     outcome.status==odh::Ts1PlacementStatus::blocked?odh::PrimitiveDisposition::goto_false:odh::PrimitiveDisposition::unsupported,outcome.diagnostic};
@@ -339,6 +349,7 @@ void avatar_floor_lifecycle(){
         require(events.front()=="pre"&&events[1]=="u1"&&events.back()==(ep9?"e1":"r1"),"source floor begins Pre and finishes full Post");
         require(world.find(3)->position.has_value()==world.find(1)->position.has_value()&&world.find(4)->position.has_value()==world.find(1)->position.has_value(),"floor/OOW whole subtree follows root after per-child unregister");
         if(out_of_world){
+            require(world.find(1)->object_words.at(1)==(explicit_oow?6:0),"explicit OOW source heading survives normalization; null OOW keeps its original heading contract");
             for(std::int16_t id:{1,3,4})require(world.find(id)->native_out_of_world_level==std::optional<std::int16_t>{1}&&
                 world.find(id)->native_slot0.has_value()==native_known,"actual avatar source OOW and recursive Post publish canonical level while preserving hierarchy knowledge");
             const auto bytes=odh::encode_world_snapshot(world.snapshot());odh::World reopened;

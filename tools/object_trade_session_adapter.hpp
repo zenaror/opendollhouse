@@ -18,7 +18,7 @@ namespace odh_host {
 // Contained descendants receive the parent's full pose in the actual Post.
 bool publish_source_individual_position(odh::World&,odh::WorldEntityReference,
     const std::optional<odh::EntityPosition>&,std::uint8_t direction,
-    const std::function<bool()>& source_current);
+    const std::function<bool()>& source_current,std::string* diagnostic=nullptr);
 enum class SessionPositionPhase {pre,publish,post};
 using SessionSlotTransferPhase=SessionPositionPhase;
 struct SessionSlotTransferResult {

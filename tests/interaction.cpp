@@ -1268,6 +1268,83 @@ void autonomous_primitive_memory_regressions(){
    family_budget==1000-amount,"real Budget primitive retaining VmMemory reference sees scratch TreeAds and exact local tuning");
  }
 }
+void queued_retained_target_lifecycle_tests(){
+ // Pending source Callee is a retained object reference, not its reusable ID.
+ for(const bool reuse:{false,true}){
+  Fixture f;require(f.enqueue(),"pending retained target enqueues before deletion");
+  const auto original=f.world.find(2)->generation;
+  const auto uid=f.queue.last_enqueued_uid();
+  require(f.world.remove_retaining_body({2,original}),"pending target body is retained");
+  if(reuse)require(f.world.create(2,odh::EntityKind::object),"pending target numeric ID is reused");
+  require(f.vm.run(1)==odh::VmStatus::budget_exhausted&&f.queue.active()&&
+      f.queue.snapshot().active->uid==uid,"retained pending target reaches original action boundary");
+  const auto& frame=f.vm.stack().back();
+  require(frame.action_tree&&frame.context.callee_generation==original&&
+      f.world.frame_entity(frame,odh::VmEntityRole::callee)->dead&&
+      f.vm.temps()[0]==0,"action frame keeps old dead body before any action instruction");
+  require(f.queue.source_reset_required()==std::optional<bool>{true},
+      "actual dead Queue0 target requests existing source Reset");
+  if(reuse)require(f.world.find(2)->generation!=frame.context.callee_generation,
+      "replacement ID cannot become the old queued target");
+ }
+ {Fixture f;require(f.enqueue(),"unresolvable pending target enqueues while live");
+  const auto original=f.world.find(2)->generation;
+  require(f.world.remove(2)&&!f.world.resolve_reference({2,original})&&
+      f.world.create(2,odh::EntityKind::object),"unretained old body is truly unavailable despite ID reuse");
+  require(f.vm.run(1)==odh::VmStatus::fault&&!f.queue.active()&&f.queue.size()==1&&
+      f.vm.temps()[0]==0,"missing old body remains a strict failure without erase or replacement execution");
+ }
+ {Fixture f;require(f.world.create(3,odh::EntityKind::object),"next valid target exists");
+  require(f.queue.enqueue_ts1(key(4096),{1,2,2,22},{},100,
+      odh::InteractionQueueMode::normal,0,false,false,key(4097)),"pending original false-check action enqueues");
+  require(f.queue.enqueue_ts1(key(4096),{1,3,3,22},{},50,
+      odh::InteractionQueueMode::normal,0,false,false),"next valid request enqueues");
+  const auto next=f.queue.last_enqueued_uid();const auto original=f.world.find(2)->generation;
+  require(f.world.remove_retaining_body({2,original})&&f.world.create(2,odh::EntityKind::object),
+      "false-check target is retained independently of its replacement");
+  require(f.vm.run(1)==odh::VmStatus::budget_exhausted&&f.queue.active()&&f.queue.size()==1&&
+      f.queue.snapshot().active->uid==next&&f.vm.stack().back().context.callee==3&&
+      f.vm.temps()[1]==33,"source false CheckAction removes only rejected request and admits next valid one with check effects");
+ }
+ // Retire/reuse during a synchronous CheckAction exercises post-check binding.
+ for(const bool nested:{false,true}){
+  odh::World world;require(world.create(1,odh::EntityKind::avatar,{0,88}),"create queued-check deletion actor");
+  world.create(2,odh::EntityKind::object);world.create(3,odh::EntityKind::object);
+  world.declare_object_word(1,8,0);odh::InteractionQueue queue(world,1,4);
+  odh::Vm vm({{key(4096),bhav({idle()})}},world.vm_memory(),{},queue.primitive(),
+      {{22,{{key(4097),bhav({idle()})},{key(4098),bhav({set(6,77)})},
+           {key(4099),bhav({{99,254,255,{}}})}}}});
+  require(queue.bind(vm)&&vm.start(key(4096),{1,1,1,0},{0})==odh::VmStatus::running,
+      "post-check lifecycle graph binds real Main and queue");
+  std::uint64_t parent_uid=0;
+  if(nested){
+   require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,
+       odh::InteractionQueueMode::normal,0,false,false)&&
+       vm.run(1)==odh::VmStatus::budget_exhausted,"parent action is protected before nested admission");
+   parent_uid=queue.snapshot().active->uid;
+  }
+  const auto target=static_cast<std::int16_t>(nested?3:2);
+  const auto original=world.find(target)->generation;bool checked=false;
+  queue.set_check_primitive([&](const auto& frame,const auto&,const auto&,const auto&){
+   checked=true;require(frame.context.callee_generation==original&&
+       world.remove_retaining_body({target,original})&&world.create(target,odh::EntityKind::object),
+       "actual synchronous check retires and reuses only its bound target");
+   return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+  });
+  require(queue.enqueue_ts1(key(4098),{1,target,target,22},{},100,
+      odh::InteractionQueueMode::normal,0,false,false,key(4099)),"checked action enters queue");
+  const auto child_uid=queue.last_enqueued_uid();
+  require(vm.run(1)==odh::VmStatus::budget_exhausted&&checked&&queue.active()&&
+      queue.snapshot().active->uid==child_uid&&vm.stack().back().context.callee_generation==original&&
+      world.frame_entity(vm.stack().back(),odh::VmEntityRole::callee)->dead&&vm.temps()[6]==0,
+      "post-check admission retains exact old body without executing replacement or action instruction");
+  const auto state=queue.snapshot();
+  require(state.suspended_active.size()==(nested?1U:0U)&&
+      (!nested||state.suspended_active.front().uid==parent_uid)&&
+      queue.source_reset_required()==std::optional<bool>{!nested},
+      "nested protected parent and source Queue0 reset rule are preserved");
+ }
+}
 void generation_reference_tests(){
  {Fixture f;
   require(f.vm.start(key(4096),{1,1,2,0},{5})==odh::VmStatus::running&&f.queue.observe(),"Main carries real StackObject reference and empty queue adopts its run");
@@ -1296,7 +1373,7 @@ void generation_reference_tests(){
 }
 int main(int argc,char** argv){try {
  source_error_eligibility_matrix();
- generation_reference_tests();active_advertisement_regressions();named_empty_queue_idle_regressions();
+ queued_retained_target_lifecycle_tests();generation_reference_tests();active_advertisement_regressions();named_empty_queue_idle_regressions();
  autonomous_check_regressions();autonomous_check_failure_regressions();autonomous_primitive_memory_regressions();generic_ts1_icon_tests();gosub_found_action_regressions();autonomous_eligibility_context_regressions();
  if(argc==4 && std::string(argv[1])=="--native-global") {
   std::ifstream input(argv[2],std::ios::binary);if(!input)throw std::runtime_error("native archive absent");

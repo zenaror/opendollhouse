@@ -113,6 +113,8 @@ public:
     Ts1PlacementResult place(const Ts1PlacementInvocation& invocation,Ts1PlacementIdentity target,
         std::optional<EntityPosition> destination,std::uint8_t flags){
         if(!valid(invocation,target))return unavailable("floor source identity unavailable");
+        const EntityPosition point=destination.value_or(EntityPosition{-32768,-32768,1,0});
+        destination=scalar_floor_destination(destination);
         const auto* entity=bindings_.world.find(target.id);const auto old=entity->attachment;
         std::optional<Playback::PreparedFloorCarryClear> carry;
         if(old){const auto* parent=bindings_.world.find(old->container);if(!parent)return unavailable("floor old carrier absent");
@@ -121,7 +123,6 @@ public:
                     target.id,target.generation,destination,parent->id,parent->generation,execution->vm->run_generation(),&why);
                 if(!carry)return unavailable(why);}}
         if(carry&&!carry->can_commit())return unavailable("floor carry preflight changed");
-        const EntityPosition point=destination.value_or(EntityPosition{-32768,-32768,1,0});
         if(entity->kind==EntityKind::avatar){
             if(!bindings_.slot_lifecycle)return unavailable("avatar floor lifecycle factory unavailable");
             auto lifecycle=bindings_.slot_lifecycle(invocation);
@@ -153,6 +154,7 @@ public:
             return unavailable("source Delete placement identity/capability unavailable");
         if(!bindings_.lifecycle_object_context)return unavailable("source Delete position factory unavailable");
         const auto point=destination.value_or(EntityPosition{-32768,-32768,1,direction});
+        destination=scalar_floor_destination(destination);
         auto context=bindings_.lifecycle_object_context(invocation);
         if(entity->kind==EntityKind::avatar){
             if(context.world!=&bindings_.world)return unavailable("source Delete avatar factory borrowed another World");
@@ -284,6 +286,15 @@ public:
             return handler(frame,instruction,temps,dispatch);};
     }
 private:
+    static std::optional<EntityPosition> scalar_floor_destination(std::optional<EntityPosition> destination){
+        // LotTilePos.OUT_OF_WORLD is exactly(-32768,-32768,1), independent
+        // of direction. PositionValid and ordinary-object ChangePosition already
+        // accept this source point; World null represents its scalar geometry.
+        // Normalize before carry/phase preparation, retaining the source point
+        // separately for its heading and existing object/validation consumers.
+        if(destination&&destination->x==-32768&&destination->y==-32768&&destination->level==1)return {};
+        return destination;
+    }
     Ts1PlacementResult avatar_floor(std::optional<odh_host::SessionObjectPositionContext> context,
             odh_host::SessionObjectPositionServices lifecycle,Ts1PlacementIdentity target,
             std::optional<EntityPosition> destination,EntityPosition point,const std::function<bool()>& authority,
@@ -339,9 +350,41 @@ private:
                 end_floor.completed=true;
                 return {Ts1PlacementStatus::blocked,result.placement_error,{result.blocker,result.blocker_generation},{}};
             }
-            if(!phase(odh_host::SessionPositionPhase::publish,destination,[&]{return odh_host::publish_source_individual_position(
-                    bindings_.world,{target.id,target.generation},destination,point.direction,valid_source);}))
-                return unavailable("avatar scalar floor publication failed");
+            // Observe the actual fixed publisher once through the existing phase.
+            // The receipt does not grant authority or retry a refused placement.
+            const auto* before_publish=bindings_.world.find(target.id);
+            const auto before_publish_position=before_publish?before_publish->position:std::optional<EntityPosition>{};
+            const auto before_publish_attachment=before_publish?before_publish->attachment:std::optional<Attachment>{};
+            std::size_t publish_calls=0;bool scalar_accepted=false;std::string scalar_detail;
+            const bool publish_accepted=phase(odh_host::SessionPositionPhase::publish,destination,[&]{
+                ++publish_calls;
+                scalar_accepted=odh_host::publish_source_individual_position(bindings_.world,
+                    {target.id,target.generation},destination,point.direction,valid_source,&scalar_detail);
+                return scalar_accepted;
+            });
+            if(!publish_accepted){
+                const auto pose=[](const std::optional<EntityPosition>& p){
+                    return p?std::to_string(p->x)+","+std::to_string(p->y)+","+std::to_string(p->level)+","+
+                        std::to_string(p->direction):std::string{"absent"};
+                };
+                const auto link=[](const std::optional<Attachment>& a){
+                    return a?std::to_string(a->container)+","+std::to_string(a->slot)+","+
+                        std::to_string(a->positioned):std::string{"absent"};
+                };
+                const auto* actual=bindings_.world.find(target.id);
+                std::string why="avatar scalar floor publication failed: phase=publish target="+std::to_string(target.id)+
+                    "/"+std::to_string(target.generation)+" callback_calls="+std::to_string(publish_calls)+
+                    " scalar_accepted="+std::to_string(scalar_accepted)+" reason="+
+                    (publish_calls?scalar_accepted?"phase refused after scalar callback":scalar_detail:"phase refused before scalar callback")+
+                    " old="+pose(old_position)+" old_attachment="+link(old)+" before_publish="+pose(before_publish_position)+
+                    " before_attachment="+link(before_publish_attachment)+" destination="+pose(destination)+
+                    " direction="+std::to_string(point.direction)+" actual_generation="+std::to_string(actual?actual->generation:0)+
+                    " actual="+pose(actual?actual->position:std::optional<EntityPosition>{})+
+                    " actual_attachment="+link(actual?actual->attachment:std::optional<Attachment>{})+
+                    " registry_complete="+(context&&context->position_registry?std::to_string(context->position_registry->complete):"unknown");
+                const auto lifecycle_detail=detail();if(!lifecycle_detail.empty())why+=" lifecycle="+lifecycle_detail;
+                return unavailable(why);
+            }
             if(!phase(odh_host::SessionPositionPhase::post,destination,[&]{return lifecycle.after_slot_transfer(root,room_change);})||!valid_source())
                 return unavailable("avatar PositionChange: "+detail());
             end_floor.completed=true;

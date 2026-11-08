@@ -1,9 +1,11 @@
 # Plano de desenvolvimento
 
-O primeiro marco é paridade funcional com a base Simitone fixada, em um único
-motor C/C++. Uma demonstração de uma casa não encerra esse marco. A experiência
-do The Sims 1 original, as sete expansões e o conteúdo clássico continuam como
-destino do projeto; limitações da referência não eliminam esses requisitos.
+A primeira versão Linux jogável precisa cumprir o [escopo completo](linux-playable-scope.md),
+incluindo a experiência original, as sete expansões e o conteúdo clássico.
+A paridade funcional com a base Simitone fixada é um marco intermediário da
+migração para um único motor C/C++. Uma demonstração de uma casa ou a paridade
+com uma parte da referência não encerra a primeira versão jogável. Limitações
+da referência não eliminam requisitos do jogo original.
 
 ## Entregas integradas
 
