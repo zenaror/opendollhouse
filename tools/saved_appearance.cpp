@@ -1,4 +1,5 @@
 #include "saved_appearance.hpp"
+#include "saved_appearance_far_index.hpp"
 #include "odh/mesh.hpp"
 #include "odh/bcf.hpp"
 #include "odh/sha256.hpp"
@@ -38,16 +39,15 @@ struct Archive {
     std::ifstream stream;
     std::uint64_t size;
     std::vector<odh::FarEntry> entries;
+    std::vector<std::size_t> full_name_order;
     explicit Archive(const std::string& filename):path(filename),stream(filename,std::ios::binary),size(0) {
         bounded_name(path);if(!stream)throw odh::FormatError("saved appearance cannot open FAR");
         size=std::filesystem::file_size(path);odh::Limits lim;lim.far_entries=8192;lim.far_name_bytes=256*1024;
         entries=odh::far1_index(odh::View(stream,size),lim);
+        full_name_order=odh_host::appearance_detail::index_full_names(entries);
     }
     const odh::FarEntry& select(const std::string& name) const {
-        const auto key=fold(name);const odh::FarEntry* out=nullptr;
-        for(const auto& e:entries)if(fold(e.name)==key){if(out)throw odh::FormatError("saved appearance ambiguous FAR entry: "+name);out=&e;}
-        if(!out)throw odh::FormatError("saved appearance missing FAR entry: "+name);
-        return *out;
+        return odh_host::appearance_detail::select_full_name(entries,full_name_order,name);
     }
     odh::View view(const odh::FarEntry& e){return odh::View(stream,size).subview(e.offset,e.length);}
 };

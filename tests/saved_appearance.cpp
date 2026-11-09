@@ -1,4 +1,5 @@
 #include "saved_appearance.hpp"
+#include "saved_appearance_far_index.hpp"
 #include "odh/sha256.hpp"
 #include <chrono>
 #include <cstring>
@@ -34,6 +35,56 @@ using Entry=std::pair<std::string,std::string>;
 void far(const std::filesystem::path& p,const std::vector<Entry>& entries){std::string b="FAR!byAZ";word(b,1);word(b,0);std::vector<std::uint32_t> offsets;for(const auto& e:entries){offsets.push_back(static_cast<std::uint32_t>(b.size()));b+=e.second;}auto offset=static_cast<std::uint32_t>(b.size());for(int i=0;i<4;++i)b[12+i]=static_cast<char>((offset>>(i*8))&255);word(b,static_cast<std::uint32_t>(entries.size()));for(std::size_t i=0;i<entries.size();++i){auto size=static_cast<std::uint32_t>(entries[i].second.size());word(b,size);word(b,size);word(b,offsets[i]);word(b,static_cast<std::uint32_t>(entries[i].first.size()));b+=entries[i].first;}std::ofstream out(p,std::ios::binary);out.write(b.data(),static_cast<std::streamsize>(b.size()));}
 void save(const std::filesystem::path& path,const std::string& bytes){std::ofstream out(path,std::ios::binary);out.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));}
 struct Temp {std::filesystem::path path;Temp(){path=std::filesystem::temp_directory_path()/("odh-saved-appearance-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));std::filesystem::create_directory(path);}~Temp(){std::error_code e;std::filesystem::remove_all(path,e);}};
+// Independent old implementation is the compatibility oracle. Test equality,
+// exact chosen entry identity and exact error message, not a wall-clock limit.
+const odh::FarEntry& legacy_select(const std::vector<odh::FarEntry>& entries,const std::string& name){
+ const auto fold=[](std::string value){for(auto& c:value)if(c>='A'&&c<='Z')c=static_cast<char>(c+'a'-'A');return value;};
+ const auto key=fold(name);const odh::FarEntry* out=nullptr;
+ for(const auto& entry:entries)if(fold(entry.name)==key){
+  if(out)throw odh::FormatError("saved appearance ambiguous FAR entry: "+name);out=&entry;
+ }
+ if(!out)throw odh::FormatError("saved appearance missing FAR entry: "+name);
+ return *out;
+}
+void full_name_index_matrix(){
+ using namespace odh_host::appearance_detail;
+ auto matrix=[&](const std::vector<std::string>& names,const std::vector<std::string>& queries){
+  std::vector<odh::FarEntry> entries;
+  for(const auto& name:names){odh::FarEntry entry{};entry.name=name;entry.offset=static_cast<std::uint32_t>(entries.size());entries.push_back(entry);}
+  const auto order=index_full_names(entries);
+  check(order.size()==entries.size(),"full-name index stores one index per entry");
+  std::vector<bool> seen(entries.size(),false);
+  for(const auto index:order){check(index<entries.size()&&!seen[index],"full-name index is a permutation");seen[index]=true;}
+  for(std::size_t n=0;n<entries.size();++n)check(entries[n].name==names[n]&&entries[n].offset==n,"index reordered or rewrote FAR entries");
+  for(const auto& query:queries){
+   const odh::FarEntry* expected=nullptr,*actual=nullptr;std::string expected_error,actual_error;
+   try{expected=&legacy_select(entries,query);}catch(const odh::FormatError& error){expected_error=error.what();}
+   try{actual=&select_full_name(entries,order,query);}catch(const odh::FormatError& error){actual_error=error.what();}
+   check(actual==expected&&actual_error==expected_error,"indexed full-name selection differs from old strict scan");
+  }
+ };
+ matrix({}, {"","absent"});
+ matrix({"Folder/Rig.BCF","rig.bcf","Folder\\Rig.BCF","prefix","prefix-more","x.bcf"},
+        {"FOLDER/RIG.bcf","RIG.BCF","FOLDER\\RIG.bcf","Rig","Folder/Rig","prefix","PREFIX-MORE","prefix-","z.bcf"});
+ matrix({"same.BCF","SAME.bcf","unique.bcf","repeat","repeat"},
+        {"SaMe.BcF","UNIQUE.BCF","repeat","missing"});
+ const std::string high1=std::string(1,static_cast<char>(0xc4))+".BCF";
+ const std::string high2=std::string(1,static_cast<char>(0xe4))+".bcf";
+ const std::string nul("A\0Z",3);
+ matrix({high1,high2,nul,"a"},{high1,high2,nul,std::string("a\0z",3),"a"});
+ // Deterministic unsorted metadata cohort: every exact/case query plus misses
+ // is compared to the old allocating scan. No randomness or timing assertion.
+ std::vector<std::string> names,queries;
+ for(unsigned n=0;n<512;++n){const auto key="Dir/Resource-"+std::to_string((n*73)%512)+".BCF";names.push_back(key);}
+ for(const auto& name:names){queries.push_back(name);auto upper=name;for(auto& c:upper)if(c>='a'&&c<='z')c=static_cast<char>(c+'A'-'a');queries.push_back(upper);}
+ queries.push_back("resource-0.bcf");queries.push_back("Dir/resource-512.bcf");matrix(names,queries);
+ // Existing Archive maximum; selected boundary/middle keys plus misses only,
+ // so the legacy reference scan does not make this a quadratic benchmark.
+ names.clear();queries.clear();
+ for(unsigned n=0;n<8192;++n)names.push_back("Bound/Entry-"+std::to_string(8191-n)+".bcf");
+ for(const auto n:{0,1,4095,4096,8190,8191})queries.push_back("BOUND/ENTRY-"+std::to_string(n)+".BCF");
+ queries.push_back("Bound/Entry-8192.bcf");matrix(names,queries);
+}
 }
 int main(int argc,char** argv){try{
  if(argc>=8&&std::string(argv[1])=="--commercial-animal-body"){
@@ -71,6 +122,7 @@ int main(int argc,char** argv){try{
       <<" raster_samples="<<frame.image.shaded_samples<<'\n';
   return 0;
  }
+ full_name_index_matrix();
  odh::AnimationHeader h{};h.name="clip";odh::BoneMotion motion{};motion.frames=121;h.motions.push_back(motion);
  auto parsed=saved_animation_appearance("clip;6;1000;25;1000;0;7;8",h);
  check(parsed.frame==3.025&&parsed.priority==6&&parsed.weight_milli==1000&&parsed.speed_milli==1000);check(!parsed.loop&&!parsed.backwards&&!parsed.end_reached&&parsed.unknown1==7&&parsed.unknown2==8);
@@ -88,6 +140,19 @@ int main(int argc,char** argv){try{
  save(skins/"loose.cmx","// synthetic CMX\nversion 300\n0\n1\nb123mafat\n1\n0\n1\nROOT\nxskin-loose\n0\n0\n0\n");
  save(skins/"xskin-loose.skn",loose_mesh());
  save(skins/"loose-texture.bmp",loose_bitmap());
+ {
+  const auto indexed=dir.path/"full-name-index.far";auto original=entries;
+  original[0].first="Folder/MiXeD-Rig.BCF";
+  original.push_back({"unused.bin","first"});original.push_back({"UNUSED.BIN","second"});far(indexed,original);
+  SavedAppearanceResources selected(indexed.string(),t.string(),"fOLDER/mIXEd-rIG.bcf","adult",skins.string());
+  odh::AvatarBodyStrings sample{};sample.body=sample.head="b123mafat";
+  const auto scene=selected.resolve_body(sample);
+  check(scene.skeleton_entry=="Folder/MiXeD-Rig.BCF"&&scene.parts.size()==2,
+        "Archive consumer preserves exact original full name despite unrelated ambiguous keys");
+  rejects([&]{SavedAppearanceResources missing(indexed.string(),t.string(),"MiXeD-Rig.BCF","adult",skins.string());});
+  original.push_back({"folder/mixed-rig.bcf",rig()});far(indexed,original);
+  rejects([&]{SavedAppearanceResources duplicate(indexed.string(),t.string(),"Folder/Mixed-Rig.BCF","adult",skins.string());});
+ }
  SavedAppearanceResources loose_resources(a.string(),t.string(),"rig.bcf","adult",skins.string());
  odh::AvatarBodyStrings loose_body{};loose_body.body="b123mafat";loose_body.head="b123mafat";
  for(auto& hand:loose_body.hands)hand="b123mafat";

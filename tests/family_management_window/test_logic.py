@@ -243,4 +243,14 @@ class CompleteGuiGates(unittest.TestCase):
         saved['members']*=2
         with self.assertRaises(ValueError):flow.identity(saved)
 
+class ChildPreviewReadiness(unittest.TestCase):
+    def test_age_button_hover_or_press_never_acknowledges_child_preview(self):
+        self.assertFalse(driver.child_preview_ready(b'adult',b'normal',b'adult',b'pressed',5))
+    def test_preview_change_alone_does_not_acknowledge_selected_idle_child(self):
+        self.assertFalse(driver.child_preview_ready(b'adult',b'normal',b'child',b'normal',5))
+    def test_transient_frame_is_not_ready(self):
+        self.assertFalse(driver.child_preview_ready(b'adult',b'normal',b'child',b'selected',1))
+    def test_changed_preview_and_idle_button_must_stabilize(self):
+        self.assertTrue(driver.child_preview_ready(b'adult',b'normal',b'child',b'selected',2))
+
 if __name__=='__main__':unittest.main(verbosity=2)

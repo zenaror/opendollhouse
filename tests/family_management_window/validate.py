@@ -216,6 +216,11 @@ def compare_reopen(before_sections, after_sections, before, after, admitted_nids
     return dict(changed_sections=[x.decode('ascii') for x in changed], new_empty_neighbor_sources=sorted(admitted_nids) if not deleted else [])
 
 
+def child_preview_ready(before_preview,before_button,preview,button,stable):
+    # Age-button hover/press alone is never proof that the release was handled.
+    return preview!=before_preview and button!=before_button and stable>=2
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for flag in ('checkout', 'binary', 'reader', 'game-root', 'source-receipt', 'protected-manifest', 'output'):
@@ -228,7 +233,9 @@ def main():
     p.add_argument('--resume-after-create', type=Path)
     p.add_argument('--family-lot-plan', type=Path, help='Reviewed real-frame plan for complete GUI chain')
     p.add_argument('--family-lot-plan-sha256')
+    p.add_argument('--preview-timeout-seconds', type=float, default=120, help='Measured child-preview readiness deadline; latency and CPU samples are retained')
     args = p.parse_args()
+    need(0<args.preview_timeout_seconds<=300, 'invalid explicit preview deadline')
     need(bool(args.family_lot_plan)==bool(args.family_lot_plan_sha256), 'GUI plan and reviewed SHA must be paired')
     flow = plan = None
     if args.family_lot_plan:
@@ -391,6 +398,38 @@ def main():
         wait(label,matches,timeout=20)
         report['actions'].append(dict(personality_ack=label,before=before,after=actual,
                                       expected=expected.copy(),frame_sha256=frame_hash))
+
+    def select_child():
+        preview_box=(618,145,94,220) # Body preview only, excluding head-arrow hover pixels.
+        button_box=(406,111,92,90) # Actual child control source rectangle.
+        park_pointer();frame=observed_rgb()
+        before_preview=rgb_region(frame,preview_box);before_button=rgb_region(frame,button_box)
+        phase=dict(stage='child-preview-post-release',status='waiting',started=time.monotonic(),started_unix=time.time(),
+                   preview_rectangle=list(preview_box),button_rectangle=list(button_box),samples=[])
+        report['pending_phase']=phase;save();previous=None;stable=0;last_sample=-1
+        def ready():
+            nonlocal previous,stable,last_sample
+            frame=observed_rgb();preview=rgb_region(frame,preview_box);button=rgb_region(frame,button_box)
+            pair=(hashlib.sha256(preview).hexdigest(),hashlib.sha256(button).hexdigest())
+            stable=stable+1 if pair==previous else 1;previous=pair
+            elapsed=time.monotonic()-phase['started'];bucket=int(elapsed//2)
+            if bucket!=last_sample:
+                last_sample=bucket;sample=dict(elapsed_seconds=elapsed,preview_changed=preview!=before_preview,button_changed=button!=before_button,stable_frames=stable)
+                try:
+                    stat=Path('/proc',str(process.pid),'stat').read_text().rsplit(')',1)[1].split()
+                    sample.update(process_state=stat[0],cpu_seconds=(int(stat[11])+int(stat[12]))/os.sysconf('SC_CLK_TCK'))
+                except (OSError,ValueError,IndexError):pass
+                phase['samples'].append(sample);save()
+            return child_preview_ready(before_preview,before_button,preview,button,stable)
+        click(450,155);park_pointer() # Enqueued after RELEASE; no age-button hover ACK.
+        try:wait('child-preview-post-release',ready,timeout=args.preview_timeout_seconds)
+        except Exception:
+            phase.update(status='failed',elapsed_seconds=time.monotonic()-phase['started']);save();raise
+        phase.update(status='observed-preview-and-idle-button-change',elapsed_seconds=time.monotonic()-phase['started'])
+        phase['over_twenty_seconds']=phase['elapsed_seconds']>20
+        phase['scope']='Source-specific preview change after release; final visual child identity still requires inspection.'
+        report['actions'].append(dict(child_preview_ack=phase));report.pop('pending_phase',None);save()
+        screenshot('child-preview-ready')
 
     def ui_ready(kind, initial_family=False):
         nonlocal confirmed_focus_owner
@@ -602,7 +641,7 @@ def main():
                 key('Return') # Name -> biography; no member acceptance.
                 ui_ready('cas_character')
                 if child:
-                    await_visual_action('child-selected',(406,101,150,101),lambda:click(450,155))
+                    select_child()
                 expected=[0]*5
                 for row in range(5):
                     if plan:

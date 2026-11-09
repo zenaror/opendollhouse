@@ -29,6 +29,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Carregamento de roupas, rostos e outros recursos de aparência, evitando buscas
+  repetidas nos arquivos do jogo.
 - Ordem das entradas rápidas de teclado e mouse na janela nativa, preservando
   exclusões de texto e cliques sucessivos; o percurso completo de gestão de
   famílias pelas telas ainda precisa de validação.
