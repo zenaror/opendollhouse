@@ -29,6 +29,13 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Ordem das entradas rápidas de teclado e mouse na janela nativa, preservando
+  exclusões de texto e cliques sucessivos; o percurso completo de gestão de
+  famílias pelas telas ainda precisa de validação.
+- Continuação doméstica no cenário de incêndio validado: criação do fogo e
+  reação de pânico prosseguiram, com salvamento e reabertura da partida. A
+  aparência, as consequências, o combate ao fogo e o atendimento dos bombeiros
+  continuam incompletos.
 - Gestos de mãos explicitamente vazios nos dados originais, usados por algumas
   fantasias, sem exigir peças inexistentes nem substituir o gesto pelo de repouso.
 - Tratamento da cabeça opcional de animais quando sua aparência está

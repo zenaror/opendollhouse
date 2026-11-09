@@ -76,6 +76,51 @@ odh::SessionBundle original_family_departure(odh::SessionBundle b,const odh::Fam
  for(auto& e:b.scheduler.entities)if(e.id==member.id){e.status=vm.status();e.steps=vm.steps();e.run_generation=vm.run_generation();}
  b.travel=state;b.neighbor_inventory=inventory.snapshot();b.family_vacation=bank;odh::seal_ts1_travel_request(*b.travel,b);odh::validate_ts1_travel_bundle(b);return b;
 }
+std::vector<std::uint8_t> legacy_sims_source(std::vector<std::uint8_t> bytes){
+ auto archive=odh::decode_session_archive(bytes);bool changed=false;
+ for(auto& section:archive.sections)if(section.id==std::array<char,4>{{'S','I','M','S'}}){
+  require(section.data.size()>=24&&section.data[0]==2&&section.data[1]==0&&section.data[2]==0&&section.data[3]==0,
+    "fixture begins at real SIMS2 writer");
+  section.data[0]=1;section.data.erase(section.data.begin()+20,section.data.begin()+24);changed=true;
+ }
+ require(changed,"fixture carries actual simulation section");return odh::encode_session_archive(archive);
+}
+void raw_source_checkpoint_matrix(){
+ const auto home=travel_test::managed_home();const auto legacy=legacy_sims_source(odh::encode_session_bundle(home));
+ const auto head=odh::sha256(legacy.data(),legacy.size());
+ auto external=legacy;const auto accepted=odh::decode_session_source_checkpoint(external,head);external.front()^=1;
+ require(accepted.envelope_bytes()==legacy&&accepted.active_bytes()==legacy&&accepted.digest()==head&&
+   accepted.active().simulation&&accepted.active().simulation->clock.fire_percent==20000,
+   "authenticated old HOME retains owned original bytes plus decoded native bridge without rewriting head");
+ const auto upgraded=odh::encode_session_bundle(accepted.active());
+ require(upgraded!=legacy&&accepted.active_bytes()!=upgraded&&odh::sha256(upgraded.data(),upgraded.size())!=head,
+   "semantic SIMS1 decode/SIMS2 write is not byte identity for source binding");
+ rejects([&]{(void)odh::decode_session_source_checkpoint(upgraded,head);},"normalized current encoding cannot impersonate accepted old head");
+ auto movable=accepted;const auto moved=std::move(movable);
+ require(moved.envelope_bytes()==legacy&&moved.digest()==head,"copy/move retains one immutable raw/model/digest binding");
+ rejects([&]{(void)movable.digest();},"moved-from source cannot expose an unbound digest");
+ auto wrong_head=head;wrong_head[0]^=1;
+ rejects([&]{(void)odh::decode_session_source_checkpoint(legacy,wrong_head);},"changed expected head is rejected");
+ auto limits=odh::SessionBundleLimits{};limits.archive.max_file_bytes=legacy.size()-1;
+ rejects([&]{(void)odh::decode_session_source_checkpoint(legacy,head,limits);},"raw source respects existing archive budget");
+ const std::vector<std::uint8_t> malformed{1,2,3};const auto malformed_head=odh::sha256(malformed.data(),malformed.size());
+ rejects([&]{(void)odh::decode_session_source_checkpoint(malformed,malformed_head);},"matching digest cannot authenticate an undecodable bundle");
+ auto active=home;active.travel=travel_test::travel_state(home);active.travel->current_house=23;active.host.house_number=23;
+ auto outer=odh_host::make_travel_session_envelope(legacy,active);
+ const auto visited=legacy_sims_source(*outer.travel_visited_session);outer.travel_visited_session=visited;
+ const auto outer_raw=legacy_sims_source(odh::encode_session_bundle(outer));const auto outer_head=odh::sha256(outer_raw.data(),outer_raw.size());
+ const auto nested=odh::decode_session_source_checkpoint(outer_raw,outer_head);
+ require(nested.envelope_bytes()==outer_raw&&nested.active_bytes()==visited&&nested.active_bytes()!=outer_raw&&
+   nested.digest()==outer_head&&nested.active().host.house_number==23&&nested.envelope().host.house_number==7,
+   "TVIS source is the exact nested payload while accepted digest remains the OUTER envelope head");
+ require(odh::encode_session_bundle(nested.active())!=nested.active_bytes(),"legacy visited decode also upgrades without changing raw binding");
+ auto replaced=odh::decode_session_archive(outer_raw);
+ for(auto& section:replaced.sections)if(section.id==std::array<char,4>{{'T','V','I','S'}})
+   section.data=odh::encode_session_bundle(nested.active());
+ const auto replaced_raw=odh::encode_session_archive(replaced);
+ rejects([&]{(void)odh::decode_session_source_checkpoint(replaced_raw,outer_head);},
+   "even semantically equal but reencoded visited payload cannot reuse accepted outer head");
+}
 void vacation_publication_matrix(){
  const auto directory=std::filesystem::temp_directory_path()/("odh-vacation-owner-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
  std::filesystem::create_directory(directory);setenv("XDG_DATA_HOME",directory.c_str(),1);setenv("XDG_CONFIG_HOME",directory.c_str(),1);
@@ -93,6 +138,15 @@ void vacation_publication_matrix(){
  auto departure=original_family_departure(home,bank.snapshot(),40);const auto source_path=owner.publish(departure);const auto source_head=*owner.head();
  rejects([&]{stale.publish(home);},"stale private overlay publisher cannot overwrite newer source head");
  auto phase=odh_host::prepare_vacation_entry_phase(departure,source_head,bank.snapshot());
+ const auto legacy_departure=legacy_sims_source(odh::encode_session_bundle(departure));
+ const auto legacy_departure_head=odh::sha256(legacy_departure.data(),legacy_departure.size());
+ const auto accepted_departure=odh::decode_session_source_checkpoint(legacy_departure,legacy_departure_head);
+ const auto legacy_phase=odh_host::prepare_vacation_entry_phase(accepted_departure,bank.snapshot());
+ require(legacy_phase.source_head==legacy_departure_head&&legacy_phase.family_identity==phase.family_identity&&
+   legacy_phase.destination==phase.destination&&legacy_phase.before_word==phase.before_word&&legacy_phase.after_word==phase.after_word,
+   "vacation entry preserves old accepted raw head while deriving identical source family/phase");
+ rejects([&]{(void)odh_host::prepare_vacation_entry_phase(accepted_departure.envelope(),legacy_departure_head,bank.snapshot());},
+   "value-only canonical phase overload cannot pretend to retain old serialized identity");
  require(phase.family_chunk_id==21&&phase.destination==40&&phase.before_word==0&&phase.after_word==40,
   "actual source CallerPD61 proves family21 instead of serialized FamilyNumber12");
  auto prepared=bank.prepare(phase);auto forged=prepared.preview_snapshot();++forged.revision;
@@ -175,6 +229,16 @@ void vacation_publication_matrix(){
  const auto return_envelope=odh_host::make_travel_session_envelope(immutable_home,return_active);
  owner.publish(return_envelope);const auto return_head=*owner.head();
  auto clear=odh_host::prepare_vacation_clear_phase(return_envelope,return_head,bank.snapshot(),21,7,odh::OriginalLotClass::residential);
+ auto legacy_return=return_envelope;legacy_return.travel_visited_session=legacy_sims_source(*legacy_return.travel_visited_session);
+ const auto legacy_return_raw=legacy_sims_source(odh::encode_session_bundle(legacy_return));
+ const auto legacy_return_head=odh::sha256(legacy_return_raw.data(),legacy_return_raw.size());
+ const auto accepted_return=odh::decode_session_source_checkpoint(legacy_return_raw,legacy_return_head);
+ const auto legacy_clear=odh_host::prepare_vacation_clear_phase(accepted_return,bank.snapshot(),21,7,odh::OriginalLotClass::residential);
+ require(legacy_clear.source_head==legacy_return_head&&legacy_clear.source_head!=return_head&&
+   legacy_clear.before_word==clear.before_word&&legacy_clear.after_word==clear.after_word,
+   "vacation residential clear binds original outer head even when both outer and TVIS use older codecs");
+ rejects([&]{(void)odh_host::prepare_vacation_clear_phase(accepted_return,bank.snapshot(),21,7,odh::OriginalLotClass::community);},
+   "typed raw source does not relax source lot-class guard");
  require(clear.before_word==40&&clear.after_word==0&&clear.source_head==return_head,
   "real visited Generic17 return binds clear to outer head and actual residential family");
  rejects([&]{odh_host::prepare_vacation_clear_phase(return_envelope,return_head,bank.snapshot(),21,7,odh::OriginalLotClass::community);},
@@ -205,7 +269,7 @@ void vacation_publication_matrix(){
  std::filesystem::remove_all(directory);
 }
 int main(){try{
- original_frontend_global_phase();vacation_publication_matrix();
+ original_frontend_global_phase();raw_source_checkpoint_matrix();vacation_publication_matrix();
  auto home=travel_test::managed_home();odh::Family f;f.house_number=7;f.family_number=12;f.budget=7000;f.member_guids={123456};std::vector<odh::FamilyEntry> source{{21,f}};
  const auto directory=std::filesystem::temp_directory_path()/("odh-travel-checkpoint-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));std::filesystem::create_directory(directory);setenv("XDG_DATA_HOME",directory.c_str(),1);setenv("XDG_CONFIG_HOME",directory.c_str(),1);
  const auto identity=home.family_lease->neighborhood_identity;home.family_lease.reset();

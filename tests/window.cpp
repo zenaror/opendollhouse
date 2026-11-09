@@ -188,7 +188,10 @@ int main(int argc,char** argv){try{
     key(XK_e,KeyRelease);window.poll();key(XK_e);if(!window.poll().move_out)throw std::runtime_error("released move-out not rearmed");
     key(XK_p);input=window.poll();if(!input.pause||input.action)throw std::runtime_error("pause mapping failed");
     key(XK_p);if(window.poll().pause)throw std::runtime_error("held pause repeated");
-    key(XK_Left);key(XK_Up);input=window.poll();if(input.rotation!=-1||input.zoom!=1)throw std::runtime_error("camera mapping failed");
+    key(XK_Left);key(XK_Up);input=window.poll();
+    if(input.rotation!=-1||input.zoom)throw std::runtime_error("first queued camera key lost or combined");
+    input=window.poll();if(input.rotation||input.zoom!=1)throw std::runtime_error("second queued camera key lost");
+    input=window.poll();if(input.rotation||input.zoom)throw std::runtime_error("camera key repeated without event");
     // TS1GameScreen D1/D2/D3 select actual VM multipliers 1/3/10.
     // Digits remain committed text for CAS/name dialogs; consumers choose
     // whether the simultaneous speed request is appropriate on their screen.
@@ -257,7 +260,120 @@ int main(int argc,char** argv){try{
     click(Button4,1,2);input=window.poll();if(input.dialog_scroll_delta!=-1||input.catalog_wheel_steps!=-1||input.catalog_page_steps||input.action||input.primary_click||input.zoom)throw std::runtime_error("wheel-up modal/catalog scroll mapping failed");
     click(Button5,1,2);input=window.poll();if(input.dialog_scroll_delta!=1||input.catalog_wheel_steps!=1||input.catalog_page_steps||input.action||input.primary_click||input.zoom)throw std::runtime_error("wheel-down modal/catalog scroll mapping failed");
     click(Button1,-2,98);input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{-2,98})throw std::runtime_error("outside click coordinates clamped");
-    click(Button1,2,3);click(Button1,127,95);input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{127,95})throw std::runtime_error("last drained primary click not retained");
+    click(Button1,2,3);click(Button1,127,95);input=window.poll();
+    if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{2,3})throw std::runtime_error("first queued primary click lost or overwritten");
+    input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{127,95})throw std::runtime_error("second queued primary click lost");
+    input=window.poll();if(input.primary_click||input.action||!input.pointer_events.empty())throw std::runtime_error("queued primary click repeated without event");
+    {
+        // Real X11 server/client delivery through the production adapter. Events
+        // are synthetic app-directed XSendEvent requests, not physical hardware
+        // input; no WindowInput or backend state is injected by this matrix.
+        odh_host::LinuxWindow ordered(128,96,"OpenDollhouse ordered native input matrix");
+        (void)ordered.readback();for(unsigned n=0;n<8;++n)(void)ordered.poll();
+        const auto native=ordered.native_id();
+        auto send=[&](XEvent& event,long mask){
+            if(!XSendEvent(sender.get(),native,False,mask,&event))
+                throw std::runtime_error("ordered matrix XSendEvent failed");
+        };
+        auto send_key=[&](KeySym sym,int type,Time time){
+            XEvent event{};event.xkey.type=type;event.xkey.display=sender.get();event.xkey.window=native;
+            event.xkey.root=DefaultRootWindow(sender.get());event.xkey.same_screen=True;
+            event.xkey.keycode=XKeysymToKeycode(sender.get(),sym);event.xkey.time=time;
+            if(!event.xkey.keycode)throw std::runtime_error("ordered matrix keycode unavailable");
+            send(event,type==KeyPress?KeyPressMask:KeyReleaseMask);
+        };
+        auto send_button=[&](unsigned button,int type,int x,int y){
+            XEvent event{};event.xbutton.type=type;event.xbutton.display=sender.get();event.xbutton.window=native;
+            event.xbutton.root=DefaultRootWindow(sender.get());event.xbutton.same_screen=True;
+            event.xbutton.button=button;event.xbutton.x=x;event.xbutton.y=y;
+            send(event,type==ButtonPress?ButtonPressMask:ButtonReleaseMask);
+        };
+        auto send_motion=[&](int x,int y){
+            XEvent event{};event.xmotion.type=MotionNotify;event.xmotion.display=sender.get();event.xmotion.window=native;
+            event.xmotion.root=DefaultRootWindow(sender.get());event.xmotion.same_screen=True;
+            event.xmotion.x=x;event.xmotion.y=y;send(event,PointerMotionMask);
+        };
+        auto send_focus=[&](int type){
+            XEvent event{};event.xfocus.type=type;event.xfocus.display=sender.get();event.xfocus.window=native;
+            event.xfocus.mode=NotifyNormal;event.xfocus.detail=NotifyNonlinear;send(event,FocusChangeMask);
+        };
+        auto flush=[&](){XSync(sender.get(),False);(void)ordered.readback();};
+        auto quiet=[&](bool shortcut=false){
+            const auto idle=ordered.poll(shortcut);
+            if(idle.action||idle.confirm||idle.text_backspace||!idle.text_input_utf8.empty()||idle.primary_click||
+               !idle.pointer_events.empty()||idle.pointer_motion||idle.create_family||idle.quit||idle.pause||
+               idle.interrupt||idle.live_mode||idle.primary_held||idle.right_press_origin||idle.pointer_cancelled)
+                throw std::runtime_error("ordered matrix repeated an already consumed event");
+        };
+        send_focus(FocusIn);flush();(void)ordered.poll();quiet();
+        // All six key pairs are in the queue before any semantic poll. The two
+        // Backspaces must survive as distinct edits between printable commits.
+        const KeySym editing[]{XK_a,XK_b,XK_BackSpace,XK_BackSpace,XK_c,XK_Return};
+        Time time=100;for(const auto sym:editing){send_key(sym,KeyPress,time++);send_key(sym,KeyRelease,time++);}flush();
+        std::string edited;
+        for(unsigned n=0;n<6;++n){
+            const auto part=ordered.poll();const bool erase=n==2||n==3,confirm=n==5;
+            const std::string expected=n==0?"a":n==1?"b":n==4?"c":"";
+            if(part.text_input_utf8!=expected||part.text_backspace!=erase||part.confirm!=confirm||part.action!=confirm||
+               (erase&&!part.interrupt)||part.primary_click||!part.pointer_events.empty())
+                throw std::runtime_error("ordered text/Backspace/Enter burst lost or combined an edit");
+            if(erase){if(edited.empty())throw std::runtime_error("extra Backspace edit");edited.pop_back();}
+            else edited+=part.text_input_utf8;
+        }
+        if(edited!="c")throw std::runtime_error("ordered burst reconstructed another edited value");quiet();
+        // Same-timestamp release/press is the X11 autorepeat convention. Text
+        // repeats, while C's edge-triggered create request must not repeat.
+        send_key(XK_c,KeyPress,1000);send_key(XK_c,KeyRelease,2000);send_key(XK_c,KeyPress,2000);
+        send_key(XK_c,KeyRelease,3000);send_key(XK_c,KeyPress,4000);send_key(XK_c,KeyRelease,5000);flush();
+        for(unsigned n=0;n<3;++n){const auto part=ordered.poll(true);
+            if(part.text_input_utf8!="c"||part.create_family!=(n!=1)||part.confirm||part.text_backspace)
+                throw std::runtime_error("ordered C autorepeat/release rearming differs");}
+        quiet(true);
+        using Kind=odh_host::WindowPointerKind;
+        send_button(Button1,ButtonPress,10,20);send_button(Button1,ButtonRelease,10,20);
+        send_button(Button1,ButtonPress,30,40);send_button(Button1,ButtonRelease,30,40);flush();
+        for(unsigned n=0;n<4;++n){const auto part=ordered.poll();const bool press=n%2==0;const int x=n<2?10:30,y=n<2?20:40;
+            if(part.pointer_events.size()!=1||part.pointer_events[0].kind!=(press?Kind::press:Kind::release)||
+               part.pointer_events[0].x!=x||part.pointer_events[0].y!=y||part.primary_held!=press||
+               part.action!=press||static_cast<bool>(part.primary_click)!=press||
+               (press&&*part.primary_click!=std::array<std::int32_t,2>{x,y}))
+                throw std::runtime_error("two complete queued clicks lost a transition or coordinate");}
+        quiet();
+        send_button(Button1,ButtonPress,10,20);send_motion(15,25);send_motion(30,40);
+        send_button(Button1,ButtonRelease,30,40);flush();
+        auto part=ordered.poll();if(!part.primary_held||part.pointer_events.size()!=1||part.pointer_events[0].kind!=Kind::press)
+            throw std::runtime_error("queued drag lost initial press");
+        part=ordered.poll();if(!part.primary_held||part.pointer_events.size()!=2||part.pointer_events[0].kind!=Kind::motion||
+            part.pointer_events[0].x!=15||part.pointer_events[0].y!=25||part.pointer_events[1].kind!=Kind::motion||
+            part.pointer_events[1].x!=30||part.pointer_events[1].y!=40||
+            !part.pointer_motion||*part.pointer_motion!=std::array<std::int32_t,2>{30,40}||part.action)
+            throw std::runtime_error("queued drag collapsed across a button boundary or lost motion");
+        part=ordered.poll();if(part.primary_held||part.pointer_events.size()!=1||part.pointer_events[0].kind!=Kind::release||
+            part.pointer_events[0].x!=30||part.pointer_events[0].y!=40||part.action)
+            throw std::runtime_error("queued drag lost final release");quiet();
+        send_button(Button3,ButtonPress,2,3);send_motion(5,6);send_button(Button3,ButtonRelease,5,6);flush();
+        part=ordered.poll();if(!part.right_press_origin||*part.right_press_origin!=std::array<std::int32_t,2>{2,3}||part.action)
+            throw std::runtime_error("right drag lost press origin");
+        part=ordered.poll();if(!part.right_press_origin||!part.pointer_position||*part.pointer_position!=std::array<std::int32_t,2>{5,6})
+            throw std::runtime_error("right drag lost held origin/motion");
+        part=ordered.poll();if(part.right_press_origin||part.action)throw std::runtime_error("right drag release not delivered");quiet();
+        send_button(Button1,ButtonPress,7,8);send_key(XK_F1,KeyPress,6000);send_focus(FocusOut);
+        send_focus(FocusIn);send_key(XK_F1,KeyPress,7000);send_key(XK_F1,KeyRelease,8000);flush();
+        part=ordered.poll();if(!part.primary_held)throw std::runtime_error("focus burst lost preceding press");
+        part=ordered.poll();if(!part.live_mode)throw std::runtime_error("focus burst lost preceding mode request");
+        part=ordered.poll();if(!part.pointer_cancelled||part.primary_held||part.pointer_position||part.right_press_origin||part.live_mode)
+            throw std::runtime_error("focus loss did not cancel held input at its boundary");
+        part=ordered.poll();if(!part.live_mode||part.primary_held||part.pointer_cancelled)
+            throw std::runtime_error("focus recovery lost or failed to rearm following key");quiet();
+        // Destruction is terminal, including when earlier input remains queued.
+        // Readback is intentionally NOT called after server destruction.
+        send_key(XK_a,KeyPress,9000);XDestroyWindow(sender.get(),native);XSync(sender.get(),False);
+        part=ordered.poll();if(ordered.alive()||!part.quit||part.quit_reason!=WindowQuitReason::window_destroyed||
+            !part.pointer_cancelled||!part.text_input_utf8.empty()||part.primary_click||!part.pointer_events.empty())
+            throw std::runtime_error("terminal DestroyNotify allowed queued input or a live drawable");
+        if(ordered.poll().quit_reason!=WindowQuitReason::window_destroyed)
+            throw std::runtime_error("terminal destruction reason did not persist");
+    }
     key(XK_Escape);input=window.poll();
     if(!input.quit||input.quit_reason!=WindowQuitReason::escape_key||window.quit_reason()!=input.quit_reason)
         throw std::runtime_error("Escape quit reason mapping failed");

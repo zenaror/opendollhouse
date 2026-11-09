@@ -1,6 +1,7 @@
 #pragma once
 #include "linux_family_session_journal.hpp"
 #include "odh/runtime_globals.hpp"
+#include "odh/session_source_checkpoint.hpp"
 #include "odh/family_vacation.hpp"
 #include "odh/original_lot_classification.hpp"
 #include <memory>
@@ -99,5 +100,13 @@ odh::FamilyVacationPhase prepare_vacation_entry_phase(const odh::SessionBundle& 
 odh::FamilyVacationPhase prepare_vacation_clear_phase(const odh::SessionBundle& sealed_return,
     const TravelCheckpointDigest& source_head,const odh::FamilyVacationSnapshot& current,
     std::uint16_t actual_family,std::uint16_t home_house,odh::OriginalLotClass actual_class);
+
+// Durable-source callers retain the exact authenticated archive and nested
+// visited payload across codec versions. The digest belongs to those bytes.
+odh::FamilyVacationPhase prepare_vacation_entry_phase(const odh::SessionSourceCheckpoint&,
+    const odh::FamilyVacationSnapshot& current);
+odh::FamilyVacationPhase prepare_vacation_clear_phase(const odh::SessionSourceCheckpoint&,
+    const odh::FamilyVacationSnapshot& current,std::uint16_t actual_family,
+    std::uint16_t home_house,odh::OriginalLotClass actual_class);
 
 }

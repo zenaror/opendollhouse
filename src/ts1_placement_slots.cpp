@@ -1,3 +1,4 @@
+#include "odh/live_entry_point5.hpp"
 // SPDX-License-Identifier: MPL-2.0
 // Pinned FreeSO VMSlotParser; native implementation retaining source phase order.
 #include "odh/ts1_placement_slots.hpp"
@@ -226,7 +227,7 @@ Ts1PlacementLocations ts1_find_slot_locations(const World& world,const Ts1Placem
         if(!valid())throw std::runtime_error("SLOT source identity changed after selection");
         result.failure_code=!result.goals.empty()?0:failure==0?7:failure==1?10:failure==2?13:8;
         result.supported=true;
-    }catch(const std::exception& error){result.supported=false;result.diagnostic=error.what();}
+    }catch(const SourceCheckResetRetirement&){throw;}catch(const std::exception& error){result.supported=false;result.diagnostic=error.what();}
     diagnostic.supported=result.supported;diagnostic.no_valid_goals=result.no_valid_goals;
     diagnostic.failure_code=result.failure_code;diagnostic.blocker=result.blocker;
     if(services.diagnostics){try{

@@ -716,11 +716,11 @@ public:
     // never resume/save it or retry as if the operation were rolled back.
     bool discard_for_source_reset();
     std::vector<WorldEntityReference> strong_entity_references() const;
-    bool active() const {return job_.has_value();}
+    bool active() const {return !source_reset_retired_&&job_.has_value();}
     bool spatial_route_active() const {return job_&&!job_->unplaced_room_failure;}
     // Original House layout counts any retained route record, including covered
     // and immediate continuations, irrespective of its current movement phase.
-    bool has_route_record() const noexcept {return job_.has_value()||!suspended_jobs_.empty()||!parked_immediate_routes_.empty();}
+    bool has_route_record() const noexcept {return !source_reset_retired_&&(job_.has_value()||!suspended_jobs_.empty()||!parked_immediate_routes_.empty());}
     // The host may discard only an idle derived cache, never a controller
     // currently executing a callback or retaining a covered/placement job.
     // VM, portal and UI ownership must also be checked by the host.
@@ -940,6 +940,13 @@ private:
     std::string diagnostic_;
     mutable bool executing_=false;
     bool source_reset_detach_failed_=false;
+    struct SourceResetOperation;
+    void leave_source_reset_operation() noexcept;
+    void clear_source_reset_storage() noexcept;
+    bool source_reset_retired_=false;
+    std::size_t source_reset_operation_depth_=0;
+    Job* source_reset_deferred_=nullptr; // Borrowed only by synchronous local replay.
+
     std::uint64_t route_revision_=1;
     std::shared_ptr<int> shoo_lifetime_=std::make_shared<int>(0);
 };

@@ -43,7 +43,7 @@ struct WindowInput {
     bool create_family = false;
     int rotation = 0, zoom = 0, interaction_selection_delta = 0;
     int dialog_scroll_delta = 0; // PageUp/PageDown or mouse wheel; modal presentation only.
-    // Last Button1 press drained by this poll, in drawable pixels. Keyboard
+    // Button1 press in this ordered batch, in drawable pixels. Keyboard
     // action does not fabricate a pointer position; coordinates may be outside.
     std::optional<std::array<std::int32_t,2>> primary_click;
     WindowQuitReason quit_reason = WindowQuitReason::none;
@@ -124,6 +124,10 @@ public:
     std::uint32_t height() const noexcept;
     // Enable the C shortcut only on the neighborhood screen. It is checked
     // before XIM filtering there, while CAS text fields keep normal input.
+    // Ordered compatibility batches: one key press or button transition;
+    // only adjacent pointer motion coalesces. Remaining native events stay
+    // queued for later polls, so legacy booleans cannot erase repeated edits
+    // or collapse two completed CAS clicks. No Xlib types escape this adapter.
     WindowInput poll(bool allow_create_family_shortcut = false);
     WindowQuitReason quit_reason() const noexcept;
     // Native destruction is independent of which quit request arrived first.

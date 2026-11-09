@@ -44,6 +44,33 @@ try {
         "late bootstrap carries into the next daylight cycle without changing VM seconds");
     require(c.snapshot().hour==23&&c.snapshot().minute==59&&c.snapshot().day==16&&c.snapshot().ticks==0,
         "sampling daylight preserves the unadvanced simulation date and time");
+    odh::Ts1Clock fire;
+    require(fire.snapshot().fire_percent==20000,"source constructor fire threshold");
+    fire.consume_fire_spread();require(fire.snapshot().fire_percent==19500,"spread consumes500");
+    require(!fire.tick(false)&&fire.snapshot().fire_percent==19500,"paused tick leaves threshold");
+    require(fire.tick(true)&&fire.snapshot().fire_percent==19501,"running tick recovers one threshold point");
+    for(int n=0;n<40;++n)fire.consume_fire_spread();
+    require(fire.snapshot().fire_percent==0,"repeated spreads clamp to zero");
+    for(const auto threshold:{0,1,499,500,501,19999,20000}){
+        auto value=fire.snapshot();value.fire_percent=threshold;require(fire.restore(value),"reachable fire threshold restore");
+        fire.consume_fire_spread();require(fire.snapshot().fire_percent==(threshold>500?threshold-500:0),"spread boundary clamp");
+        require(fire.restore(value)&&fire.tick(true)&&fire.snapshot().fire_percent==(threshold<20000?threshold+1:20000),"tick recovers and saturates boundary");
+    }
+    const auto valid_fire=fire.snapshot();
+    for(const auto threshold:{-1,20001,std::numeric_limits<std::int32_t>::min(),std::numeric_limits<std::int32_t>::max()}){
+        auto value=valid_fire;value.fire_percent=threshold;
+        require(!fire.restore(value)&&fire.snapshot().fire_percent==valid_fire.fire_percent,"invalid fire restore atomic");
+    }
+    auto fire_max=valid_fire;fire_max.fire_percent=123;fire_max.ticks=std::numeric_limits<std::uint64_t>::max();
+    require(fire.restore(fire_max)&&!fire.tick(true)&&fire.snapshot().fire_percent==123,"tick overflow does not increment threshold");
+    require(fire.initialize(23,30,59,12,std::numeric_limits<std::int32_t>::max()),"fire year overflow setup");
+    fire_max=fire.snapshot();fire_max.fire_percent=123;fire_max.minute_fraction=29;
+    require(fire.restore(fire_max)&&!fire.tick(true)&&fire.snapshot().fire_percent==123,"year overflow leaves threshold atomic");
+    require(fire.initialize_simi(7,17,0,22,6,1997)&&fire.snapshot().fire_percent==20000,"original SIMI bootstrap has new source clock threshold");
+    fire.consume_fire_spread();odh::Ts1Clock fire_restored;
+    require(fire_restored.restore(fire.snapshot()),"fire snapshot resume");
+    for(int n=0;n<100;++n){if(n%7==0){fire.consume_fire_spread();fire_restored.consume_fire_spread();}fire.tick(true);fire_restored.tick(true);}
+    require(fire.snapshot().ticks==fire_restored.snapshot().ticks&&fire.snapshot().fire_percent==fire_restored.snapshot().fire_percent,"fire continuation matches uninterrupted source schedule");
     // VMTS1MotiveDecay.cs:29-38 order; Model/VMMotive.cs:9-20 bank indexes.
     const unsigned bank[]={7,6,8,9,5,15,14};
     for(unsigned i=0;i<7;++i)require(odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))==bank[i],"explicit motive mapping");

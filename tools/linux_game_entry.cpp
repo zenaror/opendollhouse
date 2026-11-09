@@ -52,6 +52,7 @@
 #endif
 #include "odh/sha256.hpp"
 #include "odh/ts1_travel_return.hpp"
+#include "odh/session_source_checkpoint.hpp"
 #include "odh/session_resource_identity.hpp"
 #include "json.hpp"
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
@@ -2384,8 +2385,9 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
         const auto stage_temporary_request=[&](){
             auto& trip=*temporary_trip;
             if(!trip.state.pending)throw odh::FormatError("temporary travel transition lacks a sealed deferred lot request");
-            const auto outer=odh::decode_session_bundle(trip.checkpoint);
-            const auto source=outer.travel_visited_session?odh::decode_session_bundle(*outer.travel_visited_session):outer;
+            if(!trip.head)throw odh::FormatError("temporary travel source has no accepted checkpoint head");
+            const auto checkpoint=odh::decode_session_source_checkpoint(trip.checkpoint,*trip.head);
+            const auto& source=checkpoint.active();
             if(!source.travel||odh::encode_ts1_travel_state(*source.travel)!=odh::encode_ts1_travel_state(trip.state))throw odh::FormatError("temporary travel request differs from its current durable checkpoint");
             const auto requested=trip.state.pending->destination;
             const auto destination=requested==-1?trip.origin.home_house:static_cast<std::uint16_t>(requested);
@@ -2403,13 +2405,13 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     inheritance.emplace(odh::read_ts1_travel_person_inheritance(view));
                 });
                 trip.returning=std::make_shared<odh::PreparedTs1TravelReturn>(
-                    odh::prepare_ts1_travel_return(outer,{},&*inheritance));
+                    odh::prepare_ts1_travel_return(checkpoint,{},&*inheritance));
                 // home() deliberately rejects unresolved original personal
                 // persistence; the return-pending envelope remains the head.
                 const auto& candidate=trip.returning->home();options.restore_archive=odh::encode_session_bundle(candidate);options.restore_bundle=candidate;
                 options.resident_id=static_cast<unsigned>(candidate.host.resident_neighbor_id);trip.arrival=false;trip.departure.clear();
             }else{
-                trip.departure=odh::encode_session_bundle(source);
+                trip.departure=checkpoint.active_bytes();
                 // Consume the sealed next party only after authenticating the
                 // source lot. It is distinct from that lot's admitted roster.
                 auto members=odh::ts1_travel_departure_members(trip.state);

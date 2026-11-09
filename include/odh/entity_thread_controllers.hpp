@@ -67,11 +67,24 @@ public:
         source_reset_handler_=std::move(handler);
     }
     bool discard_for_source_reset(){
-        if(!sleep_.vm_||sleep_.vm_->dispatch_active()||sleep_.executing_||interactions_.executing_)return false;
+        if(!sleep_.vm_)return false;
+        const bool authorized=sleep_.vm_->source_reset_lifecycle_active();
+        if((sleep_.vm_->dispatch_active()&&!authorized)||sleep_.executing_||
+           (interactions_.executing_&&(!authorized||!interactions_.eligibility_check_active_)))return false;
         interactions_.queue_.clear();interactions_.active_.reset();interactions_.suspended_active_.clear();
+        interactions_.run_generation_=sleep_.vm_->run_generation();
         interactions_.wait_.reset();interactions_.completion_.reset();interactions_.resume_tick_.reset();
         interactions_.interrupted_=false;interactions_.diagnostic_.clear();
         sleep_.job_.reset();sleep_.interrupted_=false;sleep_.notify_resume_=false;sleep_.diagnostic_.clear();
+        return true;
+    }
+    // Called only in the source Reset helper's avatar-effects stage. Preserve
+    // schedule/clock fields, but bind remaining controllers to the new Main.
+    bool finish_source_reset(){
+        if(!sleep_.vm_||sleep_.vm_!=interactions_.vm_||!sleep_.vm_->source_reset_lifecycle_active()||
+           sleep_.executing_||(interactions_.executing_&&!interactions_.eligibility_check_active_))return false;
+        interactions_.run_generation_=sleep_.vm_->run_generation();
+        if(sleep_.actor_)sleep_.actor_->run_generation=sleep_.vm_->run_generation();
         return true;
     }
     // Original Person recovery detaches asynchronous owners before popping

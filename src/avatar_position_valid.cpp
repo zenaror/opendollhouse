@@ -1,3 +1,4 @@
+#include "odh/live_entry_point5.hpp"
 #include "odh/avatar_position_valid.hpp"
 #include "odh/routing.hpp"
 #include <algorithm>
@@ -116,7 +117,7 @@ AvatarPositionValidResult AvatarPositionValid::evaluate_creation(const LiveObjec
         const auto frame=vm.stack().back();const auto instruction=vm.pending()->instruction.instruction;
         return evaluate_internal(frame,vm,instruction,{&vm,vm.pending()->ticket},
             nullptr,nullptr,nullptr,&source,id,generation,candidate,direction,flags);
-    }catch(const std::exception& error){return unknown(error.what());}
+    }catch(const SourceCheckResetRetirement&){throw;}catch(const std::exception& error){return unknown(error.what());}
 }
 AvatarPositionValidResult AvatarPositionValid::evaluate_route(const RoutePlacementContext& context,
     std::int16_t id,std::uint64_t generation,const EntityPosition& candidate,std::uint8_t direction,std::uint8_t flags){
@@ -348,7 +349,7 @@ AvatarPositionValidResult AvatarPositionValid::evaluate_geometry(const std::func
             if((*entity->entry_points)[26].action!=0)break;
         }
         return result;
-    }catch(const std::exception& error){return unknown(std::string("avatar PositionValid callback failed: ")+error.what());}
+    }catch(const SourceCheckResetRetirement&){throw;}catch(const std::exception& error){return unknown(std::string("avatar PositionValid callback failed: ")+error.what());}
     catch(...){return unknown("avatar PositionValid callback raised a non-standard exception");}
 }
 }

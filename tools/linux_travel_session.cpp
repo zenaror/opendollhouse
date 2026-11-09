@@ -182,10 +182,9 @@ const odh::FamilyVacationRow& vacation_row(const odh::FamilyVacationSnapshot& st
  const auto it=std::find_if(state.families.begin(),state.families.end(),[&](const auto& row){return row.family_chunk_id==id&&row.active;});
  if(it==state.families.end()||!it->current_word)throw odh::FormatError("vacation family has no complete admitted booking word");return *it;
 }
-odh::FamilyVacationPhase vacation_phase(const odh::SessionBundle& sealed,const TravelCheckpointDigest& head,
+odh::FamilyVacationPhase vacation_phase(const odh::SessionSourceCheckpoint& source,
  const odh::FamilyVacationSnapshot& state,odh::FamilyVacationPhaseKind kind,std::uint16_t family,std::uint16_t destination){
- const auto bytes=odh::encode_session_bundle(sealed);
- if(odh::sha256(bytes.data(),bytes.size())!=head)throw odh::FormatError("vacation source bytes differ from sealed head");
+ const auto& sealed=source.envelope();const auto& head=source.digest();
  odh::validate_ts1_travel_bundle(sealed);
  const auto& row=vacation_row(state,family);
  if(!sealed.travel||sealed.travel->protocol!=odh::Ts1TravelProtocol::original_6e598||
@@ -335,8 +334,13 @@ void PrivateVacationSession::publish_phase(const odh::FamilyVacationPhase& phase
 }
 odh::FamilyVacationPhase prepare_vacation_entry_phase(const odh::SessionBundle& sealed,const TravelCheckpointDigest& head,
  const odh::FamilyVacationSnapshot& current){
+ // Value-only callers explicitly describe a newly encoded canonical source.
+ return prepare_vacation_entry_phase(odh::decode_session_source_checkpoint(odh::encode_session_bundle(sealed),head),current);
+}
+odh::FamilyVacationPhase prepare_vacation_entry_phase(const odh::SessionSourceCheckpoint& source,
+ const odh::FamilyVacationSnapshot& current){
+ const auto& sealed=source.envelope();const auto& active=source.active();
  odh::validate_ts1_travel_bundle(sealed);
- const auto active=sealed.travel_visited_session?odh::decode_session_bundle(*sealed.travel_visited_session):sealed;
  if(!active.travel||!active.travel->pending||active.travel->protocol!=odh::Ts1TravelProtocol::original_6e598)
   throw odh::FormatError("vacation entry requires the sealed original Generic17 source");
  const auto& request=*active.travel->pending;
@@ -348,16 +352,21 @@ odh::FamilyVacationPhase prepare_vacation_entry_phase(const odh::SessionBundle& 
     it->kind!=odh::EntityKind::avatar||it->dead||it->ui_ghost||it->person_data.size()<=61||!it->person_data[61])
   throw odh::FormatError("vacation entry actual CallerPD61 source unavailable");
  const auto family=static_cast<std::uint16_t>(it->person_data[61]);
- return vacation_phase(sealed,head,current,odh::FamilyVacationPhaseKind::set_before_avatars,family,static_cast<std::uint16_t>(request.destination));
+ return vacation_phase(source,current,odh::FamilyVacationPhaseKind::set_before_avatars,family,static_cast<std::uint16_t>(request.destination));
 }
 odh::FamilyVacationPhase prepare_vacation_clear_phase(const odh::SessionBundle& sealed,const TravelCheckpointDigest& head,
  const odh::FamilyVacationSnapshot& current,std::uint16_t family,std::uint16_t home,odh::OriginalLotClass actual_class){
+ return prepare_vacation_clear_phase(odh::decode_session_source_checkpoint(odh::encode_session_bundle(sealed),head),current,family,home,actual_class);
+}
+odh::FamilyVacationPhase prepare_vacation_clear_phase(const odh::SessionSourceCheckpoint& source,
+ const odh::FamilyVacationSnapshot& current,std::uint16_t family,std::uint16_t home,odh::OriginalLotClass actual_class){
+ const auto& sealed=source.envelope();
  odh::validate_ts1_travel_bundle(sealed);
  const auto& travel=sealed.travel;
  if(!travel||!travel->pending||travel->current_house==travel->home_house||!family||travel->home_house!=home||
     (travel->pending->destination!=-1&&travel->pending->destination!=home)||actual_class!=odh::OriginalLotClass::residential)
   throw odh::FormatError("vacation clear lacks authenticated frontend residential return phase");
- return vacation_phase(sealed,head,current,odh::FamilyVacationPhaseKind::clear_residential_load,family,home);
+ return vacation_phase(source,current,odh::FamilyVacationPhaseKind::clear_residential_load,family,home);
 }
 
 }

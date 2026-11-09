@@ -48,7 +48,20 @@ struct InteractionActionSnapshot {
     InteractionCheckContext check_context=InteractionCheckContext::default_zero;
     std::optional<InteractionLabel> label={};
 };
-struct InteractionActiveSnapshot {std::uint64_t uid,ticket;};
+// Actual AttemptPush may retain an old action across a synchronous Reset.
+// Execution is distinct from the CURRENT header at its ActiveQueueBlock index;
+// that header may be different or absent. No lifecycle lease is persisted.
+struct InteractionDetachedExecutionSnapshot {
+    VmCall call;
+    std::uint64_t source_run_generation=0;
+};
+struct InteractionActiveSnapshot {
+    std::uint64_t uid,ticket;
+    // Header lookup follows the source's CURRENT numeric queue index.
+    // uid is its actual current header UID, or0 only for a proved absence.
+    std::optional<InteractionDetachedExecutionSnapshot> detached_execution={};
+};
+
 struct InteractionWaitSnapshot {std::uint64_t ticket,deadline;};
 struct InteractionQueueSnapshot {
     std::int16_t actor_id;
@@ -67,6 +80,31 @@ struct InteractionQueueSnapshot {
     // active action is stored separately and is always the innermost frame.
     std::vector<InteractionActiveSnapshot> suspended_active;
 };
+// Value-only cross-codec helpers. A detached binding follows the CURRENT
+// numeric source index; its executing call is proven separately by VM state.
+inline const VmCall* interaction_execution_call(const InteractionQueueSnapshot& state,std::size_t index){
+    const InteractionActiveSnapshot* active=index<state.suspended_active.size()?&state.suspended_active[index]:
+        index==state.suspended_active.size()&&state.active?&*state.active:nullptr;
+    if(!active)return nullptr;
+    if(active->detached_execution)return &active->detached_execution->call;
+    return index<state.actions.size()?&state.actions[index].call:nullptr;
+}
+inline bool interaction_header_binding_valid(const InteractionQueueSnapshot& state,std::size_t index,
+        const InteractionActiveSnapshot& active){
+    if(!active.detached_execution)return active.uid&&index<state.actions.size()&&state.actions[index].uid==active.uid;
+    const auto& detached=*active.detached_execution;const auto& call=detached.call;
+    if(!detached.source_run_generation||detached.source_run_generation>=state.run_generation||
+       call.return_mode!=VmCallReturnMode::interaction_next_tick||!routine_key_valid(call.key)||
+       call.arguments.size()>4096||(call.action_tree_override&&!*call.action_tree_override)||
+       !call.context.entity_references_bound||call.context.caller!=state.actor_id||
+       call.context.caller_generation!=state.actor_generation||call.context.callee<=0||
+       !call.context.callee_generation||call.context.stack_object!=call.context.callee||
+       call.context.stack_object_generation!=call.context.callee_generation)return false;
+    // Only the actual reset-first action can lack its current header; a
+    // nonexistent arbitrary nested prefix is not a source continuation.
+    return index<state.actions.size()?active.uid==state.actions[index].uid:
+        (!active.uid&&index==0&&state.suspended_active.empty()&&state.actions.empty());
+}
 // Native queue for one avatar/VM. The TS1 profile currently implements priority
 // insertion and its persisted action metadata. World and VM must outlive it.
 // Host observes before each run/budget
@@ -247,7 +285,12 @@ private:
     bool valid_snapshot_with_vm(const InteractionQueueSnapshot&,const VmSnapshot&) const;
     void publish_snapshot(InteractionQueueSnapshot&&) noexcept;
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
+    PrimitiveOutcome detached_attempt_push(const Action&,const VmFrame&,const Instruction&,const VmDispatch&,
+        const VmInstructionLease&,std::uint64_t source_run,const std::optional<VmFrameWrite>&);
     bool validate();
+    // Producer-only derived header binding after an actual source queue edit.
+    // Never called by decode/validation to repair an invalid saved UID.
+    void rebind_current_source_headers() noexcept;
     bool evaluate_queue_priorities();
     bool enqueue_impl(RoutineKey,VmContext,const std::vector<std::int16_t>&,
         std::int16_t,InteractionQueueMode,std::uint32_t,bool,bool,bool,std::optional<RoutineKey>,bool,
@@ -267,6 +310,8 @@ private:
     std::uint64_t clock_=0,idle_start_=0;std::optional<std::uint64_t> last_tick_,resume_tick_;
     std::deque<Action> queue_;std::vector<Active> suspended_active_;
     std::optional<Active> active_;std::optional<Wait> wait_;
+    bool eligibility_check_active_=false;
+
     InteractionQueueProfile profile_=InteractionQueueProfile::ts1_priority;
     std::uint16_t next_queue_uid_=0;
     std::optional<InteractionCompletion> completion_;bool interrupted_=false,executing_=false;

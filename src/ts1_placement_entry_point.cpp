@@ -1,3 +1,4 @@
+#include "odh/live_entry_point5.hpp"
 // SPDX-License-Identifier: MPL-2.0
 #include "odh/ts1_placement_entry_point.hpp"
 namespace odh {
@@ -35,6 +36,6 @@ Ts1PlacementEntryPointResult evaluate_ts1_avatar_placement_entry_point(const Ts1
         if(result.status==VmStatus::returned_true)return {Ts1PlacementEntryPointState::evaluated_true,result.steps,{}};
         if(result.status==VmStatus::returned_false)return {Ts1PlacementEntryPointState::evaluated_false,result.steps,{}};
         return fail(result.diagnostic.empty()?"avatar placement EP9 did not return synchronously":result.diagnostic,result.steps);
-    }catch(const std::exception& error){return fail(error.what());}
+    }catch(const SourceCheckResetRetirement&){throw;}catch(const std::exception& error){return fail(error.what());}
 }
 }

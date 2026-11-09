@@ -1361,6 +1361,51 @@ bool World::notify_footprint_changed(std::int16_t id){
     const auto generation=e->generation;notifying_footprint_=true;struct Reset{bool& flag;~Reset(){flag=false;}}reset{notifying_footprint_};
     try{if(!footprint_observer_(*this,id,generation))return false;const auto* current=find(id);return current&&current->generation==generation;}catch(...){return false;}
 }
+bool World::set_avatar_burning_observer(AvatarBurningObserver observer){
+    if(reject_room_reentry()||avatar_burning_depth_)return false;
+    avatar_burning_observer_=std::move(observer);return true;
+}
+bool World::set_entity_flags(const VmFrame& source,WorldEntityReference target,std::int16_t value){
+    if(reject_room_reentry())return false;
+    const auto found=entities_.find(target.id);
+    if(found==entities_.end()||found->second.generation!=target.generation||
+       found->second.ui_ghost||!is_live_reference(target))return false;
+    return write_flags(source,found->second,value,false);
+}
+bool World::write_flags(const VmFrame& source,Entity& entity,std::int16_t value,bool retained){
+    const auto field=entity.object_words.find(8);if(field==entity.object_words.end())return false;
+    const auto before=field->second;
+    const auto changed=std::uint16_t(before)^std::uint16_t(value);
+    if(!changed)return true;
+    if(retained&&(changed&4U))return false;
+    const WorldEntityReference target{entity.id,entity.generation};
+    const bool avatar=entity.kind==EntityKind::avatar;
+    field->second=value;if(!retained)mark_spatial_change();
+    if(retained)entity.static_footprint=(std::uint16_t(value)&0x8000U)==0;
+    else{
+        // Source SetValue order: raw Flags, UpdateFootprint, class property,
+        // avatar Reset, then presentation observes the resulting word.
+        if((changed&4U)&&!notify_footprint_changed(target.id))return false;
+        const auto* current=find(target.id);
+        if(!current||current->generation!=target.generation)return false;
+        if((changed&0x8000U)&&!set_static_footprint(target.id,(std::uint16_t(value)&0x8000U)==0,
+            FootprintClassChangeSource::flags_assignment))return false;
+    }
+    if(avatar&&(changed&512U)){
+        if(!avatar_burning_observer_)return false; // Published Flags cannot stand in for required Reset.
+        // Same-target InReset belongs to the host Reset helper. This bound
+        // only prevents arbitrary cross-entity callback recursion exhausting
+        // the native stack; it never suppresses a legitimate reset as success.
+        if(avatar_burning_depth_>=64)return false;
+        ++avatar_burning_depth_;
+        struct Guard {unsigned& value;~Guard(){--value;}} guard{avatar_burning_depth_};
+        try{
+            if(!avatar_burning_observer_(*this,source,target,before,value))return false;
+            return resolve_reference(target)!=nullptr;
+        }catch(...){return false;}
+    }
+    return true;
+}
 bool World::set_ui_ghost(std::int16_t id,bool is_ghost) {
     if(reject_room_reentry())return false;
     const auto found=entities_.find(id);
@@ -2205,20 +2250,9 @@ bool World::write(const VmFrame& frame, std::uint8_t scope, std::int16_t index, 
         if(index==1)return write_direction(frame,{entity.id,entity.generation},value,dead);
         if(index==41&&!dead&&entity.kind==EntityKind::object&&current_value_write_observer_)
             return write_current_value({entity.id,entity.generation},field->second,value);
-        if(dead&&index==8&&((std::uint16_t(field->second)^std::uint16_t(value))&4U))return false;
+        if(index==8)return write_flags(frame,entity,value,dead);
         if(field->second!=value){
-            const auto old=field->second;const auto id=entity.id;const auto generation=entity.generation;
             field->second=value;if(!dead)mark_spatial_change();
-            if(index==8&&dead)entity.static_footprint=(std::uint16_t(value)&0x8000U)==0;
-            if(index==8&&!dead){
-                const auto changed=std::uint16_t(old)^std::uint16_t(value);
-                // Source SetValue(Flags): publish ObjectData first; UpdateFootprint
-                // sees the previous StaticFootprint; only then assign the
-                // dynamic-class property directly (not SetObstacleStatic).
-                if((changed&4U)&&!notify_footprint_changed(id))return false;
-                const auto* current=find(id);if(!current||current->generation!=generation)return false;
-                if((changed&0x8000U)&&!set_static_footprint(id,(std::uint16_t(value)&0x8000U)==0,FootprintClassChangeSource::flags_assignment))return false;
-            }
         }
         return true;
     }

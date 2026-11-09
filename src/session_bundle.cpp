@@ -560,13 +560,12 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity,std::uint64
     std::uint64_t previous_parent_ticket=0;
     for(std::size_t i=0;i<parent_count;++i){
         const auto& parent=interactions.suspended_active[i];
-        if(parent.uid!=interactions.actions[i].uid||!valid_ticket(parent.ticket)||
+        if(!interaction_header_binding_valid(interactions,i,parent)||!valid_ticket(parent.ticket)||
            parent.ticket<=previous_parent_ticket)
             throw FormatError("session suspended interaction parent does not match queue order");
         previous_parent_ticket=parent.ticket;
     }
-    if(interactions.active&&(interactions.actions.size()<=parent_count||
-       interactions.active->uid!=interactions.actions[parent_count].uid||
+    if(interactions.active&&(!interaction_header_binding_valid(interactions,parent_count,*interactions.active)||
        !valid_ticket(interactions.active->ticket)||interactions.active->ticket<=previous_parent_ticket))
         throw FormatError("session active interaction does not match nested queue prefix");
     std::vector<const VmFrame*> interaction_frames;
@@ -575,9 +574,8 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity,std::uint64
            frame.return_mode!=VmCallReturnMode::immediate)continue;
         interaction_frames.push_back(&frame);
     }
-    const auto frame_matches=[&](const VmFrame& frame,const InteractionActionSnapshot& action,
+    const auto frame_matches=[&](const VmFrame& frame,const VmCall& call,
                                   std::uint64_t ticket){
-        const auto& call=action.call;
         return frame.invocation_ticket==ticket&&
            frame.key.scope==call.key.scope&&frame.key.id==call.key.id&&
            frame.context.caller==call.context.caller&&frame.context.callee==call.context.callee&&
@@ -675,7 +673,9 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity,std::uint64
     }
     bool action_frame=false;
     if(interactions.active){
-        const auto& active_call=interactions.actions[parent_count].call;
+        const auto* executing=interaction_execution_call(interactions,parent_count);
+        if(!executing)throw FormatError("session active execution descriptor is absent");
+        const auto& active_call=*executing;
         const bool returned_unobserved=(active_call.return_mode==VmCallReturnMode::interaction_next_tick&&
             vm.interaction_return&&!interactions.resume_tick&&
             vm.interaction_return->ticket==interactions.active->ticket)||
@@ -686,8 +686,8 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity,std::uint64
             throw FormatError("session interaction VM frame roster differs from active prefix");
         for(std::size_t i=0;i<interaction_frames.size();++i){
             const auto& saved=i<parent_count?interactions.suspended_active[i]:*interactions.active;
-            const auto& action=interactions.actions[i];
-            if(!frame_matches(*interaction_frames[i],action,saved.ticket))
+            const auto* executing=interaction_execution_call(interactions,i);
+            if(!executing||!frame_matches(*interaction_frames[i],*executing,saved.ticket))
                 throw FormatError("session interaction VM frame does not match queue key, context, or ticket");
         }
         action_frame=interaction_frames.size()>parent_count;
@@ -695,7 +695,9 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity,std::uint64
         throw FormatError("session interaction frame has no active controller prefix");
     }
     if(interactions.active) {
-        const auto& active_call=interactions.actions[parent_count].call;
+        const auto* executing=interaction_execution_call(interactions,parent_count);
+        if(!executing)throw FormatError("session active execution descriptor is absent");
+        const auto& active_call=*executing;
         if(vm.interaction_return&&!interactions.resume_tick&&
            (active_call.return_mode!=VmCallReturnMode::interaction_next_tick||action_frame||
             vm.interaction_return->ticket!=interactions.active->ticket||
@@ -3108,15 +3110,20 @@ void validate_simulation(const SessionBundle& bundle) {
     }
 }
 std::vector<std::uint8_t> encode_simulation(const SessionSimulationState& sim,std::size_t limit) {
-    Writer w(limit);w.u16(1);const auto& c=sim.clock;
-    w.u64(c.ticks);w.u16(c.minute_fraction);w.u8(c.minute);w.u8(c.hour);w.u8(c.day);w.u8(c.month);w.i32(c.year);
+    Writer w(limit);w.u16(2);const auto& c=sim.clock;
+    w.u64(c.ticks);w.u16(c.minute_fraction);w.u8(c.minute);w.u8(c.hour);w.u8(c.day);w.u8(c.month);w.i32(c.year);w.i32(c.fire_percent);
     w.u16(static_cast<std::uint16_t>(sim.avatars.size()));
     for(const auto& a:sim.avatars){w.i16(a.id);w.u8(a.decay.last_two_minute_bucket);for(auto f:a.decay.fractions)w.i16(f);}
     return w.take();
 }
 SessionSimulationState decode_simulation(const std::vector<std::uint8_t>& bytes,std::size_t max_avatars) {
-    Reader r(bytes);if(r.u16()!=1)throw FormatError("unsupported session simulation version");
+    Reader r(bytes);const auto version=r.u16();
+    if(version!=1&&version!=2)throw FormatError("unsupported session simulation version");
     SessionSimulationState sim;auto& c=sim.clock;c.ticks=r.u64();c.minute_fraction=r.u16();c.minute=r.u8();c.hour=r.u8();c.day=r.u8();c.month=r.u8();c.year=r.i32();
+    // SIMS1 was the native clock schema before Burn existed: it had neither
+    // a fire threshold nor a mutator. Bridge that native model to VMClock's
+    // constructor value; this does not recover an original-game fire history.
+    c.fire_percent=version>=2?r.i32():20000;
     const auto count=r.u16();if(count>max_avatars)throw FormatError("session simulation roster exceeds bounds");
     for(unsigned i=0;i<count;++i){SessionAvatarMotiveState a;a.id=r.i16();a.decay.last_two_minute_bucket=r.u8();for(auto& f:a.decay.fractions)f=r.i16();sim.avatars.push_back(a);}
     if(!r.done())throw FormatError("session simulation has unclaimed bytes");

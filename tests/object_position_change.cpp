@@ -741,5 +741,42 @@ void native_rotation_requires_actual_owner(){
         "a native metadata tag cannot authorize rotation without the real group heading/offset/list owner");
 }
 
+void constructor_capture_receipts(){
+    for(unsigned mode=0;mode<3;++mode){
+        Fixture f;const auto generation=f.world.find(1)->generation;
+        unsigned admits=0;f.services.admit_single_ordinary=[&](auto)->std::optional<bool>{
+            ++admits;
+            if(mode==0)return false;
+            if(mode==1)return {};
+            f.authorized=false;return true;
+        };
+        const auto result=f.run();
+        const auto stage=mode==0?"ordinary admission rejected":mode==1?"ordinary admission unknown":"authority";
+        require(result.status==Status::unsupported&&!result.effects_started&&!result.position_published&&admits==1,
+            "constructor receipt preserves admission invocation count and refusal before effects");
+        require(result.diagnostic.find(stage)!=std::string::npos&&result.diagnostic.find("root=1")!=std::string::npos&&
+            result.diagnostic.find("root_generation="+std::to_string(generation))!=std::string::npos&&
+            !f.world.find(1)->position,
+            "constructor failure identifies exact failed capture stage and generation without publication");
+    }
+    {
+        Fixture f;const auto generation=f.world.find(1)->generation;
+        f.services.admit_single_ordinary=[&](auto)->std::optional<bool>{
+            require(f.world.remove(1)&&f.world.create(1,odh::EntityKind::object),"actual body replacement during admission");return true;};
+        const auto result=f.run();
+        require(result.status==Status::unsupported&&!result.effects_started&&f.world.find(1)->generation!=generation&&
+            result.diagnostic.find("live identity")!=std::string::npos&&
+            result.diagnostic.find("actual_generation="+std::to_string(f.world.find(1)->generation))!=std::string::npos,
+            "replacement body is rejected and receipt preserves both exact generations");
+    }
+    Fixture f;unsigned admits=0;
+    f.services.admit_single_ordinary=[&](auto)->std::optional<bool>{++admits;
+        require(f.world.set_position(1,{40,40,1,0}),"actual admission callback changes constructor pose");return true;};
+    const auto result=f.run();
+    require(result.status==Status::unsupported&&!result.effects_started&&admits==1&&f.world.find(1)->position->x==40&&
+        result.diagnostic.find("constructor pose/attachment changed during capture")!=std::string::npos,
+        "pose failure is distinct from tree failure and preserves callback partial effects");
 }
-int main(){try{shared_native_rotation_invalidates_checks();shared_native_stages();native_rotation_requires_actual_owner();dynamic_split_invocation_authority();imported_group_position();physical_group_position();dynamic_group_support_footprint();retained_parent_source_pre();lifecycle_phase_boundaries();source_order();support_branch();existing_move_and_held_tree();clean_old_transfer_lifecycle();loaded_position_lifecycle();capability_and_effects();scalar_publication_hook();lifecycle_failure_diagnostics();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+
+}
+int main(){try{constructor_capture_receipts();shared_native_rotation_invalidates_checks();shared_native_stages();native_rotation_requires_actual_owner();dynamic_split_invocation_authority();imported_group_position();physical_group_position();dynamic_group_support_footprint();retained_parent_source_pre();lifecycle_phase_boundaries();source_order();support_branch();existing_move_and_held_tree();clean_old_transfer_lifecycle();loaded_position_lifecycle();capability_and_effects();scalar_publication_hook();lifecycle_failure_diagnostics();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

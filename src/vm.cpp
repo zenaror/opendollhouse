@@ -8,6 +8,275 @@
 #include <type_traits>
 
 namespace odh {
+namespace detail {
+enum class VmInstructionPhase {none,handler,setter,commit};
+struct VmInstructionHandle {VmInstructionState* state=nullptr;const void* thread=nullptr;};
+struct VmInstructionLink {
+    Vm* child=nullptr;
+    Vm* reset_target=nullptr;
+    const Vm* service_source=nullptr;
+    const void* thread=nullptr;
+    std::uint64_t ingress_run=0,retired_run=0;
+    bool source_retired=false;
+    std::vector<std::pair<const Vm*,std::uint64_t>> reset_targets;
+    VmInstructionChildKind kind=VmInstructionChildKind::construction;
+    std::weak_ptr<VmInstructionHandle> parent;
+    std::function<bool()> service_current;
+    bool active=true,cleanup=false,parent_bound=false;
+};
+struct VmInstructionState {
+    Vm* owner=nullptr;
+    VmFrame* frame=nullptr;
+    VmInstructionState* previous_vm=nullptr;
+    Instruction instruction{};
+    std::uint64_t run=0,ticket=0;
+    bool check=false,allowed=false,detached=false;
+    VmInstructionPhase phase=VmInstructionPhase::none;
+    const void* thread=nullptr;
+    std::weak_ptr<VmInstructionHandle> parent;
+    std::shared_ptr<VmInstructionLink> link;
+    std::shared_ptr<VmInstructionHandle> handle;
+    std::vector<std::vector<VmFrame>> retained;
+    unsigned reset_actions=0;
+    std::size_t commit_parent_depth=0;
+    std::shared_ptr<VmInstructionHandle> identity(){
+        if(!handle)handle=std::make_shared<VmInstructionHandle>(VmInstructionHandle{this,thread});
+        return handle;
+    }
+    ~VmInstructionState(){if(handle)handle->state=nullptr;}
+};
+struct VmDetachedCallState {
+    std::weak_ptr<VmInstructionHandle> source;
+    VmCall call;
+    std::uint64_t destination_run=0;
+    std::size_t destination_depth=0;
+    bool consumed=false;
+};
+thread_local unsigned char thread_identity=0;
+thread_local VmInstructionState* current_instruction=nullptr;
+thread_local unsigned trace_depth=0;
+VmInstructionState* state_of(const std::shared_ptr<VmInstructionHandle>& handle) noexcept {
+    // Read the immutable thread discriminator before touching the ephemeral
+    // stack-local state. A foreign thread never races its retirement.
+    return handle&&handle->thread==&thread_identity?handle->state:nullptr;
+}
+bool same_instruction(const Instruction& a,const Instruction& b) noexcept {
+    return a.opcode==b.opcode&&a.on_true==b.on_true&&a.on_false==b.on_false&&a.operands==b.operands;
+}
+bool same_call(const VmCall& a,const VmCall& b) noexcept {
+    return a.key.scope==b.key.scope&&a.key.id==b.key.id&&vm_context_equal(a.context,b.context)&&
+        a.arguments==b.arguments&&a.return_mode==b.return_mode&&a.exact_arguments==b.exact_arguments&&
+        a.action_tree_override==b.action_tree_override;
+}
+VmInstructionState* parent_of(const VmInstructionState& state) {
+    const auto parent=state.parent.lock();
+    return state_of(parent);
+}
+bool service_current(const VmInstructionLink& link){
+    if(link.thread!=&thread_identity)return false;
+    if(link.source_retired)return link.service_source&&link.retired_run>link.ingress_run&&
+        link.service_source->run_generation()==link.retired_run;
+    return !link.service_current||link.service_current();
+}
+bool prepare_reset_receipts(Vm* target,VmInstructionState* source){
+    for(unsigned depth=0;source&&depth<=16;++depth,source=parent_of(*source)){
+        auto& link=source->link;
+        if(!link||!link->active||!link->service_source)continue;
+        const auto found=std::find_if(link->reset_targets.begin(),link->reset_targets.end(),
+            [target](const auto& item){return item.first==target;});
+        if(found==link->reset_targets.end()){
+            if(link->reset_targets.size()>=32)return false;
+            link->reset_targets.reserve(link->reset_targets.size()+1);
+        }
+    }
+    return true;
+}
+void record_source_reset(Vm* target,VmInstructionState* source,std::uint64_t old_run,std::uint64_t new_run,bool first){
+    for(unsigned depth=0;source&&depth<=16;++depth,source=parent_of(*source)){
+        auto& link=source->link;
+        if(!link||!link->active||!link->service_source)continue;
+        const auto found=std::find_if(link->reset_targets.begin(),link->reset_targets.end(),
+            [target](const auto& item){return item.first==target;});
+        if(found==link->reset_targets.end()){
+            if(!first)continue;
+            // Capacity was admitted for every link before any receipt/clear.
+            link->reset_targets.emplace_back(target,new_run);
+        }else{
+            if(!first&&found->second!=old_run)continue;
+            found->second=new_run;
+        }
+        if(link->service_source==target){link->source_retired=true;link->retired_run=new_run;}
+    }
+}
+bool link_current(const VmInstructionState& state) {
+    if(!state.link)return true;
+    if(!state.link->active||state.link->child!=state.owner)return false;
+    const auto parent=state.link->parent.lock();
+    if(state.link->parent_bound&&!parent)return false;
+    if(parent&&(!parent->state||
+       (parent->state->phase!=VmInstructionPhase::handler&&parent->state->phase!=VmInstructionPhase::setter)))return false;
+    if(!parent&&!state.link->service_current)return false;
+    if(!service_current(*state.link))return false;
+    return true;
+}
+bool descendant(const VmInstructionState* current,const VmInstructionState* ancestor) {
+    for(unsigned depth=0;current&&depth<=16;++depth){
+        if(!current->allowed||current->thread!=&thread_identity||!link_current(*current))return false;
+        if(current==ancestor)return true;
+        current=parent_of(*current);
+    }
+    return false;
+}
+bool callback_live(const VmInstructionState& state) noexcept {
+    return state.phase==VmInstructionPhase::handler||state.phase==VmInstructionPhase::setter;
+}
+}
+Vm::~Vm(){if(instruction_child_)instruction_child_->child=nullptr;}
+VmInstructionChildScope::~VmInstructionChildScope(){
+    if(!link_)return;
+    link_->active=false;
+    if(link_->child&&link_->child->instruction_child_==link_)link_->child->instruction_child_.reset();
+    link_->child=nullptr;
+}
+bool VmInstructionChildScope::valid() const noexcept {
+    try{
+        if(!link_||link_->thread!=&detail::thread_identity)return false;
+        if(!link_->active||!link_->child||detail::trace_depth)return false;
+        const auto parent=link_->parent.lock();
+        if(link_->parent_bound&&(!parent||!parent->state||!detail::callback_live(*parent->state)||
+            !detail::descendant(detail::current_instruction,parent->state)))return false;
+        return detail::service_current(*link_);
+    }catch(...){return false;}
+}
+bool VmInstructionChildScope::authenticated_reset_of(const Vm& target) const noexcept {
+    if(!valid()||!link_)return false;
+    const auto found=std::find_if(link_->reset_targets.begin(),link_->reset_targets.end(),
+        [&target](const auto& item){return item.first==&target;});
+    return found!=link_->reset_targets.end()&&target.run_generation()==found->second;
+}
+bool VmInstructionLease::valid() const noexcept {
+    try{
+        const auto handle=handle_.lock();const auto* state=detail::state_of(handle);
+        return state&&!detail::trace_depth&&detail::callback_live(*state)&&
+            detail::descendant(detail::current_instruction,state);
+    }catch(...){return false;}
+}
+const Vm* VmInstructionLease::origin() const noexcept {
+    const auto handle=handle_.lock();const auto* state=detail::state_of(handle);return state?state->owner:nullptr;
+}
+bool VmInstructionLease::matches(const VmFrame& frame,const Instruction& instruction,const VmDispatch& dispatch) const noexcept {
+    try{
+        const auto handle=handle_.lock();const auto* state=detail::state_of(handle);
+        return valid()&&state&&state->ticket&&dispatch.origin==state->owner&&dispatch.ticket==state->ticket&&
+            dispatch.check_mode==state->check&& &frame==state->frame&&
+            detail::same_instruction(instruction,state->instruction);
+    }catch(...){return false;}
+}
+bool VmInstructionLease::detached() const noexcept {
+    const auto handle=handle_.lock();return valid()&&handle&&handle->state&&handle->state->detached;
+}
+std::optional<VmDetachedCallContinuation> VmInstructionLease::prepare_detached_call(const VmCall& call) const {
+    const auto handle=handle_.lock();auto* state=detail::state_of(handle);
+    if(!valid()||!state||!state->detached||state->phase!=detail::VmInstructionPhase::handler||state->check||
+       (call.return_mode!=VmCallReturnMode::ordinary&&call.return_mode!=VmCallReturnMode::interaction_next_tick)||
+       !state->owner->can_accept_call(call))return {};
+    auto value=std::make_shared<detail::VmDetachedCallState>();
+    value->source=handle;value->call=call;value->destination_run=state->owner->run_generation_;
+    value->destination_depth=state->owner->stack_.size();
+    return VmDetachedCallContinuation{std::move(value)};
+}
+bool VmInstructionLease::call_commit_active() const noexcept {
+    const auto handle=handle_.lock();const auto* state=detail::state_of(handle);
+    return state&&!detail::trace_depth&&detail::current_instruction==state&&state->allowed&&state->detached&&
+        state->thread==&detail::thread_identity&&state->phase==detail::VmInstructionPhase::commit;
+}
+bool VmInstructionLease::matches_call_commit(const VmFrame& frame,const Instruction& instruction,
+        const VmDispatch& dispatch,std::size_t depth) const noexcept {
+    try{
+        const auto handle=handle_.lock();const auto* state=detail::state_of(handle);
+        if(!state||detail::trace_depth||detail::current_instruction!=state||
+           state->phase!=detail::VmInstructionPhase::commit||!state->detached||
+           state->commit_parent_depth!=depth||!state->owner||state->owner->stack_.size()!=depth+1||
+           !state->owner->active_call_commit_dispatch_||!state->owner->active_call_commit_instruction_)return false;
+        return state->owner->active_call_commit_parent_depth_==depth&&dispatch.origin==state->owner&&
+            dispatch.ticket==state->ticket&&dispatch.check_mode==state->check&&
+            &frame==state->frame&&detail::same_instruction(instruction,state->instruction)&&
+            detail::same_instruction(instruction,*state->owner->active_call_commit_instruction_);
+    }catch(...){return false;}
+}
+std::optional<VmInstructionLease> Vm::active_instruction_lease(const VmFrame& frame) noexcept {
+    try{
+        auto* state=detail::current_instruction;
+        if(!state||state->frame!=&frame||!state->owner||!detail::callback_live(*state)||
+           detail::trace_depth||!detail::descendant(state,state))return {};
+        return VmInstructionLease{state->identity()};
+    }catch(...){return {};}
+}
+std::optional<VmInstructionLease> Vm::instruction_lease(const VmFrame& frame) const noexcept {
+    const auto lease=active_instruction_lease(frame);
+    return lease&&lease->origin()==this?lease:std::nullopt;
+}
+std::unique_ptr<VmInstructionChildScope> Vm::authorize_instruction_child(const VmInstructionLease& parent,
+        VmInstructionChildKind kind){
+    if(!parent.valid()||parent.origin()==this||executing_||check_active_||external_check_active_||instruction_child_||
+       run_generation_||status_!=VmStatus::ready||!stack_.empty()||pending_)return {};
+    auto link=std::make_shared<detail::VmInstructionLink>();link->child=this;link->thread=&detail::thread_identity;link->kind=kind;link->parent=parent.handle_;link->parent_bound=true;
+    instruction_child_=link;
+    return std::unique_ptr<VmInstructionChildScope>(new VmInstructionChildScope(std::move(link)));
+}
+std::unique_ptr<VmInstructionChildScope> Vm::authorize_source_check_service(const Vm* source,std::function<bool()> current){
+    if(!source||source==this||!current||!current()||executing_||check_active_||external_check_active_||instruction_child_||
+       run_generation_||status_!=VmStatus::ready||!stack_.empty()||pending_)return {};
+    auto link=std::make_shared<detail::VmInstructionLink>();link->child=this;link->thread=&detail::thread_identity;
+    link->kind=VmInstructionChildKind::source_check;link->service_current=std::move(current);
+    link->service_source=source;link->ingress_run=source->run_generation();
+    if(source->instruction_scope_&&detail::callback_live(*source->instruction_scope_)&&
+       detail::descendant(detail::current_instruction,source->instruction_scope_)){
+        link->parent=source->instruction_scope_->identity();link->parent_bound=true;
+    }else if(source->instruction_child_&&source->instruction_child_->active){
+        // A prepared constructor's own Main has not dispatched yet, but its
+        // exact host-owned child link still carries its authenticated parent.
+        link->parent=source->instruction_child_->parent;
+        link->parent_bound=source->instruction_child_->parent_bound;
+    }
+    if(link->parent_bound)link->service_current={};
+    instruction_child_=link;
+    return std::unique_ptr<VmInstructionChildScope>(new VmInstructionChildScope(std::move(link)));
+}
+std::unique_ptr<VmInstructionChildScope> Vm::authorize_reset_cleanup(const VmInstructionLease* source,Vm& target,
+        std::function<bool()> current){
+    if(!current||!current())return {};
+    std::unique_ptr<VmInstructionChildScope> child;
+    if(source)child=authorize_instruction_child(*source,VmInstructionChildKind::source_check);
+    else child=authorize_source_check_service(&target,current);
+    if(!child)return {};
+    instruction_child_->cleanup=true;instruction_child_->reset_target=&target;
+    instruction_child_->service_current=std::move(current);
+    entity_thread_stack_=&target.entity_thread_frames();
+    return child;
+}
+bool Vm::source_reset_queue_mutation_active() const noexcept {
+    try{
+        if(detail::trace_depth)return false;
+        const auto* current=detail::current_instruction;
+        if(!current||!detail::callback_live(*current))return false;
+        auto* state=current;
+        for(unsigned depth=0;state&&depth<=16;++depth,state=detail::parent_of(*state)){
+            if(state->link&&state->link->cleanup&&state->link->reset_target==this)
+                return detail::descendant(current,state);
+        }
+        return false;
+    }catch(...){return false;}
+}
+bool Vm::source_reset_allowed(const VmInstructionLease& source) const noexcept {
+    try{
+        if(!source.valid()||named_stack_depth_||check_active_)return false;
+        if(!executing_)return true;
+        const auto handle=source.handle_.lock();const auto* trigger=detail::state_of(handle);
+        return trigger&&instruction_scope_&&detail::descendant(trigger,instruction_scope_);
+    }catch(...){return false;}
+}
+
 bool vm_context_equal(const VmContext&a,const VmContext&b) noexcept {
     return a.caller==b.caller&&a.callee==b.callee&&a.stack_object==b.stack_object&&a.code_owner==b.code_owner&&
         a.entity_references_bound==b.entity_references_bound&&a.caller_generation==b.caller_generation&&
@@ -349,6 +618,17 @@ bool Vm::prepare_primitive_call(const VmFrame& frame,const Instruction& instruct
     return matches_active_primitive(frame,instruction,dispatch)&&can_accept_call(call);
 }
 
+bool Vm::prepare_instruction_call(const VmInstructionLease& lease,const VmFrame& frame,
+        const Instruction& instruction,const VmDispatch& dispatch,const VmCall& call){
+    reject_storage_proof_mutation();
+    const auto authentic=[&]{return lease.origin()==this&&lease.matches(frame,instruction,dispatch);};
+    if(preparing_primitive_call_||!authentic())return false;
+    struct Guard{bool& active;explicit Guard(bool& value):active(value){active=true;}~Guard(){active=false;}}
+        guard(preparing_primitive_call_);
+    resolve_missing_owner(call.context.code_owner);
+    return authentic()&&can_accept_call(call);
+}
+
 VmSnapshot Vm::snapshot() const {
     if (executing_) throw std::logic_error("VM callbacks must not capture running state");
     return {stack_, register_temps(), register_xl(), status_, diagnostic_, steps_, pending_, suspended_pending_,
@@ -604,6 +884,8 @@ std::vector<WorldEntityReference> Vm::strong_entity_references() const {
         for(const auto role:{VmEntityRole::caller,VmEntityRole::callee,VmEntityRole::stack_object}){
             const auto ref=vm_context_reference(context,role);if(ref.id>0&&ref.generation)references.insert(ref);}};
     for(const auto& frame:stack_)add(frame.context);
+    for(auto* scope=instruction_scope_;scope;scope=scope->previous_vm)
+        for(const auto& frames:scope->retained)for(const auto& frame:frames)add(frame.context);
     if(entity_thread_stack_)for(const auto& frame:*entity_thread_stack_)add(frame.context);
     if(pending_)add(pending_->context);
     for(const auto& pending:suspended_pending_)add(pending.context);
@@ -616,6 +898,45 @@ bool Vm::references_entity(WorldEntityReference reference) const {
 VmStatus Vm::start_after_reset(RoutineKey key,VmContext context,const std::vector<std::int16_t>& arguments,bool exact){
     const auto temps=register_temps();const auto xl=register_xl();const auto result=start(key,context,arguments,exact);
     register_temps()=temps;register_xl()=xl;return result;
+}
+bool Vm::source_reset_clear(const VmInstructionLease* source){
+    if(storage_proof_active_){reject_storage_proof_mutation();return false;}
+    if(run_generation_==std::numeric_limits<std::uint64_t>::max()||named_stack_depth_||check_active_)return false;
+    if(source){
+        if(!source_reset_allowed(*source))return false;
+        const auto handle=source->handle_.lock();auto* root=detail::state_of(handle);
+        if(!root||!detail::prepare_reset_receipts(this,root))return false;
+        for(unsigned depth=0;depth<16;++depth){auto* parent=detail::parent_of(*root);if(!parent)break;root=parent;}
+        if(root->reset_actions>=32)return false;
+        ++root->reset_actions;
+    }else if(executing_||external_check_active_)return false;
+    if(executing_){
+        if(!instruction_scope_||instruction_scope_->retained.size()>=32)return false;
+        instruction_scope_->retained.reserve(instruction_scope_->retained.size()+1);
+        instruction_scope_->retained.emplace_back();
+        if(source){const auto handle=source->handle_.lock();detail::record_source_reset(this,detail::state_of(handle),
+            run_generation_,run_generation_+1,true);}
+        instruction_scope_->retained.back().swap(stack_);
+        instruction_scope_->detached=true;
+    }else{
+        if(source){const auto handle=source->handle_.lock();detail::record_source_reset(this,detail::state_of(handle),
+            run_generation_,run_generation_+1,true);}
+        stack_.clear();
+    }
+    ++run_generation_;
+    pending_.reset();suspended_pending_.clear();interaction_return_.reset();external_frame_return_.reset();
+    immediate_continuations_.clear();immediate_return_.reset();diagnostic_.clear();steps_=0;
+    status_=VmStatus::returned_false;return true;
+}
+VmStatus Vm::source_reset_main(RoutineKey key,VmContext context,const std::vector<std::int16_t>& arguments){
+    if(run_generation_==std::numeric_limits<std::uint64_t>::max())return VmStatus::fault;
+    const auto previous_run=run_generation_;
+    ++run_generation_;
+    detail::record_source_reset(this,detail::current_instruction,previous_run,run_generation_,false);
+    action_tree_known_=true;steps_=0;status_=VmStatus::running;
+    try{push(key,context,arguments,VmCallReturnMode::ordinary,0,false,false);}
+    catch(const VmError& error){diagnostic_=error.what();status_=VmStatus::fault;}
+    return status_;
 }
 bool Vm::reset_execution_state() {
     reject_storage_proof_mutation();
@@ -772,7 +1093,7 @@ std::optional<VmMemoryAddress> resolve_ts1_variable_address(std::uint8_t scope,
     return VmMemoryAddress{target,index};
 }
 std::int32_t Vm::read(std::uint8_t scope, std::int16_t data) {
-    auto& frame = stack_.back();
+    auto& frame = instruction_scope_?*instruction_scope_->frame:stack_.back();
     const auto address=resolve_ts1_variable_address(scope,data,frame,register_temps());
     if(!address)throw VmError("indirect read selector outside bank");
     scope=address->scope;data=address->index;
@@ -819,7 +1140,7 @@ std::int32_t Vm::read(std::uint8_t scope, std::int16_t data) {
     }
 }
 bool Vm::write(std::uint8_t scope, std::int16_t data, std::int32_t value) {
-    auto& frame = stack_.back();
+    auto& frame = instruction_scope_?*instruction_scope_->frame:stack_.back();
     const auto address=resolve_ts1_variable_address(scope,data,frame,register_temps());
     if(!address)throw VmError("indirect write selector outside bank");
     scope=address->scope;data=address->index;
@@ -848,6 +1169,14 @@ bool Vm::write(std::uint8_t scope, std::int16_t data, std::int32_t value) {
             if (memory_.set_dynamic_sprite_flag(frame,flag,truncated>0)) return true;
         }
         if (const auto address=resolve_person_data_address(scope,data,register_temps());address) {
+            struct SetterScope {
+                detail::VmInstructionState* state;detail::VmInstructionPhase previous;
+                explicit SetterScope(detail::VmInstructionState* current):state(current),
+                    previous(current?current->phase:detail::VmInstructionPhase::none){
+                    if(state&&state->instruction.opcode==2)state->phase=detail::VmInstructionPhase::setter;
+                }
+                ~SetterScope(){if(state)state->phase=previous;}
+            } setter(instruction_scope_);
             if (memory_.expression_write) {
                 if (const auto result=memory_.expression_write(frame,address->scope,address->index,truncated))
                     return *result;
@@ -880,7 +1209,8 @@ bool Vm::expression(const Instruction& i) {
         try {
             const auto& vm = *state.vm;
             if (!vm.memory_.expression_levels) throw VmError("unsupported expression room levels");
-            const auto levels=vm.memory_.expression_levels(vm.stack_.back());
+            const auto& source=vm.instruction_scope_?*vm.instruction_scope_->frame:vm.stack_.back();
+            const auto levels=vm.memory_.expression_levels(source);
             if (!levels) throw VmError("unsupported expression room levels");
             *caller=(*levels)[0]; *callee=(*levels)[1]; *offset=(*levels)[2]; return 0;
         } catch (...) { state.error=std::current_exception(); return 1; }
@@ -895,29 +1225,15 @@ bool Vm::expression(const Instruction& i) {
                       " operator " + std::to_string(i.operands[5]));
     return result!=0;
 }
-void Vm::branch(bool result) {
-    // Iteratively unwind returning children; parent stays on its call instruction.
-    while (!stack_.empty()) {
-        auto& frame = stack_.back();
-        const auto& routine=current_routine(frame);
-        if(frame.pc>=routine.instructions.size())throw VmError("instruction pointer outside routine");
-        const auto& instruction = routine.instructions[frame.pc];
-        auto target = result ? instruction.on_true : instruction.on_false;
-        if (target == 0xFD) {
-            target = instruction.on_true != 0xFD ? instruction.on_true : instruction.on_false;
-            if (target == 0xFD) throw VmError("both branches are FD error destinations");
-        }
-        if (target < 0xFD) {
-            if (target >= current_routine(frame).instructions.size()) throw VmError("branch outside routine");
-            frame.pc = target; return;
-        }
-        result = target == 0xFE;
+bool Vm::pop_current_frame(bool result) {
+    if(stack_.empty()){status_=result?VmStatus::returned_true:VmStatus::returned_false;return false;}
+    const auto& frame=stack_.back();
         if (frame.return_mode == VmCallReturnMode::interaction_next_tick) {
             interaction_return_ = VmInteractionReturn{frame.invocation_ticket, result,
                                                        frame.context.code_owner, run_generation_};
             stack_.pop_back();
             status_ = VmStatus::yielded;
-            return;
+            return false;
         }
         if(frame.return_mode==VmCallReturnMode::immediate){
             if(immediate_continuations_.empty()||immediate_return_||
@@ -927,7 +1243,7 @@ void Vm::branch(bool result) {
             immediate_return_=VmImmediateReturn{frame.invocation_ticket,result,frame.context.code_owner,run_generation_};
             stack_.pop_back();
             status_=VmStatus::yielded;
-            return;
+            return false;
         }
         if (frame.return_mode == VmCallReturnMode::external_frame_next_tick) {
             if (suspended_pending_.empty()) throw VmError("external frame returned without parent wait");
@@ -937,15 +1253,45 @@ void Vm::branch(bool result) {
             pending_ = std::move(suspended_pending_.back());
             suspended_pending_.pop_back();
             status_ = VmStatus::yielded;
-            return;
+            return false;
         }
-        stack_.pop_back();
+    stack_.pop_back();
+    if(stack_.empty()){status_=result?VmStatus::returned_true:VmStatus::returned_false;return false;}
+    return true;
+}
+void Vm::branch(bool result) {
+    // Ordinary returning children select their current parent's instruction.
+    while(!stack_.empty()){
+        auto& frame=stack_.back();const auto& routine=current_routine(frame);
+        if(frame.pc>=routine.instructions.size())throw VmError("instruction pointer outside routine");
+        const auto& instruction=routine.instructions[frame.pc];
+        auto target=result?instruction.on_true:instruction.on_false;
+        if(target==0xFD){target=instruction.on_true!=0xFD?instruction.on_true:instruction.on_false;
+            if(target==0xFD)throw VmError("both branches are FD error destinations");}
+        if(target<0xFD){
+            if(target>=routine.instructions.size())throw VmError("branch outside routine");
+            frame.pc=target;return;
+        }
+        result=target==0xFE;
+        if(!pop_current_frame(result))return;
     }
-    status_ = result ? VmStatus::returned_true : VmStatus::returned_false;
+    status_=result?VmStatus::returned_true:VmStatus::returned_false;
+}
+void Vm::branch_from_detached(VmFrame& frame,const Instruction& instruction,bool result){
+    auto target=result?instruction.on_true:instruction.on_false;
+    if(target==0xFD){target=instruction.on_true!=0xFD?instruction.on_true:instruction.on_false;
+        if(target==0xFD)throw VmError("both branches are FD error destinations");}
+    if(target<0xFD){
+        if(target>=current_routine(frame).instructions.size())throw VmError("branch outside retained source routine");
+        frame.pc=target;return; // The new entity Main's PC is untouched.
+    }
+    result=target==0xFE;
+    if(pop_current_frame(result))branch(result);
 }
 VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>& trace) {
     reject_storage_proof_mutation();
     if (executing_) throw std::logic_error("VM callbacks must not reenter start/run");
+    last_run_instruction_count_=0;
     if (status_ != VmStatus::running && status_ != VmStatus::budget_exhausted) return status_;
     const auto unbound=[](const VmContext& context){return !context.entity_references_bound;};
     bool legacy=std::any_of(stack_.begin(),stack_.end(),[&](const auto& frame){return unbound(frame.context);})||
@@ -959,7 +1305,7 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
         explicit Guard(bool& flag) : value(flag) { value = true; }
         ~Guard() { value = false; }
     } guard(executing_);
-    return run_internal(budget,trace,nullptr,false);
+    return run_internal(budget,trace,nullptr,false,&last_run_instruction_count_);
 }
 
 bool Vm::references_entity(std::int16_t entity) const {
@@ -967,6 +1313,8 @@ bool Vm::references_entity(std::int16_t entity) const {
         return context.caller==entity||context.callee==entity||context.stack_object==entity;
     };
     for(const auto& frame:stack_)if(matches(frame.context))return true;
+    for(auto* scope=instruction_scope_;scope;scope=scope->previous_vm)
+        for(const auto& frames:scope->retained)for(const auto& frame:frames)if(matches(frame.context))return true;
     if(pending_&&matches(pending_->context))return true;
     for(const auto& pending:suspended_pending_)if(matches(pending.context))return true;
     return false;
@@ -1172,13 +1520,36 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
     std::uint64_t used=0;
     for (;used<instruction_budget && status_ == VmStatus::running;++used) {
         try {
-            const auto& frame = stack_.back();
+            if(stack_.empty()){status_=VmStatus::returned_false;break;}
+            if(stack_.capacity()<stack_.size()+1&&stack_.size()<limits_.stack_depth){
+                const auto doubled=stack_.capacity()>limits_.stack_depth/2?limits_.stack_depth:stack_.capacity()*2;
+                stack_.reserve(std::min(limits_.stack_depth,std::max(stack_.size()+1,doubled)));
+            }
+            auto& frame = stack_.back();
             const auto& routine = current_routine(frame);
             if (frame.pc >= routine.instructions.size()) throw VmError("instruction pointer outside routine");
             const auto instruction = routine.instructions[frame.pc];
             if (!check_mode&&steps_ == std::numeric_limits<std::uint64_t>::max())
                 throw VmError("step counter overflow");
-            if (trace) trace(VmTrace{steps_, stack_.size(), frame.key, frame.pc, instruction,frame.context.code_owner});
+            if(trace){
+                struct TraceMask {TraceMask(){++detail::trace_depth;}~TraceMask(){--detail::trace_depth;}} mask;
+                trace(VmTrace{steps_,stack_.size(),frame.key,frame.pc,instruction,frame.context.code_owner});
+            }
+            struct InstructionScope {
+                Vm& vm;detail::VmInstructionState state;detail::VmInstructionState* previous;
+                detail::VmInstructionState* previous_vm;
+                InstructionScope(Vm& value,VmFrame& current,const Instruction& operation,bool check):
+                    vm(value),previous(detail::current_instruction),previous_vm(value.instruction_scope_){
+                    state.owner=&vm;state.frame=&current;state.previous_vm=previous_vm;state.instruction=operation;state.run=vm.run_generation_;state.check=check;
+                    state.thread=&detail::thread_identity;
+                    state.link=vm.instruction_child_;
+                    if(state.link)state.parent=state.link->parent;
+                    state.allowed=!vm.named_stack_depth_&&(!check||(state.link&&state.link->kind==VmInstructionChildKind::source_check));
+                    if(state.allowed&&!detail::link_current(state))state.allowed=false;
+                    vm.instruction_scope_=&state;detail::current_instruction=&state;
+                }
+                ~InstructionScope(){vm.instruction_scope_=previous_vm;detail::current_instruction=previous;}
+            } scope(*this,frame,instruction,check_mode);
             if(!check_mode)++steps_;
             if (instruction.opcode >= 256) {
                 const auto key = routine_key(instruction.opcode);
@@ -1202,7 +1573,7 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                 push(key, context, args);
             } else if (instruction.opcode == 2) {
                 const auto result = expression(instruction);
-                branch(result);
+                if(scope.state.detached)branch_from_detached(frame,instruction,result);else branch(result);
             } else {
                 if (ticket_sequence_ == std::numeric_limits<std::uint64_t>::max())
                     throw VmError("service ticket overflow");
@@ -1219,8 +1590,15 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                         ~ActivePrimitive(){vm.active_primitive_dispatch_=previous_dispatch;
                             vm.active_primitive_instruction_=previous_instruction;}
                     } active(*this,dispatch,instruction);
+                    scope.state.ticket=dispatch.ticket;scope.state.phase=detail::VmInstructionPhase::handler;
+                    struct EndHandler {detail::VmInstructionState& state;~EndHandler(){state.phase=detail::VmInstructionPhase::none;}} end{scope.state};
                     return handler ? handler(frame,instruction,register_temps(),dispatch) : PrimitiveOutcome{};
                 }();
+                if(scope.state.detached&&(outcome.disposition==PrimitiveDisposition::wait||
+                   outcome.disposition==PrimitiveDisposition::suspend_and_call))
+                    throw VmError("detached source requested an unproven asynchronous continuation");
+                if(outcome.detached_call&&outcome.disposition!=PrimitiveDisposition::call)
+                    throw VmError("detached call capability requires an ordinary call outcome");
                 if(outcome.disposition==PrimitiveDisposition::source_error&&
                    (outcome.write||outcome.call||outcome.call_commit||outcome.temp_write||
                     outcome.second_temp_write||outcome.stack_object_write||outcome.variable_write))
@@ -1278,6 +1656,47 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                     break;
                 case PrimitiveDisposition::call:
                 case PrimitiveDisposition::suspend_and_call:
+                    if(scope.state.detached){
+                        if(outcome.disposition!=PrimitiveDisposition::call||!outcome.call||!outcome.detached_call||
+                           !outcome.detached_call->state_)throw VmError("detached call lacks its actual single-use continuation");
+                        const auto continuation=outcome.detached_call->state_;
+                        const auto source=continuation->source.lock();
+                        if(check_mode||detail::state_of(source)!=&scope.state||continuation->consumed||
+                           continuation->destination_run!=run_generation_||continuation->destination_depth!=stack_.size()||
+                           !detail::same_call(continuation->call,*outcome.call)||
+                           (outcome.call->return_mode!=VmCallReturnMode::ordinary&&
+                            outcome.call->return_mode!=VmCallReturnMode::interaction_next_tick)||
+                           !can_accept_call(*outcome.call))throw VmError("detached call source or new-stack identity changed");
+                        if(outcome.write&&!frame_output(frame,*outcome.write,limits_.frame_variables))
+                            throw VmError("detached call output outside retained source frame");
+                        const auto parent_depth=stack_.size();
+                        continuation->consumed=true;
+                        push(outcome.call->key,outcome.call->context,outcome.call->arguments,outcome.call->return_mode,
+                            dispatch.ticket,outcome.call->exact_arguments,outcome.call->action_tree_override);
+                        if(outcome.call_commit){
+                            bool accepted=false;
+                            struct CommitScope{
+                                Vm& vm;detail::VmInstructionState& state;
+                                CommitScope(Vm& owner,detail::VmInstructionState& value,const VmDispatch& token,
+                                        const Instruction& operation,std::size_t depth):vm(owner),state(value){
+                                    state.phase=detail::VmInstructionPhase::commit;state.commit_parent_depth=depth;
+                                    vm.active_call_commit_dispatch_=&token;vm.active_call_commit_instruction_=&operation;
+                                    vm.active_call_commit_parent_depth_=depth;
+                                }
+                                ~CommitScope(){state.phase=detail::VmInstructionPhase::none;state.commit_parent_depth=0;
+                                    vm.active_call_commit_dispatch_=nullptr;vm.active_call_commit_instruction_=nullptr;
+                                    vm.active_call_commit_parent_depth_=0;}
+                            };
+                            try{CommitScope commit(*this,scope.state,dispatch,instruction,parent_depth);accepted=outcome.call_commit();}
+                            catch(...){stack_.pop_back();throw;}
+                            if(!accepted){stack_.pop_back();throw VmError("detached call commit rejected after child admission");}
+                        }
+                        if(outcome.write)*frame_output(frame,*outcome.write,limits_.frame_variables)=outcome.write->value;
+                        if(outcome.temp_write)register_temps()[outcome.temp_write->index]=outcome.temp_write->value;
+                        if(outcome.second_temp_write)register_temps()[outcome.second_temp_write->index]=outcome.second_temp_write->value;
+                        break;
+                    }
+                    if(outcome.detached_call)throw VmError("ordinary call cannot borrow a detached continuation");
                     if(check_mode){
                         bool named_child=false;
                         if(instruction.opcode==28&&instruction.operands[5]==2&&outcome.call&&named_routine_scope(outcome.call->key.scope)&&
@@ -1287,7 +1706,10 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                             auto participants=outcome.call->context;participants.code_owner=frame.context.code_owner;
                             named_child=vm_context_equal(participants,frame.context);
                         }
-                        if(!named_child)throw VmError("check BHAV requested an asynchronous child service");
+                        const bool source_child=scope.state.allowed&&instruction_child_&&
+                            instruction_child_->kind==VmInstructionChildKind::source_check&&outcome.call&&
+                            outcome.disposition==PrimitiveDisposition::call&&outcome.call->return_mode==VmCallReturnMode::ordinary;
+                        if(!named_child&&!source_child)throw VmError("check BHAV requested an asynchronous child service");
                     }
                     if(!outcome.call)throw VmError("primitive call requires child");
                     if(outcome.call->return_mode==VmCallReturnMode::external_frame_next_tick)
@@ -1354,7 +1776,8 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                             accepted=outcome.call_commit();
                         }
                         catch(...){stack_.pop_back();if(service_child)suspended_pending_.pop_back();
-                            if(immediate)immediate_continuations_.pop_back();status_=VmStatus::fault;throw;}
+                            if(immediate)immediate_continuations_.pop_back();
+                            status_=VmStatus::fault;throw;}
                         if(!accepted){
                             stack_.pop_back();
                             if(service_child)suspended_pending_.pop_back();
@@ -1378,13 +1801,13 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                 case PrimitiveDisposition::goto_true_next_tick:
                 case PrimitiveDisposition::goto_false:
                     // Validate all frame/temp/context outputs before publishing any.
-                    if (outcome.write && !frame_output(stack_.back(), *outcome.write,limits_.frame_variables))
+                    if (outcome.write && !frame_output(frame, *outcome.write,limits_.frame_variables))
                         throw VmError("primitive frame output bank/index outside frame");
                     if(outcome.variable_write&&!write(static_cast<std::uint8_t>(outcome.variable_write->scope),
                         outcome.variable_write->index,outcome.variable_write->value))
                         throw VmError("primitive variable output destination rejected by TS1 setter");
                     if (outcome.write) {
-                        auto* destination = frame_output(stack_.back(), *outcome.write,limits_.frame_variables);
+                        auto* destination = frame_output(frame, *outcome.write,limits_.frame_variables);
                         *destination = outcome.write->value;
                     }
                     if (outcome.temp_write)
@@ -1392,15 +1815,21 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
                     if (outcome.second_temp_write)
                         register_temps()[outcome.second_temp_write->index] = outcome.second_temp_write->value;
                     if (outcome.stack_object_write)
-                        if(!assign_stack_object(stack_.back().context,outcome.stack_object_write->value))throw VmError("StackObject result binding failed");
-                    branch(outcome.disposition != PrimitiveDisposition::goto_false);
+                        if(!assign_stack_object(frame.context,outcome.stack_object_write->value))throw VmError("StackObject result binding failed");
+                    if(scope.state.detached)branch_from_detached(frame,instruction,outcome.disposition!=PrimitiveDisposition::goto_false);
+                    else branch(outcome.disposition!=PrimitiveDisposition::goto_false);
                     if(outcome.disposition==PrimitiveDisposition::goto_true_next_tick && status_==VmStatus::running)
                         status_=VmStatus::next_tick;
                     break;
                 case PrimitiveDisposition::continue_next_tick:
                     // Source CONTINUE_NEXT_TICK retries this exact instruction,
                     // without selecting a branch or creating an async ticket.
-                    if(outcome.write)throw VmError("CONTINUE_NEXT_TICK cannot carry frame output");
+                    if(outcome.write){
+                        if(!scope.state.detached)throw VmError("CONTINUE_NEXT_TICK cannot carry frame output");
+                        auto* output=frame_output(frame,*outcome.write,limits_.frame_variables);
+                        if(!output)throw VmError("detached next-tick output outside retained source frame");
+                        *output=outcome.write->value;
+                    }
                     status_=VmStatus::next_tick;
                     break;
                 case PrimitiveDisposition::continue_execution:
@@ -1458,7 +1887,31 @@ VmStatus Vm::run_internal(std::uint64_t instruction_budget,
 VmSubroutineResult Vm::evaluate_check(RoutineKey key,VmContext context,
         const std::vector<std::int16_t>& arguments,std::uint64_t instruction_budget,
         const VmPrimitive& check_primitive,bool exact_arguments,const VmPrimitiveFactory& primitive_factory) {
-    return evaluate_temporary_stack(key,context,arguments,instruction_budget,check_primitive,exact_arguments,primitive_factory,false);
+    reject_storage_proof_mutation();
+    VmSubroutineResult result;result.status=status_;
+    const auto* active=instruction_scope_;
+    if(!instruction_budget||!active||active->phase!=detail::VmInstructionPhase::handler||check_active_||
+       named_stack_depth_||!active_primitive_dispatch_||!active_primitive_instruction_){
+        result.diagnostic="Check BHAV requires its actual ordinary instruction scope";return result;
+    }
+    const auto source=instruction_lease(*active->frame);
+    if(!source){result.diagnostic="Check BHAV lacks authenticated source lifetime";return result;}
+    try{
+        Vm check(program_,ShareVmProgramTag{},memory_,limits_,{},owners_,ShareVmOwnerProgramsTag{});
+        inherit_disposable_resource_context(check);
+        auto child=check.authorize_instruction_child(*source,VmInstructionChildKind::source_check);
+        if(!child){result.diagnostic="Check BHAV child scope rejected";return result;}
+        check.entity_thread_stack_=&entity_thread_frames();
+        check.ticket_sequence_=ticket_sequence_;
+        if(check.start(key,context,arguments,exact_arguments)!=VmStatus::running){
+            result.status=check.status();result.diagnostic=check.diagnostic();return result;
+        }
+        const auto effective=primitive_factory?primitive_factory(check.effective_memory()):check_primitive;
+        result=check.run_synchronous_check_with_registers(*this,true,instruction_budget,effective);
+        ticket_sequence_=std::max(ticket_sequence_,check.ticket_sequence_);
+    }catch(const std::exception& error){result.status=VmStatus::fault;result.diagnostic=error.what();}
+    catch(...){result.status=VmStatus::fault;result.diagnostic="fresh Check BHAV raised a non-standard exception";}
+    return result;
 }
 VmSubroutineResult Vm::run_named_in_stack(RoutineKey key,VmContext context,const std::vector<std::int16_t>& arguments,
     std::uint64_t budget,const VmPrimitive& primitive,const VmPrimitiveFactory& factory){
@@ -1649,9 +2102,16 @@ VmSubroutineResult Vm::evaluate_entry_point_check(RoutineKey key,VmContext conte
 VmSubroutineResult Vm::evaluate_check_at_safe_point(RoutineKey key,VmContext context,
     const std::vector<std::int16_t>& arguments,std::uint64_t instruction_budget,
     const VmPrimitive& check_primitive,bool exact_arguments,const VmPrimitiveFactory& primitive_factory) {
+    return evaluate_queue_check_at_safe_point(key,context,arguments,instruction_budget,
+        check_primitive,exact_arguments,primitive_factory,{});
+}
+VmSubroutineResult Vm::evaluate_queue_check_at_safe_point(RoutineKey key,VmContext context,
+    const std::vector<std::int16_t>& arguments,std::uint64_t instruction_budget,
+    const VmPrimitive& check_primitive,bool exact_arguments,const VmPrimitiveFactory& primitive_factory,
+    const std::function<bool()>& source_current) {
     reject_storage_proof_mutation();
     VmSubroutineResult result;result.status=status_;
-    if(executing_||check_active_||!instruction_budget){
+    if(executing_||check_active_||!instruction_budget||(source_current&&!source_current())){
         result.diagnostic="disposable Check requires a non-reentrant external execution boundary and a nonzero budget";return result;
     }
     struct Guard {bool& active;explicit Guard(bool& a):active(a){active=true;}~Guard(){active=false;}}
@@ -1659,6 +2119,9 @@ VmSubroutineResult Vm::evaluate_check_at_safe_point(RoutineKey key,VmContext con
     try {
         Vm check(program_,ShareVmProgramTag{},memory_,limits_,{},owners_,ShareVmOwnerProgramsTag{});
         inherit_disposable_resource_context(check);
+        auto child=source_current?check.authorize_source_check_service(this,source_current):nullptr;
+        if(source_current&&!child){result.diagnostic="queue source_check service identity rejected";return result;}
+        if(child)check.entity_thread_stack_=&entity_thread_frames();
         if(check.start(key,context,arguments,exact_arguments)!=VmStatus::running){
             result.status=check.status();result.diagnostic=check.diagnostic();return result;
         }
@@ -1825,8 +2288,9 @@ bool Vm::resume_interaction(std::uint64_t ticket) {
     if (status_ != VmStatus::yielded || !interaction_return_ ||
         interaction_return_->ticket != ticket ||
         interaction_return_->run_generation != run_generation_) return false;
+    const auto result=interaction_return_->result;
     interaction_return_.reset();
-    status_ = VmStatus::running;
+    status_=stack_.empty()?(result?VmStatus::returned_true:VmStatus::returned_false):VmStatus::running;
     return true;
 }
 bool Vm::can_inject_immediate(const VmCall& call,const ImmediatePendingAudit& audit) const {

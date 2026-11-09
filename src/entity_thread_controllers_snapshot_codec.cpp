@@ -7,7 +7,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 14;
+constexpr std::uint16_t codec_version = 15;
 constexpr std::uint16_t legacy_codec_version = 1;
 constexpr std::size_t minimum_size = 84;
 constexpr std::size_t minimum_action_size_v1 = 34;
@@ -185,6 +185,24 @@ VmCall read_call(Reader& reader, const EntityThreadControllersSnapshotCodecLimit
     return call;
 }
 
+void write_active(Writer& writer,const InteractionActiveSnapshot& active,std::uint16_t version){
+    writer.u64(active.uid);writer.u64(active.ticket);
+    if(version>=15){
+        writer.boolean(active.detached_execution.has_value());
+        if(active.detached_execution){write_call(writer,active.detached_execution->call,version);
+            writer.u64(active.detached_execution->source_run_generation);}
+    }else if(active.detached_execution)throw FormatError("detached interaction execution requires controller codec15");
+}
+InteractionActiveSnapshot read_active(Reader& reader,const EntityThreadControllersSnapshotCodecLimits& limits,
+        std::uint16_t version){
+    InteractionActiveSnapshot active{reader.u64(),reader.u64()};
+    if(version>=15&&reader.boolean()){
+        InteractionDetachedExecutionSnapshot detached;detached.call=read_call(reader,limits,version);
+        detached.source_run_generation=reader.u64();active.detached_execution=std::move(detached);
+    }
+    return active;
+}
+
 void write_sleep(Writer& writer, const SleepSnapshot& state,std::uint16_t version) {
     writer.boolean(state.actor.has_value());
     if (state.actor) {
@@ -272,9 +290,9 @@ void write_interactions(Writer& writer, const InteractionQueueSnapshot& state,st
         }
     }
     writer.boolean(state.active.has_value());
-    if (state.active) { writer.u64(state.active->uid); writer.u64(state.active->ticket); }
+    if (state.active)write_active(writer,*state.active,version);
     writer.count(state.suspended_active.size());
-    for(const auto& parent:state.suspended_active){writer.u64(parent.uid);writer.u64(parent.ticket);}
+    for(const auto& parent:state.suspended_active)write_active(writer,parent,version);
     writer.boolean(state.wait.has_value());
     if (state.wait) { writer.u64(state.wait->ticket); writer.u64(state.wait->deadline); }
     writer.boolean(state.completion.has_value());
@@ -343,11 +361,11 @@ InteractionQueueSnapshot read_interactions(Reader& reader,
             action.label=std::move(label);
         }
     }
-    if (reader.boolean()) state.active = InteractionActiveSnapshot{reader.u64(), reader.u64()};
+    if (reader.boolean())state.active=read_active(reader,limits,version);
     if(version>=5){
         const auto parents=reader.count(limits.max_queue_actions,16);
         state.suspended_active.resize(parents);
-        for(auto& parent:state.suspended_active)parent={reader.u64(),reader.u64()};
+        for(auto& parent:state.suspended_active)parent=read_active(reader,limits,version);
     }
     if (reader.boolean()) state.wait = InteractionWaitSnapshot{reader.u64(), reader.u64()};
     if (reader.boolean()) state.completion = InteractionCompletion{reader.u64(), reader.u64(), reader.u64(), reader.boolean()};
@@ -427,16 +445,20 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
        (!interactions.suspended_active.empty()&&!interactions.active)||
        (interactions.profile==InteractionQueueProfile::legacy_fifo&&!interactions.suspended_active.empty()))
         throw FormatError("invalid nested interaction prefix");
+    const auto bounded_execution=[&](const InteractionActiveSnapshot& active){
+        return !active.detached_execution||
+            active.detached_execution->call.arguments.size()<=limits.max_call_arguments;
+    };
     std::uint64_t previous_ticket=0;
     for(std::size_t i=0;i<interactions.suspended_active.size();++i){
         const auto& parent=interactions.suspended_active[i];
         if(!valid_ticket(parent.ticket)||parent.ticket<=previous_ticket||
-           parent.uid!=interactions.actions[i].uid)
+           (!interaction_header_binding_valid(interactions,i,parent)||!bounded_execution(parent)))
             throw FormatError("invalid suspended interaction parent prefix");
         previous_ticket=parent.ticket;
     }
-    if (interactions.active && (interactions.actions.size()<=interactions.suspended_active.size()||
-        interactions.active->uid != interactions.actions[interactions.suspended_active.size()].uid ||
+    if (interactions.active && ((!interaction_header_binding_valid(interactions,interactions.suspended_active.size(),*interactions.active)||
+        !bounded_execution(*interactions.active))||
         !valid_ticket(interactions.active->ticket)||interactions.active->ticket<=previous_ticket))
         throw FormatError("invalid active interaction state");
     if (interactions.wait && (interactions.resume_tick ||
@@ -497,7 +519,10 @@ std::vector<std::uint8_t> encode_entity_thread_controllers_snapshot(
     Writer writer(limits.max_bytes);
     const bool labels=std::any_of(snapshot.interactions.actions.begin(),snapshot.interactions.actions.end(),
         [](const auto& action){return action.label.has_value();});
-    const auto version=static_cast<std::uint16_t>(labels?14:has_v13_state(snapshot)?13:has_v12_state(snapshot)?12:has_v11_state(snapshot)?11:has_v10_state(snapshot)?10:has_v9_state(snapshot)?9:has_v8_state(snapshot)?8:has_v7_state(snapshot)?7:
+    const bool detached=(snapshot.interactions.active&&snapshot.interactions.active->detached_execution)||
+        std::any_of(snapshot.interactions.suspended_active.begin(),snapshot.interactions.suspended_active.end(),
+            [](const auto& active){return active.detached_execution.has_value();});
+    const auto version=static_cast<std::uint16_t>(detached?15:labels?14:has_v13_state(snapshot)?13:has_v12_state(snapshot)?12:has_v11_state(snapshot)?11:has_v10_state(snapshot)?10:has_v9_state(snapshot)?9:has_v8_state(snapshot)?8:has_v7_state(snapshot)?7:
         snapshot.sleep.job&&snapshot.sleep.job->next_evaluation?6:5);
     writer.u16(version);
     write_sleep(writer, snapshot.sleep,version);

@@ -493,6 +493,15 @@ public:
     // Explicit source UpdateFootprint event after a HasZeroExtent flag change.
     // Bootstrap bank declaration and arbitrary writes do not emit this event.
     bool notify_footprint_changed(std::int16_t id);
+    // VMEntity.SetValue(Flags) publishes its word/footprint/class effects
+    // before avatar Reset on either Burning-bit transition. The host binds
+    // its actual Thread/controller lifecycle; failure preserves earlier writes.
+    using AvatarBurningObserver=std::function<bool(World&,const VmFrame& source,
+        WorldEntityReference target,std::int16_t before,std::int16_t after)>;
+    bool set_avatar_burning_observer(AvatarBurningObserver);
+    // Explicit live-target SetFlag service. source is the real originating
+    // frame, independent of target; no fabricated self-frame is required.
+    bool set_entity_flags(const VmFrame& source,WorldEntityReference target,std::int16_t value);
     bool set_ui_ghost(std::int16_t id, bool is_ghost);
     std::optional<bool> dynamic_sprite_flag(std::int16_t id,std::uint16_t flag) const;
     bool set_dynamic_sprite_flag(std::int16_t id,std::uint16_t flag,bool enabled);
@@ -648,6 +657,10 @@ private:
     bool notifying_static_footprint_=false;
     FootprintObserver footprint_observer_;
     bool notifying_footprint_=false;
+    AvatarBurningObserver avatar_burning_observer_;
+    unsigned avatar_burning_depth_=0;
+    bool write_flags(const VmFrame&,Entity&,std::int16_t,bool retained);
+
     SpatialChangeObserver spatial_change_observer_;
     bool notifying_spatial_change_=false;
 };

@@ -1,6 +1,7 @@
 #include "odh/interaction.hpp"
 #include "odh/autonomy_check.hpp"
 #include "odh/ts1_budget.hpp"
+#include "odh/object_reset.hpp"
 #include "odh/entity_thread_controllers_snapshot_codec.hpp"
 #include <iostream>
 #include <fstream>
@@ -715,11 +716,12 @@ void immediate_queue_protocol() {
         const auto old=vm.pending()->ticket;const auto old_pc=vm.stack()[1].pc;
         require(queue.enqueue_ts1(key(4098),action_context,{},50,odh::InteractionQueueMode::normal,
             immediate,false,false),"immediate async child appends without cancelling active action");
-        const auto before=vm.snapshot();bool parked=false;
+        const auto before=vm.snapshot();const auto candidate_uid=queue.last_enqueued_uid();bool parked=false;
         const auto deny=[](const auto&,const auto&){return false;};
         require(!queue.try_run_immediate(deny,[&](auto){parked=true;return true;})&&!parked&&
-            vm.pending()->ticket==old&&vm.snapshot().ticket_sequence==before.ticket_sequence,
-            "unaudited sleeping parent refuses injection without VM mutation or park callback");
+            vm.pending()->ticket==old&&vm.snapshot().ticket_sequence==before.ticket_sequence&&
+            queue.contains_uid(candidate_uid),
+            "unaudited sleeping parent refuses before source admission without VM, queue or park mutation");
         queue.set_immediate_parent_resume([&](auto ticket){return parked&&ticket==old&&vm.retry_pending(ticket);});
         require(queue.try_run_immediate([](const auto& pending,const auto&){return pending.instruction.instruction.opcode==0;},
             [&](auto ticket){parked=ticket==old;return parked;})&&queue.snapshot().suspended_active.size()==1&&
@@ -1052,7 +1054,8 @@ void source_error_eligibility_matrix(){
   else completed=vm.run(16)!=odh::VmStatus::fault;
   require(checked>0&&!action_ran,"every source ERROR matrix path actually checks and never runs rejected action");
   if(mode==0)require(completed&&!queue.contains_uid(checked_uid),"known source ERROR excludes ordinary/nested/immediate candidate without host failure");
-  else require(!completed&&queue.contains_uid(checked_uid),"unsupported, async wait, budget and exceptions remain unresolved; no false eligibility decision");
+  else require(!completed&&queue.contains_uid(checked_uid)==(path!=2),
+    "failed checks preserve source ordering: ordinary candidate retained, immediate candidate already removed before CheckAction");
  }
 }
 void autonomous_eligibility_context_regressions(){
@@ -1371,7 +1374,110 @@ void generation_reference_tests(){
   require(f.queue.source_reset_required()==std::optional<bool>{true},"top ActionTree and actual dead Queue0 callee require source Reset");
  }
 }
+namespace {
+void foreign_source_cleanup_enqueue(){
+ odh::World world;require(world.create(1,odh::EntityKind::avatar,{0,80})&&world.create(2,odh::EntityKind::object)&&
+   world.create(3,odh::EntityKind::object)&&world.declare_object_word(1,8,0)&&world.define_type(2,0x12345678)&&
+   world.set_person_data(1,65,8),"foreign Reset owns real actor and source objects");
+ odh::EntityThreadControllers controllers(world,1);auto& queue=controllers.interactions();
+ const odh::RoutineSet bank{{key(4100),bhav({{96,254,255,{}}})},
+   {key(4101),bhav({{98,1,255,{}},{13,254,255,{0,0,1,0,0,0,0,0}}})}};
+ odh::Vm target(bank,world.vm_memory(),{}, {},{{1,bank},{22,{{key(4201),bhav({{96,254,255,{}}})}}}});
+ require(controllers.bind(target)&&target.start(key(4100),{1,1,1,1})==odh::VmStatus::running,
+   "foreign Reset target has a separate registered Thread");
+ bool enqueued=false;
+ const auto push=odh::ts1_push_interaction_primitive(world,
+   odh::Ts1PushInteractionContextLookup{[&](const odh::Ts1PushInteractionRequest& request,const auto& frame,const auto&,const auto& dispatch)
+       ->std::optional<odh::Ts1PushInteractionAction>{
+     require(request.actor==1&&request.source==2&&dispatch.origin!=&target&&frame.context.caller==1&&
+       dispatch.origin->instruction_lease(frame).has_value(),"Cleanup Push13 uses current executor and real target Thread separately");
+     return odh::Ts1PushInteractionAction{key(4201),22,0,{}};
+   }},[&](std::int16_t actor){return actor==1?odh::Ts1PushInteractionTarget{&target,&queue}:odh::Ts1PushInteractionTarget{};});
+ odh::Vm source({{key(4096),bhav({{99,254,255,{}}})}},world.vm_memory(),{},
+   [&](const auto& frame,const auto&,const auto&,const auto& dispatch)->odh::PrimitiveOutcome{
+    const auto lease=dispatch.origin->instruction_lease(frame);require(lease.has_value(),"foreign Reset source owns actual lease");
+    odh::Vm cleanup(bank,world.vm_memory(),{}, {},{{1,bank}});
+    odh::EntryPointTable entries{};entries.entries.resize(4);entries.entries[1].action=4100;entries.entries[3].action=4101;
+    const auto reset=odh::run_object_reset(*lease,cleanup,target,1,1,entries,30,
+      [&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+       if(instruction.opcode==98){odh::PrimitiveOutcome setup{odh::PrimitiveDisposition::goto_true,{}};
+         setup.write=odh::VmFrameWrite{odh::VmFrameBank::arguments,0,2};
+         setup.stack_object_write=odh::VmStackObjectWrite{1};return setup;}
+       auto result=push(frame,instruction,temps,dispatch);enqueued=result.disposition==odh::PrimitiveDisposition::goto_true;
+       return result;},
+      odh::ObjectResetHooks{[&]{return controllers.discard_for_source_reset();},[&]{return controllers.finish_source_reset();}});
+    require(reset.completed&&reset.main_started,"foreign-source Reset Cleanup repopulates nonexecuting target queue");
+    return {odh::PrimitiveDisposition::goto_true,{}};
+   });
+ require(source.start(key(4096),{3,3,1,0})==odh::VmStatus::running&&source.run(1)==odh::VmStatus::returned_true&&
+   enqueued&&queue.size()==1&&!queue.active()&&target.stack().size()==1&&target.stack()[0].key.id==4100,
+   "Cleanup queue mutation capability permits empty-thread enqueue without requiring an active CheckAction");
+}
+void source_reset_queue_matrix(){
+ for(const bool immediate:{false,true})for(const bool accepted:{false,true})for(const bool replenished:{false,true}){
+  odh::World world;require(world.create(1,odh::EntityKind::avatar,{0,80,0})&&
+    world.create(2,odh::EntityKind::object)&&world.declare_object_word(1,8,0),"Reset queue matrix real identities");
+  odh::EntityThreadControllers controllers(world,1);auto& queue=controllers.interactions();
+  const odh::RoutineSet main{{key(4096),bhav({idle(1,1),set(7,77)})},
+    {key(4100),bhav({{96,254,255,{}}})},{key(4101),bhav({{98,254,255,{}}})}};
+  odh::Vm* parent=nullptr;unsigned effects=0,checks_seen=0;std::uint64_t filler_uid=0;
+  const auto enqueue_filler=[&]{require(queue.enqueue_source_ts1(key(4201),{1,2,2,22},{},4,
+     odh::InteractionQueueMode::normal,0,false,false),"Cleanup enqueues new current queue header");filler_uid=queue.last_enqueued_uid();};
+  const odh::VmPrimitive check=[&](const auto& frame,const auto&,const auto&,const auto& dispatch)->odh::PrimitiveOutcome{
+    ++checks_seen;const auto lease=odh::Vm::active_instruction_lease(frame);
+    require(lease&&lease->origin()==dispatch.origin,"CheckAction has authenticated fresh child lineage");
+    odh::Vm cleanup(main,world.vm_memory(),{}, {},{{1,main}});odh::EntryPointTable entries{};entries.entries.resize(4);
+    entries.entries[1].action=4100;if(replenished)entries.entries[3].action=4101;
+    const auto reset=odh::run_object_reset(*lease,cleanup,*parent,1,1,entries,30,
+      [&](const auto&,const auto&,const auto&,const auto&){enqueue_filler();return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};},
+      odh::ObjectResetHooks{[&]{return controllers.discard_for_source_reset();},[&]{return controllers.finish_source_reset();}});
+    require(reset.completed&&reset.main_started,"CheckAction Reset clears old execution and prepares new Main");
+    return {accepted?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::goto_false,{}};
+  };
+  const odh::VmPrimitive primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d)->odh::PrimitiveOutcome{
+    if(i.opcode==95){++effects;return {odh::PrimitiveDisposition::goto_true,{}};}
+    if(i.opcode==96)return {odh::PrimitiveDisposition::goto_true,{}};
+    return controllers.interaction_primitive()(f,i,t,d);
+  };
+  odh::Vm vm(main,world.vm_memory(),{},primitive,{{1,main},{22,{
+    {key(4200),bhav({{95,254,255,{}}})},{key(4201),bhav({{96,254,255,{}}})},
+    {key(4202),bhav({{99,254,255,{}}})}}}});parent=&vm;
+  require(controllers.bind(vm)&&vm.start(key(4096),{1,1,1,1},{1})==odh::VmStatus::running,
+    "Reset queue matrix starts old Main");queue.set_check_primitive(check);
+  require(queue.enqueue_source_ts1(key(4200),{1,2,2,22},{},3,odh::InteractionQueueMode::normal,
+    immediate?4U:0U,false,false,key(4202),7),"Reset queue matrix checked retained candidate");
+  const auto retained_uid=queue.last_enqueued_uid();
+  if(immediate){
+    require(queue.try_run_immediate(),"source immediate Reset check returns normally");
+    const auto state=queue.snapshot();
+    if(accepted){require(state.active&&state.actions.size()==(replenished?2U:1U)&&
+       state.actions.front().uid==retained_uid&&(!replenished||state.actions.back().uid==filler_uid),
+       "immediate TRUE reinserts retained candidate in current post-Reset queue");
+      require(vm.run(1)==odh::VmStatus::yielded&&effects==1&&queue.observe(),
+       "immediate action executes and completes over new Main");
+    }else require(!state.active&&state.actions.size()==(replenished?1U:0U)&&
+       (!replenished||state.actions.front().uid==filler_uid)&&effects==0,
+       "immediate FALSE leaves newly enqueued Cleanup header untouched");
+  }else{
+    const auto status=vm.run(2);
+    if(accepted){
+      require(status==odh::VmStatus::yielded&&effects==1,"ordinary TRUE executes retained candidate before reading current header");
+      const auto state=queue.snapshot();require(state.active&&state.active->detached_execution&&
+        state.actions.size()==(replenished?1U:0U)&&state.active->uid==(replenished?filler_uid:0),
+        "ordinary TRUE keeps executing call separate from current header without reinsertion");
+      require(queue.observe()==replenished,"ordinary completion reads current header and fails only at actual missing access");
+    }else if(replenished){
+      require(status==odh::VmStatus::next_tick&&queue.size()==0&&effects==0&&vm.stack().size()==1&&vm.stack()[0].key.id==4100,
+        "ordinary FALSE removes NEW header and retains new Main next-tick scheduling");
+    }else require(status==odh::VmStatus::fault&&effects==0&&vm.diagnostic().find("RemoveAt")!=std::string::npos,
+        "ordinary FALSE empty current queue faults at actual source RemoveAt");
+  }
+  require(checks_seen==1,"one authored check per retained candidate");
+ }
+}
+}
 int main(int argc,char** argv){try {
+ foreign_source_cleanup_enqueue();source_reset_queue_matrix();
  source_error_eligibility_matrix();
  queued_retained_target_lifecycle_tests();generation_reference_tests();active_advertisement_regressions();named_empty_queue_idle_regressions();
  autonomous_check_regressions();autonomous_check_failure_regressions();autonomous_primitive_memory_regressions();generic_ts1_icon_tests();gosub_found_action_regressions();autonomous_eligibility_context_regressions();

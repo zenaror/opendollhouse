@@ -623,6 +623,48 @@ int main() {
         rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},"hybrid callee generations rejected");
         invalid=modern;invalid.interactions.actions[0].call.context.entity_references_bound=false;
         rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},"unbound context cannot smuggle generation tags");
+        // The current queue header and executing call may differ after a
+        // real Reset/CheckAction continuation. Wire15 preserves both exactly.
+        auto detached=modern;
+        auto old_execution=modern.interactions.actions[1].call;
+        old_execution.context.callee=old_execution.context.stack_object=3;
+        old_execution.context.code_owner=33;
+        detached.interactions.active->detached_execution=
+            odh::InteractionDetachedExecutionSnapshot{old_execution,1};
+        const auto detached_bytes=odh::encode_entity_thread_controllers_snapshot(detached);
+        require(detached_bytes[0]==15&&detached_bytes[1]==0,"detached execution selects controller wire15");
+        const auto detached_copy=odh::decode_entity_thread_controllers_snapshot(detached_bytes);
+        require(detached_copy.interactions.actions.front().uid==1&&
+            detached_copy.interactions.active->uid==1&&
+            detached_copy.interactions.active->detached_execution->call.context.callee==3&&
+            detached_copy.interactions.active->detached_execution->call.context.code_owner==33&&
+            detached_copy.interactions.active->detached_execution->source_run_generation==1,
+            "wire keeps CURRENT header separate from the original executing call and source run");
+        require(odh::encode_entity_thread_controllers_snapshot(detached_copy)==detached_bytes,
+            "detached execution wire is canonical after roundtrip");
+        auto hole=detached;hole.interactions.actions.clear();hole.interactions.active->uid=0;
+        const auto hole_copy=odh::decode_entity_thread_controllers_snapshot(
+            odh::encode_entity_thread_controllers_snapshot(hole));
+        require(hole_copy.interactions.actions.empty()&&hole_copy.interactions.active->uid==0&&
+            hole_copy.interactions.active->detached_execution->call.context.callee==3,
+            "proved absent current header persists without inventing a queue item");
+        invalid=detached;invalid.interactions.active->uid=0;
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+            "nonempty current header never accepts zero as wildcard");
+        invalid=hole;invalid.interactions.active->uid=1;
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+            "absent header cannot claim a fabricated current UID");
+        invalid=detached;invalid.interactions.active->detached_execution->source_run_generation=3;
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+            "detached source run must precede current Reset run");
+        invalid=detached;invalid.interactions.active->detached_execution->call.context.caller_generation=9;
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+            "detached execution cannot borrow another actor generation");
+        auto tight=odh::EntityThreadControllersSnapshotCodecLimits{};
+        tight.max_call_arguments=2;
+        auto detached_only=hole;detached_only.interactions.active->detached_execution->call.arguments={1,2,3};
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(detached_only,tight);},
+            "detached call keeps caller argument parser limit");
         std::cout << checks << " thread controller snapshot codec checks passed (synthetic values only)\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

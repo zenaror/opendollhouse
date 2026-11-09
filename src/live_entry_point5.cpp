@@ -50,7 +50,10 @@ bool source_dispatch_is_live(const LiveEntryPoint5Request& request) noexcept {
             // Check the scope first: an expired host capability must not touch
             // a VM whose construction owner may already have been released.
             if(!source.source_still_matches||!source.source_still_matches()||!source.source_vm||
-               !source.source_run_generation||source.source_vm->run_generation()!=source.source_run_generation||
+               !source.source_run_generation||
+               (source.source_vm->run_generation()!=source.source_run_generation&&
+                (!source.active_dispatch||!source.active_dispatch->instruction_lease||
+                 !live_object_creation_active_dispatch_matches(source)))||
                source.created_entity<=0||!source.created_generation||
                (source.created_entity!=request.tested_entity&&source.created_entity!=request.other_entity))return false;
             if(source.active_dispatch&&!live_object_creation_active_dispatch_matches(source))return false;
@@ -81,11 +84,12 @@ bool source_dispatch_is_live(const LiveEntryPoint5Request& request) noexcept {
             *request.source_instruction,request.source_dispatch);
 }
 
-bool entities_match(const LiveEntryPoint5Request& request) {
+bool entities_match(const LiveEntryPoint5Request& request,bool authenticated_reset=false) {
     if(!request.world||request.tested_entity<=0||request.other_entity<=0||
        request.tested_entity==request.other_entity||!request.tested_generation||
-       !request.other_generation||!request.identities_still_match||
-       !request.identities_still_match())return false;
+       !request.other_generation)return false;
+    const auto& identity=authenticated_reset?request.identities_after_authenticated_reset:request.identities_still_match;
+    if(!identity||!identity())return false;
     const auto* tested=request.world->find(request.tested_entity);
     const auto* other=request.world->find(request.other_entity);
     return tested&&other&&tested->generation==request.tested_generation&&
@@ -99,6 +103,17 @@ bool live_object_creation_active_dispatch_matches(const LiveObjectCreationPlacem
         if(!source.source_still_matches||!source.source_still_matches()||!source.active_dispatch||
            !source.source_vm||!source.source_run_generation||source.created_entity<=0||!source.created_generation)return false;
         const auto& active=*source.active_dispatch;const auto& vm=*source.source_vm;
+        if(active.instruction_lease){
+            const auto& lease=*active.instruction_lease;
+            // Validate the lease before dereferencing the protected frame.
+            // The value snapshot is provenance only; copies cannot mint authority.
+            if(!lease.valid()||lease.origin()!=&vm||!active.protected_frame||
+               !lease.matches(*active.protected_frame,active.instruction,active.dispatch)||
+               !vm_frame_equal(active.frame,*active.protected_frame)||
+               (active.instruction.opcode!=42&&active.instruction.opcode!=9))return false;
+            return vm.run_generation()==source.source_run_generation||
+                (lease.detached()&&vm.run_generation()>source.source_run_generation);
+        }
         return vm.run_generation()==source.source_run_generation&&active.instruction.opcode==42&&
             active.dispatch.origin==&vm&&active.dispatch.ticket&&
             vm.matches_active_query(active.frame,active.instruction,active.dispatch);
@@ -134,6 +149,18 @@ bool live_avatar_constructor_placement_source_matches(const LiveAvatarConstructo
             frame.context.caller==source.avatar.id&&frame.context.callee==source.avatar.id&&
             frame.context.code_owner==source.code_owner;
     }catch(...){return false;}
+}
+
+std::unique_ptr<VmInstructionChildScope> authorize_source_check(Vm& fresh_check,const LiveEntryPoint5Request& request) {
+    if(!source_dispatch_is_live(request)||!entities_match(request))return {};
+    const Vm* source=request.source_vm;
+    if(request.object_creation_source)source=request.object_creation_source->source_vm;
+    else if(request.avatar_constructor_source)source=request.avatar_constructor_source->thread;
+    else if(request.original_recovery_source)source=request.original_recovery_source->thread;
+    if(!source)return {}; // Retired-container authority has no Thread lineage.
+    return fresh_check.authorize_source_check_service(source,[&request]{
+        return source_dispatch_is_live(request);
+    });
 }
 
 LiveEntryPoint5Result evaluate_live_entry_point5(const LiveEntryPoint5Request& request) {
@@ -187,13 +214,21 @@ LiveEntryPoint5Result evaluate_live_entry_point5(const LiveEntryPoint5Request& r
         if(!check.has_routine(key,request.code_owner))
             return {LiveEntryPoint5State::evaluated_false,0,"EP5 BHAV is absent for the exact code owner"};
 
+        // Private typed bridge: a real parent instruction or an authenticated
+        // parked placement service, never a public arbitrary check-root grant.
+        auto source_check=authorize_source_check(check,request);
+        const bool requires_thread_lineage=!request.retired_container_source;
+        if(requires_thread_lineage&&!source_check)
+            return unsupported("EP5 typed source-check lineage could not bind");
+        const auto source_current=[&]{return source_check?source_check->valid():source_dispatch_is_live(request);};
+
         const VmContext context{request.tested_entity,request.tested_entity,
             request.other_entity,request.code_owner};
         const std::vector<std::int16_t> arguments{request.other_entity,request.ghost,0,0};
         if(!check.set_owner_resolver(request.owner_resolver))return unsupported("entry point5 resource context could not bind");
         if(check.start(key,context,arguments,true)!=VmStatus::running)
             return unsupported("EP5 disposable check VM could not start",check.steps());
-        if(!source_dispatch_is_live(request)||!entities_match(request))
+        if(!source_current()||!entities_match(request))
             return unsupported("EP5 source/World identity changed before check execution");
 
         const auto result=request.register_owner
@@ -203,15 +238,21 @@ LiveEntryPoint5Result evaluate_live_entry_point5(const LiveEntryPoint5Request& r
 
         // The check uses the live World memory and publishes the tested
         // entity's TEMP/TempXL writes before reporting any non-return status.
-        if(!source_dispatch_is_live(request)||!entities_match(request))
+        const Vm* source_thread=request.source_vm;
+        if(request.object_creation_source)source_thread=request.object_creation_source->source_vm;
+        else if(request.avatar_constructor_source)source_thread=request.avatar_constructor_source->thread;
+        else if(request.original_recovery_source)source_thread=request.original_recovery_source->thread;
+        const bool source_reset=source_check&&source_thread&&source_check->authenticated_reset_of(*source_thread);
+        const bool register_reset=source_check&&request.register_owner&&source_check->authenticated_reset_of(*request.register_owner);
+        if(!source_current()||!entities_match(request,source_reset||register_reset))
             return unsupported("EP5 source/World identity changed during check execution",result.steps);
         if(!result.started)
             return unsupported(result.diagnostic.empty()?"EP5 synchronous check did not start":result.diagnostic,
                 result.steps);
         if(result.status==VmStatus::returned_true)
-            return {LiveEntryPoint5State::evaluated_true,result.steps,{}};
+            return {LiveEntryPoint5State::evaluated_true,result.steps,{},source_reset,register_reset};
         if(result.status==VmStatus::returned_false)
-            return {LiveEntryPoint5State::evaluated_false,result.steps,{}};
+            return {LiveEntryPoint5State::evaluated_false,result.steps,{},source_reset,register_reset};
         return unsupported(result.diagnostic.empty()?"EP5 did not return synchronously":result.diagnostic,
             result.steps);
     } catch(const std::exception& error) {

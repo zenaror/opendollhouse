@@ -1,3 +1,4 @@
+#include "odh/session_source_checkpoint.hpp"
 #include "odh/interaction.hpp"
 #include "odh/world_snapshot_codec.hpp"
 #include "saved_code_import.hpp"
@@ -172,6 +173,7 @@
 #include "saved_object_subroutine.hpp"
 #include "saved_interactions.hpp"
 #include "functional_selector_host.hpp"
+#include "odh/ts1_fire.hpp"
 #include "saved_wall_appearance.hpp"
 #include "saved_portal.hpp"
 #include "saved_lot_renderer.hpp"
@@ -1994,7 +1996,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
 #endif
     }
 #ifdef __linux__
-    const auto read_vacation_source_checkpoint=[&]()->std::pair<odh::SessionBundle,odh_host::TravelCheckpointDigest>{
+    const auto read_vacation_source_checkpoint=[&]()->odh::SessionSourceCheckpoint{
         if(!session_context)throw odh::FormatError("vacation source checkpoint has no host context");
         std::vector<std::uint8_t> bytes;
         if(session_context->family_journal){
@@ -2013,7 +2015,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 throw odh::FormatError("vacation private source head changed");
         }
         const auto digest=odh::sha256(bytes.data(),bytes.size());
-        return {odh::decode_session_bundle(bytes),digest};
+        return odh::decode_session_source_checkpoint(std::move(bytes),digest);
     };
     if(session_context&&activate_family&&type_attributes_neighborhood_identity){
         auto current=type_attributes_open_overlay;
@@ -2041,19 +2043,17 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             std::optional<odh::FamilyVacationRestoreHead> head;
             if(session_context->family_journal||session_context->private_vacation_session){
                 const auto accepted=read_vacation_source_checkpoint();
-                const auto& outer=accepted.first;
-                const auto source=outer.travel_visited_session?odh::decode_session_bundle(*outer.travel_visited_session):outer;
                 bool bound=false;
-                if(actorless_arrival)bound=odh::encode_session_bundle(source)==session_context->travel_departure_archive;
-                else if(session_context->travel_return)bound=accepted.second==session_context->travel_return->source_checkpoint_sha256();
-                else bound=odh::encode_session_bundle(source)==session_context->restore_archive;
+                if(actorless_arrival)bound=accepted.active_bytes()==session_context->travel_departure_archive;
+                else if(session_context->travel_return)bound=accepted.digest()==session_context->travel_return->source_checkpoint_sha256();
+                else bound=accepted.active_bytes()==session_context->restore_archive;
                 if(!bound)throw odh::FormatError("vacation restore payload is not bound to its accepted source head");
                 head=odh::FamilyVacationRestoreHead{session_context->family_journal?
                     odh::FamilyVacationHeadKind::managed:odh::FamilyVacationHeadKind::private_travel,
                     session_context->family_chunk_id,
                     session_context->family_journal?session_context->family_journal->lease().family_identity:
                         odh::family_vacation_private_head(*current->family_vacation,session_context->family_chunk_id)->family_identity,
-                    accepted.second};
+                    accepted.digest()};
             }
             const auto selected=odh::select_family_vacation_snapshot(vacation_family_source,
                 *type_attributes_neighborhood_identity,restored_family_vacation,current?&*current:nullptr,head);
@@ -4114,6 +4114,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::deque<PendingNpcAvatar> pending_npc_avatars;
     std::function<void()> process_lifecycle_npc_avatars;
     odh::VmPrimitive synchronous_ordinary_object_creation;
+    odh::VmPrimitive burn_handler;
     struct LifecycleAuthority {
         odh::Vm* owner=nullptr;
         odh::WorldEntityReference entity;
@@ -4925,7 +4926,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::function<bool(std::int16_t)> bind_world_object_tables;
     std::function<bool(odh::CodeOwner)> bind_resource_owner_animation_tables;
     if(!animation_sources.empty()){
-        animation_catalog.emplace(animation_sources);
+        // TS1Provider consumes ordered admitted providers, not a union of raw
+        // duplicate files. Keep exact selected BCF/CFP provenance in handles.
+        animation_catalog.emplace(animation_sources,odh::host::CatalogLimits{},
+            odh::host::CatalogNamePolicy::ts1_provider_order);
         global_animation_tables=load_strings(*globals,{128,130,150,151,156,157});
         const auto bind_tables=[&](std::int16_t owner,const Resource& resource,const Loaded& data){
             const auto base=data.binding->animation_table;
@@ -5143,6 +5147,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                         <<" table_id="<<(resolution_table_id?std::to_string(*resolution_table_id):"unselected")
                         <<" language=1"
                         <<" catalog_sources="<<usage.sources<<" bcf_supported="<<usage.bcf_supported
+                        <<" bcf_candidates="<<usage.bcf_candidates<<" bcf_overrides="<<usage.bcf_overrides
+                        <<" animation_overrides="<<usage.animation_overrides<<" cfp_overrides="<<usage.cfp_overrides
                         <<" bcf_skipped="<<usage.bcf_skipped_profile<<" live_headers="<<usage.live_headers
                         <<" cache_records="<<usage.cache_records<<" metadata_bytes="<<usage.metadata_bytes
                         <<" reason_len="<<animation_resolution_diagnostic.size()
@@ -6891,6 +6897,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     const auto family_spell_handler=odh::family_spells_primitive(world,family_spells?&*family_spells:nullptr,
         explicit_family_spell_zoning?&*explicit_family_spell_zoning:nullptr,family_spell_globals);
     const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        if(i.opcode==9)return burn_handler?burn_handler(f,i,t,d):odh::PrimitiveOutcome{
+            odh::PrimitiveDisposition::unsupported,"Burn shared host services are not initialized"};
         if(i.opcode==1&&i.operands[0]==27){
             if(i.operands[1]||!d.origin||!d.origin->matches_active_query(f,i,d)||!family_vacation)
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Generic27 requires its real active source and complete family booking bank"};
@@ -6939,7 +6947,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_false,{}};
                     if(resolved.status!=odh::NpcAvatarRequestStatus::ready||!resolved.request)
                         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,resolved.diagnostic};
-                    if(d.check_mode||!d.origin->matches_active_primitive(f,i,d))
+                    if(!d.origin->instruction_lease(f))
                         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
                             "NPC construction requires its actual ordinary primitive dispatch"};
                     if(!process_lifecycle_npc_avatars)
@@ -6952,17 +6960,18 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     // both miss it. Only newborn Main admission remains deferred.
                     const auto run=d.origin->run_generation();
                     const auto caller=odh::WorldEntityReference{resolved.request->caller,resolved.request->caller_generation};
-                    const auto current=[&,source=d.origin,run,caller,frame=f,instruction=i,dispatch=d]{
+                    const auto source_lease=*d.origin->instruction_lease(f);
+                    const auto current=[&,source=d.origin,caller,source_lease,protected_frame=&f,instruction=i,dispatch=d]{
+                        if(!source_lease.valid()||!source_lease.matches(*protected_frame,instruction,dispatch))return false;
                         const auto* body=world.resolve_reference(caller);
-                        return body&&!body->dead&&!body->ui_ghost&&source->run_generation()==run&&
-                            source->matches_active_primitive(frame,instruction,dispatch);
+                        return body&&!body->dead&&!body->ui_ghost&&world.is_live_reference(caller);
                     };
                     std::optional<std::int16_t> created;
                     PendingNpcAvatar pending;pending.vm=const_cast<odh::Vm*>(d.origin);pending.ticket=d.ticket;
                     pending.request=std::move(*resolved.request);
                     pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
                     pending.lifecycle_current=current;pending.lifecycle_result=&created;
-                    pending.active_dispatch=odh::LiveObjectCreationActiveDispatch{f,i,d};
+                    pending.active_dispatch=odh::LiveObjectCreationActiveDispatch{f,i,d,d.origin?d.origin->instruction_lease(f):std::nullopt,&f};
                     pending_npc_avatars.push_front(std::move(pending));process_lifecycle_npc_avatars();
                     if(host_failed)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,last_npc_diagnostic};
                     if(!current())return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
@@ -6976,7 +6985,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 if(request.persist_in_database())
                     return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
                         "CreateObjectInstance PersistID allocation is not integrated with neighborhood persistence"};
-                if(d.check_mode||!d.origin->matches_active_primitive(f,i,d))
+                if(!d.origin->instruction_lease(f))
                     return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
                         "CreateObjectInstance requires its actual live ordinary primitive dispatch"};
                 if(!synchronous_ordinary_object_creation)
@@ -7264,10 +7273,17 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(i.opcode==1&&odh::generic_ts1_compatibility_mode(i.operands[0]))
             return generic_ts1_compatibility_handler(f,i,t,d);
         if(i.opcode==1&&(i.operands[0]==28||i.operands[0]==10||i.operands[0]==11||i.operands[0]==43))return person_primitive(f,i,t,d);
+        if(i.opcode==13){
+            // Source checks can enqueue. Logical query roots remain unable to
+            // publish live queue mutations without an actual linked scope.
+            if(!d.origin||!d.origin->instruction_lease(f))return odh::PrimitiveOutcome{
+                odh::PrimitiveDisposition::unsupported,"check PushInteraction requires authenticated source-check lineage"};
+            return person_primitive(f,i,t,d);
+        }
         if(i.opcode==22)return look_towards_handler(f,i,t,d);
         switch(i.opcode){
-        case 7: case 8: case 10: case 11: case 12: case 14: case 15: case 16: case 24: case 25: case 26: case 29:
-        case 28: case 31: case 32: case 35: case 36: case 37: case 38: case 39: case 49: case 50: case 51:
+        case 7: case 8: case 9: case 10: case 11: case 12: case 14: case 15: case 16: case 24: case 25: case 26: case 29:
+        case 28: case 42: case 31: case 32: case 35: case 36: case 37: case 38: case 39: case 49: case 50: case 51:
             return person_primitive(f,i,t,d);
         default:return {odh::PrimitiveDisposition::unsupported,
             "interaction check primitive requires synchronous support: "+std::to_string(i.opcode)};
@@ -8910,8 +8926,18 @@ struct PlacementCandidateProbe {
                  source.retired_container_source?source.retired_container_source->source_still_matches&&source.retired_container_source->source_still_matches():
                     source.source_frame&&callee_vm_for(static_cast<std::int16_t>(source.source_frame->context.caller))==source.source_vm);
         };
+        request.identities_after_authenticated_reset=[&,source,register_owner,guid]{
+            const auto* live=world.find(source.tested_entity);const auto* other=world.find(source.other);
+            return live&&other&&live->generation==source.tested_generation&&other->generation==source.other_generation&&
+                live->definition&&live->definition->guid==guid&&live->entry_points&&live->entry_points->size()>5&&
+                (*live->entry_points)[5].action==source.action&&callee_vm_for(source.tested_entity)==register_owner&&
+                (source.source_vm&&source.source_frame?
+                    callee_vm_for(source.source_frame->context.caller)==source.source_vm:true);
+        };
         if(source.original_recovery_source)++recovery_position_ep5_calls;
         const auto result=odh::evaluate_live_entry_point5(request);
+        if(result.source_reset&&(source.route_placement_proof||source.route_execution_proof))
+            throw odh::SourceCheckResetRetirement(source.source_vm);
         if(result.state==odh::LiveEntryPoint5State::unsupported)
             throw odh::FormatError("Snap live EP5: "+result.diagnostic);
         return result.state==odh::LiveEntryPoint5State::evaluated_true;
@@ -8942,11 +8968,38 @@ struct PlacementCandidateProbe {
         if(!initial||!initial->definition||creation.created_entity!=id||initial->generation!=creation.created_generation)
             return reject("object placement lacks its actual constructed identity");
         const odh::ObjectPositionIdentity identity{id,initial->generation};
+        const auto initial_position=initial->position;
+        const auto initial_attachment=initial->attachment;
+        // Own only bounded provenance values for a possible failure receipt;
+        // callback effects must not require borrowing a later dispatch frame.
+        struct PlacementSourceReceipt {
+            std::uint64_t run=0;bool active=false;odh::VmContext context{};
+            odh::RoutineKey key{};std::uint16_t pc=0;unsigned opcode=0;
+            bool instruction_lease=false,protected_frame=false;
+        } source_receipt;
+        source_receipt.run=creation.source_run_generation;
+        if(creation.active_dispatch){const auto& dispatch=*creation.active_dispatch;
+            source_receipt.active=true;source_receipt.context=dispatch.frame.context;
+            source_receipt.key=dispatch.frame.key;source_receipt.pc=dispatch.frame.pc;
+            source_receipt.opcode=dispatch.instruction.opcode;
+            source_receipt.instruction_lease=bool(dispatch.instruction_lease);
+            source_receipt.protected_frame=bool(dispatch.protected_frame);
+        }
+        std::string first_current_failure;
         auto lease=std::make_shared<bool>(true);
         struct End {std::shared_ptr<bool> value;~End(){*value=false;}} end{lease};
         const auto current=[&,identity,creation,weak=std::weak_ptr<bool>(lease)]{
-            const auto alive=weak.lock();if(!alive||!*alive||!creation.source_still_matches||!creation.source_still_matches())return false;
-            const auto* e=world.find(identity.id);return e&&e->generation==identity.generation&&e->kind==odh::EntityKind::object&&!e->ui_ghost;
+            // Escaped expired callbacks must not touch this scope's diagnostics.
+            const auto alive=weak.lock();if(!alive||!*alive)return false;
+            const auto failed=[&](const char* reason){if(first_current_failure.empty())first_current_failure=reason;return false;};
+            if(!creation.source_still_matches)return failed("source callback absent");
+            if(!creation.source_still_matches())return failed("source callback refused");
+            const auto* e=world.find(identity.id);
+            if(!e)return failed("constructed body absent");
+            if(e->generation!=identity.generation)return failed("constructed generation changed");
+            if(e->kind!=odh::EntityKind::object)return failed("constructed kind changed");
+            if(e->ui_ghost)return failed("constructed GhostImage");
+            return true;
         };
         auto scoped_creation=creation;scoped_creation.source_still_matches=current;
         const auto word=[&](std::int16_t object,std::int16_t index)->std::optional<std::int16_t>{
@@ -9047,7 +9100,8 @@ struct PlacementCandidateProbe {
             return run_position_entry_point5(selected,proof);
         };
         std::optional<odh_host::SessionObjectPositionServices> registry_positions;
-        if(current_position_registry()){
+        auto* const placement_registry=current_position_registry();
+        if(placement_registry){
             if(!placement_resources)return reject("fresh placement registry providers unavailable");
             (void)placement_resources->load(initial->definition->guid);
             odh_host::SessionObjectPositionContext context;context.world=&world;context.resources=placement_resources.get();
@@ -9059,6 +9113,14 @@ struct PlacementCandidateProbe {
             context.memory=memory;context.primitive_factory=[&](const odh::VmMemory&){return person_primitive;};context.source_still_matches=current;
             registry_positions=odh_host::make_session_object_position_services(std::move(context));
         }
+        const auto* const placement_lighting=room_lighting_controller?room_lighting_controller->current():nullptr;
+        const auto registered_position_current=[&]{
+            return registry_positions&&placement_registry&&current_position_registry()==placement_registry&&placement_registry->complete;
+        };
+        const auto registered_light_current=[&]{
+            return registered_position_current()&&placement_lighting&&room_lighting_controller&&
+                room_lighting_controller->current()==placement_lighting;
+        };
         odh::ObjectPositionValid placement(world,std::move(valid));
         odh::ObjectPositionChangeServices change;
         change.story_count=[]()->std::optional<std::int16_t>{return 5;}; // Pinned VMTS1ActivatorNew.Architecture.Stories.
@@ -9069,33 +9131,46 @@ struct PlacementCandidateProbe {
             if(pos.level>2)return {}; // Source story exists, but its geometry is not in this prepared dataset.
             return render_lot->runtime_room_at(pos);
         };
-        change.admit_single_ordinary=[&](auto target)->std::optional<bool>{
-            if(!current()||target.id!=id)return {};const auto* e=world.find(id);const auto* def=definition_index->unique(e->definition->guid);
+        const auto admit_single_profile=[&](auto target,bool registered_light)->std::optional<bool>{
+            if(!current()||target.id!=id||target.generation!=identity.generation)return {};const auto* e=world.find(id);const auto* def=definition_index->unique(e->definition->guid);
             const auto flags=word(id,40),light=word(id,51);if(!def||!flags||!light||!e->entry_points||e->entry_points->size()<=15)return {};
             const auto* group=dynamic_group_for(id);
             const bool direct_subpart=group&&!group->multitile&&group->members.size()==1&&group->base_id==id&&def->definition.sub_index!=-1;
             return ((def->definition.master_id==0&&!def->definition.is_multitile)||direct_subpart)&&!e->definition->master_guid&&
-                !e->entry_points->at(15).action&&!(static_cast<std::uint16_t>(*flags)&0xc000U)&&*light==0;
+                !e->entry_points->at(15).action&&!(static_cast<std::uint16_t>(*flags)&0xc000U)&&(*light==0||registered_light);
+        };
+        change.admit_single_ordinary=[&](auto target){return admit_single_profile(target,false);};
+        if(registry_positions)change.admit_single_constructed=[&](auto target)->std::optional<bool>{
+            // Actual construction owns this root. Lighting support comes from
+            // the same complete event registry used by BOTH Pre and Post, not
+            // from the definition/GUID or an assumed empty spatial cache.
+            if(!registered_position_current())return {};
+            const auto light=word(id,51);if(!light||(*light!=0&&!registered_light_current()))return {};
+            return admit_single_profile(target,registered_light_current());
         };
         bool unregistered=false;const auto registration=world.room_registration_revision();
         change.unregister_position=[&](auto target,bool room_change){
             if(!current()||target.id!=id||world.find(id)->position||world.find(id)->attachment||unregistered||!registration)return false;
             // Fresh OOW has no tile-query entry/positive-room footprint to
             // remove. Native query/room-score services derive from live World.
-            if(registry_positions&&!registry_positions->change.unregister_position(target,room_change))return false;
+            if(registry_positions&&(!registered_position_current()||
+                !registry_positions->change.unregister_position(target,room_change)))return false;
             unregistered=true;return true;
         };
         change.register_position=[&](auto target,std::uint16_t room,bool room_change){
-            if(!current()||target.id!=id||!unregistered||!word(id,51)||*word(id,51)!=0)return false;
+            if(!current()||target.id!=id||target.generation!=identity.generation||!unregistered||!word(id,51)||
+               (*word(id,51)!=0&&!registered_light_current()))return false;
             const auto* e=world.find(id);const auto revision=world.room_registration_revision();if(!revision)return false;
             if(e->position){
                 const auto actual=render_lot->runtime_room_at(*e->position);if(!actual||*actual!=room||(room_change&&*revision<=*registration))return false;
                 if(!vm_room_map||!odh::calculate_room_score(*vm_room_map,odh::room_score_contributions(world),e->position->x,e->position->y,e->position->level))return false;
             }else if(room!=0)return false;
-            if(registry_positions&&!registry_positions->change.register_position(target,room,room_change))return false;
-            // World position publication records ordered room-registration
-            // history. Spatial queries and room scores are recomputed live;
-            // this non-light/non-portal profile adds no lighting source.
+            if(registry_positions&&(!registered_position_current()||
+                !registry_positions->change.register_position(target,room,room_change)))return false;
+            // The shared event registry owns RoomInfo/tile membership,
+            // footprints, deferred lighting and source room-score effects.
+            // The legacy absent-registry branch remains non-light/non-portal;
+            // it cannot certify a light by recomputing spatial queries alone.
             return word(id,29)&&*word(id,29)==static_cast<std::int16_t>(static_cast<std::int32_t>(room)-1);
         };
         change.wall_use=[&](auto target,bool set,bool exclusive){
@@ -9164,7 +9239,41 @@ struct PlacementCandidateProbe {
         const auto result=publication.apply({identity,destination.value_or(odh::EntityPosition{-32768,-32768,1,*direction}),*direction,0,current});
         if(result.status==odh::ObjectPositionChangeStatus::unsupported){
             if(auto* registry=current_position_registry())registry->complete=false;
-            return reject(result.diagnostic);
+            // Failure-only receipt: inspect the exact constructor body without
+            // invoking authority, callbacks, placement or resource admission again.
+            std::ostringstream receipt;receipt<<result.diagnostic<<"; placement_root="<<id
+                <<"/"<<identity.generation<<" source_failure="<<(first_current_failure.empty()?"none":first_current_failure);
+            receipt<<" source_run="<<source_receipt.run<<" active_dispatch="<<source_receipt.active;
+            if(source_receipt.active){receipt<<" source_actor="<<source_receipt.context.caller<<" source_callee="<<source_receipt.context.callee
+                    <<" source_stack="<<source_receipt.context.stack_object<<" source_routine="<<source_receipt.key.id
+                    <<" source_pc="<<source_receipt.pc<<" source_opcode="<<source_receipt.opcode
+                    <<" instruction_lease="<<source_receipt.instruction_lease<<" protected_frame="<<source_receipt.protected_frame;}
+            const auto pose=[&](const char* label,const std::optional<odh::EntityPosition>& p){
+                receipt<<' '<<label<<'=';if(p)receipt<<p->x<<','<<p->y<<','<<int(p->level)<<','<<unsigned(p->direction);else receipt<<"OOW";};
+            pose("requested",destination);pose("initial_pose",initial_position);
+            receipt<<" initial_attachment=";if(initial_attachment)receipt<<initial_attachment->container<<','<<initial_attachment->slot;else receipt<<"none";
+            const auto* actual=world.find(id);receipt<<" body_present="<<bool(actual);
+            if(actual){
+                receipt<<" actual_generation="<<actual->generation<<" kind="<<unsigned(actual->kind)
+                    <<" ghost="<<actual->ui_ghost<<" dead="<<actual->dead;
+                pose("actual_pose",actual->position);
+                receipt<<" attachment=";if(actual->attachment)receipt<<actual->attachment->container<<','<<actual->attachment->slot;else receipt<<"none";
+                receipt<<" slot_count="<<actual->slots.size()<<" children=";
+                std::size_t shown=0;for(std::size_t slot=0;slot<actual->slots.size()&&shown<8;++slot)if(actual->slots[slot]){receipt<<slot<<':'<<actual->slots[slot]<<',';++shown;}
+                receipt<<" children_receipt_limit=8";
+                receipt<<" guid="<<(actual->definition?actual->definition->guid:0)
+                    <<" master_guid="<<(actual->definition&&actual->definition->master_guid?*actual->definition->master_guid:0);
+                const auto* def=actual->definition?definition_index->unique(actual->definition->guid):nullptr;
+                receipt<<" definition="<<bool(def);
+                if(def)receipt<<" master_id="<<def->definition.master_id<<" multitile="<<def->definition.is_multitile<<" sub_index="<<def->definition.sub_index;
+                for(const auto index:{40,51,16,29,59,63}){receipt<<" word"<<index<<'=';const auto value=actual->object_words.find(index);
+                    if(value==actual->object_words.end())receipt<<"missing";else receipt<<value->second;}
+                receipt<<" ep_count="<<(actual->entry_points?actual->entry_points->size():0)
+                    <<" ep15="<<(actual->entry_points&&actual->entry_points->size()>15?actual->entry_points->at(15).action:0);
+                const auto* group=dynamic_group_for(id);receipt<<" group_present="<<bool(group);
+                if(group)receipt<<" group_multitile="<<group->multitile<<" group_count="<<group->members.size()<<" group_base="<<group->base_id;
+            }
+            return reject(receipt.str());
         }
         return true; // Source rejected placement legitimately leaves the constructed object OOW.
     };
@@ -17218,8 +17327,15 @@ struct PlacementCandidateProbe {
                 const auto caller_id=pending.command_caller?pending.command_caller:pending.source_frame.context.caller;
                 if(pending.command_caller&&in_hand)throw odh::FormatError("external game command cannot invent a carry instruction");
                 const auto* caller=catalog_startup?nullptr:world.find(caller_id);
+                const auto leased_source_current=[&]{
+                    if(!pending.ordinary_dispatch||!pending.ordinary_dispatch->instruction_lease)return false;
+                    const auto& active=*pending.ordinary_dispatch;const auto& lease=*active.instruction_lease;
+                    return lease.valid()&&lease.origin()==pending.vm&&active.protected_frame&&
+                        lease.matches(*active.protected_frame,active.instruction,active.dispatch)&&
+                        odh::vm_frame_equal(active.frame,*active.protected_frame);
+                };
                 if(!catalog_startup&&(!caller||caller->generation!=pending.caller_generation||
-                   pending.vm->run_generation()!=pending.vm_generation))
+                   (pending.vm->run_generation()!=pending.vm_generation&&!leased_source_current())))
                     throw odh::FormatError("CreateObjectInstance Caller identity changed before construction");
                 if(pending.placement&&pending.placement->reference){
                     // The source copied this anchor's pose before Init. Its
@@ -17331,10 +17447,20 @@ struct PlacementCandidateProbe {
                     if(pending.lifecycle_query)(void)placement_resources->load(candidate->definition.guid);
                     else if(pending.ordinary_dispatch){
                         const auto& proof=*pending.ordinary_dispatch;
-                        const auto admitted=[&]{return pending.vm&&proof.instruction.opcode==42&&
-                            !proof.dispatch.check_mode&&proof.dispatch.origin==pending.vm&&
-                            pending.vm->run_generation()==pending.vm_generation&&pending.source_still_matches()&&
-                            pending.vm->matches_active_primitive(proof.frame,proof.instruction,proof.dispatch)&&[&]{
+                        const auto admitted=[&]{
+                            if(!pending.vm||!pending.source_still_matches()||proof.dispatch.origin!=pending.vm)return false;
+                            const bool leased=leased_source_current();
+                            if(proof.instruction.opcode==9){
+                                // VMBurn authors only the installed Fire GUID.
+                                // Lifetime authority does not grant arbitrary creation.
+                                return leased&&pending.request.guid==odh::ts1_fire_guid&&!pending.group_part&&
+                                    pending.request.position()==odh::CreateObjectPosition::out_of_world&&
+                                    !pending.request.flags&&static_cast<bool>(pending.place_initialized);
+                            }
+                            if(proof.instruction.opcode!=42)return false;
+                            if(!leased&&(proof.dispatch.check_mode||pending.vm->run_generation()!=pending.vm_generation||
+                               !pending.vm->matches_active_primitive(proof.frame,proof.instruction,proof.dispatch)))return false;
+                            return [&]{
                                 const auto source_guid=odh::decode_create_object_instance(proof.instruction).guid;
                                 if(source_guid==pending.request.guid)return true;
                                 const auto* root=definition_index->unique(source_guid);
@@ -17342,7 +17468,7 @@ struct PlacementCandidateProbe {
                                     root->definition.master_id==candidate->definition.master_id&&
                                     root->source==candidate->source&&root->asset==candidate->asset;
                             }();};
-                        if(!admitted())throw odh::FormatError("ordinary creation resource admission lost active42 authority");
+                        if(!admitted())throw odh::FormatError("ordinary creation resource admission lost authenticated42/Burn9 authority");
                         (void)placement_resources->load(candidate->definition.guid);
                         if(!admitted())throw odh::FormatError("ordinary creation source changed during bounded resource admission");
                     }else (void)placement_resources->creation_resource(candidate->definition.guid,pending.vm);
@@ -17496,6 +17622,16 @@ struct PlacementCandidateProbe {
                         ->std::optional<ConstructedRuntimeObject>{
                     bool ordinary_placement_failure=false;
                     try{
+                std::unique_ptr<odh::VmInstructionChildScope> construction_child;
+                if(pending.ordinary_dispatch&&pending.ordinary_dispatch->instruction_lease){
+                    const auto& proof=*pending.ordinary_dispatch;
+                    if(!proof.instruction_lease->valid()||!proof.protected_frame||
+                       !proof.instruction_lease->matches(*proof.protected_frame,proof.instruction,proof.dispatch))
+                        throw odh::FormatError("constructor parent instruction lease expired before Init");
+                    construction_child=runtime->vm->authorize_instruction_child(*proof.instruction_lease,
+                        odh::VmInstructionChildKind::construction);
+                    if(!construction_child)throw odh::FormatError("constructor child could not bind exact source instruction");
+                }
                 std::optional<odh::VmTrace> startup_last;
                 std::string startup_phase;
                 LifecycleScope lifecycle(lifecycle_authorities,*runtime->vm,{object_id,created_generation},owner);
@@ -17709,6 +17845,101 @@ struct PlacementCandidateProbe {
                 }
                 return {};
             }
+    };
+    burn_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+            const odh::Ts1Temps&,const odh::VmDispatch& dispatch)->odh::PrimitiveOutcome{
+        const auto reject=[](std::string why){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,std::move(why)};};
+        if(!simulation_clock||!vm_room_map||!dispatch.origin)
+            return reject("Burn requires the shared TS1 clock and exact live room map");
+        const auto lease=dispatch.origin->instruction_lease(frame);
+        const auto* creator=world.frame_entity(frame,odh::VmEntityRole::caller,true);
+        if(!lease||!creator||creator->ui_ghost)return reject("Burn lacks actual instruction or live Caller identity");
+        const odh::WorldEntityReference caller{creator->id,creator->generation};
+        const auto current=[&,lease=*lease,caller]{
+            return lease.valid()&&lease.matches(frame,instruction,dispatch)&&world.is_live_reference(caller);
+        };
+        odh::Ts1FireServices services;
+        services.width=vm_room_map->width;services.height=vm_room_map->height;
+        services.instruction_lease=*lease;services.source_current=current;
+        services.random=[&](std::uint32_t maximum)->std::optional<std::uint32_t>{
+            if(!current()||!maximum)return {}; ++rng_requests;return random.next(maximum);
+        };
+        services.position=[&](odh::WorldEntityReference ref)->std::optional<odh::EntityPosition>{
+            if(!current())return {};const auto* body=world.resolve_reference(ref);if(!body)return {};
+            if(body->position)return body->position;
+            // Position is OOW but Direction remains this exact body's heading.
+            // Do not substitute a live numeric-ID lookup for a retained anchor.
+            const auto heading=body->object_words.find(1);
+            if(heading==body->object_words.end()||heading->second<0||heading->second>7)return {};
+            return odh::EntityPosition{-32768,-32768,1,static_cast<std::uint8_t>(heading->second)};
+        };
+        services.caller_in_pool=[&](odh::WorldEntityReference ref)->std::optional<bool>{
+            const auto point=services.position(ref);if(!point||!vm_room_map)return {};
+            const auto room=odh::geometric_room_at_runtime(*vm_room_map,point->x,point->y,point->level);
+            if(!room||*room>=vm_room_map->rooms.size()||vm_room_map->rooms[*room].id!=*room)return {};
+            return vm_room_map->rooms[*room].pool;
+        };
+        services.objects_at=[&](const odh::EntityPosition& point)->std::optional<std::vector<odh::WorldEntityReference>>{
+            const auto* registry=current_position_registry();
+            if(!current()||!registry||!registry->complete||registry->width!=services.width||registry->height!=services.height||
+               point.x<0||point.y<0||point.level<1||point.level>2||
+               point.x/16>=static_cast<std::int32_t>(registry->width)||point.y/16>=static_cast<std::int32_t>(registry->height))return {};
+            const auto offset=(point.level-1)*registry->width*registry->height+(point.y/16)*registry->width+point.x/16;
+            const auto tile=std::lower_bound(registry->tiles.begin(),registry->tiles.end(),static_cast<std::int32_t>(offset),
+                [](const auto& a,std::int32_t b){return a.offset<b;});
+            std::vector<odh::WorldEntityReference> result;
+            if(tile!=registry->tiles.end()&&tile->offset==static_cast<std::int32_t>(offset)){
+                if(tile->entities.size()>4096)return {};
+                for(const auto part:tile->entities){const odh::WorldEntityReference ref{part.id,part.generation};
+                    if(!world.is_live_reference(ref))return {};result.push_back(ref);}
+            }
+            return result;
+        };
+        services.group=[&](odh::WorldEntityReference ref)->std::optional<std::vector<odh::WorldEntityReference>>{
+            if(!current()||!world.is_live_reference(ref))return {};
+            const auto* body=world.resolve_reference(ref);if(!body||body->ui_ghost)return {};
+            if(body->kind==odh::EntityKind::avatar){
+                if(!body->definition||body->definition->master_guid)return {};
+                return std::vector<odh::WorldEntityReference>{ref};
+            }
+            const auto physical=live_physical_manifest({ref.id,ref.generation});if(!physical)return {};
+            std::vector<odh::WorldEntityReference> result;
+            for(const auto& part:physical->members)result.push_back({part.id,part.generation});return result;
+        };
+        services.in_use=[&](odh::WorldEntityReference ref)->std::optional<bool>{
+            return odh_host::functional_selector_in_use(world,ref,services.group,
+                [&](odh::WorldEntityReference avatar)->const odh::Vm*{
+                    if(!world.is_live_reference(avatar))return {};return actor_vm_for(avatar.id);
+                });
+        };
+        services.set_flags=[&](odh::WorldEntityReference ref,std::int16_t flags,std::string& why){
+            if(!current()){why="Burn instruction expired before Flags publication";return false;}
+            if(!world.set_entity_flags(frame,ref,flags)){why="shared Flags/Reset publication refused exact target";return false;}
+            return current();
+        };
+        services.create=[&](const odh::EntityPosition& destination,std::string& why){
+            if(!current()){why="Burn instruction expired before Fire construction";return false;}
+            auto* source=const_cast<odh::Vm*>(dispatch.origin);
+            odh::LiveObjectCreationActiveDispatch active{frame,instruction,dispatch,*lease,&frame};
+            RuntimeObjectConstructionContext pending;
+            pending.vm=source;pending.vm_generation=source->run_generation();pending.caller_generation=caller.generation;
+            pending.source_frame=frame;pending.stack_object=frame.context.stack_object;
+            pending.request.guid=odh::ts1_fire_guid;
+            pending.request.raw_position=static_cast<std::uint8_t>(odh::CreateObjectPosition::out_of_world);
+            pending.source_still_matches=current;pending.ordinary_dispatch=active;
+            pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
+            pending.place_initialized=[&,active,destination](std::int16_t object,std::string* error){
+                const auto* body=world.find(object);if(!body||!current())return false;
+                odh::LiveObjectCreationPlacementSource authority{source,pending.vm_generation,object,body->generation,current};
+                authority.active_dispatch=active;
+                return place_new_object_default(object,destination,authority,error);
+            };
+            (void)construct_runtime_object(pending);
+            if(host_failed){why=last_create_object_diagnostic.empty()?host_diagnostic:last_create_object_diagnostic;return false;}
+            if(!current()){why="Burn source identity changed during installed Fire construction";return false;}
+            return true; // Completed source attempt may legitimately return null.
+        };
+        return odh::execute_ts1_burn(world,*simulation_clock,frame,instruction,dispatch,services);
     };
     std::uint64_t source_shoo_calls=0,source_shoo_direct=0,source_shoo_queued=0;
     std::int16_t source_shoo_last_destination=0;
@@ -18052,9 +18283,9 @@ struct PlacementCandidateProbe {
     synchronous_ordinary_object_creation=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
             const odh::Ts1Temps& temps,const odh::VmDispatch& dispatch)->odh::PrimitiveOutcome{
         const auto reject=[](const std::string& why){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,why};};
-        if(instruction.opcode!=42||!dispatch.origin||dispatch.check_mode||
-           !dispatch.origin->matches_active_primitive(frame,instruction,dispatch))
-            return reject("ordinary object construction requires its exact active source dispatch");
+        const auto lease=dispatch.origin?dispatch.origin->instruction_lease(frame):std::nullopt;
+        if(instruction.opcode!=42||!lease||!lease->matches(frame,instruction,dispatch))
+            return reject("ordinary object construction requires its authenticated actual instruction lifetime");
         const auto request=odh::decode_create_object_instance(instruction);
         if(request.persist_in_database()||request.use_neighbor())
             return reject("ordinary object constructor cannot acquire PersistID or avatar neighbor authority");
@@ -18063,10 +18294,10 @@ struct PlacementCandidateProbe {
             return reject("ordinary object construction lacks its exact captured placement source");
         auto* source=const_cast<odh::Vm*>(dispatch.origin);const auto run=source->run_generation();
         const odh::WorldEntityReference caller{plan.caller.id,plan.caller.generation};const auto parent_depth=source->stack().size();
-        const auto current=[&,source,run,caller,frame,instruction,dispatch]{
+        const auto current=[&,source,caller,lease=*lease,protected_frame=&frame,instruction,dispatch]{
+            if(!lease.valid()||lease.origin()!=source||!lease.matches(*protected_frame,instruction,dispatch))return false;
             const auto* body=world.resolve_reference(caller);
-            return body&&!body->dead&&!body->ui_ghost&&source->run_generation()==run&&
-                source->matches_active_primitive(frame,instruction,dispatch);
+            return body&&!body->dead&&!body->ui_ghost&&world.is_live_reference(caller);
         };
         if(!current())return reject("ordinary object creator lost its exact source body");
         // Capture actual pointer identity BEFORE Init can delete/reuse any raw
@@ -18080,7 +18311,7 @@ struct PlacementCandidateProbe {
             pending.stack_object=frame.context.stack_object;pending.source_frame=frame;
             pending.caller_generation=caller.generation;pending.caller_direction=plan.direction;
             pending.source_still_matches=current;pending.placement=plan;
-            pending.ordinary_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch};
+            pending.ordinary_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch,dispatch.origin?dispatch.origin->instruction_lease(frame):std::nullopt,&frame};
             pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
             pending.main_parameter=request.pass_temp0()?temps[0]:request.pass_object_ids()?frame.context.caller:std::int16_t{0};
             const auto* stack=world.frame_entity(frame,odh::VmEntityRole::stack_object);
@@ -18088,7 +18319,7 @@ struct PlacementCandidateProbe {
             pending.place_initialized=[&](std::int16_t id,std::string* why){
                 const auto* entity=world.find(id);if(!entity||!current())return false;
                 odh::LiveObjectCreationPlacementSource authority{source,run,id,entity->generation,current};
-                authority.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch};
+                authority.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch,dispatch.origin?dispatch.origin->instruction_lease(frame):std::nullopt,&frame};
                 if(!place_new_object_default(id,plan.destination,authority,why,{},plan.direction))return false;
                 entity=world.find(id);
                 if(plan.retry_underneath&&entity&&!entity->position&&!entity->attachment){
@@ -18109,15 +18340,19 @@ struct PlacementCandidateProbe {
                 callback_source.source_frame=callback_source_frame;callback_source.vm_generation=run;callback_source.caller_generation=caller.generation;
                 const auto callback=resolve_created_callback(callback_source,*created,true);
                 if(callback){
-                    if(!source->prepare_primitive_call(frame,instruction,dispatch,*callback))
+                    const bool detached=lease->detached();
+                    if(!source->prepare_instruction_call(*lease,frame,instruction,dispatch,*callback))
                         return reject("ordinary creation callback failed exact child preflight");
                     const auto born=odh::WorldEntityReference{created->id,created->generation};
                     odh::PrimitiveOutcome out{odh::PrimitiveDisposition::call,{}};out.call=*callback;
                     out.temp_write=odh::VmTempWrite{0,created->id};
-                    out.call_commit=[&,source,run,caller,born,frame,instruction,dispatch,parent_depth]{
+                    const auto depth=source->stack().size();
+                    if(detached){out.detached_call=lease->prepare_detached_call(*callback);
+                        if(!out.detached_call)return reject("creation callback lost detached new-Main continuation");}
+                    out.call_commit=[&,source,caller,born,lease=*lease,protected_frame=&frame,instruction,dispatch,depth]{
+                        if(!lease.call_commit_active()||!lease.matches_call_commit(*protected_frame,instruction,dispatch,depth))return false;
                         const auto* creator=world.resolve_reference(caller);
-                        return creator&&!creator->dead&&!creator->ui_ghost&&world.is_live_reference(born)&&
-                            source->run_generation()==run&&source->matches_active_call_commit(frame,instruction,dispatch,parent_depth);
+                        return creator&&!creator->dead&&!creator->ui_ghost&&world.is_live_reference(born);
                     };
                     return out;
                 }
@@ -18400,7 +18635,9 @@ struct PlacementCandidateProbe {
                 configure_actor_execution(*bound,nullptr,true);
                 const auto creator_run=pending.vm?pending.vm->run_generation():0;
                 const auto current=[&,id,generation,creator_run]{const auto* e=world.find(id);
-                    return e&&e->generation==generation&&(!pending.vm||pending.vm->run_generation()==creator_run)&&
+                    const bool leased=pending.active_dispatch&&pending.active_dispatch->instruction_lease&&
+                        pending.active_dispatch->instruction_lease->valid();
+                    return e&&e->generation==generation&&(!pending.vm||pending.vm->run_generation()==creator_run||leased)&&
                         (pending.lifecycle_current?pending.lifecycle_current():
                          (pending.vm->status()==odh::VmStatus::waiting&&pending.vm->pending()&&pending.vm->pending()->ticket==pending.ticket));};
                 if(pending.request.original_semantics)
@@ -18413,6 +18650,15 @@ struct PlacementCandidateProbe {
                         throw odh::FormatError("NPC constructor footprint metadata could not bind");
                 }
                 auto& thread=*bound->vm;
+                std::unique_ptr<odh::VmInstructionChildScope> npc_construction_child;
+                if(pending.active_dispatch&&pending.active_dispatch->instruction_lease){
+                    const auto& active=*pending.active_dispatch;const auto& source_lease=*active.instruction_lease;
+                    if(!source_lease.valid()||!active.protected_frame||
+                       !source_lease.matches(*active.protected_frame,active.instruction,active.dispatch))
+                        throw odh::FormatError("NPC constructor parent instruction lease expired");
+                    npc_construction_child=thread.authorize_instruction_child(source_lease,odh::VmInstructionChildKind::construction);
+                    if(!npc_construction_child)throw odh::FormatError("NPC constructor exact source child could not bind");
+                }
                 auto inputs=*bound->npc_body_inputs;
                 if(simulation_clock){
                     const auto time=simulation_clock->snapshot();
@@ -19029,6 +19275,65 @@ struct PlacementCandidateProbe {
         if(animation&&!animation->finish_source_reset())return false;
         (void)now;return true;
     };
+    if(!world.set_avatar_burning_observer([&](odh::World& published,const odh::VmFrame& source,
+            odh::WorldEntityReference target,std::int16_t,std::int16_t){
+        const auto fail=[&](const std::string& why){host_failed=true;
+            host_diagnostic="avatar Burning Reset target="+std::to_string(target.id)+"/"+
+                std::to_string(target.generation)+": "+why;return false;};
+        if(&published!=&world)return fail("different World");
+        const auto lease=odh::Vm::active_instruction_lease(source);
+        if(!lease)return fail("missing authenticated actual instruction/setter lifetime");
+        const auto* body=world.resolve_reference(target);auto* thread=actor_vm_for(target.id);
+        if(!body||!world.is_live_reference(target)||body->kind!=odh::EntityKind::avatar||!body->entry_points||
+           !thread||body->person_data.size()<=65)return fail("exact target Thread/entries/IsPet bank unavailable");
+        auto* actor=actor_runtime_for(target.id);
+        auto* controllers=target.id==runtime_avatar_id?&primary_controllers():actor&&actor->controllers?actor->controllers.get():
+            headless_second_main&&target.id==headless_second_main->avatar.id?second_main_thread.get():nullptr;
+        if(!controllers||!controllers->bound_to(*thread))return fail("target controller identity unavailable");
+        const auto owner=actor&&actor->npc_origin?actor->primary_owner:static_cast<odh::CodeOwner>(target.id);
+        const auto bank=thread->shared_program_for_owner(owner);if(!bank)return fail("exact owning resource bank unavailable");
+        auto* animation=target.id==runtime_avatar_id?(primary_animation()?&*primary_animation():nullptr):
+            actor&&actor->playback?&*actor->playback:
+            headless_second_main&&target.id==headless_second_main->avatar.id&&second_main_playback?&*second_main_playback:nullptr;
+        auto* route=target.id==runtime_avatar_id?primary_routing().get():actor?actor->routing.get():nullptr;
+        const auto target_current=[&]{return world.is_live_reference(target)&&actor_vm_for(target.id)==thread;};
+        odh::EntryPointTable entries{};entries.entries=*body->entry_points;
+        // VMAvatar.IsPet reads Gender's dog/cat flags; this is independent of
+        // game death and source GhostImage. Preserve the original table.
+        const bool pet=(static_cast<std::uint16_t>(body->person_data[65])&24U)!=0;
+        if(!pet&&entries.entries.size()>3)entries.entries[3].action=0;
+        if(body->ui_ghost&&entries.entries.size()>1)entries.entries[1].action=0;
+        odh::Vm check(shared_program,odh::ShareVmProgramTag{},memory,odh::VmLimits{},odh::VmPrimitive{},
+            odh::SharedRoutineOwners{{owner,bank}},odh::ShareVmOwnerProgramsTag{});
+        check.set_owner_resolver([&](odh::CodeOwner requested){return thread->shared_program_for_owner(requested);});
+        odh::ObjectResetHooks hooks;
+        hooks.after_stack_cleared=[&]{
+            if(!target_current()||!controllers->discard_for_source_reset()||
+               (animation&&!animation->discard_for_source_reset())||(route&&!route->discard_for_source_reset()))return false;
+            if(target.id==runtime_avatar_id)primary_portals().contexts.clear();else if(actor)actor->room_portals.contexts.clear();
+            dialog_controller.cancel_for(thread);
+            pending_create_objects.erase(std::remove_if(pending_create_objects.begin(),pending_create_objects.end(),
+                [&](const auto& pending){return pending.vm==thread;}),pending_create_objects.end());
+            pending_npc_avatars.erase(std::remove_if(pending_npc_avatars.begin(),pending_npc_avatars.end(),
+                [&](const auto& pending){return pending.vm==thread;}),pending_npc_avatars.end());
+            pending_remove_objects.erase(std::remove_if(pending_remove_objects.begin(),pending_remove_objects.end(),
+                [&](const auto& pending){if(pending.vm!=thread)return false;
+                    if(pending.native){pending.native->phase=NativeDeleteOperation::Phase::closed;pending.native->entry_guard={};}
+                    return true;}),pending_remove_objects.end());
+            return target_current();
+        };
+        hooks.before_return_avatar_effects=[&]{
+            if(!target_current()||!world.set_person_data(target.id,33,0)||!world.clear_bound_appearances(target.id))return false;
+            headlines.remove(target.id);
+            return (!animation||animation->finish_source_reset())&&controllers->finish_source_reset()&&target_current();
+        };
+        const auto old_steps=thread->steps();
+        const auto reset=odh::run_object_reset(*lease,check,*thread,target.id,owner,entries,10000,
+            check_primitive,hooks);
+        startup_steps+=old_steps+reset.steps;
+        if(!reset.completed)return fail(reset.diagnostic);
+        return true;
+    }))throw odh::FormatError("avatar Burning lifecycle observer could not bind");
     const auto record_animation_event=[&](const odh::PlaybackEvent& event){
         // Events already crossed their saved playback cursor. Resolve sound
         // separately from the bounded diagnostic-history retention gate.
@@ -19361,7 +19666,7 @@ struct PlacementCandidateProbe {
                 PendingNpcAvatar pending;pending.vm=const_cast<odh::Vm*>(dispatch.origin);pending.ticket=dispatch.ticket;
                 pending.request=std::move(*resolved.request);pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
                 pending.lifecycle_current=current;pending.lifecycle_result=&created;
-                pending.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch};
+                pending.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch,dispatch.origin?dispatch.origin->instruction_lease(frame):std::nullopt,&frame};
                 pending_npc_avatars.push_front(std::move(pending));process_lifecycle_npc_avatars();
                 if(host_failed)return reject(last_npc_diagnostic);
                 odh::PrimitiveOutcome out{created?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::goto_false,{}};
@@ -19375,6 +19680,8 @@ struct PlacementCandidateProbe {
             pending.request=request;pending.stack_object=frame.context.stack_object;pending.source_frame=frame;
             pending.caller_generation=lease->entity.generation;pending.caller_direction=plan.direction;
             pending.source_still_matches=current;pending.placement=plan;pending.lifecycle_query=true;
+            pending.ordinary_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch,
+                dispatch.origin->instruction_lease(frame),&frame};
             pending.scheduler_running_now=entity_scheduler.running()||simulation_dispatch_running;
             pending.main_parameter=request.pass_temp0()?temps[0]:request.pass_object_ids()?frame.context.caller:std::int16_t{0};
             const auto* stack=world.frame_entity(frame,odh::VmEntityRole::stack_object);
@@ -20528,8 +20835,7 @@ struct PlacementCandidateProbe {
         if(!family_vacation||!session_context||!runtime_globals||!type_attributes_neighborhood_identity)
             throw odh::FormatError("vacation frontend phase lacks its shared owner and actual globals");
         const auto accepted=read_vacation_source_checkpoint();
-        const auto source=accepted.first.travel_visited_session?
-            odh::decode_session_bundle(*accepted.first.travel_visited_session):accepted.first;
+        const auto& source=accepted.active();
         auto owned=session_context->family_journal?session_context->family_journal->runtime_overlay():
             session_context->private_vacation_session?session_context->private_vacation_session->expected_overlay():type_attributes_open_overlay;
         const auto selected=runtime_globals->read(9);
@@ -20537,18 +20843,18 @@ struct PlacementCandidateProbe {
         const auto klass=odh::classify_original_lot(explicit_family_spell_zoning?&*explicit_family_spell_zoning:nullptr,
             static_cast<std::int16_t>(session_context->house_number));
         if(!entering&&(!klass||*klass!=odh::OriginalLotClass::residential))return;
-        auto phase=entering?odh_host::prepare_vacation_entry_phase(accepted.first,accepted.second,family_vacation->snapshot()):
-            odh_host::prepare_vacation_clear_phase(accepted.first,accepted.second,family_vacation->snapshot(),
+        auto phase=entering?odh_host::prepare_vacation_entry_phase(accepted,family_vacation->snapshot()):
+            odh_host::prepare_vacation_clear_phase(accepted,family_vacation->snapshot(),
                 static_cast<std::uint16_t>(*selected),session_context->house_number,*klass);
         if(entering){
             if(!actorless_arrival||!travel_state||travel_state->current_house!=phase.destination||
-               !source.travel||!source.travel->pending||odh::encode_session_bundle(source)!=session_context->travel_departure_archive)
+               !source.travel||!source.travel->pending||accepted.active_bytes()!=session_context->travel_departure_archive)
                 throw odh::FormatError("vacation set phase is not its exact fresh incoming sealed departure");
             if(!neighborhood_path)throw odh::FormatError("vacation family departure personal source is absent");
             std::optional<odh::OriginalFrontendPersonalSource> personal_source;
             with_iff_file(*neighborhood_path,[&](const auto& view){personal_source.emplace(odh::read_original_frontend_personal_source(view));});
             odh::validate_original_family_departure_personal(source,*personal_source);
-        }else if(!session_context->travel_return||session_context->travel_return->source_checkpoint_sha256()!=accepted.second)
+        }else if(!session_context->travel_return||session_context->travel_return->source_checkpoint_sha256()!=accepted.digest())
             throw odh::FormatError("vacation clear is not an authenticated typed frontend return");
         const odh::FamilyVacationPhase* prior=owned&&owned->family_vacation?
             odh::family_vacation_phase(*owned->family_vacation,phase.family_chunk_id):nullptr;
@@ -23261,7 +23567,7 @@ struct PlacementCandidateProbe {
     const auto emit_simulation=[&]{
         std::cout<<",\"simulation\":{\"profile\":"<<json_bytes(simulation_profile)<<",\"skipped_updates\":"<<simulation_skipped_updates<<",\"clock\":";
         if(simulation_clock){const auto& c=simulation_clock->snapshot();
-            std::cout<<"{\"ticks\":"<<c.ticks<<",\"minute_fraction\":"<<c.minute_fraction<<",\"minute\":"<<unsigned(c.minute)<<",\"hour\":"<<unsigned(c.hour)<<",\"day\":"<<unsigned(c.day)<<",\"month\":"<<unsigned(c.month)<<",\"year\":"<<c.year<<"}";
+            std::cout<<"{\"ticks\":"<<c.ticks<<",\"minute_fraction\":"<<c.minute_fraction<<",\"minute\":"<<unsigned(c.minute)<<",\"hour\":"<<unsigned(c.hour)<<",\"day\":"<<unsigned(c.day)<<",\"month\":"<<unsigned(c.month)<<",\"year\":"<<c.year<<",\"fire_percent\":"<<c.fire_percent<<"}";
         }else std::cout<<"null";
         std::cout<<",\"avatars\":[";bool first=true;
         for(const auto& a:simulation_motives){if(!first)std::cout<<',';first=false;const auto* actor=world.find(a.first);

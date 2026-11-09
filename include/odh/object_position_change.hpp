@@ -106,6 +106,12 @@ struct ObjectPositionChangeServices {
     std::function<bool(ObjectPositionIdentity)> native_remove_entry10;
     std::function<bool(ObjectPositionIdentity)> native_group_removed;
     std::function<bool(ObjectPositionIdentity)> native_group_added;
+    // Optional actual post-Init SINGLE constructor proof. Used only for the
+    // root of apply(), at capture AND after PositionValid/EP5. It may admit
+    // lighting only when the bound Pre/Post services own the real complete
+    // event registry and lighting requests. No fallback after refusal. Existing
+    // moves and contained children retain admit_single_ordinary unchanged.
+    std::function<std::optional<bool>(ObjectPositionIdentity)> admit_single_constructed;
 
 };
 // Synchronous shared native positioning stages. The loan cannot escape its
@@ -135,7 +141,8 @@ public:
     ObjectPositionChange(World& world,ObjectPositionValid& placement,ObjectPositionChangeServices services)
         :world_(world),placement_(placement),services_(std::move(services)){}
     // New ordinary objects: certified complete physical groups when the group
-    // provider is present, otherwise the legacy singleton. No effect rollback.
+    // provider is present, otherwise the singleton constructor profile (ordinary
+    // unless the explicit constructed-root proof is supplied). No effect rollback.
     ObjectPositionChangeResult apply(const ObjectPositionValidRequest&);
     // Same source lifecycle for an existing ordinary group/singleton, including a held
     // root and its bounded ordinary-object containment tree.

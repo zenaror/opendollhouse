@@ -3,8 +3,18 @@
 #include "odh/route_placement_proof.hpp"
 #include "odh/route_execution_proof.hpp"
 #include "odh/world.hpp"
+#include <stdexcept>
 
 namespace odh {
+
+// Internal synchronous unwind after EP5 proved that source Reset removed the
+// owning route. Consumers must also possess their own Reset detach marker.
+class SourceCheckResetRetirement : public std::runtime_error {
+public:
+    explicit SourceCheckResetRetirement(const Vm* source):std::runtime_error("authenticated source-check Reset retired route execution"),source_(source){}
+    const Vm* source() const noexcept{return source_;}
+private:const Vm* source_;
+};
 
 enum class LiveEntryPoint5State { evaluated_true, evaluated_false, unsupported };
 
@@ -17,6 +27,9 @@ struct LiveObjectCreationActiveDispatch {
     VmFrame frame;
     Instruction instruction;
     VmDispatch dispatch;
+    // Exact captured source lifetime. Legacy callers keep strict active42.
+    std::optional<VmInstructionLease> instruction_lease={};
+    const VmFrame* protected_frame=nullptr; // Dereference only after validating instruction_lease.
 };
 struct LiveObjectCreationPlacementSource {
     const Vm* source_vm=nullptr;
@@ -100,6 +113,9 @@ struct LiveEntryPoint5Request {
     // runner does not emulate that sandbox and refuses it explicitly.
     bool ghost_sandbox = false;
     std::function<bool()> identities_still_match;
+    // Exact World/resource/Thread bindings excluding old run/pending. Used only
+    // after the private child scope proves that Reset changed that same Thread.
+    std::function<bool()> identities_after_authenticated_reset;
     VmPrimitive check_primitive;
     std::uint64_t instruction_budget = 4096;
     std::optional<RoutePlacementProof> route_placement_proof;
@@ -120,6 +136,7 @@ struct LiveEntryPoint5Result {
     LiveEntryPoint5State state = LiveEntryPoint5State::unsupported;
     std::uint64_t steps = 0;
     std::string diagnostic;
+    bool source_reset=false,register_owner_reset=false; // Ephemeral observed outcome, never saved authority.
 };
 
 // Runs one known EP5 with source's {other, ghost, 0, 0} arguments against the

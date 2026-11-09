@@ -64,7 +64,7 @@ struct Harness {
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
             }};
         const odh::VmPrimitive source_primitive=[&,tested_id,other_id,no_thread,
-                ghost_sandbox,action,invert_source_dispatch,check,tested_thread](const odh::VmFrame& frame,
+                ghost_sandbox,action,invert_source_dispatch,check,tested_thread,route_placement_source](const odh::VmFrame& frame,
                 const odh::Instruction& instruction,const odh::Ts1Temps&,
                 const odh::VmDispatch& dispatch){
             auto altered=dispatch;

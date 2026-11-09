@@ -1512,8 +1512,9 @@ void immediate_route_controller_restore(){
 }
 void ordinary_go_here_factory_tests() {
     odh::World world;odh::RouteGrid grid{32,16};auto slots=slot();
-    require(world.create(11,odh::EntityKind::avatar,{0,88,0})&&world.set_position(11,{4,4,1,0}),
-        "ordinary Go Here creates a real actor");
+    require(world.create(11,odh::EntityKind::avatar,{0,88,0})&&world.set_position(11,{4,4,1,0})&&
+        world.declare_object_word(11,8,0),
+        "ordinary Go Here creates a real actor with explicit source queue-notification Flags");
     odh::EntityThreadControllers threads{world,11};odh::Routing routing{world,grid,slots};
     const odh::RoutineSet main{{odh::routine_key(4096),odh::Bhav{0x8002,
         {{17,0,0,{0,0,1,0}}},{},odh::Bhav::Metadata{0,1,0,0}}}};

@@ -979,11 +979,11 @@ bool Playback::deliver() {
     return false;
 }
 bool Playback::discard_for_source_reset(){
-    if(executing_||reach_executing_||(vm_&&vm_->dispatch_active()))return false;
+    if(executing_||reach_executing_||(vm_&&vm_->dispatch_active()&&!vm_->source_reset_lifecycle_active()))return false;
     wait_.reset();state_.reset();source_walk_.reset();diagnostic_.clear();return true;
 }
 bool Playback::finish_source_reset(){
-    if(executing_||reach_executing_||!vm_||vm_->dispatch_active()||state_||wait_||source_walk_)return false;
+    if(executing_||reach_executing_||!vm_||(vm_->dispatch_active()&&!vm_->source_reset_lifecycle_active())||state_||wait_||source_walk_)return false;
     if(hands_){const auto* actor=world_.find(hands_->actor);
         if(!actor||actor->generation!=hands_->actor_generation)return false;
         hands_->vm_generation=vm_->run_generation();}

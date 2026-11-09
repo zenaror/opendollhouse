@@ -188,4 +188,59 @@ class Gates(unittest.TestCase):
             candidate=copy.deepcopy(after);candidate['families'][0][field]=value
             with self.subTest(field=field),self.assertRaises(ValueError):driver.stable_family(before,candidate,7)
 
+spec=importlib.util.spec_from_file_location('family_flow',Path(__file__).with_name('family_lot_flow.py'))
+flow=importlib.util.module_from_spec(spec);spec.loader.exec_module(flow)
+
+class CompleteGuiGates(unittest.TestCase):
+    def plan(self):
+        ref=dict(png='observed.png',sha256='a'*64,box=[0,0,100,40])
+        return dict(schema='family_lot_window/v1',source_proof='reviewed real UI',purchase_guid=123,
+            purchase_price=10,sale_refund=10,build_cost=1,
+            floor=dict(x=1,y=1,level=1,material=1),operations={name:dict(
+                ready=copy.deepcopy(ref),complete=copy.deepcopy(ref),
+                events=[dict(kind='key',value='Escape',before=copy.deepcopy(ref))]) for name in flow.OPERATIONS})
+    def test_finite_ui_only_plan(self):
+        plan=self.plan();self.assertIs(flow.validate_plan(plan),plan)
+        variants=[]
+        wrong=copy.deepcopy(plan);wrong['operations'].pop('enter-second');variants.append(wrong)
+        wrong=copy.deepcopy(plan);wrong['operations']['purchase']['events'][0]={'kind':'shell','command':'writer'};variants.append(wrong)
+        wrong=copy.deepcopy(plan);wrong['operations']['purchase']['events'][0]['state']={'cash':20000};variants.append(wrong)
+        wrong=copy.deepcopy(plan);wrong['purchase_price']=True;variants.append(wrong)
+        wrong=copy.deepcopy(plan);wrong['operations']['purchase']['events']=[];variants.append(wrong)
+        wrong=copy.deepcopy(plan);wrong['operations']['purchase']['events'][0]['value']='Control_L+q';variants.append(wrong)
+        wrong=copy.deepcopy(plan);wrong['operations']['purchase']['complete']['box']=[0,0,50,40];variants.append(wrong)
+        wrong=copy.deepcopy(plan);wrong['operations']['purchase']['events'][0]=dict(kind='drag',before=copy.deepcopy(plan['operations']['purchase']['ready']),**{'from':[0,0],'to':[800,0]});variants.append(wrong)
+        wrong=copy.deepcopy(plan);wrong['operations']['purchase']['ready']['sha256']='not-reviewed';variants.append(wrong)
+        for index,value in enumerate(variants):
+            with self.subTest(case=index),self.assertRaises(ValueError):flow.validate_plan(value)
+    def test_pin_plan_and_reference_before_any_runtime(self):
+        import hashlib,json
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);image=root/'frame.png';image.write_bytes(b'reference bytes, parser never opens GUI')
+            plan=self.plan()
+            for operation in plan['operations'].values():
+                for ref in [operation['ready'],operation['complete']]+[e['before'] for e in operation['events']]:
+                    ref.update(png=str(image),sha256=hashlib.sha256(image.read_bytes()).hexdigest())
+            path=root/'plan.json';path.write_text(json.dumps(plan));digest=hashlib.sha256(path.read_bytes()).hexdigest()
+            self.assertEqual(flow.load_plan(path,digest),plan)
+            with self.assertRaises(ValueError):flow.load_plan(path,'0'*64)
+            image.write_bytes(b'changed')
+            with self.assertRaises(ValueError):flow.load_plan(path,digest)
+    def test_actual_native_gui_reports_and_cold_identity(self):
+        import json
+        native=dict(session_loaded=True,resumed_tick=17,integrated_session_context=dict(family_chunk_id=8,house_number=2))
+        text=json.dumps(native)+'\n'+json.dumps({'map_cancelled':True})
+        self.assertEqual(len(flow.gui_reports(text,8,2,True,17)),1)
+        for body,family,house,loaded,tick in [(text,9,2,True,17),(text,8,3,True,17),
+            (text,8,2,False,17),(text,8,2,True,18),(json.dumps({'passed':True}),8,2,True,17)]:
+            with self.subTest(body=body,family=family,house=house,loaded=loaded,tick=tick),self.assertRaises(ValueError):
+                flow.gui_reports(body,family,house,loaded,tick)
+    def test_saved_floor_bounds_and_whole_member_identity(self):
+        saved=dict(architecture=dict(width=2,height=2,floors=[[1,2,3,4],[5,6,7,8]]),members=[dict(guid=1,neighbor_id=7,age=9,gender=1,body='child')])
+        self.assertEqual(flow.floor_value(saved,dict(x=1,y=1,level=2)),8)
+        self.assertEqual(flow.identity(saved),{1:(7,9,1,'child')})
+        with self.assertRaises(ValueError):flow.floor_value(saved,dict(x=2,y=1,level=2))
+        saved['members']*=2
+        with self.assertRaises(ValueError):flow.identity(saved)
+
 if __name__=='__main__':unittest.main(verbosity=2)

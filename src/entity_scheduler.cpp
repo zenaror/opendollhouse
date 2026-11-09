@@ -214,18 +214,14 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
             auto slice_remaining=slice;
             while(slice_remaining){
             after_observed=false;
-            const auto before_steps=entity.vm->steps();
             const auto result=entity.vm->run(slice_remaining,entity_trace);
+            const auto consumed=entity.vm->last_run_instruction_count();
             if(result==VmStatus::budget_exhausted){
-                const auto after_run=entity.vm->steps();
                 if(budget_yield_count_!=std::numeric_limits<std::uint64_t>::max())++budget_yield_count_;
                 if(!first_budget_yield_)first_budget_yield_=EntityVmSchedulerBudgetYield{
-                    id,now,slice_remaining,after_run>=before_steps?after_run-before_steps:0};
+                    id,now,slice_remaining,consumed};
             }
             process_pending_interrupts();
-            const auto after_steps=entity.vm->steps();
-            if(after_steps<before_steps)return fail("entity VM run generation changed during scheduler tick");
-            const auto consumed=after_steps-before_steps;
             if(consumed>slice_remaining||consumed>remaining)return fail("entity VM exceeded scheduler instruction budget");
             instructions_last_tick_+=consumed;remaining-=consumed;
             slice_remaining-=consumed;
@@ -241,8 +237,8 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
                     return fail("entity VM fault for "+std::to_string(id)+location+": "+fault);
                 }
             }
-            if(result==VmStatus::yielded&&entity.vm->immediate_return()){
-                if(entity.after&&!entity.after())return fail("entity immediate-return controller rejected tick for "+std::to_string(id));
+            if(result==VmStatus::yielded&&(entity.vm->immediate_return()||entity.vm->interaction_return())){
+                if(entity.after&&!entity.after())return fail("entity return controller rejected tick for "+std::to_string(id));
                 after_observed=true;
                 process_pending_interrupts();
                 const auto resumed=entity.vm->status();

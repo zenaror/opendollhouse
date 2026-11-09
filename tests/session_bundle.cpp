@@ -3654,17 +3654,47 @@ int main() {
         "legacy host without a saved family budget remains readable and canonical");
     auto simulated=source;simulated.simulation.emplace();
     simulated.simulation->avatars={{1,{}},{2,{}}};
+    simulated.simulation->clock.fire_percent=12345;
     simulated.simulation->avatars[1].decay.fractions[4]=1000;
     simulated.simulation->avatars[0].decay.fractions[0]=std::numeric_limits<std::int16_t>::min();
     simulated.simulation->avatars[0].decay.fractions[1]=std::numeric_limits<std::int16_t>::max();
     simulated.simulation->avatars[1].decay.fractions[2]=-1;
     const auto simulation_bytes=odh::encode_session_bundle(simulated);
     const auto simulation_restored=odh::decode_session_bundle(simulation_bytes,source.resources);
-    require(simulation_restored.simulation && simulation_restored.simulation->avatars[1].decay.fractions[4]==1000 &&
+    require(simulation_restored.simulation && simulation_restored.simulation->clock.fire_percent==12345 && simulation_restored.simulation->avatars[1].decay.fractions[4]==1000 &&
         simulation_restored.simulation->avatars[0].decay.fractions[0]==std::numeric_limits<std::int16_t>::min() &&
         simulation_restored.simulation->avatars[0].decay.fractions[1]==std::numeric_limits<std::int16_t>::max() &&
         simulation_restored.simulation->avatars[1].decay.fractions[2]==-1 &&
-        odh::encode_session_bundle(simulation_restored)==simulation_bytes,"SIMS v1 deterministic full round-trip");
+        odh::encode_session_bundle(simulation_restored)==simulation_bytes,"SIMS v2 deterministic fire and motive round-trip");
+    const auto sims_id=std::array<char,4>{{'S','I','M','S'}};
+    auto legacy_sim=odh::decode_session_archive(simulation_bytes);
+    for(auto& section:legacy_sim.sections)if(section.id==sims_id){
+        require(section.data[0]==2&&section.data.size()>=26,"SIMS2 explicit field extent");
+        section.data[0]=1;section.data.erase(section.data.begin()+20,section.data.begin()+24);}
+    const auto bridged=odh::decode_session_bundle(odh::encode_session_archive(legacy_sim));
+    require(bridged.simulation&&bridged.simulation->clock.fire_percent==20000&&
+            bridged.simulation->avatars[1].decay.fractions[4]==1000,"native SIMS1 bridge initializes constructor threshold and preserves roster");
+    const auto bridged_again=odh::decode_session_bundle(odh::encode_session_bundle(bridged));
+    require(bridged_again.simulation->clock.fire_percent==20000,"SIMS1 upgrade roundtrip writes SIMS2");
+    odh::Ts1Clock resumed_fire,continuous_fire;
+    require(resumed_fire.restore(simulation_restored.simulation->clock)&&continuous_fire.restore(simulated.simulation->clock),"restore persisted fire clock");
+    for(unsigned n=0;n<40;++n){if(n%3==0){resumed_fire.consume_fire_spread();continuous_fire.consume_fire_spread();}resumed_fire.tick(true);continuous_fire.tick(true);}
+    require(resumed_fire.snapshot().fire_percent==continuous_fire.snapshot().fire_percent&&resumed_fire.snapshot().ticks==continuous_fire.snapshot().ticks,"decoded clock continues spread/tick deterministically");
+    for(const auto threshold:{-1,20001}){
+        auto invalid_fire=simulated;invalid_fire.simulation->clock.fire_percent=threshold;
+        rejects([&]{odh::encode_session_bundle(invalid_fire);},"out-of-domain fire percentage rejected before encode");
+        auto invalid_wire=odh::decode_session_archive(simulation_bytes);
+        for(auto& section:invalid_wire.sections)if(section.id==sims_id)
+            for(unsigned byte=0;byte<4;++byte)section.data[20+byte]=static_cast<std::uint8_t>(static_cast<std::uint32_t>(threshold)>>(8*byte));
+        rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(invalid_wire));},"out-of-domain SIMS2 fire wire rejected");
+    }
+    const auto valid_sim_wire=odh::decode_session_archive(simulation_bytes);
+    const auto sim_section=std::find_if(valid_sim_wire.sections.begin(),valid_sim_wire.sections.end(),[&](const auto& item){return item.id==sims_id;});
+    require(sim_section!=valid_sim_wire.sections.end(),"SIMS2 section exists");
+    for(std::size_t cut=0;cut<sim_section->data.size();++cut){
+        auto truncated=valid_sim_wire;for(auto& section:truncated.sections)if(section.id==sims_id)section.data.resize(cut);
+        rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(truncated));},"every truncated SIMS2 extent rejected");
+    }
     auto invalid_sim=simulated;invalid_sim.simulation->clock.ticks=1;
     rejects([&]{odh::encode_session_bundle(invalid_sim);},"simulation tick must match host");
     invalid_sim=simulated;invalid_sim.simulation->avatars[1].id=1;
@@ -3674,7 +3704,7 @@ int main() {
     invalid_sim=simulated;invalid_sim.host.global_values.insert(invalid_sim.host.global_values.begin(),{0,12});
     rejects([&]{odh::encode_session_bundle(invalid_sim);},"clock globals cannot contradict simulation");
     auto sim_archive=odh::decode_session_archive(simulation_bytes);
-    for(auto& section:sim_archive.sections)if(section.id==std::array<char,4>{{'S','I','M','S'}})section.data[0]=2;
+    for(auto& section:sim_archive.sections)if(section.id==std::array<char,4>{{'S','I','M','S'}})section.data[0]=3;
     rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(sim_archive));},"unknown SIMS version rejected");
     sim_archive=odh::decode_session_archive(simulation_bytes);
     for(auto& section:sim_archive.sections)if(section.id==std::array<char,4>{{'S','I','M','S'}})section.data.push_back(0);

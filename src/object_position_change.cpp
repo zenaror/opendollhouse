@@ -15,10 +15,18 @@ struct PositionLifecycle {
     struct Link {ObjectPositionIdentity parent,child;std::size_t slot;};
     std::vector<Link> links;
     std::string* diagnostic=nullptr;
+    const std::function<std::optional<bool>(ObjectPositionIdentity)>* root_admission=nullptr;
     bool fail(const char* stage,ObjectPositionIdentity id)const {
-        if(diagnostic&&diagnostic->empty())*diagnostic=std::string(stage)+" root="+std::to_string(root.id)+
-            " root_generation="+std::to_string(root.generation)+" entity="+std::to_string(id.id)+
-            " generation="+std::to_string(id.generation);
+        if(diagnostic&&diagnostic->empty()){
+            *diagnostic=std::string(stage)+" root="+std::to_string(root.id)+
+                " root_generation="+std::to_string(root.generation)+" entity="+std::to_string(id.id)+
+                " generation="+std::to_string(id.generation);
+            const auto* actual=world.find(id.id);
+            *diagnostic+=" present="+std::to_string(bool(actual));
+            if(actual){*diagnostic+=" actual_generation="+std::to_string(actual->generation)+
+                " actual_parent="+std::to_string(actual->attachment?actual->attachment->container:0)+
+                " actual_slot="+std::to_string(actual->attachment?actual->attachment->slot:0);}
+        }
         return false;
     }
     const Entity* entity(ObjectPositionIdentity id)const {
@@ -30,8 +38,10 @@ struct PositionLifecycle {
     bool admit(ObjectPositionIdentity id)const {
         const auto* e=entity(id);if(!e)return false;
         if(e->kind==EntityKind::avatar)return (e->entry_points&&e->object_words.count(29))||fail("avatar admission",id);
-        if(e->kind!=EntityKind::object||!services.admit_single_ordinary)return fail("ordinary admission unavailable",id);
-        const auto yes=services.admit_single_ordinary(id);
+        const auto& admission=root_admission&&id.id==root.id&&id.generation==root.generation?
+            *root_admission:services.admit_single_ordinary;
+        if(e->kind!=EntityKind::object||!admission)return fail("single-object admission unavailable",id);
+        const auto yes=admission(id);
         return (yes&&*yes&&entity(id))||fail(yes?"ordinary admission rejected":"ordinary admission unknown",id);
     }
     bool capture(){
@@ -43,7 +53,11 @@ struct PositionLifecycle {
             for(std::size_t slot=0;slot<slots.size();++slot)if(slots[slot]){
                 const auto* child=world.find(slots[slot]);if(!child||!child->attachment||
                    child->attachment->container!=id.id||child->attachment->slot!=slot||
-                   !seen.insert(child->id).second||seen.size()>4096)return fail("contained tree identity/reciprocity/budget",id);
+                   !seen.insert(child->id).second||seen.size()>4096){
+                    fail("contained tree identity/reciprocity/budget",{slots[slot],child?child->generation:0});
+                    if(diagnostic)*diagnostic+=" expected_parent="+std::to_string(id.id)+" expected_slot="+std::to_string(slot);
+                    return false;
+                }
                 const ObjectPositionIdentity next{child->id,child->generation};
                 if(!admit(next))return false;
                 links.push_back({id,next,slot});if(!visit(next))return false;
@@ -628,7 +642,7 @@ ObjectPositionChangeResult ObjectPositionChange::run_native_stages(const ObjectP
 
 ObjectPositionChangeResult ObjectPositionChange::apply_single(const ObjectPositionValidRequest& request,bool require_new){
     ObjectPositionChangeResult result;
-    const auto fail=[&](const char* why){result.diagnostic=why;return result;};
+    const auto fail=[&](const std::string& why){result.diagnostic=why;return result;};
     if(executing_||!request.source_still_matches||request.direction>7||request.flags>15||
        request.candidate.x<INT16_MIN||request.candidate.x>INT16_MAX||request.candidate.y<INT16_MIN||request.candidate.y>INT16_MAX||
        request.candidate.level<INT8_MIN||request.candidate.level>INT8_MAX)
@@ -653,7 +667,10 @@ ObjectPositionChangeResult ObjectPositionChange::apply_single(const ObjectPositi
     const auto original_position=original?original->position:std::optional<EntityPosition>{};
     const auto original_attachment=original?original->attachment:std::optional<Attachment>{};
     bool detached=false;
-    PositionLifecycle lifecycle{world_,services_,request.target,request.source_still_matches,{}};
+    std::string capture_diagnostic;
+    const auto& root_admission=require_new&&services_.admit_single_constructed?
+        services_.admit_single_constructed:services_.admit_single_ordinary;
+    PositionLifecycle lifecycle{world_,services_,request.target,request.source_still_matches,{},&capture_diagnostic,&root_admission};
     const bool out_of_world=request.candidate.x==-32768&&request.candidate.y==-32768&&request.candidate.level==1;
     const auto pose_unchanged=[&](){const auto* e=world_.find(request.target.id);
         if(!e||e->position.has_value()!=original_position.has_value()||(e->position&&!(*e->position==*original_position)))return false;
@@ -669,7 +686,8 @@ ObjectPositionChangeResult ObjectPositionChange::apply_single(const ObjectPositi
            !services_.unregister_position||!services_.register_position)return fail("object change lifecycle capabilities are unavailable");
         const auto* e=world_.find(request.target.id);
         if(require_new&&(e->attachment||e->position))return fail("new object change requires an unattached out-of-world constructor");
-        if(!lifecycle.capture()||!pose_unchanged())return fail("contained source object tree is unknown or changed");
+        if(!lifecycle.capture())return fail("contained source object tree is unknown or changed: "+capture_diagnostic);
+        if(!pose_unchanged())return fail("contained source object tree is unknown or changed: constructor pose/attachment changed during capture");
         ObjectPositionIdentity old_container{};
         if(original_attachment){const auto parent=world_.attachment_parent({request.target.id,request.target.generation});
             const auto* container=parent?world_.resolve_reference(*parent):nullptr;
@@ -696,7 +714,7 @@ ObjectPositionChangeResult ObjectPositionChange::apply_single(const ObjectPositi
         // contents. The initial ordinary-profile proof cannot authorize the
         // later PositionChange branches after those effects. Keep the effects
         // but refuse this bounded lifecycle before publishing its position.
-        const auto after_check=services_.admit_single_ordinary(request.target);
+        const auto after_check=root_admission(request.target);
         if(!after_check||!*after_check||!valid()||!pose_unchanged()||!lifecycle.matches())
             return fail("placement check changed the admitted ordinary single-object profile");
         if(!pose_unchanged())return fail("placement callback moved the object outside the admitted lifecycle");

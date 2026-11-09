@@ -1,4 +1,5 @@
 #include "odh/routing.hpp"
+#include "odh/live_entry_point5.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -8,6 +9,20 @@
 #include <stdexcept>
 
 namespace odh {
+struct Routing::SourceResetOperation {
+    Routing& route;
+    explicit SourceResetOperation(Routing& value):route(value){++route.source_reset_operation_depth_;}
+    ~SourceResetOperation(){route.leave_source_reset_operation();}
+};
+void Routing::clear_source_reset_storage() noexcept {
+    job_.reset();suspended_jobs_.clear();parked_immediate_routes_.clear();replay_placement_authorization_.reset();
+    active_range_lease_.reset();replay_sparse_consideration_.reset();source_sparse_continue_=false;
+    last_tick_.reset();
+}
+void Routing::leave_source_reset_operation() noexcept {
+    if(source_reset_operation_depth_)--source_reset_operation_depth_;
+    if(!source_reset_operation_depth_&&source_reset_retired_){clear_source_reset_storage();source_reset_retired_=false;}
+}
 namespace {
 constexpr std::array<RoutePoint,8> headings={{{0,-1},{1,-1},{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1}}};
 std::uint8_t heading(RoutePoint from,RoutePoint to) {
@@ -748,11 +763,14 @@ std::optional<std::string> Routing::invoke_route_execution_callback(RouteExecuti
     const bool was_executing=executing_;executing_=true;
     try {
         if(callback)callback(context);
+        if(source_reset_retired_)throw SourceCheckResetRetirement(vm_);
         if(has_sparse_place){
             auto candidate=*actor->position;candidate.x=goal.x;candidate.y=goal.y;candidate.direction=0;
             last_sparse_placement_=source_sparse_services_.place(context,candidate);
+            if(source_reset_retired_)throw SourceCheckResetRetirement(vm_);
         }
     }
+    catch(const SourceCheckResetRetirement&){executing_=was_executing;throw;}
     catch(const std::exception& error){executing_=was_executing;return std::string("source route execution callback failed: ")+error.what();}
     catch(...){executing_=was_executing;return "source route execution callback raised a non-standard exception";}
     executing_=was_executing;
@@ -887,8 +905,10 @@ std::optional<SourceSparsePlacementOutcome> Routing::publish_route_position(cons
         lease->published=true;return matches(true);
     };
     std::optional<SourceSparsePlacementOutcome> result;
-    try{result=position_publication_(context);}catch(const std::exception& exception){return reject(std::string("route position lifecycle callback failed: ")+exception.what());}
+    try{result=position_publication_(context);}catch(const SourceCheckResetRetirement&){throw;}
+    catch(const std::exception& exception){return reject(std::string("route position lifecycle callback failed: ")+exception.what());}
     catch(...){return reject("route position lifecycle callback threw");}
+    if(source_reset_retired_)throw SourceCheckResetRetirement(vm_);
     if(!result)return reject(state->diagnostic.empty()?"route position lifecycle is unavailable":state->diagnostic);
     const auto status=result->status;const bool admitted=status==SourceSparsePlacementStatus::success;
     const bool blocked=status==SourceSparsePlacementStatus::blocked_object||status==SourceSparsePlacementStatus::blocked_avatar||status==SourceSparsePlacementStatus::cant_be_through_wall;
@@ -2770,6 +2790,8 @@ bool is_source_unplaced_room_failure(const RouteJobSnapshot& job){
     return true;
 }
 PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,const VmDispatch& dispatch,RouteOutcomeReceipt* immediate) {
+    SourceResetOperation source_operation(*this);
+    try {
     // Pinned Execute returns before creating a routing frame or reading any
     // operand geometry in check mode and for null/OOW StackObject. In
     // particular these queries cannot invalidate a live route's receipts.
@@ -2856,7 +2878,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         i.operands[5]==0&&i.operands[6]==0&&i.operands[7]==0;
     bool stair_goto_relative=false;
     if(stair_goto_relative_shape&&stair_goto_relative_) {
-        struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+        struct Guard {bool& flag;bool previous;explicit Guard(bool& value):flag(value),previous(value){flag=true;}~Guard(){flag=previous;}} guard(executing_);
         stair_goto_relative=stair_goto_relative_(frame,i);
     }
     if(goto_relative&&!saved_go_here_relative&&!bounded_goto_relative&&
@@ -2878,7 +2900,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(!goto_relative && (scope==0||scope==1)) {
         if(!stack_object_slots_)
             return unsupported("StackObject StackVariable/Literal SLOT table provider unavailable");
-        struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+        struct Guard {bool& flag;bool previous;explicit Guard(bool& value):flag(value),previous(value){flag=true;}~Guard(){flag=previous;}} guard(executing_);
         selected_slots=stack_object_slots_(frame);
         if(!selected_slots)
             return unsupported("StackObject StackVariable/Literal SLOT table missing or ambiguous");
@@ -3117,7 +3139,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         const auto actor_position=*actor->position,target_position=*target->position;
         std::optional<std::string> preflight_diagnostic;
         {
-            struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+            struct Guard {bool& flag;bool previous;explicit Guard(bool& value):flag(value),previous(value){flag=true;}~Guard(){flag=previous;}} guard(executing_);
             preflight_diagnostic=sitting_slot_candidate_preflight_(*selected_slots,slot_index,
                 actor_position,target_position);
         }
@@ -3135,7 +3157,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         const auto actor_position=*actor->position,target_position=*target->position;
         const auto actor_direction=actor->radian_direction;
         const auto rooms=[&] {
-            struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+            struct Guard {bool& flag;bool previous;explicit Guard(bool& value):flag(value),previous(value){flag=true;}~Guard(){flag=previous;}} guard(executing_);
             return room_pair_(actor_position,target_position);
         }();
         actor=world_.find(actor_id);target=world_.resolve_reference({target_id,target_generation});
@@ -3214,8 +3236,9 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         if(execution_callback_error)return false;
         if(!check_attempt_walk(point))return false;
         if(!goal_validator_)return true;
-        struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+        struct Guard {bool& flag;bool previous;explicit Guard(bool& value):flag(value),previous(value){flag=true;}~Guard(){flag=previous;}} guard(executing_);
         const auto accepted=goal_validator_(frame,point);
+        if(source_reset_retired_)throw SourceCheckResetRetirement(vm_);
         if(!refresh_execution_participants()) {
             execution_callback_error="route goal validator changed or invalidated its participants";
             return false;
@@ -3390,7 +3413,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         const auto candidates=[&] {
           try {
             return [&] {
-            struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+            struct Guard {bool& flag;bool previous;explicit Guard(bool& value):flag(value),previous(value){flag=true;}~Guard(){flag=previous;}} guard(executing_);
             if(authenticated_source_slot){
                 if(!active_range_lease_.expired()||!placement_source_matches(frame,i,dispatch,true))
                     throw std::logic_error("authenticated SLOT planning lacks an exact live or private replay source");
@@ -3620,7 +3643,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     } else if(source_point_slot) {
         try {source_point_candidate=enumerate_source_slot_point_candidate(*selected_slots,slot_index,
             *target->position,source_slot_object_radians(*target));}
-        catch(const std::exception& error){return unsupported(error.what());}
+        catch(const SourceCheckResetRetirement&){throw;}
+    catch(const std::exception& error){return unsupported(error.what());}
         const RoutePoint goal{source_point_candidate->position.x,source_point_candidate->position.y};
         route_goal_count=1;
         if(sparse_source_requested){
@@ -3811,6 +3835,11 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         job_->target_anchor_radian_direction=source_slot_object_radians(*target);
     report_goal_selection("selected",{});
     return {PrimitiveDisposition::wait,{}};
+    }catch(const SourceCheckResetRetirement& retired){
+        if(!source_reset_retired_||retired.source()!=vm_)throw;
+        if(source_reset_operation_depth_>1)throw;
+        return {PrimitiveDisposition::continue_execution,{}};
+    }
 }
 PrimitiveOutcome Routing::request_look_towards(const VmFrame& frame,const Instruction& instruction,
     const VmDispatch& dispatch,bool nested) {
@@ -4729,7 +4758,7 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
         }
     }
     const auto plan=[&] {
-        struct CallbackGuard {bool& flag;explicit CallbackGuard(bool& value):flag(value){flag=true;}~CallbackGuard(){flag=false;}} callback_guard(executing_);
+        struct CallbackGuard {bool& flag;bool previous;explicit CallbackGuard(bool& value):flag(value),previous(value){flag=true;}~CallbackGuard(){flag=previous;}} callback_guard(executing_);
         return room_portal_step_(job_->ticket,actor_position,target_position,previous_call,previous_result,step_index);
     }();
     actor=world_.find(job_->actor);target=world_.resolve_reference({job_->target,job_->target_generation});
@@ -4765,7 +4794,7 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
     if(plan.call||!room_pair_||!job_->replay_frame||!job_->replay_instruction)
         return finish(false,"room portal planner reported arrival without a valid local Route45 request");
     const auto rooms=[&] {
-        struct CallbackGuard {bool& flag;explicit CallbackGuard(bool& value):flag(value){flag=true;}~CallbackGuard(){flag=false;}} callback_guard(executing_);
+        struct CallbackGuard {bool& flag;bool previous;explicit CallbackGuard(bool& value):flag(value),previous(value){flag=true;}~CallbackGuard(){flag=previous;}} callback_guard(executing_);
         return room_pair_(actor_position,target_position);
     }();
     actor=world_.find(job_->actor);target=world_.resolve_reference({job_->target,job_->target_generation});
@@ -4777,6 +4806,9 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
 
     auto deferred=std::move(*job_);
     job_.reset();
+    struct DeferredResetStorage {Job*& slot;Job* previous;~DeferredResetStorage(){slot=previous;}}
+        deferred_reset_storage{source_reset_deferred_,source_reset_deferred_};
+    source_reset_deferred_=&deferred;
     const auto previous_sparse_consideration=replay_sparse_consideration_;
     replay_sparse_consideration_=deferred.sparse_consideration;
     struct RestoreSparseConsideration {
@@ -4811,6 +4843,8 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
         struct ReplayEnd {std::optional<std::pair<std::uint64_t,std::uint64_t>>& value;~ReplayEnd(){value.reset();}} replay_end{replay_placement_authorization_};
         outcome=request(*deferred.replay_frame,*deferred.replay_instruction,
                         VmDispatch{vm_,deferred.ticket});
+    } catch(const SourceCheckResetRetirement&) {
+        executing_=was_executing;throw;
     } catch(const std::exception& error) {
         executing_=was_executing;
         if(replay_placement_range_){
@@ -5017,11 +5051,15 @@ std::vector<WorldEntityReference> Routing::strong_entity_references() const {
         for(const auto& link:value.carried_target){refs.push_back({link.child.id,link.child.generation});refs.push_back({link.parent.id,link.parent.generation});}
     };
     if(job_)job(*job_);for(const auto& value:suspended_jobs_)job(value);
+    if(source_reset_deferred_)job(*source_reset_deferred_);
     return refs;
 }
 bool Routing::discard_for_source_reset(){
-    if(executing_||source_reset_detach_failed_||(vm_&&vm_->dispatch_active()))return false;
-    struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+    const bool authorized=vm_&&vm_->source_reset_lifecycle_active();
+    if(source_reset_detach_failed_||((executing_||(vm_&&vm_->dispatch_active()))&&!authorized))return false;
+    if(source_reset_retired_)return authorized;
+    if(source_reset_operation_depth_)source_reset_retired_=true;
+    struct Guard {bool& flag;bool previous;explicit Guard(bool& value):flag(value),previous(value){flag=true;}~Guard(){flag=previous;}} guard(executing_);
     // Release the real room owner before losing its ticket. Do not complete
     // any old VM pending instruction or erase its action queue.
     const auto release=[&](Job& job){
@@ -5034,17 +5072,14 @@ bool Routing::discard_for_source_reset(){
     try{
         if(job_)release(*job_);
         for(auto& parent:suspended_jobs_)release(parent);
+        if(source_reset_deferred_)release(*source_reset_deferred_);
     }catch(...){
         // A throwing host callback may have partially released ownership.
         // Never turn a later retry into a fabricated successful detach.
         source_reset_detach_failed_=true;diagnostic_="source reset route owner release failed";return false;
     }
-    job_.reset();suspended_jobs_.clear();parked_immediate_routes_.clear();replay_placement_authorization_.reset();
-    active_range_lease_.reset();replay_sparse_consideration_.reset();source_sparse_continue_=false;route_mutated();
-    // This clock belongs to the discarded routing frame. A later Main may
-    // create a different route after several ticks with no routing service.
-    // As in finish/cancel_chain, the new root starts its own cadence.
-    last_tick_.reset();
+    route_mutated();last_tick_.reset();
+    if(!source_reset_operation_depth_)clear_source_reset_storage();
     diagnostic_.clear();return true;
 }
 void Routing::cancel_chain(const std::string& reason) {
@@ -5232,9 +5267,11 @@ bool Routing::advance_invalidated_room_route(const std::optional<VmCall>& previo
     return true;
 }
 bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovement&)>& moved) {
+    SourceResetOperation source_operation(*this);
+    try {
     route_mutated();
     if(executing_) throw std::logic_error("routing ticks must not reenter");
-    struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+    struct Guard {bool& flag;bool previous;explicit Guard(bool& value):flag(value),previous(value){flag=true;}~Guard(){flag=previous;}} guard(executing_);
     if(last_tick_ && (now<=*last_tick_ || now-*last_tick_!=1)) {
         diagnostic_="routing scheduler cadence rejected now="+std::to_string(now)+" last_tick="+std::to_string(*last_tick_);
         if(job_)diagnostic_+=" actor="+std::to_string(job_->actor)+"/"+std::to_string(job_->actor_generation)+
@@ -5390,7 +5427,7 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
                 const auto actor_position=*actor->position;
                 const auto target_position=*target->position;
                 const auto next=[&] {
-                    struct CallbackGuard {bool& flag;explicit CallbackGuard(bool& value):flag(value){flag=true;}~CallbackGuard(){flag=false;}} callback_guard(executing_);
+                    struct CallbackGuard {bool& flag;bool previous;explicit CallbackGuard(bool& value):flag(value),previous(value){flag=true;}~CallbackGuard(){flag=previous;}} callback_guard(executing_);
                     return portal_retry_(failed_call,actor_position,target_position,retry_index);
                 }();
                 const auto* current_actor=world_.find(job_->actor);
@@ -5568,5 +5605,9 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
     }
     if(event && moved) moved(*event);
     return true;
+    }catch(const SourceCheckResetRetirement& retired){
+        if(!source_reset_retired_||retired.source()!=vm_)throw;
+        return true; // Reset consumed the old route; never complete its ticket.
+    }
 }
 } // namespace odh

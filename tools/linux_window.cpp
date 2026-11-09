@@ -374,7 +374,16 @@ void LinuxWindow::present(const odh::RasterFrame& frame) {
 WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
     auto& p = *impl_;
     WindowInput result;
-    for (unsigned count = 0; count < 4096 && XPending(p.display); ++count) {
+    // A server-side destroy can be queued behind input. It must still prevent
+    // callers from painting a dead drawable when this poll returns one batch.
+    XEvent destroyed{};
+    if (XCheckTypedWindowEvent(p.display, p.window, DestroyNotify, &destroyed)) {
+        p.alive = false;
+        p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::window_destroyed);
+        p.pointer_position.reset();p.right_press_origin.reset();p.primary_held=false;
+        p.key_down.fill(false);result.pointer_cancelled=true;
+    }
+    for (unsigned count = 0; p.alive && count < 4096 && XPending(p.display); ++count) {
         XEvent event{};
         XNextEvent(p.display, &event);
         // MappingNotify belongs to the display, not our drawable. Refresh
@@ -420,7 +429,10 @@ WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
                 if (!repeat_pair) p.key_down[event.xkey.keycode] = false;
             }
         }
-        if (p.input_context && XFilterEvent(&event, p.window)) continue;
+        if (p.input_context && XFilterEvent(&event, p.window)) {
+            if (result.create_family || result.pointer_cancelled || event.type==LeaveNotify) break;
+            continue;
+        }
         if (event.type == DestroyNotify) {
             p.alive = false;
             p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::window_destroyed);
@@ -460,6 +472,18 @@ WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
         if (event.type == Expose && p.alive && event.xexpose.count == 0) {
             p.expose_pending=true;
         }
+        // WindowInput keeps legacy command fields, not an ordered command
+        // stream. Never fold another button transition/key into this batch:
+        // CAS/menus must observe down, up, text, Backspace and confirm in order.
+        // Unconsumed events remain in Xlib's queue; no replay or synthetic input.
+        if (event.type == ButtonPress || event.type == ButtonRelease) break;
+        if (event.type == MotionNotify) {
+            if (!XPending(p.display)) break;
+            XEvent next{};XPeekEvent(p.display,&next);
+            if (next.type != MotionNotify || next.xany.window != p.window) break;
+            continue; // Only adjacent motion may share its final coordinates.
+        }
+        if (event.type == FocusOut || event.type == LeaveNotify) break;
         if (event.type == KeyRelease) {
             bool repeat_pair = false;
             if (XPending(p.display)) {
@@ -505,10 +529,10 @@ WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
                     std::string_view(committed.data(), static_cast<std::size_t>(length)));
         }
         if(event.xkey.state&ShiftMask){
-            if(key==XK_Left){--result.camera_steps[0];continue;}
-            if(key==XK_Right){++result.camera_steps[0];continue;}
-            if(key==XK_Up){--result.camera_steps[1];continue;}
-            if(key==XK_Down){++result.camera_steps[1];continue;}
+            if(key==XK_Left){--result.camera_steps[0];break;}
+            if(key==XK_Right){++result.camera_steps[0];break;}
+            if(key==XK_Up){--result.camera_steps[1];break;}
+            if(key==XK_Down){++result.camera_steps[1];break;}
         }
         switch (key) {
         case XK_Escape: p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::escape_key); break;
@@ -544,6 +568,9 @@ WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
         case XK_minus: case XK_underscore: case XK_KP_Subtract: case XK_Down: --result.zoom; break;
         default: break;
         }
+        // One key press can carry an entire validated XIM UTF-8 commit. A
+        // second press must be delivered later, preserving edit/action order.
+        break;
     }
     // A queued Expose can precede DestroyNotify even though the server has
     // already destroyed the drawable. Preserve cached repaint behavior only

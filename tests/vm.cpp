@@ -656,23 +656,25 @@ void source_entity_thread_stack_view(){
         {check_key,routine({{201,1,255,{}},{28,254,255,{}}})}};
     odh::Vm* actual=nullptr;unsigned check_views=0,named_views=0;bool from_check=false;
     odh::VmPrimitive checks;
-    checks=[&](const odh::VmFrame& frame,const auto& op,const auto&,const auto&)->odh::PrimitiveOutcome{
+    checks=[&](const odh::VmFrame& frame,const auto& op,const auto&,const odh::VmDispatch& dispatch)->odh::PrimitiveOutcome{
+        auto* executor=const_cast<odh::Vm*>(dispatch.origin);
+        require(executor!=nullptr,"source check/named fixture uses its actual execution VM");
         if(op.opcode==201){
-            ++check_views;require(actual->stack().back().key.id==4400&&actual->entity_thread_frames().back().key.id==4096&&
-                actual->entity_thread_frames().back().context.callee==2,
+            ++check_views;require(executor->stack().back().key.id==4400&&executor->entity_thread_frames().back().key.id==4096&&
+                executor->entity_thread_frames().back().context.callee==2,
                 "entity Thread stack retains its real Main while an ordinary EvaluateCheck uses temporary frames");
-            require(actual->references_entity(odh::WorldEntityReference{3,33}),"parked real Main references remain strong during a temporary check");
+            require(executor->references_entity(odh::WorldEntityReference{3,33}),"parked real Main references remain strong during a temporary check");
             return {odh::PrimitiveDisposition::goto_true,{}};
         }
         if(op.opcode==202){
             ++named_views;
-            require(from_check?actual->entity_thread_frames().back().key.id==4096:
-                actual->entity_thread_frames().back().key.scope==odh::RoutineScope::named_private,
+            require(from_check?executor->entity_thread_frames().back().key.id==4096:
+                executor->entity_thread_frames().back().key.scope==odh::RoutineScope::named_private,
                 "Named inside fresh Check preserves real Main view; Named on real Thread exposes its actual replacement stack");
             return {odh::PrimitiveDisposition::goto_true,{}};
         }
         auto context=frame.context;context.code_owner=77;
-        const auto result=actual->run_named_in_stack(named,context,{},8,checks);
+        const auto result=executor->run_named_in_stack(named,context,{},8,checks);
         require(result.status==odh::VmStatus::returned_true,"nested named stack view completes synchronously");
         return {odh::PrimitiveDisposition::goto_true,{}};
     };
@@ -716,16 +718,18 @@ void named_queue_ancestry(){
             {key(4100),routine({expr(5,7,33,12,7,1),{28,254,255,{}}})}};
         odh::Vm* actual=nullptr;unsigned fallback_calls=0,body_calls=0;odh::VmSubroutineResult result;
         odh::VmPrimitive checks;
-        checks=[&](const auto& frame,const auto& op,const auto&,const auto&)->odh::PrimitiveOutcome{
+        checks=[&](const auto& frame,const auto& op,const auto&,const odh::VmDispatch& dispatch)->odh::PrimitiveOutcome{
+            auto* executor=const_cast<odh::Vm*>(dispatch.origin);
+            require(executor!=nullptr,"named advertisement fixture uses its actual source executor");
             if(op.opcode==28){
                 auto named_context=frame.context;named_context.code_owner=77;
-                const auto nested=actual->run_named_in_stack(named,named_context,{},10,checks);
+                const auto nested=executor->run_named_in_stack(named,named_context,{},10,checks);
                 return {nested.status==odh::VmStatus::returned_true?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::unsupported,nested.diagnostic};
             }
-            ++body_calls;require(op.opcode==99&&actual->synchronous_queue_empty()&&
-                actual->named_stack_inherits_parent_queue_index()==!from_check,
+            ++body_calls;require(op.opcode==99&&executor->synchronous_queue_empty()&&
+                executor->named_stack_inherits_parent_queue_index()==!from_check,
                 "named queue ancestry distinguishes actual Main from a fresh logical EvaluateCheck Thread");
-            const auto& memory=actual->effective_memory();
+            const auto& memory=executor->effective_memory();
             require(memory.write(frame,29,9,88),"named body publishes durable Thread advertisement effect before later lookup");
             const auto value=memory.read(frame,12,override_present?7:8);
             if(!value)return {odh::PrimitiveDisposition::unsupported,"source empty queue retains an invalid old active index"};
@@ -796,7 +800,7 @@ void thread_advertisement_memory(){
                 });
             require(checked.started&&checked.status==(mode?odh::VmStatus::fault:odh::VmStatus::returned_false)&&
                 actual->temps()[3]==0&&actual->advertisement_changes()==parent,
-                "same-VM check always restores parent ads after false, callback error or unsupported wait");
+                "fresh check isolates parent ads after false, callback error or unsupported wait");
             return {odh::PrimitiveDisposition::goto_true,{}};
         });actual=&vm;
         vm.set_advertisement_fallback([](const auto&,auto,auto)->std::optional<std::int16_t>{return 77;});
@@ -908,9 +912,11 @@ void disposable_owner_resolver_inheritance(){
                 return {odh::PrimitiveDisposition::goto_true,{}};
             });actual=&source;require(source.set_owner_resolver(provider),"bind provider for same-VM named/temporary paths");
         source.start(key(),check_context,{},true);
-        require(source.run(1)==odh::VmStatus::returned_true&&source.shared_program_for_owner(77)==first_bank&&
-            source.shared_program_for_owner(88)==second_bank,
-            "same-VM named and temporary-stack paths keep the existing resolver and exact admitted immutable banks");
+        require(source.run(1)==odh::VmStatus::returned_true,"named and fresh Check paths return their authored result");
+        if(temporary)require(!source.shared_program_for_owner(77)&&!source.shared_program_for_owner(88),
+            "fresh EvaluateCheck owns its lazy immutable bank cache without polluting the entity Thread");
+        else require(source.shared_program_for_owner(77)==first_bank&&source.shared_program_for_owner(88)==second_bank,
+            "same-VM RunInMyStack retains exact admitted immutable banks");
     }
     require(terminals==5&&resolutions[77]==5&&resolutions[88]==5,
         "each disposable clone owns its lazy cache; same-VM named scopes reuse their admitted owner banks");
@@ -1888,9 +1894,18 @@ int main() {
             [&](const auto&,const auto& instruction,const auto&,const auto&){
                 if(instruction.opcode!=49)return odh::PrimitiveOutcome{};
                 const auto outer=nested_vm->evaluate_check(key(4097),{1,2,3,7},{},8,
-                    [&](const auto&,const auto&,const auto&,const auto&){
-                        const auto nested=nested_vm->evaluate_check(key(4097),{1,2,3,7},{},8);
-                        nested_refused=!nested.started&&nested.diagnostic.find("nested Check")!=std::string::npos;
+                    [&](const odh::VmFrame& frame,const auto&,const auto&,const odh::VmDispatch& dispatch){
+                        auto* executor=const_cast<odh::Vm*>(dispatch.origin);
+                        require(executor&&executor!=nested_vm&&dispatch.check_mode,
+                            "nested Check request targets its actual fresh check executor");
+                        const auto before_frame=frame;const auto before_status=executor->status();
+                        const auto before_run=executor->run_generation(),before_steps=executor->steps();
+                        const auto nested=executor->evaluate_check(key(4097),{1,2,3,7},{},8);
+                        nested_refused=!nested.started&&nested.status==before_status&&
+                            nested.diagnostic=="Check BHAV requires its actual ordinary instruction scope"&&
+                            executor->status()==before_status&&executor->run_generation()==before_run&&
+                            executor->steps()==before_steps&&executor->stack().size()==1&&
+                            odh::vm_frame_equal(executor->stack().back(),before_frame);
                         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
                     });
                 return odh::PrimitiveOutcome{outer.status==odh::VmStatus::returned_true

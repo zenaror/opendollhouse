@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -18,8 +19,13 @@ int on_error(Display* display,XErrorEvent* event){
         <<event->resourceid<<" serial="<<event->serial<<'\n';
     return 0;
 }
+using DisplayOwner=std::unique_ptr<Display,decltype(&XCloseDisplay)>;
+DisplayOwner open_display(){return DisplayOwner(XOpenDisplay(nullptr),&XCloseDisplay);}
 struct Errors {
     XErrorHandler previous=XSetErrorHandler(on_error);
+    Errors()=default;
+    Errors(const Errors&)=delete;
+    Errors& operator=(const Errors&)=delete;
     ~Errors(){XSetErrorHandler(previous);}
 };
 void need(bool value,const char* why){if(!value)throw std::runtime_error(why);}
@@ -33,6 +39,16 @@ odh::CursorImage image(){
     return out;
 }
 void synchronize(odh_host::LinuxWindow& window){(void)window.readback();need(errors==0,"native cursor operation raised an X11 error");}
+// Query a live root, never the destroyed drawable: this proves the server
+// processed XDestroyWindow without deliberately manufacturing a BadWindow.
+bool server_contains(Display* display,Window id){
+    Window root=0,parent=0,*children=nullptr;unsigned count=0;
+    const auto queried=XQueryTree(display,DefaultRootWindow(display),&root,&parent,&children,&count);
+    std::unique_ptr<Window,decltype(&XFree)> owned(children,&XFree);
+    need(queried!=0,"cannot query test server root");
+    for(unsigned n=0;n<count;++n)if(children[n]==id)return true;
+    return false;
+}
 void cases(){
     Errors error_handler;
     {
@@ -65,8 +81,8 @@ void cases(){
         odh::RasterFrame cached{};cached.width=64;cached.height=48;cached.pixels.assign(64*48,{255,0,255,255});
         cached.depth.assign(cached.pixels.size(),std::numeric_limits<float>::infinity());
         window.present(cached);
-        auto* expose_display=XOpenDisplay(nullptr);need(expose_display!=nullptr,"external expose display");
-        XClearArea(expose_display,window.native_id(),0,0,64,48,True);XSync(expose_display,False);XCloseDisplay(expose_display);
+        auto expose_display=open_display();need(bool(expose_display),"external expose display");
+        XClearArea(expose_display.get(),window.native_id(),0,0,64,48,True);XSync(expose_display.get(),False);expose_display.reset();
         need(window.poll().redraw&&window.readback()==cached.pixels,"live Expose preserves cached repaint and requests application redraw");
         reject([&]{window.use_cursor(0);});reject([&]{window.use_cursor(129);});
         synchronize(window); // Invalid handles do not leak native XIDs into requests.
@@ -98,52 +114,65 @@ void cases(){
         const auto cursor=window.create_cursor(image());need(bool(cursor),"cursor creation survives previous bank teardown");
         window.use_cursor(cursor);synchronize(window);
     }
-    // Destruction must remain observable even if Escape was recorded first.
+    // Destruction must remain observable even with Expose/Escape queued before it.
     {
         odh_host::LinuxWindow window(32,32,"OpenDollhouse destroyed cursor window");
-        auto* display=XOpenDisplay(nullptr);need(display!=nullptr,"external test display");
+        auto display=open_display();need(bool(display),"external test display");
         const auto id=window.native_id();
-        XEvent expose{};expose.xexpose.type=Expose;expose.xexpose.display=display;expose.xexpose.window=id;
+        need(server_contains(display.get(),id),"native drawable absent before server destruction");
+        XEvent expose{};expose.xexpose.type=Expose;expose.xexpose.display=display.get();expose.xexpose.window=id;
         expose.xexpose.width=32;expose.xexpose.height=32;expose.xexpose.count=0;
-        XSendEvent(display,id,False,ExposureMask,&expose);
-        XEvent escape{};escape.xkey.type=KeyPress;escape.xkey.display=display;escape.xkey.window=id;
-        escape.xkey.root=DefaultRootWindow(display);escape.xkey.same_screen=True;
-        escape.xkey.keycode=XKeysymToKeycode(display,0xff1b);
-        XSendEvent(display,id,False,KeyPressMask,&escape);
-        XDestroyWindow(display,id);XSync(display,False);
+        need(XSendEvent(display.get(),id,False,ExposureMask,&expose)!=0,"cannot enqueue native Expose");
+        XEvent escape{};escape.xkey.type=KeyPress;escape.xkey.display=display.get();escape.xkey.window=id;
+        escape.xkey.root=DefaultRootWindow(display.get());escape.xkey.same_screen=True;
+        escape.xkey.keycode=XKeysymToKeycode(display.get(),0xff1b);
+        need(XSendEvent(display.get(),id,False,KeyPressMask,&escape)!=0,"cannot enqueue native Escape");
+        XDestroyWindow(display.get(),id);XSync(display.get(),False);
+        need(!server_contains(display.get(),id),"server still contains destroyed native drawable");
+        need(errors==0,"server destruction/query raised an X11 error");
         (void)window.poll();
         need(!window.alive(),"native destruction is visible independently of first quit reason");
         reject([&]{window.use_cursor({});});
         reject([&]{window.create_cursor(image());});
-        XCloseDisplay(display);
+        display.reset();
     }
     need(errors==0,"native cursor teardown remained error-free");
-    // Expose-origin repaint must not escape a capped poll while a later
-    // DestroyNotify is still queued; retain its pending flag until drained.
+    // Expose-origin repaint must not escape while destruction is queued.
+    // Terminal DestroyNotify may be prioritized immediately; a bounded drain
+    // is also valid provided NONE of its batches repaint the dead drawable.
     {
         odh_host::LinuxWindow window(32,32,"OpenDollhouse capped expose queue test");
         (void)window.poll();
-        auto* display=XOpenDisplay(nullptr);need(display!=nullptr,"external capped queue display");
+        auto display=open_display();need(bool(display),"external capped queue display");
         const auto id=window.native_id();
-        XEvent expose{};expose.xexpose.type=Expose;expose.xexpose.display=display;expose.xexpose.window=id;
+        need(server_contains(display.get(),id),"native drawable absent before server destruction");
+        XEvent expose{};expose.xexpose.type=Expose;expose.xexpose.display=display.get();expose.xexpose.window=id;
         expose.xexpose.width=32;expose.xexpose.height=32;
-        XSendEvent(display,id,False,ExposureMask,&expose);
+        need(XSendEvent(display.get(),id,False,ExposureMask,&expose)!=0,"cannot enqueue native Expose");
         for(unsigned i=0;i<4100;++i){
-            XEvent ignored{};ignored.xclient.type=ClientMessage;ignored.xclient.display=display;ignored.xclient.window=id;ignored.xclient.format=32;
-            XSendEvent(display,id,False,NoEventMask,&ignored);
+            XEvent ignored{};ignored.xclient.type=ClientMessage;ignored.xclient.display=display.get();ignored.xclient.window=id;ignored.xclient.format=32;
+            need(XSendEvent(display.get(),id,False,NoEventMask,&ignored)!=0,"cannot enqueue capped native client event");
         }
-        XDestroyWindow(display,id);XSync(display,False);
+        XDestroyWindow(display.get(),id);XSync(display.get(),False);
+        need(!server_contains(display.get(),id),"server still contains destroyed native drawable");
+        need(errors==0,"server destruction/query raised an X11 error");
         const auto capped=window.poll();
-        need(window.alive()&&!capped.redraw,"capped event batch does not publish premature Expose redraw");
-        for(unsigned i=0;i<4&&window.alive();++i)(void)window.poll();
-        need(!window.alive(),"later bounded poll observes queued native destruction");
-        XCloseDisplay(display);
+        need(!capped.redraw,"first destruction batch published premature Expose redraw");
+        for(unsigned i=0;i<4&&window.alive();++i){
+            const auto pending=window.poll();
+            need(!pending.redraw,"bounded destruction batch published stale Expose redraw");
+            need(errors==0,"bounded destruction batch repainted a dead drawable");
+        }
+        need(!window.alive(),"immediate or bounded poll must observe real server destruction");
+        need(window.quit_reason()==odh_host::WindowQuitReason::window_destroyed,
+             "server destruction did not retain its terminal quit reason");
+        display.reset();
     }
     need(errors==0,"capped Expose followed by destruction never repaints a stale drawable");
 }
 }
 int main(){try{
     if(!std::getenv("DISPLAY")){std::cout<<"X11 display unavailable: skipped\n";return 77;}
-    Display* available=XOpenDisplay(nullptr);if(!available){std::cout<<"X11 DISPLAY inaccessible: skipped\n";return 77;}XCloseDisplay(available);
+    auto available=open_display();if(!available){std::cout<<"X11 DISPLAY inaccessible: skipped\n";return 77;}available.reset();
     cases();return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

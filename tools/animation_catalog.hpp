@@ -2,6 +2,12 @@
 #include "odh/animation.hpp"
 #include <memory>
 namespace odh::host {
+// Explicit provider order is the admitted FAR vector order, then FAR directory
+// entry order. It is not a claim about historical filesystem enumeration.
+// unique preserves diagnostic/tool rejection of all duplicate names.
+// ts1_provider_order follows TS1Provider filename overwrite, then
+// TS1BCFProvider internal host overwrite / first matching record in that host.
+enum class CatalogNamePolicy {unique,ts1_provider_order};
 struct CatalogLimits {
     std::uint32_t sources=128, far_entries=8192, cache_records=16;
     std::uint64_t name_bytes=8*1024*1024, index_bytes=16*1024*1024;
@@ -19,15 +25,25 @@ struct CatalogDecoded {std::shared_ptr<const CatalogAnimation> animation;CfpPlan
 struct CatalogUsage {
     std::uint64_t sources=0,far_entries=0,bcf_supported=0,bcf_skipped_profile=0,animations=0,cfp_entries=0;
     std::uint64_t name_bytes=0,index_bytes=0,cache_records=0,live_headers=0,registry_entries=0,registry_bytes=0,metadata_bytes=0,cfp_samples=0;
+    std::uint64_t bcf_candidates=0,cfp_candidates=0,bcf_overrides=0,cfp_overrides=0,animation_overrides=0;
 };
 // HOST, seekable read-only files, not thread-safe. Caller supplies every FAR;
-// Lookup of duplicate animation names or CFP basenames rejects, regardless of
-// source order; unrelated duplicates do not prevent constructing the index.
+// unique policy rejects duplicate animation names/CFP basenames regardless of
+// source order. TS1 policy first projects each filename basename to its last
+// admitted provider (keeping its first registration slot), scans selected BCFs
+// in that slot order, then uses last internal-name host and FIRST matching
+// animation inside that host. CFP filename projection is independent. Only
+// selected providers are decoded; selected malformed data never falls back.
+// FAR1's first exact full-filename payload lookup is precomputed separately;
+// recorded provenance identifies actual bytes, including intra-FAR duplicates.
+// Selected unclassified CMX cannot prove any TS1 animation host selection.
 // All bounded binary BCF sections are validated, including zero-animation
 // skeleton/appearance files. Unknown CMX or trailing profiles keep absence
 // authority incomplete; malformed binary resources fail explicitly.
-// Accounting is logical bytes (strings + populated record sizeof), not RSS or
-// allocator capacity. Live returned handles stay charged after cache eviction;
+// Accounting is logical bytes (strings + admitted record reservations), not
+// RSS or allocator overhead. Projection retains original index/key charges
+// until catalog destruction; resize is not treated as a portable deallocation.
+// Live returned handles stay charged after cache eviction;
 // budget exhaustion while handles are pinned fails explicitly. Handles may
 // outlive catalog destruction. metadata_bytes includes live decoded record
 // overhead; cfp_samples counts all seven live plane lengths (4 bytes/sample).
@@ -38,7 +54,8 @@ struct CatalogUsage {
 // pruned on operations, and its population is bounded by live_headers.
 class AnimationCatalog {
 public:
-    explicit AnimationCatalog(const std::vector<std::string>& sources,CatalogLimits={});
+    explicit AnimationCatalog(const std::vector<std::string>& sources,CatalogLimits={},
+        CatalogNamePolicy=CatalogNamePolicy::unique);
     ~AnimationCatalog();
     AnimationCatalog(AnimationCatalog&&) noexcept;
     AnimationCatalog& operator=(AnimationCatalog&&) noexcept;

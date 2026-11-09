@@ -161,6 +161,53 @@ struct VmVariableWrite {
     std::uint16_t scope;
     std::int16_t index,value;
 };
+class Vm;
+struct VmDispatch;
+struct LiveEntryPoint5Request;
+struct Ts1AvatarPlacementEntryPointRequest;
+namespace detail {struct VmInstructionHandle;struct VmInstructionState;struct VmInstructionLink;struct VmDetachedCallState;}
+class VmDetachedCallContinuation {
+public:
+    VmDetachedCallContinuation()=default;
+private:
+    friend class Vm;friend class VmInstructionLease;
+    explicit VmDetachedCallContinuation(std::shared_ptr<detail::VmDetachedCallState> value):state_(std::move(value)){}
+    std::shared_ptr<detail::VmDetachedCallState> state_;
+};
+// Ephemeral actual-instruction identity. Value copies grant no authority after
+// the originating callback/setter expires, and are never snapshot data.
+class VmInstructionLease {
+public:
+    VmInstructionLease()=default;
+    bool valid() const noexcept;
+    bool matches(const VmFrame&,const Instruction&,const VmDispatch&) const noexcept;
+    bool detached() const noexcept;
+    bool call_commit_active() const noexcept;
+    const Vm* origin() const noexcept;
+    std::optional<VmDetachedCallContinuation> prepare_detached_call(const VmCall&) const;
+    // Commit-only proof: does not reopen handler or lifecycle authority.
+    bool matches_call_commit(const VmFrame&,const Instruction&,const VmDispatch&,std::size_t parent_depth) const noexcept;
+private:
+    friend class Vm;friend class VmSourceResetAccess;
+    explicit VmInstructionLease(std::weak_ptr<detail::VmInstructionHandle> value):handle_(std::move(value)){}
+    std::weak_ptr<detail::VmInstructionHandle> handle_;
+};
+enum class VmInstructionChildKind {construction,source_check};
+class VmInstructionChildScope {
+public:
+    ~VmInstructionChildScope();
+    bool valid() const noexcept;
+    bool authenticated_reset_of(const Vm&) const noexcept;
+    VmInstructionChildScope(const VmInstructionChildScope&)=delete;
+    VmInstructionChildScope& operator=(const VmInstructionChildScope&)=delete;
+private:
+    friend class Vm;friend class VmSourceResetAccess;
+    explicit VmInstructionChildScope(std::shared_ptr<detail::VmInstructionLink> value):link_(std::move(value)){}
+    std::shared_ptr<detail::VmInstructionLink> link_;
+};
+std::unique_ptr<VmInstructionChildScope> authorize_source_check(Vm& fresh_check,const LiveEntryPoint5Request&);
+std::unique_ptr<VmInstructionChildScope> authorize_source_placement_entry_point_check(Vm& fresh_check,const Ts1AvatarPlacementEntryPointRequest&);
+
 struct PrimitiveOutcome {
     PrimitiveDisposition disposition = PrimitiveDisposition::unsupported;
     std::string diagnostic;
@@ -187,6 +234,9 @@ struct PrimitiveOutcome {
     // Exclusive of all other outputs/calls, and accepted only on a synchronous
     // branch. Vm resolves indirection and invokes its effective memory setter.
     std::optional<VmVariableWrite> variable_write = {};
+    // Required only for a source-authorized ordinary call after synchronous
+    // Reset detached the executing frame. Single-use, never persisted.
+    std::optional<VmDetachedCallContinuation> detached_call = {};
 };
 class Vm;
 struct VmDispatch {
@@ -293,6 +343,7 @@ public:
                 VmPrimitive primitive = {}, RoutineOwners owners = {});
     explicit Vm(std::shared_ptr<const VmProgram> program, ShareVmProgramTag, VmMemory memory, VmLimits limits,
                 VmPrimitive primitive, SharedRoutineOwners owners, ShareVmOwnerProgramsTag);
+    ~Vm();
     Vm(const Vm&) = delete;
     Vm& operator=(const Vm&) = delete;
     Vm(Vm&&) = delete;
@@ -358,19 +409,14 @@ public:
         RoutineKey, VmContext, const std::vector<std::int16_t>& arguments,
         std::uint64_t instruction_budget,
         const std::function<void(const VmTrace&)>& trace = {});
-    // Evaluate an interaction Check BHAV synchronously during an executing
-    // Main primitive. The Main stack and dispatch state are moved aside without
-    // invalidating its live frame reference; Temp/TempXL and World effects are
-    // intentionally shared. Only the supplied check_primitive handles primitive
-    // opcodes (there is no implicit reuse of asynchronous host services). That
-    // callback must be synchronous and must reject unsupported/async operations
-    // before producing side effects. The check has its own instruction budget,
-    // independent of the caller's current run() slice. Nested checks, waits and
-    // service child calls are refused. On a non-return status effects are not
-    // rolled back and no count is added to the caller's run() step total.
-    // An existing external/immediate parent is parked and restored intact;
-    // the caller must be at its authenticated active primitive boundary.
-    // Exact source check frames retain the supplied array extent; legacy calls pad metadata.
+    // Source EvaluateCheck uses a fresh disposable VM with shared immutable
+    // banks/memory and real thread TEMP/XL. The entity execution layer remains
+    // installed; a linked source check can Reset that layer without restoring
+    // its displaced old Main. Only the supplied synchronous primitive/factory
+    // handles check opcodes, with its own budget and no asynchronous waits or
+    // tick yields. Authenticated ordinary child calls remain synchronous.
+    // Named RunInMyStack is a separate same-VM path below. Exact source check
+    // frames retain the supplied array extent; legacy calls pad metadata.
     VmSubroutineResult evaluate_check(
         RoutineKey, VmContext, const std::vector<std::int16_t>& arguments,
         std::uint64_t instruction_budget, const VmPrimitive& check_primitive = {},
@@ -438,6 +484,7 @@ public:
     // Authenticated primitive safe point: resolve a bounded host owner before
     // ordinary call preflight. Plain queries never trigger owner loading.
     bool prepare_primitive_call(const VmFrame&,const Instruction&,const VmDispatch&,const VmCall&);
+    bool prepare_instruction_call(const VmInstructionLease&,const VmFrame&,const Instruction&,const VmDispatch&,const VmCall&);
     // Authenticate this active primitive before resolving only an immutable owner.
     // Does not preflight/push a child, change registers, or grant queue authority.
     bool prepare_primitive_owner(const VmFrame&,const Instruction&,const VmDispatch&,CodeOwner);
@@ -448,6 +495,16 @@ public:
     // External load/check operations must not observe a register owner in the
     // middle of its instruction dispatch. This does not imply a VM status.
     bool dispatch_active() const noexcept { return executing_; }
+    static std::optional<VmInstructionLease> active_instruction_lease(const VmFrame&) noexcept;
+    std::optional<VmInstructionLease> instruction_lease(const VmFrame&) const noexcept;
+    std::unique_ptr<VmInstructionChildScope> authorize_instruction_child(const VmInstructionLease&,
+        VmInstructionChildKind=VmInstructionChildKind::construction);
+    bool source_reset_lifecycle_active() const noexcept {return source_reset_hook_depth_!=0;}
+    bool source_reset_queue_mutation_active() const noexcept;
+    // Actual work in the last outer run(), independent of source Reset's
+    // per-run steps counter. Runtime accounting only, never wire authority.
+    std::uint64_t last_run_instruction_count() const noexcept {return last_run_instruction_count_;}
+
     // Certifies the current synchronous primitive callback, not a trace or a
     // stale copy of a former dispatch. Copies of its value token are allowed
     // only while that same callback and protected frame remain active.
@@ -547,6 +604,9 @@ private:
     void push(RoutineKey, VmContext, const std::vector<std::int16_t>&,
               VmCallReturnMode = VmCallReturnMode::ordinary, std::uint64_t ticket = 0, bool exact_arguments = false,std::optional<bool> action_tree_override={});
     void branch(bool);
+    bool pop_current_frame(bool);
+    void branch_from_detached(VmFrame&,const Instruction&,bool);
+
     bool expression(const Instruction&);
     bool assign_stack_object(VmContext&,std::int16_t);
     std::int32_t read(std::uint8_t, std::int16_t);
@@ -573,6 +633,26 @@ private:
     std::string diagnostic_;
     std::uint64_t steps_ = 0;
     bool executing_ = false;
+    friend class VmInstructionLease;
+    friend class VmInstructionChildScope;
+    friend class VmSourceResetAccess;
+    friend class InteractionQueue;
+    VmSubroutineResult evaluate_queue_check_at_safe_point(RoutineKey,VmContext,
+        const std::vector<std::int16_t>&,std::uint64_t,const VmPrimitive&,bool,
+        const VmPrimitiveFactory&,const std::function<bool()>& source_current);
+    friend std::unique_ptr<VmInstructionChildScope> authorize_source_check(Vm&,const LiveEntryPoint5Request&);
+    friend std::unique_ptr<VmInstructionChildScope> authorize_source_placement_entry_point_check(Vm&,const Ts1AvatarPlacementEntryPointRequest&);
+    detail::VmInstructionState* instruction_scope_=nullptr;
+    std::shared_ptr<detail::VmInstructionLink> instruction_child_;
+    unsigned source_reset_hook_depth_=0;
+    std::uint64_t last_run_instruction_count_=0;
+    std::unique_ptr<VmInstructionChildScope> authorize_source_check_service(const Vm*,std::function<bool()>);
+    bool source_reset_allowed(const VmInstructionLease&) const noexcept;
+    std::unique_ptr<VmInstructionChildScope> authorize_reset_cleanup(const VmInstructionLease*,Vm&,std::function<bool()>);
+
+    bool source_reset_clear(const VmInstructionLease*);
+    VmStatus source_reset_main(RoutineKey,VmContext,const std::vector<std::int16_t>&);
+
     bool preparing_primitive_call_ = false;
     const VmDispatch* active_call_commit_dispatch_ = nullptr;
     const Instruction* active_call_commit_instruction_ = nullptr;

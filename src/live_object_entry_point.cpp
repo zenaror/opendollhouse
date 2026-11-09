@@ -39,7 +39,9 @@ LiveObjectEntryPointResult evaluate_live_object_entry_point(const LiveObjectEntr
         const auto current=[&]() {
             if(!source.source_still_matches()||!identities()||
                (source.active_dispatch&&!live_object_creation_active_dispatch_matches(source))||
-               source.source_vm->run_generation()!=source.source_run_generation||registers->run_generation()!=run||
+               (source.source_vm->run_generation()!=source.source_run_generation&&
+                (!source.active_dispatch||!source.active_dispatch->instruction_lease||
+                 !source.active_dispatch->instruction_lease->detached()))||registers->run_generation()!=run||
                registers->shared_program_for_owner(0)!=globals||registers->shared_program_for_owner(owner)!=bank)return false;
             const auto* entity=world->find(object);
             if(!entity||entity->kind!=EntityKind::object||entity->ui_ghost||entity->generation!=generation||!entity->entry_points)
@@ -64,14 +66,27 @@ LiveObjectEntryPointResult evaluate_live_object_entry_point(const LiveObjectEntr
         Vm check(globals,ShareVmProgramTag{},request.live_memory,limits,{},
             SharedRoutineOwners{{owner,bank}},ShareVmOwnerProgramsTag{});
         if(!check.set_owner_resolver(request.owner_resolver))return unsupported("object entry point resource context could not bind");
+        std::unique_ptr<VmInstructionChildScope> source_check;
+        if(source.active_dispatch&&source.active_dispatch->instruction_lease){
+            // Source constructor/Post is synchronous. Retain the exact real
+            // parent instruction, not a copied frame or a synthetic opcode.
+            const auto& proof=*source.active_dispatch;const auto& lease=*proof.instruction_lease;
+            if(!lease.valid()||!proof.protected_frame||
+               !lease.matches(*proof.protected_frame,proof.instruction,proof.dispatch))
+                return unsupported("object entry point parent lifetime has expired");
+            source_check=check.authorize_instruction_child(lease,VmInstructionChildKind::source_check);
+            if(!source_check)return unsupported("object entry point source-check child could not bind");
+        }
         const auto arguments=request.source_arguments?*request.source_arguments:std::vector<std::int16_t>(4,0);
         if(check.start(key,{object,object,stack_object,owner},arguments,true)!=VmStatus::running)
             return unsupported("object entry point disposable check could not start",check.steps());
-        if(!current())return unsupported("object entry point source changed before synchronous execution");
+        if((source_check&&!source_check->valid())||!current())
+            return unsupported("object entry point source changed before synchronous execution");
         const auto result=check.run_synchronous_check_with_registers(*registers,true,
             request.instruction_budget,request.check_primitive);
         executed_steps=result.steps;
-        if(!current())return unsupported("object entry point source changed during synchronous execution",result.steps);
+        if((source_check&&!source_check->valid())||!current())
+            return unsupported("object entry point source changed during synchronous execution",result.steps);
         if(!result.started)return unsupported(result.diagnostic.empty()?"object entry point check did not start":result.diagnostic,result.steps);
         if(result.status==VmStatus::returned_true)return {LiveObjectEntryPointState::evaluated_true,result.steps,{}};
         if(result.status==VmStatus::returned_false)return {LiveObjectEntryPointState::evaluated_false,result.steps,{}};

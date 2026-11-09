@@ -1,5 +1,6 @@
 #include "travel_session_fixture.hpp"
 #include "odh/ts1_travel_return.hpp"
+#include "odh/session_source_checkpoint.hpp"
 #include "odh/sha256.hpp"
 #include <iostream>
 #include <algorithm>
@@ -60,8 +61,79 @@ odh::SessionBundle return_envelope(bool personal_change=false,bool runtime_chang
  active.neighbor_inventory=inventory.snapshot();active.travel=state;odh::seal_ts1_travel_request(*active.travel,active);
  auto envelope=home;envelope.travel=active.travel;envelope.neighbor_inventory=active.neighbor_inventory;envelope.host.family_budget=active.host.family_budget;envelope.travel_home_session=odh::encode_session_bundle(home);envelope.travel_visited_session=odh::encode_session_bundle(active);(void)odh::encode_session_bundle(envelope);return envelope;
 }
+
+// The historical native SIMS1 layout ends its clock at year, while SIMS2
+// inserts exactly one int32 FirePercent before the unchanged avatar count.
+// Rebuild only archive checksums, preserving opaque controller/VM payloads.
+std::vector<std::uint8_t> native_sims1_archive(const std::vector<std::uint8_t>& current,
+        unsigned& converted,unsigned depth=0){
+ require(depth<=1,"legacy return fixture has no nested travel envelope");
+ auto archive=odh::decode_session_archive(current);
+ for(auto& section:archive.sections){
+  if(section.id==std::array<char,4>{{'T','H','O','M'}}||section.id==std::array<char,4>{{'T','V','I','S'}})
+   section.data=native_sims1_archive(section.data,converted,depth+1);
+  if(section.id==std::array<char,4>{{'S','I','M','S'}}){
+   require(section.data.size()>=24&&section.data[0]==2&&section.data[1]==0,"known native SIMS2 clock field extent");
+   section.data[0]=1;section.data.erase(section.data.begin()+20,section.data.begin()+24);++converted;
+  }
+ }
+ return odh::encode_session_archive(archive);
+}
+void accepted_raw_return_identity(){
+ const auto envelope=return_envelope();const auto canonical=odh::encode_session_bundle(envelope);
+ unsigned converted=0;const auto legacy=native_sims1_archive(canonical,converted);
+ require(converted==3,"legacy source contains actual outer/HOME/visited SIMS1 clocks");
+ const auto digest=odh::sha256(legacy.data(),legacy.size());
+ const auto checkpoint=odh::decode_session_source_checkpoint(legacy,digest);
+ const auto normalized=odh::encode_session_bundle(checkpoint.envelope());
+ const auto normalized_digest=odh::sha256(normalized.data(),normalized.size());
+ require(checkpoint.envelope_bytes()==legacy&&normalized!=legacy&&normalized_digest!=digest,
+     "accepted legacy source and current writer have distinct byte identities despite successful decode");
+ require(checkpoint.envelope().travel_visited_session&&checkpoint.active_bytes()==*checkpoint.envelope().travel_visited_session&&
+     checkpoint.active().host.house_number==23,
+     "onward departure selects the exact authenticated raw TVIS rather than reencoding its active model");
+ const auto raw_active=checkpoint.active_bytes();
+ const auto raw_home=*checkpoint.envelope().travel_home_session;
+ const auto returned=odh::prepare_ts1_travel_return(checkpoint);
+ const auto canonical_return=odh::prepare_ts1_travel_return(envelope);
+ require(returned.source_checkpoint_sha256()==digest&&returned.source_checkpoint_sha256()!=normalized_digest&&
+     returned.suspended_home_sha256()==odh::sha256(raw_home.data(),raw_home.size()),
+     "return receipt binds exact accepted outer and suspended HOME bytes across native codec evolution");
+ require(odh::encode_session_bundle(returned.home())==odh::encode_session_bundle(canonical_return.home())&&
+     returned.home().simulation->clock.fire_percent==20000&&!returned.home().travel,
+     "raw identity retention preserves the complete original HOME projection and known native clock bridge");
+ require(checkpoint.envelope_bytes()==legacy&&checkpoint.active_bytes()==raw_active,
+     "return preparation never rewrites accepted source or raw departure buffers");
+ rejects([&]{(void)odh::decode_session_source_checkpoint(legacy,normalized_digest);},
+     "normalized model digest cannot authenticate older accepted source bytes");
+ auto changed=legacy;changed.back()^=1;
+ rejects([&]{(void)odh::decode_session_source_checkpoint(changed,digest);},
+     "changed archive cannot borrow the original accepted raw digest");
+ const auto changed_digest=odh::sha256(changed.data(),changed.size());
+ rejects([&]{(void)odh::decode_session_source_checkpoint(changed,changed_digest);},
+     "matching hash cannot bypass the native archive integrity/schema checks");
+ auto limits=odh::SessionBundleLimits{};limits.archive.max_file_bytes=legacy.size()-1;
+ limits.archive.max_section_bytes=std::min(limits.archive.max_section_bytes,limits.archive.max_file_bytes);
+ rejects([&]{(void)odh::decode_session_source_checkpoint(legacy,digest,limits);},
+     "authenticated source still respects the original archive byte budget");
+ const auto home_digest=odh::sha256(raw_home.data(),raw_home.size());
+ const auto home_checkpoint=odh::decode_session_source_checkpoint(raw_home,home_digest);
+ require(home_checkpoint.active_bytes()==home_checkpoint.envelope_bytes()&&home_checkpoint.active().host.house_number==7,
+     "source without TVIS carries the exact raw outer HOME bytes for departure binding");
+ rejects([&]{(void)odh::prepare_ts1_travel_return(home_checkpoint);},
+     "raw byte authority does not grant a HOME-only archive a return-pending envelope");
+ const auto unresolved_model=return_envelope(true);unsigned unresolved_converted=0;
+ const auto unresolved_bytes=native_sims1_archive(odh::encode_session_bundle(unresolved_model),unresolved_converted);
+ const auto unresolved_digest=odh::sha256(unresolved_bytes.data(),unresolved_bytes.size());
+ const auto unresolved=odh::prepare_ts1_travel_return(odh::decode_session_source_checkpoint(unresolved_bytes,unresolved_digest));
+ require(unresolved.requires_original_personal_persistence_resolution()&&unresolved.source_checkpoint_sha256()==unresolved_digest&&
+     unresolved.unresolved_personal_deltas().size()==1,
+     "legacy raw return retains exact personal-delta guard and accepted source identity");
+ rejects([&]{(void)unresolved.home();},"raw source identity never bypasses unresolved original personal persistence");
+}
 }
 int main(){try{
+ accepted_raw_return_identity();
  const auto envelope=return_envelope();const auto original=odh::decode_session_bundle(*envelope.travel_home_session);const auto before=odh::encode_session_bundle(envelope);
  const auto returned=odh::prepare_ts1_travel_return(envelope);const auto& home=returned.home();require(!returned.requires_original_personal_persistence_resolution(),"unchanged personal bank needs no invented field rule");
  require(returned.source_checkpoint_sha256()==odh::sha256(before.data(),before.size())&&returned.suspended_home_sha256()==odh::sha256(envelope.travel_home_session->data(),envelope.travel_home_session->size()),"return receipt authenticates exact checkpoint and suspended home");

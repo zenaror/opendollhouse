@@ -9,6 +9,7 @@ struct Ts1ClockSnapshot {
     std::uint16_t minute_fraction=0;
     std::uint8_t minute=0,hour=0,day=1,month=6;
     std::int32_t year=1997;
+    std::int32_t fire_percent=20000; // VMClock: reachable bounded spread threshold, not a 0..100 percentage.
 };
 // TS1 profile: 30 simulation ticks/minute, 30-day months. No wall clock.
 class Ts1Clock {
@@ -22,6 +23,8 @@ public:
     bool tick(bool simulation_running);
     const Ts1ClockSnapshot& snapshot() const {return state_;}
     bool restore(const Ts1ClockSnapshot&);
+    // VMBurn consumes only after its spread RNG and caller-pool gates succeed.
+    void consume_fire_spread() noexcept;
     unsigned seconds() const {return state_.minute_fraction*60U/ticks_per_minute;}
     // VMArchitecture uses the sum of these three clock components for daylight.
     // A newly imported SIMI can carry more than one minute in Seconds. Cycle

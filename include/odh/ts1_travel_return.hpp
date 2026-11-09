@@ -7,6 +7,7 @@ class OriginalFrontendPersonalSource;
 // Pure sealed-family1 proof; accepts existing equal selective writer/seed values.
 void validate_original_family_departure_personal(const SessionBundle&,const OriginalFrontendPersonalSource&);
 class PreparedTs1TravelReturn;
+class SessionSourceCheckpoint;
 // Constructed only by hashing and parsing the same owned, bounded IFF bytes.
 // The host must still authenticate the checkpoint and visited resource manifest.
 class Ts1TravelPersonInheritanceSource {
@@ -21,6 +22,7 @@ private:
     friend Ts1TravelPersonInheritanceSource read_ts1_travel_person_inheritance(const View&);
     friend class PreparedTs1TravelReturn;
     friend PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionBundle&,SessionBundleLimits,const Ts1TravelPersonInheritanceSource*);
+    friend PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionSourceCheckpoint&,SessionBundleLimits,const Ts1TravelPersonInheritanceSource*);
 };
 Ts1TravelPersonInheritanceSource read_ts1_travel_person_inheritance(const View&);
 // The reference restores SavedLot and does not implement SaveSimPersistentData.
@@ -57,10 +59,18 @@ private:
     std::array<std::uint8_t,32> source_checkpoint_sha256_{},suspended_home_sha256_{};
     std::vector<Ts1TravelPersonalDelta> personal_deltas_,runtime_deltas_,inherited_deltas_;
     friend PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionBundle&,SessionBundleLimits,const Ts1TravelPersonInheritanceSource*);
+    friend PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionSourceCheckpoint&,SessionBundleLimits,const Ts1TravelPersonInheritanceSource*);
 };
 // Pure unpublished projection from an already-durable return-pending envelope.
 // Never imports visited World IDs, object relationships, VM/queue/controller
 // state, clock, motive-decay state or property/occupancy data into the home.
+// Already-accepted source identity comes from its exact authenticated bytes,
+// including older supported payload versions. The host still verifies the head
+// is current before consuming this pure unpublished projection.
+PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionSourceCheckpoint&,SessionBundleLimits = {},
+    const Ts1TravelPersonInheritanceSource* = nullptr);
+// Synthetic/new canonical model convenience. Its receipt identifies the current
+// writer's explicit encoding; never use it to authenticate an older raw head.
 PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionBundle&,SessionBundleLimits = {},
     const Ts1TravelPersonInheritanceSource* = nullptr);
 }

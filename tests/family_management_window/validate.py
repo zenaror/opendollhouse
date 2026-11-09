@@ -226,7 +226,15 @@ def main():
     p.add_argument('--checkpoint-sha256', default='b7409c4d9e61dacab7eb12ff19d1ae254ae36f0cb5fdd361a5ea54b5ffc49533')
     p.add_argument('--timeout-seconds', type=float, default=120)
     p.add_argument('--resume-after-create', type=Path)
+    p.add_argument('--family-lot-plan', type=Path, help='Reviewed real-frame plan for complete GUI chain')
+    p.add_argument('--family-lot-plan-sha256')
     args = p.parse_args()
+    need(bool(args.family_lot_plan)==bool(args.family_lot_plan_sha256), 'GUI plan and reviewed SHA must be paired')
+    flow = plan = None
+    if args.family_lot_plan:
+        need(not args.resume_after_create, 'complete GUI chain must create/edit its own draft through actual UI')
+        flow = module('family_lot_flow', Path(__file__).with_name('family_lot_flow.py'))
+        plan = flow.load_plan(args.family_lot_plan, args.family_lot_plan_sha256)
     args.checkout = args.checkout.resolve()
     for name in ('binary', 'reader', 'game_root', 'source_receipt', 'protected_manifest'):
         setattr(args, name, getattr(args, name).resolve())
@@ -272,6 +280,12 @@ def main():
                           'Acknowledged input does not resolve product FIFO/coalescing limitations.'],
                   source_receipt_sha256=sha(args.source_receipt), checkpoint_sha256=args.checkpoint_sha256,
                   binary_sha256=sha(args.binary), reader_sha256=sha(args.reader), actions=[], runs=[], probes=[])
+    if plan:
+        report.update(evidence='Actual GUI actions and read-only saved-state observations; no headless actions',
+                      family_lot_plan_sha256=args.family_lot_plan_sha256)
+        report['limits']=['Private Xvfb/XTest, not physical display or original appearance comparison.',
+                          'Draft editing only; no saved-Sim editor or full Build acceptance.',
+                          'No first playable milestone or whole-game acceptance.']
     if resume_prior:
         report['resume_after_create']=dict(receipt=str(resume_receipt),receipt_sha256=sha(resume_receipt),
             source_profile=str(resume_profile),source_profile_before=resume_files,validation=resume_validation)
@@ -327,10 +341,16 @@ def main():
         xdo('mousedown','1')
         xdo('mouseup','1')
 
+    def drag(start,end):
+        need(all(0<=x<800 and 0<=y<600 for x,y in (start,end)), 'drag outside actual window')
+        need(xdo('getwindowfocus','-f')==str(window), 'focus changed before isolated drag')
+        xdo('mousemove','--window',window,*start,'mousedown','1',
+            'mousemove','--window',window,*end,'mouseup','1')
+
     def text(value):
         need(xdo('getwindowfocus','-f')==str(window), 'input focus changed before text')
         need(value.isascii(), 'gate text must be ASCII to avoid synthesizing input method state')
-        xdo('type','--window',window,'--clearmodifiers','--delay','35','--',value)
+        xdo('type','--window',window,'--clearmodifiers','--delay',('0' if plan else '35'),'--',value)
 
     def observed_rgb():
         raw = subprocess.run(['xwd','-display',env['DISPLAY'],'-id',window,'-silent'],
@@ -409,6 +429,11 @@ def main():
         await_visual_action('rename-text-visible',(272,297,255,25),lambda:text(value))
 
     def erase_visible_name(value):
+        if plan:
+            need(xdo('getwindowfocus','-f')==str(window), 'focus changed before bounded Backspace burst')
+            xdo('key','--window',window,'--clearmodifiers','--delay','0',*(['BackSpace']*len(value)))
+            report['actions'].append(dict(burst_backspaces=len(value)))
+            return
         # WindowInput.text_backspace is a boolean per poll; never enqueue a
         # burst and assume every Backspace was consumed by the UI.
         for index in range(len(value)):
@@ -580,10 +605,17 @@ def main():
                     await_visual_action('child-selected',(406,101,150,101),lambda:click(450,155))
                 expected=[0]*5
                 for row in range(5):
-                    for point in range(5):
-                        expected[row]=point+1
-                        await_personality('trait-'+str(row)+'-point-'+str(point+1),expected,
-                                          lambda row=row:click(284,143+row*32))
+                    if plan:
+                        need(xdo('getwindowfocus','-f')==str(window), 'focus changed before repeated-click burst')
+                        xdo('mousemove','--window',window,284,143+row*32,
+                            'click','--repeat','5','--delay','0','1')
+                        expected[row]=5
+                        await_personality('burst-trait-'+str(row),expected)
+                    else:
+                        for point in range(5):
+                            expected[row]=point+1
+                            await_personality('trait-'+str(row)+'-point-'+str(point+1),expected,
+                                              lambda row=row:click(284,143+row*32))
                 click(200,560);wait('cas-member-accepted',lambda:title()==family_title)
                 ui_ready('cas_family')
             new_member('Ava Original')
@@ -624,57 +656,66 @@ def main():
             ui_ready('picker')
             screenshot('created-family-in-list')
             key('Escape');wait('back-to-map',lambda:title()==map_title);close_map()
-            reopen_probe('after-create',admitted_nids)
-        map_title=launch('rename')
-        picker_title=select_aux(aux_id,baseline)
-        before_cancel=important()
-        open_modal('rename-dialog',lambda:key('r'))
-        rename_text('ODH Discard Rename');key('Escape')
-        wait('rename-cancelled',lambda:title()==picker_title)
-        need(important()==before_cancel, 'cancelled rename changed durable family data')
-        keyboard_select_aux(aux_id)
-        open_modal('rename-dialog-accepted',lambda:key('r'))
-        rename_text('ODH UI Renamed');key('Return')
-        wait('rename-persisted',lambda:next(f for f in state()['families'] if f['id']==aux_id)['name']=='ODH UI Renamed')
-        renamed=state();stable_family(baseline,renamed,args.family)
-        renamed_aux=next(f for f in renamed['families'] if f['id']==aux_id)
-        need(renamed_aux['members']==aux['members'] and renamed_aux['guids']==aux['guids'], 'rename changed immutable character identity/content')
-        ui_ready('picker')
-        screenshot('renamed-family');key('Escape');wait('rename-back-map',lambda:title()==map_title);close_map()
-        reopen_probe('after-rename',admitted_nids)
-        map_title=launch('archive')
-        select_aux(aux_id,baseline)
-        before_cancel=important();picker_title=title()
-        open_modal('archive-question',lambda:click(458,560),baseline['ui_titles']['archive'])
-        screenshot('archive-cancel-question');key('Escape')
-        wait('archive-cancel-map',lambda:title()==map_title)
-        need(important()==before_cancel, 'cancelled archive changed durable family data')
-        select_aux(aux_id,baseline);picker_title=title()
-        open_modal('archive-confirm',lambda:click(458,560),baseline['ui_titles']['archive'])
-        key('Return')  # Management confirmation explicitly maps Enter to Yes.
-        wait('archive-persisted',lambda:all(f['id']!=aux_id for f in state()['families']))
-        archived=state();stable_family(baseline,archived,args.family)
-        need(archived['archive_count']==baseline['archive_count']+1 and archived['creation_count']==created['creation_count'], 'archive did not retain its real creation history')
-        # Logical archive retains private characters; it cannot delete arbitrary files.
-        final_important=important()
-        for name,digest in before_cancel.items():
-            if Path(name).suffix.lower() in ('.iff','.odhs'):
-                need(final_important.get(name)==digest, 'archive changed character/session bytes')
-        wait('archive-back-map',lambda:title()==map_title);close_map()
-        reopen_probe('after-delete',admitted_nids,deleted=True)
-        map_title=launch('reopen-management')
-        key('c');wait('reopened-family-list',lambda:title()==baseline['ui_titles']['picker'])
-        ui_ready('picker')
-        need(aux_id not in state()['unhoused_order'], 'archived family reappeared after reopening management')
-        screenshot('reopened-list-without-auxiliary');key('Escape');wait('final-map',lambda:title()==map_title);close_map()
-        report['final']=state()
-        stable_family(baseline,report['final'],args.family)
-        need(report['final']['families']==baseline['families'], 'management changed a pre-existing effective family')
-        need(report['final']['assignment_count']==baseline['assignment_count'], 'management unexpectedly purchased/moved a family')
-        for name,digest in baseline_important.items():
-            if Path(name).suffix.lower() in ('.iff','.odhs'):
-                need(important().get(name)==digest, 'management changed a pre-existing character/save')
-        report['passed']=True
+            if not plan:reopen_probe('after-create',admitted_nids)
+        if plan:
+            flow.run(dict(args=args,report=report,state=state,inspect=inspect,wait=wait,
+                          key=key,click=click,drag=drag,text=text,save=save,sha=sha,
+                          baseline=baseline,aux=aux,rgb_region=rgb_region,
+                          observed_region=observed_region,launch=launch,title=title,
+                          close_map=close_map,ui_ready=ui_ready,open_modal=open_modal,
+                          important=important,keyboard_select_aux=keyboard_select_aux,
+                          select_aux=select_aux,new_member=new_member,rename_text=rename_text),plan)
+        else:
+            map_title=launch('rename')
+            picker_title=select_aux(aux_id,baseline)
+            before_cancel=important()
+            open_modal('rename-dialog',lambda:key('r'))
+            rename_text('ODH Discard Rename');key('Escape')
+            wait('rename-cancelled',lambda:title()==picker_title)
+            need(important()==before_cancel, 'cancelled rename changed durable family data')
+            keyboard_select_aux(aux_id)
+            open_modal('rename-dialog-accepted',lambda:key('r'))
+            rename_text('ODH UI Renamed');key('Return')
+            wait('rename-persisted',lambda:next(f for f in state()['families'] if f['id']==aux_id)['name']=='ODH UI Renamed')
+            renamed=state();stable_family(baseline,renamed,args.family)
+            renamed_aux=next(f for f in renamed['families'] if f['id']==aux_id)
+            need(renamed_aux['members']==aux['members'] and renamed_aux['guids']==aux['guids'], 'rename changed immutable character identity/content')
+            ui_ready('picker')
+            screenshot('renamed-family');key('Escape');wait('rename-back-map',lambda:title()==map_title);close_map()
+            reopen_probe('after-rename',admitted_nids)
+            map_title=launch('archive')
+            select_aux(aux_id,baseline)
+            before_cancel=important();picker_title=title()
+            open_modal('archive-question',lambda:click(458,560),baseline['ui_titles']['archive'])
+            screenshot('archive-cancel-question');key('Escape')
+            wait('archive-cancel-map',lambda:title()==map_title)
+            need(important()==before_cancel, 'cancelled archive changed durable family data')
+            select_aux(aux_id,baseline);picker_title=title()
+            open_modal('archive-confirm',lambda:click(458,560),baseline['ui_titles']['archive'])
+            key('Return')  # Management confirmation explicitly maps Enter to Yes.
+            wait('archive-persisted',lambda:all(f['id']!=aux_id for f in state()['families']))
+            archived=state();stable_family(baseline,archived,args.family)
+            need(archived['archive_count']==baseline['archive_count']+1 and archived['creation_count']==created['creation_count'], 'archive did not retain its real creation history')
+            # Logical archive retains private characters; it cannot delete arbitrary files.
+            final_important=important()
+            for name,digest in before_cancel.items():
+                if Path(name).suffix.lower() in ('.iff','.odhs'):
+                    need(final_important.get(name)==digest, 'archive changed character/session bytes')
+            wait('archive-back-map',lambda:title()==map_title);close_map()
+            reopen_probe('after-delete',admitted_nids,deleted=True)
+            map_title=launch('reopen-management')
+            key('c');wait('reopened-family-list',lambda:title()==baseline['ui_titles']['picker'])
+            ui_ready('picker')
+            need(aux_id not in state()['unhoused_order'], 'archived family reappeared after reopening management')
+            screenshot('reopened-list-without-auxiliary');key('Escape');wait('final-map',lambda:title()==map_title);close_map()
+            report['final']=state()
+            stable_family(baseline,report['final'],args.family)
+            need(report['final']['families']==baseline['families'], 'management changed a pre-existing effective family')
+            need(report['final']['assignment_count']==baseline['assignment_count'], 'management unexpectedly purchased/moved a family')
+            for name,digest in baseline_important.items():
+                if Path(name).suffix.lower() in ('.iff','.odhs'):
+                    need(important().get(name)==digest, 'management changed a pre-existing character/save')
+            report['passed']=True
     except Exception as error:
         report['error']=str(error)
         if window and process and process.poll() is None:
@@ -694,6 +735,10 @@ def main():
             source_receipt_unchanged=sha(args.source_receipt)==report['source_receipt_sha256'],
             binary_unchanged=sha(args.binary)==report['binary_sha256'],reader_unchanged=sha(args.reader)==report['reader_sha256'],
             commercial_sources_unchanged={name:sha(args.game_root/name) for name in protected}==original_before)
+        if plan:
+            try:flow.load_plan(args.family_lot_plan,args.family_lot_plan_sha256)
+            except Exception as error:report['reference_guard_error']=str(error)
+            report['guards']['plan_and_observed_references_unchanged']='reference_guard_error' not in report
         if resume_prior:
             report['guards']['resume_profile_unchanged']=inventory(resume_profile)==resume_files
             report['guards']['resume_receipt_unchanged']=sha(resume_receipt)==report['resume_after_create']['receipt_sha256']

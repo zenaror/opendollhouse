@@ -6,7 +6,7 @@ namespace {
 bool valid(const Ts1ClockSnapshot& s) {
     return (s.minute_fraction<Ts1Clock::ticks_per_minute ||
         (s.ticks==0 && s.minute_fraction<=59*Ts1Clock::ticks_per_minute && s.minute_fraction%Ts1Clock::ticks_per_minute==0)) && s.minute<60 && s.hour<24 &&
-        s.day>=1 && s.day<=30 && s.month>=1 && s.month<=12 && s.year>=1;
+        s.day>=1 && s.day<=30 && s.month>=1 && s.month<=12 && s.year>=1 && s.fire_percent>=0 && s.fire_percent<=20000;
 }
 }
 bool Ts1Clock::initialize(unsigned hour,unsigned day,unsigned minute,unsigned month,std::int32_t year) {
@@ -32,9 +32,13 @@ std::optional<std::int16_t> Ts1Clock::global(std::int16_t index) const {
     }
 }
 bool Ts1Clock::restore(const Ts1ClockSnapshot& s) {if(!valid(s)) return false;state_=s;return true;}
+void Ts1Clock::consume_fire_spread() noexcept {
+    state_.fire_percent=std::max(std::int32_t{0},state_.fire_percent-500);
+}
 bool Ts1Clock::tick(bool running) {
     if(!running || state_.ticks==std::numeric_limits<std::uint64_t>::max()) return false;
     auto next=state_;
+    if(next.fire_percent<20000)++next.fire_percent;
     ++next.ticks;
     if(++next.minute_fraction>=ticks_per_minute) {
         next.minute_fraction=0;

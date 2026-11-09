@@ -1,4 +1,5 @@
 #include "odh/ts1_travel_return.hpp"
+#include "odh/session_source_checkpoint.hpp"
 #include "odh/original_companion_protocol.hpp"
 #include "odh/sha256.hpp"
 #include "odh/native_personal_session.hpp"
@@ -142,15 +143,24 @@ void recount(RelationshipSnapshot& state){
 // Generic25 at227-229 is a successful no-op, NOT a persistent-person schema.
 PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionBundle& envelope,SessionBundleLimits limits,
  const Ts1TravelPersonInheritanceSource* inheritance){
- const auto encoded=encode_session_bundle(envelope,limits);
+ auto bytes=encode_session_bundle(envelope,limits);
+ const auto digest=sha256(bytes.data(),bytes.size());
+ return prepare_ts1_travel_return(decode_session_source_checkpoint(std::move(bytes),digest,limits),limits,inheritance);
+}
+PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionSourceCheckpoint& checkpoint,SessionBundleLimits limits,
+ const Ts1TravelPersonInheritanceSource* inheritance){
+ const auto& envelope=checkpoint.envelope();
+ // Keep complete projection/limit validation; this encoding never substitutes
+ // for the accepted serialized source identity carried by the checkpoint.
+ (void)encode_session_bundle(envelope,limits);
  if(!envelope.travel||!envelope.travel_home_session||!envelope.travel_visited_session)throw FormatError("travel return requires a durable home/visited envelope");
  const auto& state=*envelope.travel;
  if(inheritance&&inheritance->neighborhood_identity()!=state.neighborhood_identity)
   throw FormatError("travel personal inheritance source differs from the authenticated neighborhood identity");
  if(!state.pending||state.current_house==state.home_house||(state.pending->destination!=-1&&state.pending->destination!=static_cast<std::int16_t>(state.home_house)))throw FormatError("travel return requires an authenticated deferred request to the permanent home");
- const auto active=decode_session_bundle(*envelope.travel_visited_session,std::nullopt,limits);
+ const auto& active=checkpoint.active();
  PreparedTs1TravelReturn result;result.home_=decode_session_bundle(*envelope.travel_home_session,std::nullopt,limits);
- result.source_checkpoint_sha256_=sha256(encoded.data(),encoded.size());result.suspended_home_sha256_=sha256(envelope.travel_home_session->data(),envelope.travel_home_session->size());
+ result.source_checkpoint_sha256_=checkpoint.digest();result.suspended_home_sha256_=sha256(envelope.travel_home_session->data(),envelope.travel_home_session->size());
  if(result.home_.personal_state&&!active.personal_state)throw FormatError("return dropped shared personal records");
  if(active.personal_state)project_native_personal_session(result.home_,*active.personal_state);
  NeighborInventory inventory(Ngbh{});inventory.restore(*active.neighbor_inventory);

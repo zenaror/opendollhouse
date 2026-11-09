@@ -122,7 +122,7 @@ bool InteractionQueue::source_recovery_remove(std::uint64_t uid,bool allow_activ
     if(current){active_.reset();wait_.reset();resume_tick_.reset();}
     if(parent!=suspended_active_.end())suspended_active_.erase(parent);
     if(completion_&&completion_->uid==uid)completion_.reset();
-    queue_.erase(found);fresh_=false;diagnostic_.clear();return true;
+    queue_.erase(found);rebind_current_source_headers();fresh_=false;diagnostic_.clear();return true;
 }
 bool InteractionQueue::source_recovery_set_active_icon(WorldEntityReference icon) {
     if(!active_)return icon==WorldEntityReference{} && vm_ && !vm_->dispatch_active() && !executing_;
@@ -168,7 +168,9 @@ bool InteractionQueue::valid_snapshot_with_vm(const InteractionQueueSnapshot& st
        state.profile>InteractionQueueProfile::ts1_priority||
        (state.last_tick?*state.last_tick!=state.clock:state.clock!=0))return false;
     const auto protected_count=state.suspended_active.size()+(state.active?1U:0U);
-    if((!state.active&&!state.suspended_active.empty())||protected_count>state.actions.size()||
+    const bool detached_hole=state.active&&state.active->detached_execution&&!state.active->uid&&
+        state.suspended_active.empty()&&state.actions.empty();
+    if((!state.active&&!state.suspended_active.empty())||(protected_count>state.actions.size()&&!detached_hole)||
        (state.profile==InteractionQueueProfile::legacy_fifo&&!state.suspended_active.empty()))return false;
     std::set<std::uint64_t> action_uids;
     for(const auto& action:state.actions){
@@ -200,15 +202,22 @@ bool InteractionQueue::valid_snapshot_with_vm(const InteractionQueueSnapshot& st
     std::set<std::uint64_t> active_tickets;
     for(std::size_t n=0;n<state.suspended_active.size();++n){
         const auto& parent=state.suspended_active[n];
-        if(!parent.uid||!parent.ticket||parent.ticket>vm.ticket_sequence||
-           state.actions[n].uid!=parent.uid||!active_tickets.insert(parent.ticket).second)return false;
+        if(!parent.ticket||parent.ticket>vm.ticket_sequence||
+           !interaction_header_binding_valid(state,n,parent)||!active_tickets.insert(parent.ticket).second)return false;
     }
     if(state.active){
-        if(!state.active->uid||!state.active->ticket||state.active->ticket>vm.ticket_sequence||
-           state.actions[state.suspended_active.size()].uid!=state.active->uid||
+        if(!state.active->ticket||state.active->ticket>vm.ticket_sequence||
+           !interaction_header_binding_valid(state,state.suspended_active.size(),*state.active)||
            !active_tickets.insert(state.active->ticket).second)return false;
     }
     const auto valid_ticket=[&](std::uint64_t ticket){return ticket&&ticket<=vm.ticket_sequence;};
+    for(std::size_t n=0;n<protected_count;++n){
+        const auto& binding=n<state.suspended_active.size()?state.suspended_active[n]:*state.active;
+        if(!binding.detached_execution)continue;
+        const auto& call=binding.detached_execution->call;
+        if(!world_.resolve_reference({call.context.callee,call.context.callee_generation})||
+           !vm_->has_routine(call.key,call.context.code_owner))return false;
+    }
     std::size_t action_frames=0;
     for(const auto& frame:vm.stack){
         if(frame.return_mode!=VmCallReturnMode::interaction_next_tick&&frame.return_mode!=VmCallReturnMode::immediate)continue;
@@ -216,15 +225,16 @@ bool InteractionQueue::valid_snapshot_with_vm(const InteractionQueueSnapshot& st
         const auto expected=action_frames<state.suspended_active.size()?
             state.suspended_active[action_frames]:*state.active;
         if(frame.invocation_ticket!=expected.ticket)return false;
-        const auto& call=state.actions[action_frames].call;
+        const auto* execution=interaction_execution_call(state,action_frames);if(!execution)return false;
+        const auto& call=*execution;
         if(frame.return_mode!=call.return_mode||frame.exact_arguments!=call.exact_arguments||frame.key.scope!=call.key.scope||frame.key.id!=call.key.id||
            !same_action_owner_context(frame.context,call.context)||
            (call.exact_arguments?frame.arguments.size()!=call.arguments.size():frame.arguments.size()<call.arguments.size()))return false;
         ++action_frames;
     }
-    const auto active_mode=state.active?state.actions[state.suspended_active.size()].call.return_mode:
-        VmCallReturnMode::ordinary;
-    const auto active_owner=state.active?state.actions[state.suspended_active.size()].call.context.code_owner:CodeOwner{0};
+    const auto* deepest=interaction_execution_call(state,state.suspended_active.size());
+    const auto active_mode=deepest?deepest->return_mode:VmCallReturnMode::ordinary;
+    const auto active_owner=deepest?deepest->context.code_owner:CodeOwner{0};
     const bool returned_normal=state.active&&active_mode==VmCallReturnMode::interaction_next_tick&&vm.interaction_return&&
         vm.interaction_return->ticket==state.active->ticket&&!state.resume_tick&&
         vm.interaction_return->run_generation==state.run_generation&&vm.interaction_return->code_owner==active_owner;
@@ -274,7 +284,7 @@ bool InteractionQueue::valid_snapshot_with_vm(const InteractionQueueSnapshot& st
     }
     if(vm.interaction_return){
         const bool matches_unobserved=returned_normal&&
-            vm.interaction_return->code_owner==state.actions[state.suspended_active.size()].call.context.code_owner;
+            vm.interaction_return->code_owner==active_owner;
         const bool matches_observed=state.completion&&vm.interaction_return->ticket==state.completion->ticket&&
             vm.interaction_return->result==state.completion->result&&
             (!state.resume_tick||*state.resume_tick==state.completion->tick+1);
@@ -324,6 +334,15 @@ std::vector<WorldEntityReference> InteractionQueue::strong_entity_references() c
             if(ref.id>0&&ref.generation)result.push_back(ref);
         }
     }
+    const auto add_execution=[&](const Active& active){
+        if(!active.detached_execution)return;
+        for(const auto role:{VmEntityRole::caller,VmEntityRole::callee,VmEntityRole::stack_object}){
+            const auto ref=vm_context_reference(active.detached_execution->call.context,role);
+            if(ref.id>0&&ref.generation)result.push_back(ref);
+        }
+    };
+    for(const auto& parent:suspended_active_)add_execution(parent);
+    if(active_)add_execution(*active_);
     return result;
 }
 std::optional<bool> InteractionQueue::source_reset_required() const {
@@ -378,19 +397,24 @@ std::optional<bool> InteractionQueue::live_action_tree(const Vm& real_thread) co
         return stack.back().action_tree?std::optional<bool>{}:std::optional<bool>{false};
     }
     const auto count=suspended_active_.size()+1;
-    if(run_generation_!=vm_->run_generation()||queue_.size()<count)return {};
+    const bool hole=active_->detached_execution&&suspended_active_.empty()&&queue_.empty();
+    if(run_generation_!=vm_->run_generation()||(queue_.size()<count&&!hole))return {};
     std::size_t matched=0,last=0;
     for(std::size_t n=0;n<stack.size();++n){
         const auto& entry=stack[n];
         if(entry.return_mode!=VmCallReturnMode::interaction_next_tick&&entry.return_mode!=VmCallReturnMode::immediate)continue;
         if(matched>=count)return {};
         const auto expected=matched<suspended_active_.size()?suspended_active_[matched]:*active_;
-        const auto& action=queue_[matched];const auto& call=action.call;
-        const auto* target=world_.resolve_reference({call.context.callee,action.target_generation});
-        if(action.uid!=expected.uid||entry.invocation_ticket!=expected.ticket||entry.return_mode!=call.return_mode||
-           entry.exact_arguments!=call.exact_arguments||
-           entry.key.id!=call.key.id||entry.key.scope!=call.key.scope||
-           !same_action_owner_context(entry.context,call.context)||!target||target->generation!=action.target_generation)return {};
+        const auto* call=expected.detached_execution?&expected.detached_execution->call:
+            matched<queue_.size()?&queue_[matched].call:nullptr;
+        if(!call)return {};
+        const auto ref=vm_context_reference(call->context,VmEntityRole::callee);
+        const auto* target=world_.resolve_reference(ref);
+        if((matched<queue_.size()?queue_[matched].uid!=expected.uid:expected.uid!=0)||
+           entry.invocation_ticket!=expected.ticket||entry.return_mode!=call->return_mode||
+           entry.exact_arguments!=call->exact_arguments||
+           entry.key.id!=call->key.id||entry.key.scope!=call->key.scope||
+           !same_action_owner_context(entry.context,call->context)||!target)return {};
         ++matched;last=n;
     }
     if(matched!=count)return {};
@@ -415,6 +439,7 @@ std::optional<bool> InteractionQueue::interacting_with(const World& expected_wor
     if(!action_tree||!*action_tree)return action_tree;
     if(!target.generation)return false; // Stable source-null, even with raw ID.
     if(!world_.resolve_reference(target))return {};
+    if(queue_.size()<=suspended_active_.size())return {}; // Actual source ActiveAction header access.
     const auto& action=queue_[suspended_active_.size()];
     return action.call.context.callee==target.id&&action.target_generation==target.generation;
 }
@@ -483,6 +508,15 @@ bool InteractionQueue::PreparedIconUpdate::commit() noexcept {
     queue_->queue_[queue_->suspended_active_.size()].icon_owner=icon_;
     consumed_=true;return true;
 }
+void InteractionQueue::rebind_current_source_headers() noexcept{
+    for(std::size_t n=0;n<suspended_active_.size();++n)
+        if(suspended_active_[n].detached_execution)
+            suspended_active_[n].uid=n<queue_.size()?queue_[n].uid:0;
+    if(active_&&active_->detached_execution){
+        const auto index=suspended_active_.size();
+        active_->uid=index<queue_.size()?queue_[index].uid:0;
+    }
+}
 bool InteractionQueue::validate() {
     if(!vm_){diagnostic_="interaction queue is not bound";return false;}
     const auto* actor=world_.find(actor_id_);
@@ -500,9 +534,12 @@ bool InteractionQueue::validate() {
         }
     }
     const auto protected_count=suspended_active_.size()+(active_?1U:0U);
-    if((!active_&&!suspended_active_.empty())||protected_count>queue_.size()){
+    const bool detached_hole=active_&&active_->detached_execution&&!active_->uid&&suspended_active_.empty()&&queue_.empty();
+    if((!active_&&!suspended_active_.empty())||(protected_count>queue_.size()&&!detached_hole)){
         diagnostic_="active interaction prefix identity mismatch";return false;
     }
+    if(detached_hole)return true; // Validate its executing frame at capture/restore and actual header reads.
+
     for(std::size_t n=0;n<protected_count;++n){
         const auto expected=n<suspended_active_.size()?suspended_active_[n]:*active_;
         if(queue_[n].uid!=expected.uid){diagnostic_="active interaction prefix identity mismatch";return false;}
@@ -549,7 +586,7 @@ bool InteractionQueue::evaluate_queue_priorities() {
             diagnostic_="queue priority change could not set InteractionCanceled";return false;
         }
     }
-    queue_.swap(candidate);
+    queue_.swap(candidate);rebind_current_source_headers();
     return true;
 }
 bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
@@ -720,7 +757,7 @@ InteractionCancelResult InteractionQueue::cancel(std::uint64_t native_uid) {
         const auto it=std::find_if(queue_.begin(),queue_.end(),[uid](const Action& action){
             return action.uid==uid;
         });
-        if(it!=queue_.end())queue_.erase(it);
+        if(it!=queue_.end()){queue_.erase(it);rebind_current_source_headers();}
     }
     const auto current=std::find_if(queue_.begin(),queue_.end(),[native_uid](const Action& action){
         return action.uid==native_uid;
@@ -733,7 +770,7 @@ InteractionCancelResult InteractionQueue::cancel(std::uint64_t native_uid) {
     if(!removable){diagnostic_.clear();return InteractionCancelResult::notified;}
 
     const auto skipped=*current;
-    queue_.erase(current);
+    queue_.erase(current);rebind_current_source_headers();
     try{
         Guard guard(executing_);
         if(!queue_skipped_handler_(skipped)){
@@ -754,7 +791,9 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
         bool ts1_request,std::optional<RoutineKey> check,bool check_permissions,
         std::optional<std::int32_t> interaction_number,InteractionArgumentMode argument_mode,InteractionCheckContext check_context,
         std::optional<InteractionIconOwnerSnapshot> icon_owner,std::optional<InteractionLabel> label) {
-    if(executing_)throw std::logic_error("interaction callbacks must not reenter enqueue");
+    const bool reset_cleanup=vm_&&vm_->source_reset_queue_mutation_active();
+    if(executing_&&(!eligibility_check_active_||!reset_cleanup))
+        throw std::logic_error("interaction callbacks must not reenter enqueue");
     fresh_=false;
     if(!validate())return false;
     if(!world_.bind_context_live(context)){diagnostic_="interaction reference binding failed";return false;}
@@ -764,8 +803,8 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
        mode>InteractionQueueMode::idle) {
         diagnostic_="interaction request identity/argument/capacity outside supported queue profile";return false;
     }
-    if(vm_->status()==VmStatus::ready || vm_->status()==VmStatus::fault ||
-       vm_->status()==VmStatus::returned_true || vm_->status()==VmStatus::returned_false) {
+    if(!reset_cleanup&&(vm_->status()==VmStatus::ready || vm_->status()==VmStatus::fault ||
+       vm_->status()==VmStatus::returned_true || vm_->status()==VmStatus::returned_false)) {
         diagnostic_="interaction requires a live Main run";return false;
     }
     if(check && (!routine_key_valid(*check) ||
@@ -799,7 +838,7 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
             for(auto& queued:candidate)queued.queue_uid=public_uid++;
             next_queue_uid_=public_uid;profile_=InteractionQueueProfile::ts1_priority;
         }else next_queue_uid_=static_cast<std::uint16_t>(next_queue_uid_+1U);
-        queue_.swap(candidate);sequence_=new_sequence;diagnostic_.clear();return true;
+        queue_.swap(candidate);rebind_current_source_headers();sequence_=new_sequence;diagnostic_.clear();return true;
     }
     const bool use_ts1_profile=profile_==InteractionQueueProfile::ts1_priority||ts1_request;
     const auto protected_prefix=suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0});
@@ -836,12 +875,12 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
     if(cancel_followups)
         for(auto it=position;it!=queue_.end();++it)followups.push_back(it->uid);
     const auto target_generation=action.target_generation;
-    queue_.insert(position,std::move(action));
+    queue_.insert(position,std::move(action));rebind_current_source_headers();
     const auto remove_new_request=[&]{
         const auto inserted=std::find_if(queue_.begin(),queue_.end(),[&](const Action& queued){
             return queued.uid==new_sequence;
         });
-        if(inserted!=queue_.end())queue_.erase(inserted);
+        if(inserted!=queue_.end()){queue_.erase(inserted);rebind_current_source_headers();}
     };
     const auto publish_identity=[&]{
         sequence_=new_sequence;
@@ -885,6 +924,46 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
 VmPrimitive InteractionQueue::primitive() {
     return [this](const auto& f,const auto& i,const auto&,const auto& d){return request(f,i,d);};
 }
+PrimitiveOutcome InteractionQueue::detached_attempt_push(const Action& candidate,const VmFrame& frame,
+        const Instruction& instruction,const VmDispatch& dispatch,const VmInstructionLease& lease,
+        std::uint64_t source_run,const std::optional<VmFrameWrite>& output){
+    if(!vm_||!lease.valid()||!lease.detached()||!lease.matches(frame,instruction,dispatch)||
+       !source_run||source_run>=vm_->run_generation())
+        return unsupported("detached AttemptPush lacks its actual Reset/instruction lineage");
+    const auto* target=world_.resolve_reference({candidate.call.context.callee,candidate.target_generation});
+    if(!target)return unsupported("detached AttemptPush target body unavailable");
+    auto call=candidate.call;
+    // SpecialResult.Interaction scheduling is selected from the CURRENT
+    // header at Pop, not old candidate flags. Use the ordinary return channel.
+    call.return_mode=VmCallReturnMode::interaction_next_tick;
+    if(!vm_->can_accept_call(call))return unsupported("new Main cannot accept detached AttemptPush frame");
+    const auto token=lease.prepare_detached_call(call);
+    if(!token)return unsupported("detached AttemptPush continuation cannot be authenticated");
+    const auto depth=vm_->stack().size();const auto run=vm_->run_generation();
+    const auto ticket=dispatch.ticket;const auto priority=candidate.priority;
+    const auto actor=WorldEntityReference{actor_id_,actor_generation_};
+    const auto* protected_frame=&frame;
+    PrimitiveOutcome out{PrimitiveDisposition::call,{},output,call};
+    out.detached_call=*token;
+    out.call_commit=[this,lease,protected_frame,instruction,dispatch,depth,run,ticket,priority,actor,call,source_run]{
+        if(!lease.call_commit_active())return false;
+        if(!lease.matches_call_commit(*protected_frame,instruction,dispatch,depth)||!vm_||
+           vm_->run_generation()!=run||!world_.is_live_reference(actor))return false;
+        // Reset's new Queue/ActiveQueueBlock are authoritative. Source does
+        // NOT put candidate back for ordinary AttemptPush.
+        if(active_||!suspended_active_.empty())return false;
+        if(!world_.set_person_data(actor.id,33,priority))return false;
+        const auto* body=world_.find(actor.id);if(!body)return false;
+        const auto flags=body->object_words.find(8);if(flags==body->object_words.end())return false;
+        if(!world_.set_entity_flags(*protected_frame,actor,
+            word(static_cast<std::uint16_t>(flags->second)&~0x0080U)))return false;
+        Active selected{queue_.empty()?0:queue_.front().uid,ticket};
+        selected.detached_execution=InteractionDetachedExecutionSnapshot{call,source_run};
+        active_=std::move(selected);run_generation_=run;idle_start_=0;
+        rebind_current_source_headers();return true;
+    };
+    return out;
+}
 PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instruction& i,const VmDispatch& dispatch) {
     if(i.opcode!=17&&i.opcode!=30)return {};
     const bool gosub=i.opcode==30;
@@ -920,6 +999,8 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
     }
     Guard guard(executing_);
     fresh_=false;
+    const auto instruction_lease=vm_?vm_->instruction_lease(frame):std::nullopt;
+    const auto instruction_run=vm_?vm_->run_generation():0;
     if(!validate())return unsupported(diagnostic_);
     if(frame.context.caller!=actor_id_)
         return unsupported("IdleForInput Caller is not this avatar");
@@ -964,8 +1045,11 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                     if(*priority_threshold<=2)--*priority_threshold;
                 }
             }
-            while(queue_.size()>protected_count){
-                const auto candidate=queue_[protected_count];
+            while(queue_.size()>(instruction_lease&&instruction_lease->detached()?
+                    suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0}):protected_count)){
+                const auto attempt_index=instruction_lease&&instruction_lease->detached()?
+                    suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0}):protected_count;
+                const auto candidate=queue_[attempt_index];
                 if(priority_threshold&&candidate.priority<=*priority_threshold)break;
                 if(profile_==InteractionQueueProfile::ts1_priority){
                     const auto* actor=world_.find(actor_id_);
@@ -977,7 +1061,7 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                                 return unsupported("nested action notification could not set InteractionCanceled");
                         }
                         if(candidate.mode==InteractionQueueMode::parent_idle&&(flags&0x0080U)){
-                            queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                            queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(attempt_index));rebind_current_source_headers();continue;
                         }
                     }
                 }
@@ -994,19 +1078,27 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                     if(permission==InteractionPermission::unsupported)
                         return unsupported("interaction permissions require complete avatar person data");
                     if(permission==InteractionPermission::denied){
-                        queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                        queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(attempt_index));rebind_current_source_headers();continue;
                     }
                 }
                 if(candidate.check){
+                    struct CheckScope {bool& flag;bool old;explicit CheckScope(bool& value):flag(value),old(value){flag=true;}~CheckScope(){flag=old;}} checking(eligibility_check_active_);
                     const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
                         eligibility_arguments(candidate),10000,check_primitive_,candidate.argument_mode!=InteractionArgumentMode::legacy_metadata,check_primitive_factory_);
                     if(!source_check_completed(result))
                         return unsupported("nested interaction check did not return synchronously: "+result.diagnostic);
+                    const bool detached=instruction_lease&&instruction_lease->valid()&&instruction_lease->detached();
                     if(!validate())return unsupported(diagnostic_);
                     if(source_check_false(result)){
-                        queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                        const auto remove_at=detached?suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0}):protected_count;
+                        if(remove_at>=queue_.size())return {PrimitiveDisposition::source_error,
+                            "source AttemptPush Queue.RemoveAt index absent after Reset"};
+                        queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(remove_at));rebind_current_source_headers();continue;
                     }
+                    if(detached)return detached_attempt_push(candidate,frame,i,dispatch,*instruction_lease,instruction_run,output);
                 }
+                if(instruction_lease&&instruction_lease->valid()&&instruction_lease->detached())
+                    return detached_attempt_push(candidate,frame,i,dispatch,*instruction_lease,instruction_run,output);
                 const auto* target=world_.resolve_reference({candidate.call.context.callee,candidate.target_generation});
                 if(!target||target->generation!=candidate.target_generation||
                    queue_.size()<=protected_count||queue_[protected_count].uid!=candidate.uid)
@@ -1043,6 +1135,8 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                 return outcome;
             }
         }
+        if(instruction_lease&&instruction_lease->valid()&&instruction_lease->detached()&&!active_)
+            return {PrimitiveDisposition::source_error,"source IdleForInput ActiveAction index absent after Reset"};
         if(queue_.size()>active_index&&queue_[active_index].notify_idle){
             const auto* actor=world_.find(actor_id_);
             if(!actor||!actor->object_words.count(8)||
@@ -1074,10 +1168,13 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
             if(*priority_threshold<=2)--*priority_threshold;
         }
     }
-    while(allow==1 && queue_.size()>protected_count) {
+    while(allow==1 && queue_.size()>(instruction_lease&&instruction_lease->detached()?
+            suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0}):protected_count)) {
+        const auto attempt_index=instruction_lease&&instruction_lease->detached()?
+            suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0}):protected_count;
         // The check can mutate World and thread registers even when it returns
         // false. Keep a value copy and resolve identities again after it runs.
-        const auto candidate=queue_[protected_count];
+        const auto candidate=queue_[attempt_index];
         if(priority_threshold&&candidate.priority<=*priority_threshold)break;
         if(profile_==InteractionQueueProfile::ts1_priority){
             const auto* actor=world_.find(actor_id_);
@@ -1088,7 +1185,7 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                     world_.declare_object_word(actor_id_,8,word(flags));
                 }
                 if(candidate.mode==InteractionQueueMode::parent_idle&&(flags&0x0080U)){
-                    queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                    queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(attempt_index));rebind_current_source_headers();continue;
                 }
             }
         }
@@ -1101,19 +1198,27 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
             if(permission==InteractionPermission::unsupported)
                 return unsupported("interaction permissions require complete avatar person data");
             if(permission==InteractionPermission::denied){
-                queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(attempt_index));rebind_current_source_headers();continue;
             }
         }
         if(candidate.check){
-            const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
+            struct CheckScope {bool& flag;bool old;explicit CheckScope(bool& value):flag(value),old(value){flag=true;}~CheckScope(){flag=old;}} checking(eligibility_check_active_);
+                    const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
                 eligibility_arguments(candidate),10000,check_primitive_,candidate.argument_mode!=InteractionArgumentMode::legacy_metadata,check_primitive_factory_);
             if(!source_check_completed(result))
                 return unsupported("interaction check did not return synchronously: "+result.diagnostic);
+            const bool detached=instruction_lease&&instruction_lease->valid()&&instruction_lease->detached();
             if(!validate())return unsupported(diagnostic_);
             if(source_check_false(result)){
-                queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                const auto remove_at=detached?suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0}):protected_count;
+                if(remove_at>=queue_.size())return {PrimitiveDisposition::source_error,
+                    "source AttemptPush Queue.RemoveAt index absent after Reset"};
+                queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(remove_at));rebind_current_source_headers();continue;
             }
+            if(detached)return detached_attempt_push(candidate,frame,i,dispatch,*instruction_lease,instruction_run,output);
         }
+        if(instruction_lease&&instruction_lease->valid()&&instruction_lease->detached())
+            return detached_attempt_push(candidate,frame,i,dispatch,*instruction_lease,instruction_run,output);
         if(queue_.size()<=protected_count||queue_[protected_count].uid!=candidate.uid)
             return unsupported("queued action identity changed during eligibility check");
         const auto& action=queue_[protected_count];const auto* target=world_.resolve_reference({action.call.context.callee,action.target_generation});
@@ -1153,6 +1258,10 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
     const auto delay=allow==1?std::uint64_t{1}:static_cast<std::uint64_t>(remaining)+1;
     if(delay>std::numeric_limits<std::uint32_t>::max()-clock_)
         return unsupported("IdleForInput deadline exceeds uint32 clock");
+    if(instruction_lease&&instruction_lease->valid()&&instruction_lease->detached()){
+        if(allow!=1)return unsupported("detached future IdleForInput lacks its source scheduler contract");
+        return {PrimitiveDisposition::continue_next_tick,{},output};
+    }
     wait_=Wait{dispatch.ticket,clock_+delay};idle_start_=clock_;
     if(shared_idle_start&&allow==0)schedule_idle_clock_write_(clock_);
     return {PrimitiveDisposition::wait,{},output};
@@ -1209,49 +1318,65 @@ bool InteractionQueue::try_run_immediate(const ImmediatePendingAudit& audit,
         if(found==queue_.end()){diagnostic_.clear();return true;}
         const auto index=static_cast<std::size_t>(std::distance(queue_.begin(),found));
         const auto protected_count=suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0});
-        // Source scans the entire queue. An active immediate protects the first
-        // match and blocks a later immediate from preempting it.
         if(index<protected_count){diagnostic_.clear();return true;}
+        // Source retains temp, then removes it BEFORE CheckAction. Reset/Cleanup
+        // can replace the queue; TRUE reinserts temp in that current queue.
         const auto action=*found;
         const auto* target=world_.find(action.call.context.callee);
         if(!target||target->generation!=action.target_generation){
-            queue_.erase(found);continue; // Source CheckAction rejects dead targets.
+            queue_.erase(found);rebind_current_source_headers();continue;
         }
         auto call=action.call;call.return_mode=VmCallReturnMode::ordinary;
-        // Reject unsafe parent services/caps before a Check can publish effects.
+        // Native parent-service admission precedes entering the source
+        // operation. A denied host capability cannot consume the candidate.
+        // Once admitted, source RemoveAt still precedes CheckAction below.
         if(!vm_->can_inject_immediate(call,audit)){
-            diagnostic_="immediate interaction VM parent/cap/audit is unsupported";return false;
+            diagnostic_="immediate interaction VM parent/cap/audit is unsupported before source admission";return false;
         }
         if(vm_->pending()&&!park_after_injection){
             diagnostic_="immediate interaction requires a host parent-service park handler";return false;
         }
+        queue_.erase(found);rebind_current_source_headers();
         if(action.check_permissions){
             const auto permission=ts1_interaction_permission(world_.find(actor_id_),action.flags);
             if(permission==InteractionPermission::unsupported){
                 diagnostic_="immediate interaction permissions require complete avatar person data";return false;
             }
-            if(permission==InteractionPermission::denied){queue_.erase(found);continue;}
+            if(permission==InteractionPermission::denied)continue;
         }
         if(action.check){
-            const auto result=vm_->evaluate_check_at_safe_point(*action.check,action.call.context,
-                eligibility_arguments(action),10000,check_primitive_,action.argument_mode!=InteractionArgumentMode::legacy_metadata,check_primitive_factory_);
+            struct CheckScope {bool& flag;bool old;explicit CheckScope(bool& value):flag(value),old(value){flag=true;}~CheckScope(){flag=old;}} checking(eligibility_check_active_);
+            const auto service_vm=vm_;const auto service_actor=actor_generation_;
+            const auto source_current=[&,service_vm,service_actor]{
+                const auto* actor=world_.find(actor_id_);
+                return executing_&&eligibility_check_active_&&vm_==service_vm&&actor&&
+                    actor->kind==EntityKind::avatar&&!actor->ui_ghost&&actor->generation==service_actor;
+            };
+            const auto result=vm_->evaluate_queue_check_at_safe_point(*action.check,action.call.context,
+                eligibility_arguments(action),10000,check_primitive_,action.argument_mode!=InteractionArgumentMode::legacy_metadata,
+                check_primitive_factory_,source_current);
             if(!source_check_completed(result)){
                 diagnostic_="immediate interaction check did not return synchronously: "+result.diagnostic;return false;
             }
             if(!validate())return false;
-            if(source_check_false(result)){
-                queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(index));continue;
-            }
+            if(source_check_false(result))continue;
         }
         target=world_.find(action.call.context.callee);
-        if(!target||target->generation!=action.target_generation||index>=queue_.size()||queue_[index].uid!=action.uid){
-            diagnostic_="immediate interaction identity changed during eligibility check";return false;
+        if(!target||target->generation!=action.target_generation){
+            diagnostic_="immediate interaction target generation changed during eligibility check";return false;
         }
-        // Allocate every queue mutation before publishing the VM child. The
-        // parked controller is released only by the explicit host callback.
+        if(!vm_->can_inject_immediate(call,audit)){
+            diagnostic_="immediate interaction VM parent/cap/audit is unsupported after eligibility check";return false;
+        }
+        if(vm_->pending()&&!park_after_injection){
+            diagnostic_="immediate interaction requires a host parent-service park handler";return false;
+        }
+        const auto current_prefix=suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0});
+        if(current_prefix>queue_.size()){
+            diagnostic_="source TryRunImmediately insertion prefix outside current queue";return false;
+        }
         auto candidate=queue_;
-        candidate.erase(candidate.begin()+static_cast<std::ptrdiff_t>(index));
-        candidate.insert(candidate.begin()+static_cast<std::ptrdiff_t>(protected_count),action);
+        candidate.insert(candidate.begin()+static_cast<std::ptrdiff_t>(current_prefix),action);
         auto parents=suspended_active_;
         if(active_)parents.push_back(*active_);
         const auto ticket=vm_->inject_immediate(call,audit);
@@ -1269,11 +1394,8 @@ bool InteractionQueue::try_run_immediate(const ImmediatePendingAudit& audit,
         }
         if(wait_){diagnostic_="immediate interaction published with an unparked idle wait";return false;}
         queue_.swap(candidate);suspended_active_.swap(parents);
-        active_=Active{action.uid,*ticket};idle_start_=0;
-        if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
-           !world_.set_person_data(actor_id_,33,action.priority)){
-            diagnostic_="immediate interaction published but priority write failed";return false;
-        }
+        active_=Active{action.uid,*ticket};rebind_current_source_headers();idle_start_=0;
+        // Unlike ExecuteAction, source TryRunImmediately does not set Priority.
         diagnostic_.clear();return true;
     }
 }
@@ -1293,12 +1415,19 @@ bool InteractionQueue::observe() {
     const auto run=immediate?urgent->run_generation:normal->run_generation;
     if(!immediate&&completion_&&completion_->ticket==ticket)return true;
     const auto active_index=suspended_active_.size();
-    if(!active_||queue_.size()<=active_index||active_->uid!=queue_[active_index].uid||
-       active_->ticket!=ticket||owner!=queue_[active_index].call.context.code_owner||run!=run_generation_||
-       (queue_[active_index].call.return_mode==VmCallReturnMode::immediate)!=immediate) {
+    if(active_&&active_->detached_execution&&queue_.size()<=active_index){
+        diagnostic_="source Pop/EndCurrentInteraction active Queue header index absent";return false;
+    }
+    if(!active_||queue_.size()<=active_index){diagnostic_="interaction completion identity mismatch";return false;}
+    const auto& executing_call=active_->detached_execution?active_->detached_execution->call:queue_[active_index].call;
+    const bool detached_immediate=active_->detached_execution&&
+        (queue_[active_index].flags&ttab_run_immediately)!=0;
+    if(active_->uid!=queue_[active_index].uid||active_->ticket!=ticket||
+       owner!=executing_call.context.code_owner||run!=run_generation_||
+       (executing_call.return_mode==VmCallReturnMode::immediate)!=immediate) {
         diagnostic_="interaction completion identity mismatch";return false;
     }
-    if(!immediate&&clock_==std::numeric_limits<std::uint32_t>::max()){
+    if(!immediate&&!detached_immediate&&clock_==std::numeric_limits<std::uint32_t>::max()){
         diagnostic_="interaction resume exceeds uint32 clock";return false;
     }
     std::uint64_t parent_ticket=0;
@@ -1350,13 +1479,19 @@ bool InteractionQueue::observe() {
                 word(static_cast<std::uint16_t>(actor->object_words.at(8))&~0x0080U));
     }
     completion_=InteractionCompletion{active_->uid,ticket,clock_,result_value};
-    queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(active_index));
+    queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(active_index));rebind_current_source_headers();
     if(!suspended_active_.empty()){
         active_=suspended_active_.back();suspended_active_.pop_back();
     }else active_.reset();
-    idle_start_=immediate?0:clock_;
-    if(!immediate)resume_tick_=clock_+1;
+    rebind_current_source_headers();
+    idle_start_=(immediate||detached_immediate)?0:clock_;
+    if(!immediate&&!detached_immediate)resume_tick_=clock_+1;
     if(!evaluate_queue_priorities())return false;
+    if(detached_immediate){
+        // Source Pop chooses CONTINUE from the CURRENT header. Resume the
+        // NEW Main directly; there is no discarded parent service to restore.
+        if(!vm_->resume_interaction(ticket)){diagnostic_="detached current-header immediate resume failed";return false;}
+    }
     if(immediate){
         if(!vm_->resume_immediate(ticket)){
             diagnostic_="immediate completion could not acknowledge its VM continuation";return false;

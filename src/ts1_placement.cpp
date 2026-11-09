@@ -1,3 +1,4 @@
+#include "odh/live_entry_point5.hpp"
 // SPDX-License-Identifier: MPL-2.0
 // TS1 VMSnap, VMFindLocationFor, VMDrop; pinned FreeSO7e76c1960252ddd033d8937d5edb47d326f5b69c.
 #include "odh/ts1_placement.hpp"
@@ -104,7 +105,7 @@ VmPrimitive Ts1Placement::primitive(){return [this](const VmFrame& frame,const I
         if(instruction.opcode==5)return drop(invocation);
         if(instruction.opcode==16)return find_location(invocation);
         return snap(invocation);
-    }catch(const std::exception& error){return bad(error.what());}
+    }catch(const SourceCheckResetRetirement&){throw;}catch(const std::exception& error){return bad(error.what());}
 };}
 PrimitiveOutcome Ts1Placement::drop(const Ts1PlacementInvocation& invocation){
     const auto caller=identity(world_,invocation.frame.context.caller);
