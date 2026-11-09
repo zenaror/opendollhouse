@@ -24,6 +24,7 @@ void Routing::leave_source_reset_operation() noexcept {
     if(!source_reset_operation_depth_&&source_reset_retired_){clear_source_reset_storage();source_reset_retired_=false;}
 }
 namespace {
+thread_local unsigned char resource_owner_thread_identity=0;
 constexpr std::array<RoutePoint,8> headings={{{0,-1},{1,-1},{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1}}};
 std::uint8_t heading(RoutePoint from,RoutePoint to) {
     const RoutePoint d{(to.x>from.x)-(to.x<from.x),(to.y>from.y)-(to.y<from.y)};
@@ -627,6 +628,10 @@ bool RoutePlacementProof::matches(const VmFrame& frame,const Vm& vm,const Instru
             placement_instruction_equal(instruction,lease->instruction)&&lease->validate&&lease->validate();
     }catch(...){return false;}
 }
+struct RouteResourceOwnerProof::State {
+    Routing* owner=nullptr;const SourceSparseMotionContext* context=nullptr;
+    const void* thread=nullptr;std::function<bool()> current;bool active=true;
+};
 struct RouteExecutionProof::State {
     const Vm* vm=nullptr;VmFrame frame;Instruction instruction{};VmDispatch dispatch{};
     std::uint64_t run_generation=0;std::size_t stack_depth=0;
@@ -2387,6 +2392,27 @@ struct PreparedSourceRouteShoo::State {
     std::uint64_t ticket=0;
     bool consumed=false;
 };
+bool Routing::source_shoo_owner_binding_current(const SourceSparseMotionContext& context) const noexcept {
+    try{
+        const auto state=context.owner_binding.state_.lock();
+        // The discriminator is immutable and the weak lock pins its lifetime.
+        // Do not read mutable controller/VM state from another native thread.
+        if(!state||state->thread!=&resource_owner_thread_identity)return false;
+        if(!state->active||state->owner!=this||state->context!=&context||!state->current||
+           !executing_||source_reset_retired_||!vm_||context.vm!=vm_||!job_||context.lifecycle_instruction||!state->current())return false;
+        const auto* actor=world_.find(context.actor);
+        return actor&&actor->generation==context.actor_generation&&actor->position&&*actor->position==context.position&&
+            job_->actor==context.actor&&job_->actor_generation==context.actor_generation&&
+            job_->ticket==context.dispatch.ticket&&job_->run_generation==context.run_generation&&
+            vm_->run_generation()==context.run_generation&&context.dispatch.origin==vm_&&!context.dispatch.check_mode&&
+            vm_->pending()&&vm_->pending()->ticket==context.dispatch.ticket&&!vm_->stack().empty()&&
+            route_frame_equal(vm_->stack().back(),context.frame);
+    }catch(...){return false;}
+}
+bool Routing::prepare_source_shoo_owner(const SourceSparseMotionContext& context,Vm& receiver,CodeOwner owner){
+    if(!source_shoo_owner_binding_current(context))return false;
+    return receiver.prepare_source_owner(owner,[&]{return source_shoo_owner_binding_current(context);});
+}
 std::optional<PreparedSourceRouteShoo> Routing::prepare_source_shoo(LiveAttemptWalkIdentity shooer,std::string* reason) const {
     const auto reject=[&](const char* why)->std::optional<PreparedSourceRouteShoo>{if(reason)*reason=why;return {};};
     if(reason)reason->clear();
@@ -4591,9 +4617,16 @@ bool Routing::tick_source_sparse_step(std::uint64_t now,const std::function<void
         if(decision.action==SourceRouteCollisionAction::shoo_direct_route||
            decision.action==SourceRouteCollisionAction::shoo_interaction){
             std::string error;
-            if(!source_sparse_services_.shoo||!source_sparse_services_.shoo(make_context(),
-                {input.blocker.id,input.blocker.generation},decision.action==SourceRouteCollisionAction::shoo_direct_route,&error)||!still_vm())
-                return reject(error.empty()?"source shoo effects are unavailable":error);
+            bool shoo_completed=false;
+            {
+                auto context=make_context();auto scope=std::make_shared<RouteResourceOwnerProof::State>();
+                scope->owner=this;scope->context=&context;scope->thread=&resource_owner_thread_identity;scope->current=still_vm;
+                context.owner_binding=RouteResourceOwnerProof(scope);
+                struct EndOwnerScope {std::shared_ptr<RouteResourceOwnerProof::State>& state;~EndOwnerScope(){state->active=false;}} end_owner_scope{scope};
+                shoo_completed=source_sparse_services_.shoo&&source_sparse_services_.shoo(context,
+                    {input.blocker.id,input.blocker.generation},decision.action==SourceRouteCollisionAction::shoo_direct_route,&error);
+            }
+            if(!shoo_completed||!still_vm())return reject(error.empty()?"source shoo effects are unavailable":error);
             decision=collision.acknowledge_shoo(true);
             if(!publish_collision())return reject("source shoo continuation could not be retained");
         }

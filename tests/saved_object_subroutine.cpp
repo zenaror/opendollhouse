@@ -45,27 +45,41 @@ odh::Instruction set_temp(unsigned index,unsigned value){return {2,254,255,
     {static_cast<std::uint8_t>(index),0,static_cast<std::uint8_t>(value),0,0,5,8,7}};}
 void named_target_parked_entity_thread_rejects(){
     const auto main=odh::routine_key(4096),check_key=odh::routine_key(4400),named=odh::named_routine_key(42,false);
-    odh::Vm* actual=nullptr;unsigned effects=0;SavedObjectSubroutineReport report;odh::PrimitiveOutcome rejected;
-    odh::VmPrimitive check;
-    check=[&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch)->odh::PrimitiveOutcome{
-        if(instruction.opcode==99){++effects;return {odh::PrimitiveDisposition::goto_true,{}};}
-        rejected=run_saved_named_tree(*actual,actual,{frame,instruction,dispatch,1,77,named,1},temps,report,check,8);
-        return rejected;
-    };
-    odh::Vm vm({{main,named_routine({{200,254,255,{}}})},{check_key,named_routine({{28,254,255,{0,0,0,0,1,1,0,0}}})}}, {}, {},
-        [&](const auto& frame,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
-            auto context=frame.context;context.callee=3;
-            const auto result=actual->evaluate_check(check_key,context,{},16,check);
-            require(result.started&&result.status==odh::VmStatus::fault&&rejected.disposition==odh::PrimitiveDisposition::unsupported&&
-                rejected.diagnostic.find("parked-thread execution bridge is unavailable")!=std::string::npos&&effects==0&&
-                actual->entity_thread_frames().back().context.callee==2&&actual->temps()[4]==55,
-                "named destination1 targeting parked actual Entity.Thread rejects before retargeting or executing a temporary Check frame");
-            return {odh::PrimitiveDisposition::goto_true,{}};
-        },{{77,{{named,named_routine({{99,254,255,{}}})}}}});actual=&vm;
-    vm.start(main,{1,2,1});vm.temps()[4]=55;
-    require(vm.run(1)==odh::VmStatus::returned_true&&effects==0&&vm.temps()[4]==55,
-        "unsupported logical-thread target bridge leaves actual Main and registers intact");
+    for(const bool wrong_logical_target:{true,false}){
+        odh::Vm* actual=nullptr;unsigned effects=0;SavedObjectSubroutineReport report;odh::PrimitiveOutcome outcome;
+        odh::VmPrimitive check;
+        check=[&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch)->odh::PrimitiveOutcome{
+            if(instruction.opcode==99){++effects;return {odh::PrimitiveDisposition::goto_true,{}};}
+            auto* executor=const_cast<odh::Vm*>(dispatch.origin);
+            require(executor&&executor!=actual&& &executor->entity_thread_frames()!=&executor->stack()&&
+                &actual->entity_thread_frames()==&actual->stack(),
+                "fresh Check executor and actual parked entity Thread remain distinct");
+            // Deliberately passing the logical Check as Entity.Thread must
+            // retain the original negative gate. The actual Thread is a
+            // separate valid target; caller always names the real executor.
+            outcome=run_saved_named_tree(*executor,wrong_logical_target?executor:actual,
+                {frame,instruction,dispatch,1,77,named,1},temps,report,check,8);
+            return outcome;
+        };
+        odh::Vm vm({{main,named_routine({{200,254,255,{}}})},{check_key,named_routine({{28,254,255,{0,0,0,0,1,1,0,0}}})}}, {}, {},
+            [&](const auto& frame,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+                auto context=frame.context;context.callee=3;
+                const auto result=actual->evaluate_check(check_key,context,{},16,check);
+                if(wrong_logical_target)require(result.started&&result.status==odh::VmStatus::fault&&outcome.disposition==odh::PrimitiveDisposition::unsupported&&
+                    outcome.diagnostic.find("parked-thread execution bridge is unavailable")!=std::string::npos&&effects==0,
+                    "named destination1 rejects logical Check supplied as actual Entity.Thread before retargeting or effects");
+                else require(result.started&&result.status==odh::VmStatus::returned_true&&outcome.disposition==odh::PrimitiveDisposition::goto_true&&effects==1,
+                    "named destination1 targets the real entity Thread from a fresh Check executor");
+                require(actual->entity_thread_frames().back().context.callee==2&&actual->temps()[4]==55,
+                    "negative and valid named targets both preserve actual parked Main and registers");
+                return {odh::PrimitiveDisposition::goto_true,{}};
+            },{{77,{{named,named_routine({{99,254,255,{}}})}}}});actual=&vm;
+        vm.start(main,{1,2,1});vm.temps()[4]=55;
+        require(vm.run(1)==odh::VmStatus::returned_true&&effects==(wrong_logical_target?0U:1U)&&vm.temps()[4]==55,
+            "fresh named caller uses exact Thread identity and leaves original Main intact");
+    }
 }
+
 void explicit_named_resource_identity(){
     const auto main=odh::routine_key(4096),action=odh::routine_key(4100);
     for(const auto raw:{std::uint16_t{10},std::uint16_t{4096},std::uint16_t{8192},std::uint16_t{65535}})

@@ -253,4 +253,48 @@ class ChildPreviewReadiness(unittest.TestCase):
     def test_changed_preview_and_idle_button_must_stabilize(self):
         self.assertTrue(driver.child_preview_ready(b'adult',b'normal',b'child',b'selected',2))
 
+class ShutdownCollection(unittest.TestCase):
+    def report(self):
+        return '\n=================================================================\n==123==ERROR: LeakSanitizer: detected memory leaks\n\nDirect leak of 256 byte(s) in 1 object(s) allocated from:\n    #0 0x123 in malloc allocator.cpp:10\n\nIndirect leak of 64 byte(s) in 2 object(s) allocated from:\n    #0 0x456 in calloc allocator.cpp:20\n\nSUMMARY: AddressSanitizer: 320 byte(s) leaked in 3 allocation(s).\n'
+    def test_only_complete_exclusive_lsan_report_is_eligible_but_gate_fails(self):
+        value=driver.classify_shutdown_leaks(self.report(),1,123)
+        self.assertEqual((value['bytes'],value['allocations']),(320,3));self.assertFalse(value['gate_passed'])
+    def test_no_crash_ub_exception_or_incomplete_report_is_collected(self):
+        valid=self.report()
+        cases=[valid.replace('==123==','==124=='),valid.replace('320 byte(s) leaked','321 byte(s) leaked'),
+          valid.replace('3 allocation(s)','4 allocation(s)'),valid[:valid.index('SUMMARY:')],
+          'runtime error: undefined behavior\n'+valid,'ERROR: AddressSanitizer: heap-use-after-free\n'+valid,
+          'terminate called after throwing an instance of runtime_error\n'+valid,valid+'unknown warning\n',
+          valid.replace('    #0 0x123 in malloc allocator.cpp:10\n',''),valid+valid,'x'*(16*1024*1024+1)]
+        for body in cases:
+            with self.subTest(body=body[:100]):self.assertIsNone(driver.classify_shutdown_leaks(body,1,123))
+        for code in (0,2,-11,-15):
+            with self.subTest(code=code):self.assertIsNone(driver.classify_shutdown_leaks(valid,code,123))
+
+class FinalShutdownGates(unittest.TestCase):
+    def report(self,gate=True,failures=None):
+        return dict(passed=True,guards=dict(source=True),shutdown_gate_passed=gate,
+                    shutdown_failures=failures or [],semantic_matrix_completed=True,family_lot=dict(accepted=True))
+    def test_collected_shutdown_failure_never_accepts_family_or_whole_run(self):
+        report=self.report(False,[dict(exit=1)])
+        self.assertFalse(driver.finalize_outcome(report));self.assertFalse(report['family_lot']['accepted'])
+        self.assertTrue(report['family_lot']['semantic_stages_completed'])
+    def test_strict_or_crash_failure_also_fails_without_collection_record(self):
+        report=self.report(False)
+        self.assertFalse(driver.finalize_outcome(report));self.assertFalse(report['family_lot']['accepted'])
+        self.assertEqual(report['shutdown_failures'],[])
+        self.assertFalse(report['shutdown_gate_passed'])
+    def test_clean_and_protected_state_gates_remain_required(self):
+        report=self.report();self.assertTrue(driver.finalize_outcome(report));self.assertTrue(report['family_lot']['accepted'])
+        report=self.report();report['guards']['source']=False
+        self.assertFalse(driver.finalize_outcome(report));self.assertFalse(report['family_lot']['accepted'])
+
+class UnexpectedWindowTermination(unittest.TestCase):
+    def test_cleanup_crash_cannot_keep_shutdown_or_nested_acceptance_true(self):
+        report=dict(passed=True,guards=dict(source=True),shutdown_gate_passed=True,
+                    shutdown_failures=[],semantic_matrix_completed=False,
+                    family_lot=dict(accepted=True),window_cleanup=dict(exit=-11))
+        self.assertFalse(driver.finalize_outcome(report));self.assertFalse(report['shutdown_gate_passed'])
+        self.assertFalse(report['family_lot']['accepted'])
+
 if __name__=='__main__':unittest.main(verbosity=2)

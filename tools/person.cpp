@@ -171,6 +171,7 @@
 #include "saved_resources.hpp"
 #include "saved_thread_plan_audit.hpp"
 #include "saved_object_subroutine.hpp"
+#include "live_resource_owner_binding.hpp"
 #include "saved_interactions.hpp"
 #include "functional_selector_host.hpp"
 #include "odh/ts1_fire.hpp"
@@ -4748,6 +4749,38 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<std::array<std::uint8_t,32>> saved_phone_code_fingerprint;
     std::function<void()> ensure_saved_phone_thread;
     std::vector<SavedObjectSubroutineReport> saved_phone_calls;
+    // Exact entity Thread registry, independent from a fresh check executor.
+    const auto resource_thread_for=[&](odh::WorldEntityReference ref)->odh::Vm* {
+        if(!world.is_live_reference(ref))return nullptr;
+        if(const auto* actor=actor_services_for(ref.id);actor&&actor->identity==ref)
+            return actor->actor?actor->actor->vm.get():actor->diagnostic_vm;
+        const auto object=runtime_object_threads.find(ref.id);
+        if(object!=runtime_object_threads.end()&&object->second&&object->second->generation==ref.generation)
+            return object->second->vm.get();
+        return saved_phone_thread&&ref.id==saved_phone_id&&ref.generation==saved_phone_generation?saved_phone_thread.get():nullptr;
+    };
+    const auto registered_resource_bank=[&](odh::CodeOwner owner,const std::shared_ptr<const odh::VmProgram>& bank){
+        const auto registered=object_owner_programs.find(owner);
+        return owner&&bank&&resource_owner_provenance.count(owner)&&registered!=object_owner_programs.end()&&registered->second==bank;
+    };
+    const auto bind_instruction_owner=[&](odh::Vm& receiver,odh::WorldEntityReference recipient,bool entity_thread,
+            odh::CodeOwner owner,const std::shared_ptr<const odh::VmProgram>& bank,
+            const odh::VmFrame& frame,const odh::Instruction& instruction,const odh::VmDispatch& dispatch,
+            const std::function<bool()>& source_current,std::string* why){
+        const auto run=receiver.run_generation();
+        const auto identities=[&]{
+            if(!registered_resource_bank(owner,bank)||!source_current||!source_current()||receiver.run_generation()!=run)return false;
+            const auto* body=world.resolve_reference(recipient);if(!body)return false;
+            if(entity_thread)return resource_thread_for(recipient)==&receiver;
+            return dispatch.origin==&receiver&&world.frame_entity(frame,odh::VmEntityRole::caller)==body;
+        };
+        if(!odh_host::bind_instruction_resource_owner(receiver,owner,bank,identities,frame,instruction,dispatch,why))return false;
+        // A disposable executor can load its own cache, but must never record
+        // that transient admission on the parked persistent entity Thread.
+        if(resource_thread_for(recipient)==&receiver)note_installed_resource_owner(receiver,owner);
+        return true;
+    };
+
     struct SavedPhoneWrite {
         odh::VmContext context;
         std::uint16_t routine,pc;
@@ -6504,13 +6537,20 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto installed=execution.shared_program_for_owner(bank.owner);
             if(installed&&odh::session_loaded_bank_fingerprint(installed->routines())!=
                 odh::session_loaded_bank_fingerprint(bank.program->routines()))return refuse("installed named owner conflicts with resource content");
-            if(!installed){
-                const bool admitted=&execution==caller?
-                    execution.prepare_primitive_owner(frame,instruction,dispatch,bank.owner):
-                    execution.install_shared_owner(bank.owner,bank.program);
-                if(!admitted)return refuse("exact named resource cannot bind at the active execution boundary");
+            if(probe){
+                if(!installed){const bool admitted=&execution==caller?
+                    execution.prepare_primitive_owner(frame,instruction,dispatch,bank.owner):execution.install_shared_owner(bank.owner,bank.program);
+                    if(!admitted)return refuse("disposable named resource cannot bind at its isolated boundary");}
+            }else{
+                const auto* receiver_body=&execution==caller?world.frame_entity(frame,odh::VmEntityRole::caller):target;
+                if(!receiver_body)return refuse("named receiver body is unavailable");
+                const odh::WorldEntityReference recipient{receiver_body->id,receiver_body->generation};
+                const odh::WorldEntityReference named_target{target->id,target->generation};
+                const auto current=[&]{const auto* actual=world.resolve_reference(named_target);
+                    return actual&&dispatch.origin==caller&&world.frame_entity(frame,odh::VmEntityRole::stack_object)==actual;};
+                std::string why;if(!bind_instruction_owner(execution,recipient,&execution!=caller,bank.owner,bank.program,
+                    frame,instruction,dispatch,current,&why))return refuse("exact named resource binding: "+why);
             }
-            if(!probe)note_installed_resource_owner(execution,bank.owner);
             SavedObjectSubroutineReport report;
             auto outcome=run_saved_named_tree(*caller,target_thread,
                 {frame,instruction,dispatch,target->id,bank.owner,*routine,destination},temps,report,nested?nested:check_primitive,4096,
@@ -6578,14 +6618,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                odh::session_loaded_bank_fingerprint(installed->routines())!=
                    odh::session_loaded_bank_fingerprint(bank.program->routines()))
                 throw odh::FormatError("PushInteraction recipient contextual owner conflicts with its immutable bank");
-            if(!installed){
-                const bool admitted=dispatch.origin==&receiver?
-                    receiver.prepare_primitive_owner(frame,instruction,dispatch,bank.owner):
-                    receiver.install_shared_owner(bank.owner,bank.program);
-                if(!admitted)
-                    throw odh::FormatError("PushInteraction exact resource bank cannot bind to recipient at this boundary");
-            }
-            note_installed_resource_owner(receiver,bank.owner);
+            const auto* recipient_body=world.find(request.actor);
+            if(!recipient_body)return std::nullopt;
+            const odh::WorldEntityReference recipient_identity{recipient_body->id,recipient_body->generation};
+            const odh::WorldEntityReference source_identity{source_object->id,source_object->generation};
+            const auto current=[&]{return world.is_live_reference(source_identity)&&
+                world.is_live_reference(recipient_identity)&&resource_thread_for(recipient_identity)==&receiver;};
+            std::string why;if(!bind_instruction_owner(receiver,recipient_identity,true,bank.owner,bank.program,
+                frame,instruction,dispatch,current,&why))throw odh::FormatError("PushInteraction exact resource binding: "+why);
             return odh::Ts1PushInteractionAction{action,bank.owner,selected->flags,
                 selected->test?std::optional<odh::RoutineKey>{odh::routine_key(selected->test)}:std::nullopt,
                 static_interaction_label(interactions,selected-interactions.table->interactions.data())};
@@ -11705,9 +11745,12 @@ struct PlacementCandidateProbe {
                     return {odh::AutonomyStatus::ready,false,{}}; // Byte-truncated GetAction can be known null.
                 const auto bank=resolve_context_resource(*resource.definition);
                 if(!bank.program)throw odh::FormatError("selected autonomous resource bank is empty");
-                if(!caller->shared_program_for_owner(bank.owner)&&!caller->prepare_primitive_owner(source_frame,instruction,dispatch,bank.owner))
-                    throw odh::FormatError("selected autonomous resource owner cannot bind at actual primitive");
-                note_installed_resource_owner(*caller,bank.owner);
+                const auto* body=world.frame_entity(source_frame,odh::VmEntityRole::caller);
+                if(!body)throw odh::FormatError("autonomy executor body is unavailable");
+                const odh::WorldEntityReference identity{body->id,body->generation};std::string binding_error;
+                if(!bind_instruction_owner(*caller,identity,false,bank.owner,bank.program,source_frame,instruction,dispatch,
+                    [&]{return world.frame_entity(source_frame,odh::VmEntityRole::caller)==world.resolve_reference(identity);},&binding_error))
+                    throw odh::FormatError("selected autonomous resource binding: "+binding_error);
                 std::optional<odh::InteractionLabel> chosen_label;
                 if(choice.name){
                     if(choice.origin)chosen_label=odh::InteractionLabel{*choice.name,*choice.origin};
@@ -18103,8 +18146,10 @@ struct PlacementCandidateProbe {
         if(plan.status==odh::SourceShooPlanStatus::no_action){snap_shoo_diagnostic=plan.diagnostic;return true;}
         if(plan.status!=odh::SourceShooPlanStatus::ready||!plan.plan)return reject(plan.diagnostic);
         const auto* action=std::get_if<odh::SourceShooQueuedPlan>(&*plan.plan);
-        if(!action||!current()||!target_vm->install_shared_owner(created->owner,program->second))return reject("Snap Shoo source/owner changed before queue publication");
-        note_installed_resource_owner(*target_vm,created->owner);
+        std::string binding_error;
+        if(!action||!current()||!bind_instruction_owner(*target_vm,{blocker.id,blocker.generation},true,
+            created->owner,program->second,invocation.frame,invocation.instruction,invocation.dispatch,current,&binding_error))
+            return reject("Snap Shoo resource binding: "+binding_error);
         const auto accepted=queue->enqueue_source_user(action->action,action->context,action->source_arguments,action->flags,action->check,action->interaction_number);
         ++snap_shoo_queued_attempts;
         // Source PushUserInteraction is void: known queue refusal leaves the
@@ -18170,8 +18215,12 @@ struct PlacementCandidateProbe {
         const auto plan=odh::plan_source_shoo(input);
         if(plan.status==odh::SourceShooPlanStatus::no_action){source_shoo_diagnostic=plan.diagnostic;return true;}
         if(plan.status!=odh::SourceShooPlanStatus::ready||!plan.plan)return reject(plan.diagnostic);
-        if(!current()||!target_vm->install_shared_owner(created->owner,program->second))
-            return reject("source shoo private owner could not be installed in the blocked Thread");
+        auto* source_route=source_routing_for(origin.actor);
+        const auto binding_current=[&]{return current()&&registered_resource_bank(created->owner,program->second)&&
+            resource_thread_for({blocker.id,blocker.generation})==target_vm&&source_routing_for(origin.actor)==source_route;};
+        std::string binding_error;
+        if(!source_route||!odh_host::bind_route_shoo_resource_owner(*source_route,origin,*target_vm,created->owner,
+                program->second,binding_current,&binding_error))return reject("source Shoo resource binding: "+binding_error);
         note_installed_resource_owner(*target_vm,created->owner);
         if(direct){
             const auto* call=std::get_if<odh::SourceShooDirectPlan>(&*plan.plan);

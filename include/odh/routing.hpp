@@ -509,6 +509,18 @@ using RoutePositionPublicationProvider=std::function<std::optional<SourceSparseP
     const RoutePositionPublicationContext&)>;
 using SourceSparsePlacementProvider=std::function<std::optional<SourceSparsePlacementOutcome>(
     const RouteExecutionContext&,const EntityPosition&)>;
+struct SourceSparseMotionContext;
+// Routing-only callback identity for immutable owner admission. Value copies
+// cannot borrow the actual call, and expired/foreign-thread tokens fail before
+// reading mutable route/VM state. Never part of a route or VM snapshot.
+class RouteResourceOwnerProof {
+public:
+    RouteResourceOwnerProof()=default;
+private:
+    struct State;std::weak_ptr<State> state_;
+    explicit RouteResourceOwnerProof(const std::shared_ptr<State>& state):state_(state){}
+    friend class Routing;
+};
 struct SourceSparseMotionContext {
     const Vm* vm=nullptr;
     VmFrame frame{};
@@ -520,6 +532,7 @@ struct SourceSparseMotionContext {
     bool room_context_open=false;
     bool actor_unplaced=false; // lifecycle only; never motion or placement authority
     std::optional<Instruction> lifecycle_instruction; // exact active primitive, otherwise pending service
+    RouteResourceOwnerProof owner_binding; // only the actual Shoo service call
 };
 using SourceSparseAnimationProvider=std::function<bool(const SourceSparseMotionContext&,
     const WalkMotionProfile&,std::string*)>;
@@ -694,6 +707,11 @@ public:
     bool call_external_frame(const VmCall&);
     // Host admission must first prove source CanShooAvatar's exact queue
     // predicate. Preparation also checks the oldest owned route's SHOOED state.
+    // Immutable owner-cache admission only, inside this controller's ACTUAL
+    // synchronous Shoo callback. Context value copies and expired callbacks
+    // cannot authorize a receiver; no queue/call/Reset permission is granted.
+    bool source_shoo_owner_binding_current(const SourceSparseMotionContext&) const noexcept;
+    bool prepare_source_shoo_owner(const SourceSparseMotionContext&,Vm& receiver,CodeOwner);
     std::optional<PreparedSourceRouteShoo> prepare_source_shoo(LiveAttemptWalkIdentity shooer,
         std::string* rejection_reason=nullptr) const;
     bool can_commit_source_shoo(const PreparedSourceRouteShoo&,const VmCall&,

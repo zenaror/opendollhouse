@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import select
 import shutil
@@ -221,6 +222,52 @@ def child_preview_ready(before_preview,before_button,preview,button,stable):
     return preview!=before_preview and button!=before_button and stable>=2
 
 
+def classify_shutdown_leaks(stderr,exit_code,pid):
+    """Only a complete, exclusive LSAN report permits diagnostic collection.
+    This never turns an application's failed shutdown into a passing gate.
+    """
+    if exit_code!=1 or not isinstance(stderr,str) or len(stderr)>16*1024*1024:return None
+    if re.search(r'ERROR: AddressSanitizer:|UndefinedBehaviorSanitizer|runtime error:|DEADLYSIGNAL|ABORTING',stderr):return None
+    lines=[line.rstrip() for line in stderr.splitlines() if line.strip()]
+    header=re.compile(r'==([0-9]+)==ERROR: LeakSanitizer: detected memory leaks')
+    leak=re.compile(r'(Direct|Indirect) leak of ([0-9]+) byte\(s\) in ([0-9]+) object\(s\) allocated from:')
+    summary=re.compile(r'SUMMARY: AddressSanitizer: ([0-9]+) byte\(s\) leaked in ([0-9]+) allocation\(s\)\.')
+    seen_header=False;blocks=0;total_bytes=total_allocations=0;frames=0
+    for index,line in enumerate(lines):
+        if not seen_header:
+            if re.fullmatch(r'=+',line):continue
+            match=header.fullmatch(line)
+            if not match or int(match[1])!=pid:return None
+            seen_header=True;continue
+        match=leak.fullmatch(line)
+        if match:
+            if blocks and not frames:return None
+            blocks+=1;frames=0;total_bytes+=int(match[2]);total_allocations+=int(match[3]);continue
+        match=summary.fullmatch(line)
+        if match:
+            if index!=len(lines)-1 or not blocks or not frames or not total_bytes or not total_allocations:return None
+            if (int(match[1]),int(match[2]))!=(total_bytes,total_allocations):return None
+            return dict(kind='exclusive_complete_LeakSanitizer',pid=pid,bytes=total_bytes,
+                        allocations=total_allocations,leak_blocks=blocks,gate_passed=False)
+        if blocks and re.fullmatch(r'    #[0-9]+ .+',line):frames+=1;continue
+        return None
+    return None
+
+
+def finalize_outcome(report):
+    # Semantic observations are distinct from ALL acceptance gates, including
+    # strict/crash failures that are intentionally ineligible for collection.
+    if report.get('window_cleanup',{}).get('exit',0)!=0:
+        report['shutdown_gate_passed']=False
+    report['passed']=bool(report['passed'] and all(report['guards'].values()) and report['shutdown_gate_passed'])
+    if 'family_lot' in report:
+        report['family_lot']['semantic_stages_completed']=report['semantic_matrix_completed']
+        report['family_lot']['accepted']=bool(report['family_lot'].get('accepted') and report['passed'])
+    if not report['shutdown_gate_passed']:
+        report.setdefault('error','Application shutdown gate failed; independent stage results do not imply acceptance')
+    return report['passed']
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for flag in ('checkout', 'binary', 'reader', 'game-root', 'source-receipt', 'protected-manifest', 'output'):
@@ -234,6 +281,7 @@ def main():
     p.add_argument('--family-lot-plan', type=Path, help='Reviewed real-frame plan for complete GUI chain')
     p.add_argument('--family-lot-plan-sha256')
     p.add_argument('--preview-timeout-seconds', type=float, default=120, help='Measured child-preview readiness deadline; latency and CPU samples are retained')
+    p.add_argument('--collect-shutdown-failures', action='store_true', help='Diagnostic only: continue independent stages after exclusive LSAN shutdown; final passed stays false')
     args = p.parse_args()
     need(0<args.preview_timeout_seconds<=300, 'invalid explicit preview deadline')
     need(bool(args.family_lot_plan)==bool(args.family_lot_plan_sha256), 'GUI plan and reviewed SHA must be paired')
@@ -297,6 +345,9 @@ def main():
         report['resume_after_create']=dict(receipt=str(resume_receipt),receipt_sha256=sha(resume_receipt),
             source_profile=str(resume_profile),source_profile_before=resume_files,validation=resume_validation)
     report['observed_header_references']=OBSERVED_HEADERS
+    report.update(shutdown_failures=[],shutdown_gate_passed=True,semantic_matrix_completed=False,
+                  collect_shutdown_failures=args.collect_shutdown_failures,
+                  sanitizer_environment={name:env.get(name) for name in ('ASAN_OPTIONS','LSAN_OPTIONS','UBSAN_OPTIONS')})
     process = xvfb = window = None
     confirmed_focus_owner = None
     opened = []
@@ -514,18 +565,51 @@ def main():
 
     def close_map():
         nonlocal process,window
+        record=report['runs'][-1]
+        previous_shutdown_gate=report['shutdown_gate_passed']
+        record['shutdown_gate_passed']=False
+        report['shutdown_gate_passed']=False;save() # Pending until ALL close proofs pass.
         ui_ready('map')
         key('Escape')
         try:
             process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             raise RuntimeError('map Escape did not close the actual application')
-        report['runs'][-1].update(exit=process.returncode,pid_absent=not Path('/proc',str(process.pid)).exists())
-        need(process.returncode == 0, 'management window did not exit cleanly')
+        pid_absent=not Path('/proc',str(process.pid)).exists()
+        record=report['runs'][-1];record.update(exit=process.returncode,pid_absent=pid_absent)
+        for handle in opened:handle.flush()
+        stderr_path=args.output/(record['stage']+'-stderr.txt')
+        need(stderr_path.stat().st_size<=16*1024*1024, 'shutdown stderr exceeds diagnostic collection bound')
+        stderr=stderr_path.read_text(errors='replace')
+        sanitizer_failure=bool(re.search(r'ERROR: (?:LeakSanitizer|AddressSanitizer):|runtime error:|UndefinedBehaviorSanitizer|DEADLYSIGNAL',stderr))
+        if process.returncode!=0 or sanitizer_failure:
+            record['shutdown_gate_passed']=False
+            report['shutdown_gate_passed']=False;save()
+            classified=classify_shutdown_leaks(stderr,process.returncode,process.pid)
+            need(args.collect_shutdown_failures and classified is not None, 'management window did not exit cleanly')
+            need(pid_absent and xvfb is not None and xvfb.poll() is None, 'shutdown collection requires a gone app and live owned Xvfb')
+            # Query ONLY the private display: no event injection and no physical
+            # mouse access. The first query proves connection health; the
+            # second must fail because the formerly owned drawable is gone.
+            healthy=subprocess.run(['xdotool','getmouselocation','--shell'],env=env,capture_output=True,text=True,timeout=8)
+            gone=subprocess.run(['xdotool','getwindowgeometry','--shell',str(window)],env=env,capture_output=True,text=True,timeout=8)
+            need(healthy.returncode==0 and gone.returncode!=0, 'shutdown collection requires actual native window closure')
+            observed=state() # Authenticate the current overlay and character resources.
+            stable_family(baseline,observed,args.family)
+            protected_head=inspect('--inspect-session-head',args.game_root,args.house,args.family)
+            need(protected_head['authenticated_journal_head'] and
+                 sha(Path(protected_head['archive_path']))==args.checkpoint_sha256,
+                 'shutdown collection requires authenticated unchanged protected session')
+            record['shutdown_gate_passed']=False
+            report['shutdown_failures'].append(dict(stage=record['stage'],exit=process.returncode,pid_absent=True,
+                window=str(window),window_absent=True,current_overlay_read_verified=True,protected_head_authenticated=True,stderr=str(stderr_path),stderr_sha256=sha(stderr_path),classification=classified))
+            report['shutdown_gate_passed']=False;save()
+        else:
+            record['shutdown_gate_passed']=True
+            report['shutdown_gate_passed']=previous_shutdown_gate
         process=None
         window=None
-        for handle in opened:
-            handle.flush()
+        save()
 
     def reopen_probe(label, admitted_nids, deleted=False):
         need(process is None, 'probe requires stopped management window')
@@ -755,6 +839,7 @@ def main():
                 if Path(name).suffix.lower() in ('.iff','.odhs'):
                     need(important().get(name)==digest, 'management changed a pre-existing character/save')
             report['passed']=True
+        report['semantic_matrix_completed']=report['passed']
     except Exception as error:
         report['error']=str(error)
         if window and process and process.poll() is None:
@@ -781,7 +866,7 @@ def main():
         if resume_prior:
             report['guards']['resume_profile_unchanged']=inventory(resume_profile)==resume_files
             report['guards']['resume_receipt_unchanged']=sha(resume_receipt)==report['resume_after_create']['receipt_sha256']
-        report['passed']=report['passed'] and all(report['guards'].values())
+        finalize_outcome(report)
         save()
     print(json.dumps(dict(passed=report['passed'],result=str(args.output/'result.json'),error=report.get('error'))))
     return 0 if report['passed'] else 1

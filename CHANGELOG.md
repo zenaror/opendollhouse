@@ -29,6 +29,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Carregamento dos recursos de ações entre Sims durante interações em andamento,
+  incluindo pedidos de passagem, preservando a fila e o salvamento.
 - Carregamento de roupas, rostos e outros recursos de aparência, evitando buscas
   repetidas nos arquivos do jogo.
 - Ordem das entradas rápidas de teclado e mouse na janela nativa, preservando

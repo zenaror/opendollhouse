@@ -2,6 +2,7 @@
 // Source SHOOED continuation: FreeSO VMRoutingFrame, pinned 7e76c196.
 #include "odh/routing.hpp"
 #include "odh/source_walk_plan.hpp"
+#include "live_resource_owner_binding.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -30,6 +31,8 @@ odh::RoutineSet failure_routines(){
 struct Fixture {
     odh::World world;odh::RouteGrid grid{128,128};odh::SlotTable table=slots();odh::Routing route{world,grid,table};odh::Vm vm;
     unsigned ticks=0,profiles=0,failure_preexits=0;
+    bool force_shoo=false,collision_seen=false;
+    std::function<bool(const odh::SourceSparseMotionContext&)> owner_shoo;
     explicit Fixture(bool nested=false,bool populate=true,bool child_true=false,bool go_here=false):vm(failure_routines(),world.vm_memory(),{},route.primitive(),{{owner,routines(nested,child_true,go_here)}}){
         if(populate){require(world.create(7,odh::EntityKind::avatar,{0,88,0,16})&&world.create(8,odh::EntityKind::avatar,{0,88,0,16})&&
             world.create(9,odh::EntityKind::object)&&world.set_position(7,{32,32,1,0})&&world.set_position(8,{48,48,1,0})&&
@@ -47,13 +50,30 @@ struct Fixture {
             input.request.actor={7,world.find(7)->generation};input.request.destination={goal.x,goal.y};input.request.bezier=false;input.request.outgoing_direction=outgoing;
             input.services.context_still_matches=[c]{return c.proof.matches_after_restore(c.frame,*c.vm,c.instruction,c.dispatch,c.phase);};
             input.services.room_at=[](const auto&){return std::optional<std::uint16_t>{2};};
-            input.services.domain=[this](auto){odh::SourceWalkDomain d;d.state=odh::LiveAttemptWalkState::ready;d.request.actor={7,world.find(7)->generation};
-                d.request.room=2;d.request.level=1;d.request.room_bounds={0,0,16,16};d.request.architecture_complete=true;d.request.entities_complete=true;d.request.avatars_to_consider_complete=true;
+            input.services.domain=[this,considered=input.avatars_to_consider](auto){odh::SourceWalkDomain d;d.state=odh::LiveAttemptWalkState::ready;d.request.actor={7,world.find(7)->generation};
+                d.request.room=2;d.request.level=1;d.request.room_bounds={0,0,16,16};d.request.architecture_complete=true;d.request.entities_complete=true;d.request.avatars_to_consider_complete=true;d.request.avatars_to_consider=considered;
                 for(const auto& e:world.snapshot().entities)d.request.entities.push_back({e.id,e.generation});
                 d.request.architectural_and_bounds={{-32,-32,288,-16},{-32,272,288,288},{-32,-32,-16,288},{272,-32,288,288}};
-                d.services.inventory_still_matches=[](const auto&){return true;};
+                // Complete architecture prefix must precede exactly four
+                // source padded-room bands; a fifth uncounted band is unknown,
+                // not an authored no-path result.
+                if(collision_seen){d.request.architectural_and_bounds.insert(d.request.architectural_and_bounds.begin(),{64,-32,80,288});d.request.architectural_count=1;}
+                d.services.inventory_still_matches=[this](const auto& request){
+                    const auto current=world.snapshot().entities;
+                    if(current.size()!=request.entities.size())return false;
+                    for(std::size_t n=0;n<current.size();++n)if(current[n].id!=request.entities[n].id||current[n].generation!=request.entities[n].generation)return false;
+                    return true;
+                };
                 d.services.footprint=[](auto){return odh::LiveAttemptWalkFootprint{odh::LiveAttemptWalkFootprintState::absent,{}};};return d;};return input;};
-        services.place=[](const auto&,const auto&)->std::optional<odh::SourceSparsePlacementOutcome>{return odh::SourceSparsePlacementOutcome{odh::SourceSparsePlacementStatus::success,0,0,{}};};
+        services.place=[this](const auto&,const auto&)->std::optional<odh::SourceSparsePlacementOutcome>{
+            if(force_shoo){collision_seen=true;return odh::SourceSparsePlacementOutcome{odh::SourceSparsePlacementStatus::blocked_avatar,8,world.find(8)->generation,{}};}
+            return odh::SourceSparsePlacementOutcome{odh::SourceSparsePlacementStatus::success,0,0,{}};
+        };
+        services.avatar_collision_state=[](const auto&,auto)->std::optional<odh::SourceSparseCollisionAvatarState>{return odh::SourceSparseCollisionAvatarState{false,0,true};};
+        services.shoo=[this](const auto& context,auto blocker,bool direct,auto*){
+            require(blocker.id==8&&blocker.generation==world.find(8)->generation&&!direct,"real collision replan selects nonroute avatar Shoo");
+            return owner_shoo&&owner_shoo(context);
+        };
         services.begin_locomotion=[](const auto&,const auto&,auto*){return true;};
         services.end_locomotion=[this](const auto& context,const auto&,auto*){
             const auto* actor=world.find(7);
@@ -85,6 +105,38 @@ struct Fixture {
             " route="+route.diagnostic()+" vm_status="+odh::vm_status_name(vm.status())+" vm="+vm.diagnostic();
         require(accepted,detail.c_str());if(vm.status()==odh::VmStatus::running)vm.run(64);}
 };
+void active_owner_service_contract(){
+    Fixture f;f.force_shoo=true;f.start();Fixture foreign;
+    const auto selected=std::make_shared<const odh::VmProgram>(odh::RoutineSet{{odh::routine_key(4200),
+        odh::Bhav{0x8002,{{99,254,255,{}}},{},odh::Bhav::Metadata{0,4,0,0}}}});
+    odh::Vm* receiver=nullptr;unsigned loads=0,callbacks=0;std::optional<odh::SourceSparseMotionContext> expired;
+    f.owner_shoo=[&](const auto& context){
+        ++callbacks;require(receiver->dispatch_active()&&f.route.source_shoo_owner_binding_current(context),"parked routing Shoo owns a typed real job/run/ticket callback");
+        auto copied=context;
+        require(!odh_host::bind_route_shoo_resource_owner(f.route,copied,*receiver,77,selected,[]{return true;})&&
+            !odh_host::bind_route_shoo_resource_owner(foreign.route,context,*receiver,77,selected,[]{return true;}),
+            "copied service context and foreign routing cannot load owner");
+        const auto run=receiver->run_generation();const auto depth=receiver->stack().size();const auto temp=receiver->temps();
+        require(!receiver->install_shared_owner(77,selected)&&odh_host::bind_route_shoo_resource_owner(f.route,context,*receiver,77,selected,[&]{return f.world.is_live_reference({8,f.world.find(8)->generation});}),
+            "actual Shoo callback admits registered bank into executing recipient without idle API bypass");
+        require(receiver->run_generation()==run&&receiver->stack().size()==depth&&receiver->temps()==temp&&!receiver->pending(),"routing bank admission does not execute or enqueue recipient");
+        expired=context;return true;
+    };
+    odh::Vm target({{odh::routine_key(4096),odh::Bhav{0x8002,{{99,254,255,{}}},{},odh::Bhav::Metadata{0,4,0,0}}}}, {}, {},
+        [&](const auto&,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+            for(std::uint64_t now=1;now<180&&!callbacks;++now)f.tick(now);
+            require(callbacks==1,"real blocked motion and complete no-path replan reach Shoo callback once");
+            require(expired&&!f.route.source_shoo_owner_binding_current(*expired)&&
+                !odh_host::bind_route_shoo_resource_owner(f.route,*expired,*receiver,78,selected,[]{return true;}),"Shoo capability expires at callback unwind before routing continuation");
+            return {odh::PrimitiveDisposition::goto_true,{}};
+        });receiver=&target;
+    require(target.set_owner_resolver([&](auto resource){++loads;return resource==77?selected:nullptr;})&&
+        target.start(odh::routine_key(4096),{8,8,8})==odh::VmStatus::running&&target.run(1)==odh::VmStatus::returned_true&&loads==1,
+        "only exact routed Shoo scope performs one immutable lookup");
+    const auto state=f.capture();require(state.jobs.front().source_sparse->collision&&state.jobs.front().source_sparse->collision->phase==odh::SourceRouteCollisionPhase::waiting,
+        "source Shoo acknowledgement retains its actual wait continuation, not a bank capability");
+}
+
 void token_contract(){
     Fixture f;f.start();const auto old_motion=f.capture().jobs.front().source_sparse->motion;auto token=f.route.prepare_source_shoo(f.shooer());require(bool(token),"prepare healthy top sparse route before Destination creation");auto call=f.destination();
     auto bad=call;bad.arguments[4]=0;require(!f.route.can_commit_source_shoo(*token,bad),"reject default argument beyond four source zeros");
@@ -198,4 +250,4 @@ void nested_restore(){
     require(!f.route.active()&&!restored.route.active()&&f.vm.status()==odh::VmStatus::returned_true&&restored.vm.status()==odh::VmStatus::returned_true,"nested shoo false return is ignored and original destination completes");
 }
 }
-int main(){try{token_contract();stale_contract();wait_and_timeout_contract();ordinary_go_here_direct_shoo();nested_restore();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{active_owner_service_contract();token_contract();stale_contract();wait_and_timeout_contract();ordinary_go_here_direct_shoo();nested_restore();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

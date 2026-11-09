@@ -629,6 +629,23 @@ bool Vm::prepare_instruction_call(const VmInstructionLease& lease,const VmFrame&
     return authentic()&&can_accept_call(call);
 }
 
+bool Vm::prepare_source_owner(CodeOwner owner,const std::function<bool()>& authentic){
+    // An authenticated disposable Check may target its real parked Thread.
+    // Cache insertion is not parent execution mutation. Storage-proof queries
+    // still forbid every mutation, including this bounded immutable cache.
+    if(storage_proof_active_)reject_storage_proof_mutation();
+    if(preparing_primitive_call_||!authentic||!authentic())return false;
+    const auto receiver_run=run_generation_;
+    struct Guard{bool& active;explicit Guard(bool& value):active(value){active=true;}~Guard(){active=false;}}
+        guard(preparing_primitive_call_);
+    resolve_missing_owner(owner);
+    return run_generation_==receiver_run&&authentic()&&(owner==0||owners_.find(owner)!=owners_.end());
+}
+bool Vm::prepare_instruction_owner(const VmInstructionLease& source,const VmFrame& frame,
+        const Instruction& instruction,const VmDispatch& dispatch,CodeOwner owner){
+    return prepare_source_owner(owner,[&]{return source.matches(frame,instruction,dispatch);});
+}
+
 VmSnapshot Vm::snapshot() const {
     if (executing_) throw std::logic_error("VM callbacks must not capture running state");
     return {stack_, register_temps(), register_xl(), status_, diagnostic_, steps_, pending_, suspended_pending_,

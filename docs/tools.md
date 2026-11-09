@@ -141,3 +141,8 @@ A entrada integrada aceita `--lot-window-size LARGURA ALTURA`, entre 320–1024
 por 200–1024, até 1048576 pixels; o padrão é 800×600. Essa opção não pode ser
 combinada com execução sem janela. Ela não equivale a suporte a resolução ou
 controles de outro aparelho.
+
+O validador de gestão de famílias oferece `--collect-shutdown-failures` para
+coletar etapas independentes após um relatório completo de vazamento de memória.
+O encerramento permanece reprovado, e o comando continua retornando erro.
+O modo padrão interrompe a verificação nessa falha.

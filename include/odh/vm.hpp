@@ -162,6 +162,7 @@ struct VmVariableWrite {
     std::int16_t index,value;
 };
 class Vm;
+class Routing;
 struct VmDispatch;
 struct LiveEntryPoint5Request;
 struct Ts1AvatarPlacementEntryPointRequest;
@@ -485,6 +486,12 @@ public:
     // ordinary call preflight. Plain queries never trigger owner loading.
     bool prepare_primitive_call(const VmFrame&,const Instruction&,const VmDispatch&,const VmCall&);
     bool prepare_instruction_call(const VmInstructionLease&,const VmFrame&,const Instruction&,const VmDispatch&,const VmCall&);
+    // Resolve only an immutable resource through THIS receiver's registered
+    // resolver at an exact actual source instruction. The source may be a
+    // different VM (including a linked check), or a retained detached frame.
+    // Does not change execution/queue/register state or grant call/Reset rights.
+    bool prepare_instruction_owner(const VmInstructionLease&,const VmFrame&,
+        const Instruction&,const VmDispatch&,CodeOwner);
     // Authenticate this active primitive before resolving only an immutable owner.
     // Does not preflight/push a child, change registers, or grant queue authority.
     bool prepare_primitive_owner(const VmFrame&,const Instruction&,const VmDispatch&,CodeOwner);
@@ -593,6 +600,11 @@ public:
     bool retry_pending(std::uint64_t ticket, std::optional<VmFrameWrite> write = {});
 private:
     bool admit_shared_owner(CodeOwner,std::shared_ptr<const VmProgram>);
+    // Only the actual instruction bridge and Routing's real Shoo callback
+    // scope may reach this bounded cache operation. Public idle installation
+    // retains its previous dispatch guard.
+    bool prepare_source_owner(CodeOwner,const std::function<bool()>& authenticated_source);
+    friend class Routing;
     void resolve_missing_owner(CodeOwner);
     // Both disposable-check constructors share immutable banks and inherit the
     // exact lazy owner provider before the first frame is pushed. New cache
