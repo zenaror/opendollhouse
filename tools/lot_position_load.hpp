@@ -40,6 +40,8 @@ struct LotPositionLoadResult {
 struct LotPositionWallConsumers {
     std::function<bool(odh::ObjectPositionIdentity,bool,bool)> wall_use;
     std::function<bool(odh::ObjectPositionIdentity)> architectural_wall_style;
+    // Normal Pre clears style0; normal Post applies actual provider style.
+    std::function<bool(odh::ObjectPositionIdentity,bool set)> architectural_wall_style_change;
 };
 // Bind recovery/ordinary position consumers to the SAME authoritative live
 // architecture state. No constructors, occupancy reset or ledger replacement.

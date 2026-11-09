@@ -153,6 +153,7 @@ struct Options {
     std::optional<unsigned> stop_route_depth;
     std::optional<EntityMove> headless_entity_move;
     bool headless_dialog_ok=false;
+    unsigned headless_info_dialog_limit=0;
     bool check_recovery_position=false,place_recovery_position=false;
     bool recover_saved_code=false;
     struct DialogResponse {unsigned code;std::string text;};
@@ -355,6 +356,12 @@ Options parse_options(int argc, char** argv) {
         if(key=="--headless-dialog-ok"){
             if(result.headless_dialog_ok)throw odh::FormatError("duplicate --headless-dialog-ok");
             result.headless_dialog_ok=true;
+            continue;
+        }
+        if(key=="--headless-info-dialog-ok-limit"){
+            if(result.headless_info_dialog_limit||i+1>=argc)throw odh::FormatError("duplicate or missing informational dialog test limit");
+            result.headless_info_dialog_limit=parse_number(argv[++i],32,"informational dialog test limit");
+            if(!result.headless_info_dialog_limit)throw odh::FormatError("informational dialog test limit must be positive");
             continue;
         }
         if(key=="--headless-dialog-response"){
@@ -600,7 +607,7 @@ Options parse_options(int argc, char** argv) {
         result.headless_resident_sit->stand_tick > *result.headless_ticks))
         throw odh::FormatError("--headless-resident-sit requires a new whole-household bounded lot session and an in-range Stand tick");
     if(result.headless_menu_query&&(!result.load_session||!result.headless_ticks||*result.headless_ticks!=0||result.plan_only||
-        result.single_resident_session||result.headless_resident_interaction||result.headless_dialog_ok||!result.headless_dialog_responses.empty()||
+        result.single_resident_session||result.headless_resident_interaction||result.headless_dialog_ok||result.headless_info_dialog_limit||!result.headless_dialog_responses.empty()||
         result.object_command||result.architecture_command||result.recover_saved_code||result.place_recovery_position||
         result.resume_buy_mode||result.resume_build_mode||result.headless_move_out_family||result.headless_move_in_family))
         throw odh::FormatError("menu query requires an otherwise read-only zero-tick resumed household session");
@@ -697,6 +704,9 @@ Options parse_options(int argc, char** argv) {
     if(!result.headless_dialog_responses.empty()&&
        (result.headless_dialog_ok||!result.headless_ticks||!*result.headless_ticks||result.plan_only))
         throw odh::FormatError("--headless-dialog-response requires bounded execution and cannot mix with --headless-dialog-ok");
+    if(result.headless_info_dialog_limit&&(!result.headless_ticks||!*result.headless_ticks||result.plan_only||
+       result.headless_dialog_ok||!result.headless_dialog_responses.empty()))
+        throw odh::FormatError("informational dialog test input requires bounded execution without other dialog inputs");
     if(result.headless_entity_move&&(!result.headless_ticks||
        result.headless_entity_move->tick>*result.headless_ticks))
         throw odh::FormatError("--headless-move-entity requires a bounded headless run and an in-range tick");
@@ -729,7 +739,7 @@ Options parse_options(int argc, char** argv) {
             "[--headless-stand (legacy saved single-resident seat)] "
             "[--audio | --no-audio] [--audio-drain-ms 1..5000] "
             "[--headless-travel-house HOUSE (repeat)] [--headless-travel-tick 1..N-1] "
-            "[--neighborhood 1..8] [--load-session PATH] [--plan-only | --headless-ticks 0..65535 [--headless-dialog-ok | --headless-dialog-response CODE TEXT (repeat up to32; positive ticks)] [--instruction-budget 1..1000000] [--headless-status-frame PATH --headless-status-tick 1..N] [--save-session-on-exit]]");
+            "[--neighborhood 1..8] [--load-session PATH] [--plan-only | --headless-ticks 0..65535 [--headless-dialog-ok | --headless-dialog-response CODE TEXT (repeat up to32; positive ticks) | --headless-info-dialog-ok-limit 1..32] [--instruction-budget 1..1000000] [--headless-status-frame PATH --headless-status-tick 1..N] [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
     odh_host::LinuxUserConfig saved;
@@ -1337,6 +1347,7 @@ RuntimePlan build_runtime_arguments(const Options& options,
     if(options.place_recovery_position)append(args,{"--headless-place-recovery-position"});
     if(options.recover_saved_code)append(args,{"--recover-saved-code"});
     if(options.headless_dialog_ok)append(args,{"--headless-dialog-ok"});
+    if(options.headless_info_dialog_limit)append(args,{"--headless-info-dialog-ok-limit",std::to_string(options.headless_info_dialog_limit)});
     for(const auto& response:options.headless_dialog_responses)
         append(args,{"--headless-dialog-response",std::to_string(response.code),response.text});
     if(options.stop_route_depth)append(args,{"--headless-stop-route-depth",std::to_string(*options.stop_route_depth)});

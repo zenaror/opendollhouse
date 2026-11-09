@@ -25,8 +25,9 @@ void resource_profile(const ObjectTradeResource& resource){
     need(resource.origin.guid&&resource.origin.guid==r.definition.guid&&!resource.origin.source.empty()&&
          resource.origin.definition_chunk_id,"trade needs exact resource provenance");
     need(r.construction.status==ObjectConstructionStatus::ready&&
-         (!r.definition.master_id||r.definition.sub_index!=-1)&&r.definition.build_mode_type&&*r.definition.build_mode_type==0,
-         "trade needs resolved ordinary physical definitions, not abstract masters");
+         (!r.definition.master_id||r.definition.sub_index!=-1)&&r.definition.build_mode_type&&
+         (*r.definition.build_mode_type<=2||(*r.definition.build_mode_type==65535&&r.definition.master_id&&r.definition.sub_index!=-1&&resource.origin.master_guid==r.master_guid)),
+         "trade needs resolved ordinary/door/window physical definitions, not abstract masters or unsupported Build classes");
     need(r.definition.level_offset&&*r.definition.level_offset==0,
          "trade EP11 architectural floor wrapper is not integrated");
     need(r.entry_points.entries.size()>12,"trade source entry-point table is incomplete");
@@ -356,6 +357,18 @@ ObjectTradeGroupResources group_resources(const ObjectTradeResource& selected,bo
     }
     return plan;
 }
+void require_architectural_build_profile(const World& world,const ObjectTradeGroupResources& plan,
+        const std::vector<ObjectTradeIdentity>& identities){
+    need(identities.size()==plan.parts.size(),"architectural Build group identity extent differs");
+    for(std::size_t n=0;n<identities.size();++n){const auto& definition=plan.parts[n].resource.runtime.definition;
+        if(!definition.build_mode_type||!*definition.build_mode_type)continue;
+        const auto* e=world.find(identities[n].id);need(e&&e->generation==identities[n].generation,
+            "architectural Build source identity unavailable");
+        const auto flags=e->object_words.find(40);
+        need(flags!=e->object_words.end()&&(std::uint16_t(flags->second)&0xc000U),
+            "door/window Build resource lacks actual post-Init architectural flags");
+    }
+}
 ObjectGroup physical_group(const ObjectTradeGroupResources& plan,const std::vector<ObjectTradeIdentity>& identities){
     need(identities.size()==plan.parts.size(),"trade physical identity count differs from its complete plan");
     ObjectGroup result{plan.requested?plan.requested->guid:0,plan.multitile,identities.at(plan.base_index).id,{}};
@@ -578,6 +591,7 @@ ObjectTradeTransactionResult prepare_ts1_object_purchase_impl(const SessionBundl
                 need(part.vm->start(routine_key(main),{part.identity.id,part.identity.id,0,part.owner},{0,0,0,0},true)==VmStatus::running,
                     "trade member Main could not be staged");
         }
+        require_architectural_build_profile(c.world,plan,identities);
         ObjectPositionValid placement(c.world,binding.placement);ObjectPositionChange change(c.world,placement,binding.position_change);
         // VMContext.CreateObjectInstance completes the constructor's own OOW
         // ChangePosition and birth publication before the user placement attempt.
@@ -626,6 +640,7 @@ ObjectTradeTransactionResult prepare_ts1_object_sale_impl(const SessionBundle& s
         Candidate c(source,limits,actorless);const auto* values=c.values->query(request.target);
         need(values,"trade sale has no authenticated shared-value group");
         const auto identities=authenticate_existing_group(source,c.world,*values,plan,request.target);
+        require_architectural_build_profile(c.world,plan,identities);
         const auto clicked=std::find_if(identities.begin(),identities.end(),[&](auto id){return same_identity(id,request.target);});
         const auto clicked_index=static_cast<std::size_t>(clicked-identities.begin());
         need(same_origin(resource.origin,plan.parts[clicked_index].resource.origin),"trade clicked command resource differs from physical selected member");
@@ -679,6 +694,7 @@ ObjectTradeTransactionResult prepare_ts1_object_move_impl(const SessionBundle& s
         Candidate c(source,limits,actorless);const auto target=request.admission.target;const auto* values=c.values->query(target);
         need(values,"trade movement has no authenticated shared-value/physical group");
         const auto identities=authenticate_existing_group(source,c.world,*values,plan,target);
+        require_architectural_build_profile(c.world,plan,identities);
         const auto clicked=std::find_if(identities.begin(),identities.end(),[&](auto id){return same_identity(id,target);});
         need(same_origin(resource.origin,plan.parts[static_cast<std::size_t>(clicked-identities.begin())].resource.origin),
             "trade movement command resource differs from clicked physical member");

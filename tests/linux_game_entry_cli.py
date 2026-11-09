@@ -277,6 +277,27 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
                                 capture_output=True, text=True, env=env)
         check(response_run.returncode == 2 and "requires bounded execution" in response_run.stderr,
               "dialog response queue requires an actual bounded execution")
+    info_option = ["--headless-info-dialog-ok-limit"]
+    for limit in ("1", "32"):
+        info_run = subprocess.run(dialog_base + ["--headless-ticks", "2"] + info_option + [limit],
+                                capture_output=True, text=True, env=env)
+        check(info_run.returncode == 2 and "unsupported FAR signature/version" in info_run.stderr,
+              "bounded informational input reaches resource loading at both count bounds")
+    for extra in (info_option, info_option + ["0"], info_option + ["33"],
+                  info_option + ["1"] + info_option + ["1"],
+                  info_option + ["1", "--headless-dialog-ok"],
+                  ["--headless-dialog-ok"] + info_option + ["1"],
+                  info_option + ["1", "--headless-dialog-response", "0", ""],
+                  ["--headless-dialog-response", "0", ""] + info_option + ["1"]):
+        info_run = subprocess.run(dialog_base + ["--headless-ticks", "2"] + extra,
+                                capture_output=True, text=True, env=env)
+        check(info_run.returncode == 2 and "unsupported FAR signature/version" not in info_run.stderr,
+              "invalid count, repetition or mixed dialog inputs fail before resource access")
+    for extra in ([], ["--headless-ticks", "0"], ["--headless-ticks", "2", "--plan-only"]):
+        info_run = subprocess.run(dialog_base + extra + info_option + ["1"],
+                                capture_output=True, text=True, env=env)
+        check(info_run.returncode == 2 and "requires bounded execution" in info_run.stderr,
+              "informational input requires an executing finite nonzero horizon")
     budget_without_ticks = subprocess.run(
         [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
          "--instruction-budget", "25000"], capture_output=True, text=True, env=env)

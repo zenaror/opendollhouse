@@ -4,6 +4,10 @@
 #include <set>
 #include <tuple>
 namespace odh {
+bool is_canonical_cleared_wall_face(const WallAppearanceFace& face) noexcept {
+    return face.owner==0&&face.generation==0&&face.style.raw_style==0&&face.style.resource_guid==0&&
+        std::all_of(face.style.sprites.begin(),face.style.sprites.end(),[](auto value){return value==0;});
+}
 ObjdWallAppearance read_objd_wall_appearance(const View& v){
     const auto version=v.le32(0);if(version!=136&&version!=138)throw FormatError("unsupported OBJD wall appearance profile");
     const std::uint64_t extent=version==138?164:94;const auto prefix=v.subview(0,extent);

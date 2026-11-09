@@ -34,13 +34,21 @@ struct WallAppearanceFace {
     std::uint64_t generation,door_generation;
     bool door,segment_present;
 };
+// An authenticated Pre style0 write has no remaining object resource owner.
+// Keep the explicit clear after deletion instead of exposing the older raw wall
+// style again. Door state, when retained by a window clear, has its own owner.
+bool is_canonical_cleared_wall_face(const WallAppearanceFace&) noexcept;
 struct WallAppearanceApplication {
     std::int16_t id;
     std::uint8_t applied_sides=0,ignored_sides=0; //bit(side); source sides1/2 ignored.
 };
 struct WallAppearance {
     std::vector<WallAppearanceFace> faces; //Stable level/y/x/segment order.
-    std::vector<WallAppearanceApplication> applications; //Eligible input order.
+    // Diagnostics only: pure derivation uses eligible input order. Successful
+    // live writes compact legacy history to the latest record per existing
+    // ObjectID, in last-application order. These IDs have no generation and
+    // never authorize faces, occupancy or replay. The wire cap remains 4096.
+    std::vector<WallAppearanceApplication> applications;
     std::uint32_t overwritten_faces=0;
 };
 // Pure FreeSO reference profile: free positioned architectural objects, flags2

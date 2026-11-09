@@ -38,7 +38,7 @@ WallEdgeBuildResult resolve_initial_wall_edges(
     for (const auto& face : appearance.faces) {
         if (face.x >= architecture.width || face.y >= architecture.height ||
             face.level < 1 || face.level > 2 || (face.segment != segment_top_left && face.segment != segment_top_right) ||
-            face.owner <= 0 || !face.generation || face.door_owner < 0 ||
+            (!is_canonical_cleared_wall_face(face) && (face.owner <= 0 || !face.generation)) || face.door_owner < 0 ||
             ((face.door_owner == 0) != (face.door_generation == 0)) ||
             (face.door && face.door_owner == 0))
             return unsupported("wall appearance face identity or extent invalid");

@@ -46,6 +46,27 @@ void live_wall_inputs(){
     object(3,300,0x8000);
     require(odh_host::live_household_wall_edges(world,architecture,inputs,1).status==odh::WallEdgeBuildStatus::unsupported,
         "reused architectural ID cannot borrow old generation binding");
+    odh::ArchitectureObjectState events;events.object_support=odh::make_architecture_object_support(4,4);
+    for(auto& occupied:events.occupied_walls)occupied.assign(16,0);
+    odh::ObjectPositionRegistrySnapshot current;current.width=current.height=4;current.complete=true;
+    events.position_registry=current;
+    // Typed event-owner input to the pure geometry consumer; this is not a
+    // synthetic save or a claim that this fixture executed the original VM.
+    events.wall_appearance.faces.push_back({1,1,1,odh::wall_top_right,{1,0,{}},3,3,
+        world.find(3)->generation,world.find(3)->generation,true,true});
+    auto from_events=odh_host::live_household_wall_edges(world,architecture,events,1);
+    require(from_events.status==odh::WallEdgeBuildStatus::ready&&from_events.edges.at(5).top_right==odh::WallEdgeKnowledge::non_solid,
+        "explicit current-generation wall events govern geometry instead of obsolete imported input bindings");
+    events.wall_appearance.faces.front().generation=old_generation;
+    require(odh_host::live_household_wall_edges(world,architecture,events,1).status==odh::WallEdgeBuildStatus::unsupported,
+        "current event owner cannot borrow another generation");
+    events.wall_appearance.faces.front()={1,1,1,odh::wall_top_right,{0,0,{}},0,0,0,0,false,true};
+    from_events=odh_host::live_household_wall_edges(world,architecture,events,1);
+    require(from_events.status==odh::WallEdgeBuildStatus::ready&&from_events.edges.at(5).top_right==odh::WallEdgeKnowledge::solid,
+        "explicit retired door clear restores solid geometry without requiring its former owner");
+    events.position_registry->complete=false;
+    require(odh_host::live_household_wall_edges(world,architecture,events,1).status==odh::WallEdgeBuildStatus::unsupported,
+        "incomplete AOBJ registry never falls back to obsolete imported geometry");
 }
 void wall_query_diagnostics(){
     for(const bool unknown_inputs:{true,false}){

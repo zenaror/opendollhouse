@@ -110,6 +110,19 @@ Os efeitos têm suas próprias taxas e limites. Uma ação de higiene pode termi
 normalmente sem melhorar um Sim que já está acima do limite definido pelo objeto.
 Não confunda “ação concluída” com “necessidade chegou ao máximo”.
 
+### Um objeto de parede, uma porta ou uma janela
+
+Declare as paredes permitidas e o espaço ocupado pelo objeto. Uma porta ou
+janela também precisa apontar para os recursos que desenham sua abertura.
+O motor usa essas informações para conferir a colocação e atualizar a parede.
+
+Use o serviço de colocação do motor para mover ou vender o objeto. Ele libera
+o lugar anterior e atualiza a aparência da parede, para a abertura não reaparecer
+quando a partida for carregada. A preparação inicial do objeto acontece antes
+da primeira colocação; as mesmas verificações precisam funcionar em todos esses
+casos. A compatibilidade continua experimental e exige conferir o conteúdo
+dentro do jogo.
+
 ### Uma opção de menu
 
 “Conversar/Perguntar sobre a loja” pode organizar uma interação dentro da categoria

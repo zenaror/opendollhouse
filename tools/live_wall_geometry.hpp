@@ -1,10 +1,34 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 #include "odh/wall_route_state.hpp"
+#include "odh/architecture_object_state.hpp"
 #include <set>
 #include <string>
 
 namespace odh_host {
+// Event-owned AOBJ is authoritative after real moves/creation/deletion. Never
+// replay obsolete imported inputs over its clears or new dynamic door styles.
+inline odh::WallEdgeBuildResult live_household_wall_edges(const odh::World& world,
+        const odh::SavedArchitecture& architecture,const odh::ArchitectureObjectState& state,std::int16_t level){
+    const auto bad=[](const char* why){return odh::WallEdgeBuildResult{odh::WallEdgeBuildStatus::unsupported,{},why};};
+    if(state.object_support.width!=architecture.width||state.object_support.height!=architecture.height||
+       !state.position_registry||!state.position_registry->complete||state.position_registry->width!=architecture.width||
+       state.position_registry->height!=architecture.height)return bad("live wall event owner is incomplete or has different geometry");
+    if(state.wall_appearance.faces.size()>16384)return bad("live wall face budget exceeded");
+    for(const auto& face:state.wall_appearance.faces){
+        if(!odh::is_canonical_cleared_wall_face(face)){
+            const auto* e=world.find(face.owner);
+            if(!e||e->generation!=face.generation||e->kind!=odh::EntityKind::object||!e->definition||e->ui_ghost||
+               !e->position||e->attachment||e->position->x<0||e->position->y<0||e->position->x/16!=std::int32_t(face.x)||
+               e->position->y/16!=std::int32_t(face.y)||e->position->level!=face.level||
+               (face.style.resource_guid&&face.style.resource_guid!=e->definition->guid))return bad("live wall face source identity differs");
+        }
+        if(face.door_owner){const auto* door=world.find(face.door_owner);
+            if(!door||door->generation!=face.door_generation||door->kind!=odh::EntityKind::object||door->ui_ghost)
+                return bad("live wall door source identity differs");}
+    }
+    return odh::resolve_initial_wall_edges(architecture,state.wall_appearance,level);
+}
 // The captured source flags identify inputs which had no architectural role.
 // Their obsolete numeric IDs are not historical wall owners. Current flags
 // remain mutable and every live object is checked below, so a new/unbound door

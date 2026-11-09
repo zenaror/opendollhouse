@@ -342,7 +342,8 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'ambiguous GLOB link' in r.stderr
  setup();invalid_type=objd(1);struct.pack_into('<H',invalid_type,18,0)
  archive(avatar,'Person.iff',[('OBJD',128,invalid_type),('GLOB',128,b'\x0dFixturePerson'),('BHAV',4096,routine([expr(0,1)]))]);r=run()
- assert r.returncode==2 and not r.stdout and 'ObjectType2' in r.stderr
+ # An ordinary object cannot be used as the selected person constructor.
+ assert r.returncode==2 and not r.stdout and 'selected avatar does not match its person constructor profile' in r.stderr
  setup();archive(semi,'FixturePerson.iff' ,[('BHAV',4096,routine([expr(0,1)]))]);r=run()
  assert r.returncode==2 and not r.stdout and 'resource role' in r.stderr
  setup();archive(avatar,'Person.iff',[('OBJD',128,objd(1)),('GLOB',1,b'\x05other'),('BHAV',4096,routine([expr(0,1)]))]);r=run()

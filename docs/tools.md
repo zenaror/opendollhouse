@@ -146,3 +146,32 @@ O validador de gestão de famílias oferece `--collect-shutdown-failures` para
 coletar etapas independentes após um relatório completo de vazamento de memória.
 O encerramento permanece reprovado, e o comando continua retornando erro.
 O modo padrão interrompe a verificação nessa falha.
+
+## Preparar avisos em testes sem janela
+
+`--headless-info-dialog-ok-limit N` confirma até `N` avisos informativos, de 1 a
+32, durante uma execução com `--headless-ticks` positivo. Perguntas, campos de
+texto e listas de escolha permanecem abertos. Cada confirmação aparece em
+`headless_info_dialog_answers` no JSON. Use essa opção em perfis de teste para
+atravessar os avisos iniciais na mesma execução. Ela exige uso separado das
+outras opções de resposta de diálogo.
+
+## Registrar os arquivos de uma compilação
+
+Depois de terminar um build CMake com o gerador **Unix Makefiles**, registre os
+arquivos e as opções fornecidos à etapa de ligação:
+
+```sh
+mkdir -p ../opendollhouse-validation
+python3 tools/collect_cmake_link_inputs.py --source . --build build/native \
+  --target odh-person --collect --output ../opendollhouse-validation/linked-build.json
+python3 tests/cmake_link_inputs.py
+```
+
+Mantenha fontes e build parados durante a coleta. Sem `--collect`, a ferramenta
+mostra somente o planejamento. O relatório serve ao diagnóstico da compilação;
+o funcionamento continua dependendo dos testes do aplicativo. Ele distingue os
+objetos fornecidos nas bibliotecas das partes efetivamente usadas no programa,
+que exigiriam um mapa produzido pelo vinculador. A ferramenta recusa arquivos de
+dependências ausentes e saídas já existentes. Guarde os resultados fora dos
+diretórios de fontes e build, como no exemplo.

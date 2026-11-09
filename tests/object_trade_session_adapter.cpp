@@ -705,6 +705,170 @@ void dynamic_association_matrix(const std::filesystem::path& root){
     }
 }
 
+void wall_trade_matrix(const std::filesystem::path& root){
+    for(const unsigned kind:{0U,1U,2U}){
+        const auto game=root/("wall-game-"+std::to_string(kind));std::filesystem::create_directories(game);
+        const std::uint32_t guid=0x9100U+kind; // Synthetic identities, no commercial object exception.
+        std::string objd(190,'\0');at(objd,0,138,4);at(objd,8,1,2);at(objd,18,4,2);at(objd,28,guid,4);
+        at(objd,36,100,2);at(objd,44,1,2);at(objd,80,1,2);at(objd,116,1,2);at(objd,134,16,2);at(objd,138,kind,2);
+        at(objd,92,kind==1?3:kind==2?22:0,2);at(objd,162,100,2);
+        std::string objf(16+33*4,'\0');at(objf,4,1,4);objf.replace(8,4,"fJBO");at(objf,12,33,4);
+        for(const auto entry:std::vector<std::pair<unsigned,unsigned>>{{0,4096},{1,4097},{6,4100}})at(objf,16+entry.first*4+2,entry.second,2);
+        if(kind==1)at(objf,16+15*4+2,4101,2); // Actual portal EP metadata remains registry-owned.
+        // Real Init sets required-front/exclusive placement and architectural class.
+        const auto flags=kind==1?32768U:kind==2?16384U:0U;
+        const auto file=game/"wall.iff",global=game/"Global.far";
+        auto adjacency=assignments({{6,66}});if(kind==2)adjacency[14]=static_cast<char>(255); // Authored false after real write.
+        auto init=assignments({{4,1},{13,1},{42,1},{23,2},{43,10},{63,2},{40,static_cast<std::uint16_t>(flags)}});
+        // A test-owned extension executes in the actual candidate VM after its
+        // real Init expressions. It can adversarially mutate an OLD registered
+        // object; it is never an alternative placement/authority capability.
+        at(init,2,8,2);init[12+6*12+2]=7;
+        put(init,99,2);init.push_back(static_cast<char>(254));init.push_back(static_cast<char>(255));init.append(8,'\0');
+        write(file,iff({chunk("OBJD",128,objd),chunk("OBJf",128,objf),
+            chunk("BHAV",4096,init),
+            chunk("BHAV",4097,assignments({{6,77}})),chunk("BHAV",4100,adjacency),chunk("BHAV",4101,assignments({{6,15}}))}));
+        write(global,far({{"global.iff",iff({chunk("BHAV",256,assignments({{6,1}}))})}}));
+        std::istringstream stream(objd,std::ios::binary);
+        DefinitionIndex definitions({{file.string(),"",128,read_object_definition(View(stream,objd.size()))}});
+        ObjectTradeResourceLibrary resources(game,definitions,global,"global.iff");
+        const auto& admitted=resources.load(guid);require(admitted.wall_style.has_value(),"wall provider is read from concrete supported OBJD");
+        SavedWorld original;original.world=std::make_unique<World>();original.relationships=std::make_unique<RelationshipState>();
+        SessionResourceIdentity identity;identity.resource_fingerprint.fill(static_cast<std::uint8_t>(0x71+kind));
+        auto globals=RuntimeGlobals::from_legacy({}).snapshot();globals.words[32]=1;
+        auto state=make_community_object_baseline(original,identity,globals,std::nullopt,1234);
+        PreparedArchitecture prepared;prepared.width=prepared.height=4;prepared.buildable.assign(16,1);
+        SavedArchitecture raw;raw.width=raw.height=4;raw.altitude=std::vector<std::array<std::uint8_t,4>>(16);
+        for(std::size_t level=0;level<2;++level){prepared.levels[level].floors.assign(16,1);prepared.levels[level].walls.resize(16);
+            raw.levels[level].floors.assign(16,1);raw.levels[level].walls.resize(16);}
+        for(const auto index:{5U,6U}){prepared.levels[0].walls[index].segments=wall_top_right;raw.levels[0].walls[index].segments=wall_top_right;}
+        const auto rooms=generate_prepared_room_map(prepared);
+        ObjectPositionRegistryServices registry_services;registry_services.definitions=&definitions;
+        registry_services.group=[](auto id)->std::optional<std::vector<ObjectPositionIdentity>>{return std::vector<ObjectPositionIdentity>{id};};
+        registry_services.routing_slot_count=[](auto)->std::optional<std::size_t>{return 0;};
+        registry_services.moved_self=[](auto)->std::optional<bool>{return false;};
+        ObjectPositionRegistry registry(*original.world,prepared,rooms,registry_services);
+        require(registry.finish_initial_load({},[]{return true;}),"empty source registry is certified by actual complete original cohort");
+        ArchitectureObjectState objects;objects.object_support=make_architecture_object_support(4,4);
+        for(auto& level:objects.occupied_walls)level.assign(16,0);
+        objects.position_registry=registry.snapshot();objects.occupied_walls[1][15]=8; // Unrelated source history must survive.
+        {
+            World probe;require(probe.create_runtime_object(1,guid,{0,0,0},admitted.code.runtime.entry_points.entries),"actual wall input identity");
+            require(probe.declare_object_word(1,13,1)&&probe.declare_object_word(1,63,2),"wall input exact post-Init words");
+            bool current=true;auto input_owner=objects;
+            SessionObjectPositionContext input;input.world=&probe;input.resources=&resources;input.prepared=&prepared;
+            input.architecture=&raw;input.rooms=&rooms;input.architecture_objects=&input_owner;
+            input.object_support=&input_owner.object_support;input.position_registry=&*input_owner.position_registry;
+            input.source_still_matches=[&]{return current;};
+            auto bound=make_session_object_position_services(input);const ObjectPositionIdentity target{1,probe.find(1)->generation};
+            input_owner.occupied_walls[0][5]=2;
+            auto fact=bound.placement.architecture(target,EntityPosition{24,24,1,0});
+            require(fact&&fact->occupied_walls==2,"PositionValid consumes the SAME supplied AOBJ, not an empty saved wall tile");
+            ObjectPositionValid valid(probe,bound.placement);
+            auto check=[&](EntityPosition pos,std::uint8_t direction,std::int16_t flags){
+                require(probe.declare_object_word(1,13,flags),"exact flag matrix input");
+                return valid.evaluate({target,pos,direction,0,[&]{return current;}});
+            };
+            require(check({24,24,1,0},0,1).placement_error==21,"used required wall gives source unused-wall error21");
+            input_owner.occupied_walls[0][5]=0;
+            require(check({8,8,1,0},0,1).placement_error==5,"missing required wall gives source error5");
+            require(check({24,24,1,0},0,256).placement_error==6,"forbidden wall side gives source error6");
+            require(check({24,24,1,0},0,64).placement_error==22,"diagonal required on straight wall gives source error22");
+            require(probe.declare_object_word(1,13,1),"restore actual required wall word");
+            auto legacy=input;legacy.architecture_objects=nullptr;legacy.object_support=nullptr;legacy.position_registry=nullptr;
+            const auto unknown=make_session_object_position_services(legacy);
+            require(!unknown.placement.architecture(target,{24,24,1,0}),"legacy absence cannot invent unused walls");
+            auto wrong=input;auto other=input_owner.object_support;wrong.object_support=&other;bool rejected=false;
+            try{(void)make_session_object_position_services(wrong);}catch(const FormatError&){rejected=true;}
+            require(rejected,"structurally equal copied support cannot masquerade as the same AOBJ owner");
+            auto absence=*input_owner.position_registry;std::string why;
+            require(!object_position_known_absent_oow(absence,*probe.find(1),why),"OOW by itself is not event-owned absence");
+            require(record_object_footprint_absent(absence,probe,target,[]{return true;})&&
+                record_object_moved_self(absence,probe,target,false,[]{return true;})&&
+                object_position_known_absent_oow(absence,*probe.find(1),why),"real constructor and exact producer metadata establish known absence");
+            auto stale=absence;++stale.motion.front().owner.generation;
+            require(!object_position_known_absent_oow(stale,*probe.find(1),why),"stale generation cannot authorize nonspatial class change");
+            auto referenced=absence;referenced.tiles.push_back({-1,{target}});
+            require(!object_position_known_absent_oow(referenced,*probe.find(1),why),"any real tile collection reference defeats known absence");
+            referenced=absence;referenced.rooms.front().entities.push_back(target);
+            require(!object_position_known_absent_oow(referenced,*probe.find(1),why),"any RoomInfo collection reference defeats known absence");
+            current=false;require(!bound.placement.architecture(target,{24,24,1,0}),"expired World/source lease rejects wall input");
+        }
+        state.object_state=objects;
+        const auto source_bytes=encode_actorless_object_trade_state(state);
+        CommunityObjectCommandServices services;services.source_still_matches=[]{return true;};
+        std::optional<ObjectPositionIdentity> mutate_registered;
+        services.bindings.extra_primitive_factory=[&](const ObjectTradeCandidateContext& context,const VmMemory&){
+            return [&,world=&context.world](const VmFrame&,const Instruction& instruction,const Ts1Temps&,const VmDispatch&)->PrimitiveOutcome{
+                if(instruction.opcode!=99)return {};
+                if(mutate_registered){const auto* old=world->find(mutate_registered->id);
+                    require(old&&old->generation==mutate_registered->generation&&old->position,"adversarial Init owns a real OLD registered source identity");
+                    const auto word=old->object_words.find(40);require(word!=old->object_words.end(),"registered architectural source word exists");
+                    require(world->declare_object_word(old->id,40,static_cast<std::int16_t>(std::uint16_t(word->second)^0x8000U)),
+                        "actual VM-side mutation of registered architectural class");}
+                return {PrimitiveDisposition::goto_true,{}};
+            };
+        };
+        ObjectTradeSessionCommand command;command.kind=ObjectTradeSessionCommandKind::purchase;command.guid=guid;command.position={24,24,1,0};
+        auto bought=prepare_community_object_command(resources,state,prepared,raw,rooms,command,services);
+        require(bought.status==ObjectTradeTransactionStatus::prepared_success&&bought.candidate,
+            "actual wall Init/VM/candidate purchase kind="+std::to_string(kind)+": "+bought.diagnostic);
+        require(encode_actorless_object_trade_state(state)==source_bytes,"candidate wall writes never mutate source AOBJ/World");
+        auto cold=decode_actorless_object_trade_state(bought.archive,&identity);
+        require(encode_actorless_object_trade_state(cold)==bought.archive&&cold.object_state&&
+            cold.object_state->occupied_walls[0][5]==2&&cold.object_state->occupied_walls[1][15]==8,
+            "FIRST archive already captures actual occupied walls and unrelated history; cold reopen is byte-exact");
+        require(cold.world.entities.size()==1&&cold.world.entities.front().object_words.at(6)==66&&
+            cold.world.entities.front().object_words.at(43)==10,
+            "wall EP6 executed and actual Init authored movement/delete bits2/8; price100 belongs only to OBJD");
+        const auto id=cold.world.entities.front().id;const auto generation=cold.world.entities.front().generation;
+        services.groups={{true,{{id,generation}}}};command.target={id,generation};
+        if(kind){const auto& face=cold.object_state->wall_appearance.faces.front();
+            require(face.owner==id&&face.generation==generation&&face.style.raw_style==(kind==1?3:22)&&face.door==(kind==1),
+                "actual architectural Post captures concrete window/door style and ownership");}
+        const auto stable=bought.archive;
+        if(kind){
+            mutate_registered=ObjectPositionIdentity{id,generation};auto attempt=command;attempt.position={40,24,1,0};
+            const auto forged=prepare_community_object_command(resources,cold,prepared,raw,rooms,attempt,services);mutate_registered.reset();
+            require(forged.status==ObjectTradeTransactionStatus::unsupported&&!forged.candidate&&
+                forged.diagnostic.find("authority unavailable")!=std::string::npos&&encode_actorless_object_trade_state(cold)==stable,
+                "registered architectural class mutation still invalidates the actual candidate; no source World/AOBJ publication");
+        }
+        auto rejected=command;rejected.position={40,40,1,0};rejected.kind=ObjectTradeSessionCommandKind::purchase;
+        const auto invalid=prepare_community_object_command(resources,cold,prepared,raw,rooms,rejected,services);
+        require(invalid.status!=ObjectTradeTransactionStatus::prepared_success&&encode_actorless_object_trade_state(cold)==stable,
+            "no-wall target never publishes source mutations or fabricates wall support");
+        command.kind=ObjectTradeSessionCommandKind::move;
+        auto same=prepare_community_object_command(resources,cold,prepared,raw,rooms,command,services);
+        require(same.status==ObjectTradeTransactionStatus::prepared_success&&same.candidate,
+            "move to same wall excludes SELF by actual Pre clear, not heuristic subtraction: "+same.diagnostic);
+        cold=decode_actorless_object_trade_state(same.archive,&identity);
+        command.position={40,24,1,0};
+        auto moved=prepare_community_object_command(resources,cold,prepared,raw,rooms,command,services);
+        require(moved.status==ObjectTradeTransactionStatus::prepared_success&&moved.candidate,
+            "actual wall move: "+moved.diagnostic);
+        cold=decode_actorless_object_trade_state(moved.archive,&identity);
+        require(cold.object_state->occupied_walls[0][5]==0&&cold.object_state->occupied_walls[0][6]==2,
+            "source Pre clears old wall, Post sets new wall in same candidate AOBJ");
+        if(kind)require(is_canonical_cleared_wall_face(cold.object_state->wall_appearance.faces.front()),
+            "old wall keeps explicit style0 after move instead of resurrecting imported style");
+        command.kind=ObjectTradeSessionCommandKind::sell;
+        auto sold=prepare_community_object_command(resources,cold,prepared,raw,rooms,command,services);
+        require(sold.status==ObjectTradeTransactionStatus::prepared_success&&sold.candidate,
+            "actual wall delete kind="+std::to_string(kind)+" status="+std::to_string(static_cast<unsigned>(sold.status))+
+            " decision="+std::to_string(static_cast<unsigned>(sold.decision.status))+
+            " reason="+std::to_string(static_cast<unsigned>(sold.decision.reason))+": "+sold.diagnostic);
+        const auto empty=decode_actorless_object_trade_state(sold.archive,&identity);
+        require(empty.world.entities.empty()&&empty.object_state->occupied_walls[0][6]==0&&
+            empty.object_state->occupied_walls[1][15]==8&&encode_actorless_object_trade_state(empty)==sold.archive,
+            "delete clears occupancy, preserves unrelated history, and cold reload needs no retired object");
+        for(const auto& face:empty.object_state->wall_appearance.faces)
+            require(is_canonical_cleared_wall_face(face)&&!face.door&&!face.door_owner,
+                "deleted door/window faces are strictly canonical clears");
+        std::cout<<"wall transaction kind="<<kind<<" Init/place/self-move/move/delete/cold passed\n";
+    }
+}
+
 void lifecycle_and_journal(const std::filesystem::path& root){
     const auto game=root/"game";std::filesystem::create_directories(game/"GameData/Objects");std::filesystem::create_directories(game/"GameData/Global");
     std::string objd(190,'\0');at(objd,0,138,4);at(objd,8,1,2);at(objd,18,4,2);at(objd,28,0x1234,4);at(objd,36,100,2);at(objd,44,1,2);at(objd,80,1,2);at(objd,116,1,2);at(objd,134,16,2);
@@ -1598,6 +1762,7 @@ int main(){try{TemporaryDirectory dir;
     run("community scene reopen",[&]{community_scene_reopen(dir.path);});
     run("multipart trade matrix",[&]{multipart_trade_matrix(dir.path);});
     run("dynamic association matrix",[&]{dynamic_association_matrix(dir.path);});
+    run("wall trade matrix",[&]{wall_trade_matrix(dir.path);});
     run("lifecycle and journal",[&]{lifecycle_and_journal(dir.path);});
     std::cout<<"object trade session adapter fixtures passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -63,7 +63,7 @@ ActorlessObjectTradeResult prepare_community_object_command(ObjectTradeResourceL
         auto* support_ptr=objects?&objects->object_support:support?&*support:nullptr;
         auto* registry=objects&&objects->position_registry?&*objects->position_registry:nullptr;
         const auto factory=make_object_trade_candidate_factory(resources,source,prepared,architecture,rooms,hooks,
-            services.groups,selected,owner,guid,services.source_still_matches,support_ptr,registry);
+            services.groups,selected,owner,guid,services.source_still_matches,support_ptr,registry,objects?&*objects:nullptr);
         if(command.kind==ObjectTradeSessionCommandKind::purchase)
             result=prepare_ts1_actorless_object_purchase(state,{selected,metadata->catalog,command.position,ids},resource,factory);
         else{

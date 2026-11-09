@@ -30,6 +30,7 @@ struct ObjectTradeLoadedResource {
     odh::ObjectTradeCatalogItem catalog;
     std::vector<std::int16_t> definition_words;
     odh::TuningOwner tuning;
+    std::optional<odh::WallAppearanceStyle> wall_style; // Exact immutable OBJD136/138 provider; no dispatch I/O.
 };
 // Reads original files only. Definition ambiguity is never archive precedence.
 // Preload before entering a candidate/VM callback; find() never performs I/O.
@@ -80,6 +81,10 @@ struct SessionObjectPositionContext {
     // Event-owned support state from the same live/candidate session. Null
     // means unknown legacy history and must not become an empty grid.
     odh::ArchitectureObjectSupport* object_support=nullptr;
+    // SAME AOBJ owner as support/registry. Null is legacy unknown, never empty.
+    odh::ArchitectureObjectState* architecture_objects=nullptr;
+    // Optional live presentation notification; transactions have no renderer.
+    std::function<bool()> wall_appearance_changed;
     // Present-but-incomplete is a failed authority, not legacy absence: event
     // callbacks refuse it. Candidate transactions preserve complete ledgers via
     // exact Pre/publish/Post guards and verify cohort coherence before publish.
@@ -205,7 +210,8 @@ odh::ObjectTradeBindingFactory make_object_trade_candidate_factory(ObjectTradeRe
     const odh::SessionBundle& component_state,const odh::PreparedArchitecture&,
     const odh::SavedArchitecture&,const odh::GeometricRoomMap&,const ObjectTradeSessionHooks&,
     const std::vector<odh::ObjectTradeGroup>&,std::int16_t selected,odh::CodeOwner owner,std::uint32_t guid,
-    std::function<bool()> authority,odh::ArchitectureObjectSupport*,odh::ObjectPositionRegistrySnapshot*);
+    std::function<bool()> authority,odh::ArchitectureObjectSupport*,odh::ObjectPositionRegistrySnapshot*,
+    odh::ArchitectureObjectState* architecture_objects=nullptr);
 
 enum class ObjectTradeSessionCommandKind { purchase,move,sell,cancel };
 struct ObjectTradeSessionCommand {

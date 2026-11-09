@@ -180,9 +180,16 @@ void event_wall_appearance_checks(const Temp& temp,const std::filesystem::path& 
  appearance.faces[0].x=2;renderer.set_runtime_wall_appearance(appearance);check(renderer.runtime_wall_appearance().has_value());
  renderer.invalidate_runtime_wall_appearance();check(!renderer.runtime_wall_appearance());
  renderer.set_runtime_wall_appearance(appearance);check(world.remove(2));check(!renderer.runtime_wall_appearance());
+ // A source style0 clear remains explicit after its former owner is gone;
+ // event application history does not require resurrecting that numeric ID.
+ auto cleared=appearance;cleared.faces[0].owner=0;cleared.faces[0].generation=0;cleared.faces[0].style={0,0,{}};
+ renderer.set_runtime_wall_appearance(cleared);
+ check(renderer.runtime_wall_appearance()&&odh::is_canonical_cleared_wall_face(renderer.runtime_wall_appearance()->faces.front()));
  renderer.set_runtime_wall_appearance(odh::WallAppearance{});check(renderer.runtime_wall_appearance().has_value());
  check(world.create_saved_entity(4,odh::EntityKind::object,123,{},{},{},words,{},0)&&world.declare_object_word(4,40,0x4000));
- check(!renderer.runtime_wall_appearance()); // A new architectural owner needs its actual event.
+ check(renderer.runtime_wall_appearance().has_value()); // OOW has no wall contribution to invalidate.
+ check(world.set_position(4,{24,40,1,0}));
+ check(!renderer.runtime_wall_appearance()); // A new FREE positioned architectural owner needs its actual event.
  renderer.set_runtime_wall_appearance({});check(!renderer.runtime_wall_appearance());
 }
 void runtime_object_checks(const Temp& temp,const std::filesystem::path& floors,

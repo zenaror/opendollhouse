@@ -164,7 +164,7 @@ void validate_architecture_object_state(const ArchitectureObjectState& state,con
         if(face.level<1||face.level>2||face.x>=state.object_support.width||face.y>=state.object_support.height||
            (face.segment!=wall_top_left&&face.segment!=wall_top_right)||(previous&&key<=*previous))
             throw FormatError("architecture object wall face extent/order invalid");
-        if(face.owner<=0||!face.generation||face.door_owner<0||
+        if((!is_canonical_cleared_wall_face(face)&&(face.owner<=0||!face.generation))||face.door_owner<0||
            (bool(face.door_owner)!=bool(face.door_generation))||(face.door&&!face.door_owner))
             throw FormatError("architecture object wall face owner invalid");
         validate_style(face.style);previous=key;

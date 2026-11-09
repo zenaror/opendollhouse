@@ -87,7 +87,10 @@ struct PositionLifecycle {
                 (world.is_live_reference(*parent)&&world.detach(parent->id,old->slot));
             return detached&&matches();}
         if(!e->position||e->kind==EntityKind::avatar)return true;
-        const auto exclusive=e->object_words.find(63);if(exclusive==e->object_words.end()||!services.wall_use||
+        const auto flags=e->object_words.find(40);if(flags==e->object_words.end())return false;
+        if((std::uint16_t(flags->second)&0xc000U)&&(!services.architectural_wall_style_change||
+           !services.architectural_wall_style_change(root,false)||!matches()))return fail("Pre architectural wall style",root);
+        e=entity(root);const auto exclusive=e->object_words.find(63);if(exclusive==e->object_words.end()||!services.wall_use||
            !services.wall_use(root,false,(exclusive->second&2)!=0)||!matches())return false;
         e=entity(root);const auto category=e->object_words.find(59);if(category==e->object_words.end())return false;
         if(category->second==8&&(!e->position||!services.object_supported||!services.object_supported(root,*e->position,false)||!matches()))return false;
@@ -119,7 +122,10 @@ struct PositionLifecycle {
         if(!matches())return false;
         e=entity(id);if(e->attachment||!e->position)return true;
         if(!avatar){
-            const auto exclusive=e->object_words.find(63);if(exclusive==e->object_words.end()||!services.wall_use||
+            const auto flags=e->object_words.find(40);if(flags==e->object_words.end())return fail("Post architectural flags",id);
+            if((std::uint16_t(flags->second)&0xc000U)&&(!services.architectural_wall_style_change||
+               !services.architectural_wall_style_change(id,true)||!matches()))return fail("Post architectural wall style",id);
+            e=entity(id);const auto exclusive=e->object_words.find(63);if(exclusive==e->object_words.end()||!services.wall_use||
                !services.wall_use(id,true,(exclusive->second&2)!=0)||!matches())return fail("Post wall use",id);
             e=entity(id);const auto category=e->object_words.find(59);if(category==e->object_words.end())return fail("Post category missing",id);
             if(category->second==8&&(!e->position||!services.object_supported||!services.object_supported(id,*e->position,true)||!matches()))return fail("Post support",id);

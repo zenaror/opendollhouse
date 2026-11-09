@@ -49,6 +49,13 @@ int main(){
                 resolved.edges[edge].top_left==odh::WallEdgeKnowledge::solid,
                 "later style-zero door write restores solid edge state");
 
+        auto detached_clear=appearance;auto& cleared=detached_clear.faces.front();
+        cleared.owner=0;cleared.generation=0;cleared.style={0,0,{}};cleared.door=false;cleared.door_owner=0;cleared.door_generation=0;
+        require(odh::resolve_initial_wall_edges(architecture,detached_clear,1).status==odh::WallEdgeBuildStatus::ready,
+            "retired door clear remains an authoritative solid edge without old owner");
+        detached_clear.faces.front().style.raw_style=1;
+        require(odh::resolve_initial_wall_edges(architecture,detached_clear,1).status==odh::WallEdgeBuildStatus::unsupported,
+            "ownerless nonzero style cannot forge a wall edge");
         auto malformed=appearance;
         malformed.faces[0].segment_present=false;
         require(odh::resolve_initial_wall_edges(architecture,malformed,1).status==

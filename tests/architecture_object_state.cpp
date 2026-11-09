@@ -59,6 +59,17 @@ int main(){
     invalid([](auto& s){s.wall_appearance.faces[1].style.raw_style=256;},"transient process style IDs rejected");
     invalid([](auto& s){s.wall_appearance.applications[0].applied_sides=2;},"applied source style sides are only top left/right");
     invalid([](auto& s){s.wall_appearance.applications[0].ignored_sides=1;},"ignored source style sides cannot hide a rendered side");
+    auto cleared=state;auto& clear=cleared.wall_appearance.faces[0];
+    clear.owner=0;clear.generation=0;clear.style={0,0,{}};clear.door=false;clear.door_owner=0;clear.door_generation=0;
+    const auto clear_bytes=encode_architecture_object_state(cleared);
+    require(encode_architecture_object_state(decode_architecture_object_state(clear_bytes))==clear_bytes,
+        "authenticated style0 clear survives byte-exact codec without a retired owner");
+    auto corrupt=cleared;corrupt.wall_appearance.faces[0].style.raw_style=1;
+    rejects([&]{encode_architecture_object_state(corrupt);},"ownerless nonzero style remains invalid");
+    corrupt=cleared;corrupt.wall_appearance.faces[0].generation=1;
+    rejects([&]{encode_architecture_object_state(corrupt);},"ownerless clear cannot carry hidden generation");
+    corrupt=cleared;corrupt.wall_appearance.faces[0].style.sprites[0]=1;
+    rejects([&]{encode_architecture_object_state(corrupt);},"ownerless clear cannot hide sprite data");
     ArchitectureObjectStateLimits limits;limits.bytes=encoded.size()-1;
     rejects([&]{encode_architecture_object_state(state,limits);},"encode honors exact byte budget");
     rejects([&]{decode_architecture_object_state(encoded,limits);},"decode honors exact byte budget");

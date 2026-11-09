@@ -4206,6 +4206,15 @@ int main() {
         auto decoded=odh::decode_session_bundle(encoded);
         require(decoded.architecture_object_state&&!decoded.architecture_object_support,"complete architecture events have a single native owner");
         require(odh::encode_session_bundle(decoded)==encoded,"complete architecture events preserve whole session bytes");
+        auto cleared=bundle;
+        cleared.architecture_object_state->wall_appearance.faces.push_back({0,0,1,odh::wall_top_left,{0,0,{}},0,0,0,0,false,true});
+        // Historical application IDs are not live World/VM authority.
+        cleared.architecture_object_state->wall_appearance.applications.push_back({300,1,0});
+        const auto clear_bytes=odh::encode_session_bundle(cleared);
+        require(odh::encode_session_bundle(odh::decode_session_bundle(clear_bytes))==clear_bytes,
+            "retired architectural clear survives whole-session reopen without manufacturing a dead entity");
+        cleared.architecture_object_state->wall_appearance.faces.front().style.raw_style=3;
+        rejects([&]{(void)odh::encode_session_bundle(cleared);},"nonempty wall style still requires live generation/resource authority");
         auto archive=odh::decode_session_archive(encoded);
         for(auto& section:archive.sections)if(section.id==std::array<char,4>{{'A','O','B','J'}})section.required=false;
         rejects([&]{(void)odh::decode_session_bundle(odh::encode_session_archive(archive));},"architecture event state cannot be ignored");

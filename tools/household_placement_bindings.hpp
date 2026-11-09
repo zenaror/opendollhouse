@@ -130,6 +130,7 @@ struct HouseholdPlacementAssembly {
     // Real immutable resource styles, derived during lot preparation. Live
     // transforms/flags are overlaid for every wall query after preceding EP5.
     std::vector<odh::WallAppearanceInput> wall_inputs;
+    std::function<const odh::ArchitectureObjectState*()> architecture_objects;
     std::function<std::vector<odh::ObjectTradeGroup>()> groups;
     std::function<odh::Vm*(std::int16_t)> vm_for;
     std::function<odh::Playback*(std::int16_t)> playback_for;
@@ -171,7 +172,10 @@ inline odh::HouseholdPlacementBindings make_household_placement_bindings(std::sh
         return result;};
     const auto wall_diagnostic=std::make_shared<std::string>();
     bindings.wall_edges=[state,wall_diagnostic](std::int16_t level)->std::optional<std::vector<odh::ResolvedWallEdges>>{
-        auto edges=live_household_wall_edges(state->world,state->architecture,state->wall_inputs,level);
+        const auto* current=state->architecture_objects?state->architecture_objects():nullptr;
+        auto edges=current?
+            live_household_wall_edges(state->world,state->architecture,*current,level):
+            live_household_wall_edges(state->world,state->architecture,state->wall_inputs,level);
         *wall_diagnostic=edges.diagnostic;
         if(edges.status!=odh::WallEdgeBuildStatus::ready)return {};
         return std::move(edges.edges);

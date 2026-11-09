@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "object_trade_session_adapter.hpp"
+#include "lot_position_load.hpp"
 #include "odh/dynamic_object_groups.hpp"
 #include "session_refresh.hpp"
 #include "resource.hpp"
@@ -95,6 +96,19 @@ const ObjectTradeLoadedResource& ObjectTradeResourceLibrary::load(std::uint32_t 
             require(!objd,"duplicate trade OBJD");objd=chunk.payload;}});
         require(objd.has_value(),"trade selected OBJD is absent");
         result.definition_words=odh::read_object_definition_words(*objd);
+        // Optional capability from complete supported raw fields; an ordinary
+        // object does not acquire invented style from a truncated metadata tail.
+        const auto version=objd->le32(0);
+        if((version==136&&objd->size()>=94)||(version==138&&objd->size()>=164)){
+            const auto raw=odh::read_objd_wall_appearance(*objd);
+            if(raw.guid==guid&&raw.wall_style<256){
+                odh::WallAppearanceStyle style{raw.wall_style,0,{}};
+                if(raw.wall_style<=21)result.wall_style=style;
+                else if(raw.sprite_base){style.resource_guid=guid;
+                    for(unsigned n=0;n<6;++n)style.sprites[n]=static_cast<std::uint16_t>(*raw.sprite_base+n);
+                    result.wall_style=style;}
+            }
+        }
         if(result.definition_words.size()>63)result.code.lead_object=static_cast<std::uint16_t>(result.definition_words[63]);
         result.tuning.private_tables=read_saved_tuning_tables(view);
     });
@@ -248,6 +262,13 @@ struct PositionBinding {
     bool current() const{return ctx.source_still_matches&&ctx.source_still_matches();}
     const Entity* entity(ObjectPositionIdentity id) const {const auto* e=ctx.world->find(id.id);
         return current()&&e&&e->generation==id.generation&&!e->ui_ghost?e:nullptr;}
+    bool architectural(ObjectPositionIdentity id) const {
+        const auto* e=entity(id);const auto flags=word(*ctx.world,id.id,40);
+        if(!e||!e->definition||!flags||!(std::uint16_t(*flags)&0xc000U)||!ctx.architecture_objects||
+            !ctx.position_registry||!ctx.position_registry->complete)return false;
+        const auto* record=ctx.resources->find(e->definition->guid);
+        return record&&record->wall_style.has_value()&&current();
+    }
     std::optional<ObjectGroup> group(ObjectPositionIdentity id) const {
         if(!entity(id)||!ctx.group)return {};
         auto group=ctx.group(id);
@@ -363,6 +384,16 @@ SessionObjectPositionServices make_session_object_position_services(SessionObjec
     require(context.prepared->width==context.rooms->width&&context.prepared->height==context.rooms->height&&
         context.prepared->width==context.architecture->width&&context.prepared->height==context.architecture->height,
         "object placement geometry dimensions disagree");
+    if(context.architecture_objects){
+        auto& a=*context.architecture_objects;const auto cells=std::size_t(context.prepared->width)*context.prepared->height;
+        require(a.object_support.width==context.prepared->width&&a.object_support.height==context.prepared->height,
+            "placement AOBJ dimensions differ from prepared source");
+        require(!context.object_support||context.object_support==&a.object_support,"placement support is not same AOBJ owner");
+        require(!context.position_registry||(a.position_registry&&context.position_registry==&*a.position_registry),
+            "placement registry is not same AOBJ owner");
+        for(const auto& level:a.occupied_walls){require(level.size()==cells,"placement occupied wall extent mismatch");
+            for(const auto mask:level)require((mask&~15U)==0,"placement occupied wall mask invalid");}
+    }
     auto state=std::make_shared<PositionBinding>(std::move(context));
     SessionObjectPositionServices result;
     auto& valid=result.placement;auto& change=result.change;
@@ -403,7 +434,13 @@ SessionObjectPositionServices make_session_object_position_services(SessionObjec
         a.user_out_of_bounds=!p.buildable[at];a.wall_segments=p.levels[pos.level-1].walls[at].segments;
         const auto floor=prepared_precise_floor(p,pos.x,pos.y,pos.level);if(!floor)return {};a.precise_floor=*floor;
         const auto wall=word(*ctx.world,target.id,13),exclusive=word(*ctx.world,target.id,63);
-        if(!wall||!exclusive||((*exclusive&2)&&(*wall&15)))return {}; // Live OccupiedWalls is not in saved grids.
+        if(!wall||!exclusive)return {};
+        if(ctx.architecture_objects){const auto& owner=*ctx.architecture_objects;
+            const auto& occupied=owner.occupied_walls[std::size_t(pos.level-1)];
+            if(owner.object_support.width!=p.width||owner.object_support.height!=p.height||
+               occupied.size()!=std::size_t(p.width)*p.height||at>=occupied.size()||(occupied[at]&~15U))return {};
+            a.occupied_walls=occupied[at];
+        }else if((*exclusive&2)&&(*wall&15))return {}; // Actual legacy unknown, not an empty grid.
         const auto& raw=*ctx.architecture;if(!raw.altitude||raw.altitude->size()!=p.buildable.size())return {};
         const auto h=[&](auto xx,auto yy){return raw.altitude->at(std::size_t(yy)*raw.width+xx)[1];};
         a.sloped=h(x,y)!=h((x+1)%raw.width,y)||h(x,y)!=h((x+1)%raw.width,(y+1)%raw.height)||h(x,y)!=h(x,(y+1)%raw.height);
@@ -447,7 +484,8 @@ SessionObjectPositionServices make_session_object_position_services(SessionObjec
         const auto* def=state->ctx.resources->definitions().unique(e->definition->guid);const auto flags=word(*state->ctx.world,id.id,40),light=word(*state->ctx.world,id.id,51),category=word(*state->ctx.world,id.id,59);
         if(!def||!flags||!light||!category||!e->entry_points||e->entry_points->size()<=15)return {};
         if(e->kind!=EntityKind::object||def->definition.is_multitile||def->definition.master_id||e->definition->master_guid||
-           (static_cast<std::uint16_t>(*flags)&0xc000U)||*light||*category==8||e->entry_points->at(15).action)return false;
+           ((static_cast<std::uint16_t>(*flags)&0xc000U)&&!state->architectural(id))||*light||*category==8||
+           (e->entry_points->at(15).action&&!state->architectural(id)))return false;
         for(const auto& group:state->ctx.groups)for(const auto& member:group.members)if(member.id==id.id&&member.generation==id.generation)
             return group.complete&&group.members.size()==1;
         // A fresh constructor proves its own singleton; an unrecorded older
@@ -464,7 +502,8 @@ SessionObjectPositionServices make_session_object_position_services(SessionObjec
         const auto flags=word(*state->ctx.world,id.id,40),light=word(*state->ctx.world,id.id,51),category=word(*state->ctx.world,id.id,59);
         if(!def||!flags||!light||!category||!e->entry_points||e->entry_points->size()<=15)return {};
         if((def->definition.master_id&&def->definition.sub_index==-1)||
-           (static_cast<std::uint16_t>(*flags)&0xc000U)||*light||*category==8||e->entry_points->at(15).action)return false;
+           ((static_cast<std::uint16_t>(*flags)&0xc000U)&&!state->architectural(id))||*light||*category==8||
+           (e->entry_points->at(15).action&&!state->architectural(id)))return false;
         const auto admitted=state->ctx.admit_group_member(id);
         return state->entity(id)&&state->group(id)?admitted:std::nullopt;
     };
@@ -508,6 +547,21 @@ SessionObjectPositionServices make_session_object_position_services(SessionObjec
             if(main&1)adjacency|=4;if(main&2)adjacency|=2;if(main&4)adjacency|=8;if(main&8)adjacency|=1;
             if(!state->ctx.world->declare_object_word(id.id,5,static_cast<std::int16_t>(adjacency))||!state->execute(id,6,id.id,{0,0,0,0}).has_value())return false;}
         return (!used||!exclusive)&&state->current();};
+    if(state->ctx.architecture_objects){
+        LotPositionLoadContext walls;walls.world=state->ctx.world;walls.prepared=state->ctx.prepared;
+        const auto weak=std::weak_ptr<PositionBinding>(state);
+        walls.source_still_matches=[weak]{const auto s=weak.lock();return s&&s->current();};
+        walls.resolved_wall_style=[weak](auto id)->std::optional<WallAppearanceStyle>{
+            const auto s=weak.lock();const auto* e=s?s->entity(id):nullptr;if(!e||!e->definition)return {};
+            const auto* r=s->ctx.resources->find(e->definition->guid);return r?r->wall_style:std::nullopt;};
+        walls.execute_entry=[weak](auto id,std::uint16_t ep,std::int16_t stack,const std::array<std::int16_t,4>& args){
+            const auto s=weak.lock();return s&&s->execute(id,ep,stack,{args.begin(),args.end()}).has_value();};
+        const auto consumer=bind_lot_position_wall_consumers(std::move(walls),*state->ctx.architecture_objects);
+        change.wall_use=[state,consumer](auto id,bool set,bool exclusive){return state->current()&&consumer.wall_use(id,set,exclusive);};
+        change.architectural_wall_style_change=[state,consumer](auto id,bool set){
+            return state->current()&&consumer.architectural_wall_style_change(id,set)&&
+                (!state->ctx.wall_appearance_changed||state->ctx.wall_appearance_changed())&&state->current();};
+    }
     change.object_supported=[state](auto id,const auto& position,bool set){
         auto* support=state->ctx.object_support;
         if(!support||support->width!=state->ctx.prepared->width||support->height!=state->ctx.prepared->height)return false;
@@ -640,6 +694,7 @@ class CandidateRegistryGuard {
         std::optional<std::int16_t> heading,flags,architectural_flags;std::uint16_t portal_action;float radians;bool stat;
     };
     World& world_;ObjectPositionRegistrySnapshot& registry_;std::function<bool()> authority_;
+    const ArchitectureObjectState* architecture_=nullptr;
     std::map<std::int16_t,Pose> poses_;
     std::function<bool(std::int16_t,const Pose&,const Entity&)> owned_;
     std::set<std::int16_t> pending_footprints_;
@@ -662,9 +717,25 @@ class CandidateRegistryGuard {
         for(const auto& tile:registry_.tiles)if(std::any_of(tile.entities.begin(),tile.entities.end(),same))return true;
         return false;
     }
+    bool known_nonspatial_architectural_change(const Pose& before,const Entity& e)const{
+        // Init may establish its wall class before the first source Post. This
+        // is not permission to change a registered door/window's collections.
+        if(!authority_||!authority_()||!architecture_||!architecture_->position_registry||
+           &*architecture_->position_registry!=&registry_||before.position||before.attachment||
+           e.kind!=EntityKind::object||e.dead)return false;
+        std::string why;
+        if(!object_position_known_absent_oow(registry_,e,why))return false;
+        // A stale style/door owner is a real architectural contribution even
+        // when a broken source has omitted its ordinary registry collections.
+        for(const auto& face:architecture_->wall_appearance.faces)
+            if((face.owner==e.id&&face.generation==e.generation)||
+               (face.door_owner==e.id&&face.door_generation==e.generation))return false;
+        return true;
+    }
 public:
-    CandidateRegistryGuard(World& world,ObjectPositionRegistrySnapshot& registry,std::function<bool()> authority)
-        :world_(world),registry_(registry),authority_(std::move(authority)){
+    CandidateRegistryGuard(World& world,ObjectPositionRegistrySnapshot& registry,std::function<bool()> authority,
+            const ArchitectureObjectState* architecture)
+        :world_(world),registry_(registry),authority_(std::move(authority)),architecture_(architecture){
         for(std::int16_t id=0;;){const auto next=world_.next_entity(id);if(!next)break;id=*next;poses_.emplace(id,pose(*world_.find(id)));}
     }
     void observe(){
@@ -681,9 +752,10 @@ public:
                     before.heading!=word(world_,id,1)||before.radians!=e.radian_direction;
                 if(!identity||(moved&&(!owned_||!owned_(id,before,e))))changed=true;
                 const auto flags2=word(world_,id,40);
-                if(before.architectural_flags.has_value()!=flags2.has_value()||
-                   (flags2&&((std::uint16_t(*before.architectural_flags)^std::uint16_t(*flags2))&0xc000U))||
-                   before.portal_action!=(e.entry_points&&e.entry_points->size()>15?e.entry_points->at(15).action:0))changed=true;
+                if(before.architectural_flags.has_value()!=flags2.has_value())changed=true;
+                else if(flags2&&((std::uint16_t(*before.architectural_flags)^std::uint16_t(*flags2))&0xc000U)&&
+                    !(identity&&!moved&&known_nonspatial_architectural_change(before,e)))changed=true;
+                if(before.portal_action!=(e.entry_points&&e.entry_points->size()>15?e.entry_points->at(15).action:0))changed=true;
                 // ObjectData8 publishes before its synchronous UpdateFootprint
                 // callback. Keep its pending receipt separate from pose authority.
                 const auto flags=word(world_,id,8);
@@ -764,6 +836,7 @@ public:
 
 struct CandidateBinding {
     ObjectTradeCandidateContext context;
+    ArchitectureObjectState* architecture_objects=nullptr;
     const SessionBundle& source;
     std::vector<ObjectTradeGroup> groups;
     const PreparedArchitecture& prepared;const SavedArchitecture& architecture;const GeometricRoomMap& rooms;
@@ -883,7 +956,10 @@ struct CandidateBinding {
            !e->entry_points||e->entry_points->size()<=15)return {};
         const auto flags=word(context.world,id.id,40),light=word(context.world,id.id,51),category=word(context.world,id.id,59);
         if(!flags||!light||!category)return {};
-        return !(static_cast<std::uint16_t>(*flags)&0xc000U)&&!*light&&*category!=8&&!e->entry_points->at(15).action;
+        const bool walls=architecture_objects&&architecture_objects->position_registry&&
+            architecture_objects->position_registry->complete&&r->wall_style&&(std::uint16_t(*flags)&0xc000U);
+        return (!(static_cast<std::uint16_t>(*flags)&0xc000U)||walls)&&!*light&&*category!=8&&
+            (!e->entry_points->at(15).action||walls);
     }
     void groups_changed(){
         if(!owned_groups)return;std::set<std::pair<std::int16_t,std::uint64_t>> owned;
@@ -972,7 +1048,7 @@ ObjectTradeBindingFactory candidate_factory(ObjectTradeResourceLibrary& resource
         const PreparedArchitecture& prepared,const SavedArchitecture& architecture,const GeometricRoomMap& rooms,
         const ObjectTradeSessionHooks& hooks,const std::vector<ObjectTradeGroup>& groups,const std::vector<ThreadSeed>& seeds,
         std::int16_t selected,CodeOwner owner,std::uint32_t guid,std::function<bool()> authority,
-        ArchitectureObjectSupport* candidate_support,ObjectPositionRegistrySnapshot* candidate_registry){
+        ArchitectureObjectSupport* candidate_support,ObjectPositionRegistrySnapshot* candidate_registry,ArchitectureObjectState* candidate_objects){
     std::vector<ObjectGroup> source_physical;
     for(const auto& membership:groups){
         if(!membership.complete||membership.members.empty())continue;
@@ -987,7 +1063,7 @@ ObjectTradeBindingFactory candidate_factory(ObjectTradeResourceLibrary& resource
         }
         if(physical){require(exact_group_members(*physical,membership),"candidate physical manifest differs from source cohort");source_physical.push_back(std::move(*physical));}
     }
-    return [&,groups,seeds,source_physical,selected,owner,guid,authority,candidate_support,candidate_registry](World& world,RelationshipState& relationships,SessionHostState& host,RandomState& random,
+    return [&,groups,seeds,source_physical,selected,owner,guid,authority,candidate_support,candidate_registry,candidate_objects](World& world,RelationshipState& relationships,SessionHostState& host,RandomState& random,
             RuntimeGlobals* globals,const Ts1Clock* clock,const ObjectTradeResource& command_resource)->ObjectTradeRuntimeBinding{
         auto state=std::make_shared<CandidateBinding>(world,relationships,host,random,globals,clock,resources,source,
             prepared,architecture,rooms,hooks,groups,selected,owner,authority);
@@ -1019,21 +1095,22 @@ ObjectTradeBindingFactory candidate_factory(ObjectTradeResourceLibrary& resource
             if(!vm->restore_snapshot(seed.state,seed.programs.saved_routine_policy))throw FormatError(register_owner_restore_failure(seed));
             state->threads.emplace(seed.id,std::move(vm));
         }
+        state->architecture_objects=candidate_objects;
         ObjectTradeRuntimeBinding binding;binding.memory=state->memory;
         binding.native_group_construction=hooks.native_group_construction;
         binding.selected_saved_routine_policy=selected_policy;
         binding.selected_programs=std::move(selected_programs);
         binding.command_still_matches=[state]{return state->authority()&&(!state->registry_guard||state->registry_guard->complete());};
         binding.primitive_factory=[state](const VmMemory& memory){return state->primitive(memory);};
-        binding.capture_architecture_state=[state,candidate_support,candidate_registry](const WorldSnapshot& world){
+        binding.capture_architecture_state=[state,candidate_support,candidate_registry,candidate_objects](const WorldSnapshot& world){
             ObjectTradeArchitectureCapture captured;
             captured.object_support=state->source.architecture_object_support;
-            captured.object_state=state->source.architecture_object_state;
+            captured.object_state=candidate_objects?std::optional<ArchitectureObjectState>{*candidate_objects}:state->source.architecture_object_state;
             if(captured.object_state){
-                // Ordinary-object callbacks mutate this actual support/registry
-                // owner only. Wall appearances, room colors and deferred light
-                // receipts stay recorded; identity classifications are reconciled
-                // below from actual candidate fields, without post-load replay.
+                // Capture the SAME event-owned candidate AOBJ: wall use/style,
+                // support and registry. Unrelated colors/deferred light receipts
+                // stay recorded; visual identities are reconciled below without
+                // rerunning fresh-load position constructors.
                 if(candidate_support)captured.object_state->object_support=*candidate_support;
                 if(candidate_registry)captured.object_state->position_registry=*candidate_registry;
                 if(captured.object_state->lighting){
@@ -1075,7 +1152,7 @@ ObjectTradeBindingFactory candidate_factory(ObjectTradeResourceLibrary& resource
             require_coherent_candidate_registry(state->source,world,captured.object_state,state->rooms);
             return captured;
         };
-        const auto initialize_positions=[state,&resources,&prepared,&architecture,&rooms,candidate_support,candidate_registry,selected,guid]{
+        const auto initialize_positions=[state,&resources,&prepared,&architecture,&rooms,candidate_support,candidate_registry,candidate_objects,selected,guid]{
             if(state->positions_initialized)return;
             if(!state->active_group&&std::none_of(state->source.world.entities.begin(),state->source.world.entities.end(),[&](const auto& e){return e.id==selected;})){
                 const auto* e=state->context.world.find(selected);require(e&&e->definition&&e->definition->guid==guid,"new singleton lacks actual constructor identity");
@@ -1087,7 +1164,7 @@ ObjectTradeBindingFactory candidate_factory(ObjectTradeResourceLibrary& resource
                 }
             }
             SessionObjectPositionContext ctx;ctx.world=&state->context.world;ctx.resources=&resources;
-            ctx.object_support=candidate_support;
+            ctx.object_support=candidate_support;ctx.architecture_objects=candidate_objects;
             ctx.position_registry=candidate_registry;
             ctx.prepared=&prepared;ctx.architecture=&architecture;ctx.rooms=&rooms;ctx.groups=state->groups;
             ctx.thread_for=state->context.thread_for;const auto weak=std::weak_ptr<CandidateBinding>(state);
@@ -1123,7 +1200,7 @@ ObjectTradeBindingFactory candidate_factory(ObjectTradeResourceLibrary& resource
             ctx.native_group_next=[weak](auto id){const auto live=weak.lock();const auto d=live?live->dynamic_groups.lock():nullptr;return d?d->group_next(id):NativeObjectGroupLink{};};
             ctx.admit_group_member=[weak](auto id)->std::optional<bool>{const auto live=weak.lock();return live?live->admit_member(id):std::nullopt;};
             if(candidate_registry){
-                state->registry_guard=std::make_shared<CandidateRegistryGuard>(state->context.world,*candidate_registry,state->authority);
+                state->registry_guard=std::make_shared<CandidateRegistryGuard>(state->context.world,*candidate_registry,state->authority,candidate_objects);
                 const auto guard=state->registry_guard;
                 ctx.position_phase=[guard](auto id,const auto& desired,auto phase,auto direction,const auto& operation){
                     return guard->phase(id,{},0,phase,desired,direction,operation);
@@ -1262,6 +1339,8 @@ ObjectTradeBindingFactory candidate_factory(ObjectTradeResourceLibrary& resource
         binding.position_change.place_in_slot0=[state](auto a,auto b){return state->positions.change.place_in_slot0(a,b);};
         binding.position_change.restore_container=[state](auto a,auto b,auto slot){return state->positions.change.restore_container(a,b,slot);};
         binding.position_change.wall_use=[state](auto a,auto b,auto c){return state->positions.change.wall_use(a,b,c);};
+        binding.position_change.architectural_wall_style_change=[state](auto id,bool set){
+            return state->positions.change.architectural_wall_style_change&&state->positions.change.architectural_wall_style_change(id,set);};
         binding.position_change.object_supported=[state](auto a,const auto& position,bool set){
             return state->positions.change.object_supported&&state->positions.change.object_supported(a,position,set);
         };
@@ -1295,7 +1374,7 @@ ObjectTradeBindingFactory make_object_trade_candidate_factory(ObjectTradeResourc
     const SessionBundle& source,const PreparedArchitecture& prepared,const SavedArchitecture& architecture,
     const GeometricRoomMap& rooms,const ObjectTradeSessionHooks& hooks,const std::vector<ObjectTradeGroup>& groups,
     std::int16_t selected,CodeOwner owner,std::uint32_t guid,std::function<bool()> authority,
-    ArchitectureObjectSupport* support,ObjectPositionRegistrySnapshot* registry) {
+    ArchitectureObjectSupport* support,ObjectPositionRegistrySnapshot* registry,ArchitectureObjectState* objects) {
     std::vector<ThreadSeed> seeds;
     const auto add=[&](std::int16_t id,const VmSnapshot& vm){
         const auto e=std::find_if(source.world.entities.begin(),source.world.entities.end(),[&](const auto& row){return row.id==id;});
@@ -1306,7 +1385,7 @@ ObjectTradeBindingFactory make_object_trade_candidate_factory(ObjectTradeResourc
     for(const auto& thread:source.npc_avatars)add(thread.runtime.id,thread.runtime.vm);
     for(const auto& thread:source.object_threads)add(thread.id,thread.vm);
     return candidate_factory(resources,source,prepared,architecture,rooms,hooks,groups,seeds,selected,owner,guid,
-        std::move(authority),support,registry);
+        std::move(authority),support,registry,objects);
 }
 
 ObjectTradeSessionAdapter::ObjectTradeSessionAdapter(ObjectTradeResourceLibrary& resources,FamilySessionJournal& journal,
@@ -1362,7 +1441,7 @@ ObjectTradeSessionResult ObjectTradeSessionAdapter::execute(const ObjectTradeSes
         auto candidate_objects=source.architecture_object_state;
         auto* support=candidate_objects?&candidate_objects->object_support:candidate_support?&*candidate_support:nullptr;
         auto* registry=candidate_objects&&candidate_objects->position_registry?&*candidate_objects->position_registry:nullptr;
-        const auto factory=candidate_factory(resources_,source,prepared_,architecture_,rooms_,hooks_,groups,seeds,selected,owner,guid,authority,support,registry);
+        const auto factory=candidate_factory(resources_,source,prepared_,architecture_,rooms_,hooks_,groups,seeds,selected,owner,guid,authority,support,registry,candidate_objects?&*candidate_objects:nullptr);
         ObjectTradeTransactionResult prepared;
         if(command.kind==ObjectTradeSessionCommandKind::purchase)
             prepared=prepare_ts1_object_purchase(source,{selected,selected_record->catalog,command.position,purchase_ids},resource,factory);

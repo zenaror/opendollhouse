@@ -779,4 +779,21 @@ void constructor_capture_receipts(){
 }
 
 }
-int main(){try{constructor_capture_receipts();shared_native_rotation_invalidates_checks();shared_native_stages();native_rotation_requires_actual_owner();dynamic_split_invocation_authority();imported_group_position();physical_group_position();dynamic_group_support_footprint();retained_parent_source_pre();lifecycle_phase_boundaries();source_order();support_branch();existing_move_and_held_tree();clean_old_transfer_lifecycle();loaded_position_lifecycle();capability_and_effects();scalar_publication_hook();lifecycle_failure_diagnostics();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+void architectural_phase_order(){
+    for(const bool blocked:{false,true}){
+        Fixture f;f.blocked=blocked;f.word(1,40,std::int16_t(-32768));
+        f.services.admit_single_ordinary=[&](auto)->std::optional<bool>{return f.admitted;};
+        f.services.architectural_wall_style_change=[&](auto,bool set){f.events.push_back(set?"style-set":"style-clear");return true;};
+        require(f.world.set_position(1,{8,8,1,0}),"style Pre fixture begins at an actual existing source pose");
+        f.expected_room_change=false; // Both source and candidate resolve real fixture room3.
+        odh::ObjectPositionValid valid(f.world,f.valid_services);odh::ObjectPositionChange change(f.world,valid,f.services);
+        const auto result=change.apply_existing(f.request());
+        require(result.status==(blocked?odh::ObjectPositionChangeStatus::blocked:odh::ObjectPositionChangeStatus::success),"architectural source phase shares actual success/refusal lifecycle");
+        const auto at=[&](const char* name){return std::find(f.events.begin(),f.events.end(),name)-f.events.begin();};
+        require(at("style-clear")<at("wall-clear")&&at("style-set")<at("wall"),"source style clear/apply each precedes SetWallUse, including restoration after refusal");
+    }
+    Fixture absent;absent.word(1,40,std::int16_t(-32768));
+    absent.services.admit_single_ordinary=[](auto)->std::optional<bool>{return true;};
+    require(absent.run().status==odh::ObjectPositionChangeStatus::unsupported,"admission cannot invent missing architectural style consumer");
+}
+int main(){try{architectural_phase_order();constructor_capture_receipts();shared_native_rotation_invalidates_checks();shared_native_stages();native_rotation_requires_actual_owner();dynamic_split_invocation_authority();imported_group_position();physical_group_position();dynamic_group_support_footprint();retained_parent_source_pre();lifecycle_phase_boundaries();source_order();support_branch();existing_move_and_held_tree();clean_old_transfer_lifecycle();loaded_position_lifecycle();capability_and_effects();scalar_publication_hook();lifecycle_failure_diagnostics();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

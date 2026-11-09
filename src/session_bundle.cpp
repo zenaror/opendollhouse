@@ -3733,10 +3733,12 @@ void validate_architecture_object_links(const SessionBundle& bundle){
         return &*at;
     };
     for(const auto& face:state.wall_appearance.faces){
-        const auto* owner=live({face.owner,face.generation});
-        if(owner->kind!=EntityKind::object||!owner->definition||
-           (face.style.resource_guid&&owner->definition->guid!=face.style.resource_guid))
-            throw FormatError("architecture wall event resource identity differs from its object");
+        if(!is_canonical_cleared_wall_face(face)){
+            const auto* owner=live({face.owner,face.generation});
+            if(owner->kind!=EntityKind::object||!owner->definition||
+               (face.style.resource_guid&&owner->definition->guid!=face.style.resource_guid))
+                throw FormatError("architecture wall event resource identity differs from its object");
+        }
         if(face.door_owner)live({face.door_owner,face.door_generation});
     }
     if(state.position_registry){const auto& registry=*state.position_registry;

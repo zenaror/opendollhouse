@@ -752,6 +752,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<std::int16_t> headless_window_interaction;
     bool headless_window_dialog_ok=false,headless_window_dialog_ok_sent=false;
     bool headless_dialog_ok=false,headless_dialog_ok_sent=false;
+    std::size_t headless_info_dialog_limit=0;
+    std::vector<std::pair<std::uint64_t,odh::DialogState>> headless_info_dialog_answers;
     std::vector<odh::DialogResponse> headless_dialog_responses;
     std::size_t headless_dialog_response_index=0;
     std::optional<std::uint64_t> rendered_vm_dialog_ticket;
@@ -1075,6 +1077,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             headless_window_dialog_ok=true;
         else if(option=="--headless-dialog-ok"&&!headless_dialog_ok)
             headless_dialog_ok=true;
+        else if(option=="--headless-info-dialog-ok-limit"&&!headless_info_dialog_limit&&n+1<argc){
+            const auto limit=selector(argv[++n]);
+            if(limit==0||limit>32)throw odh::FormatError("informational dialog test input requires a limit from 1 to 32");
+            headless_info_dialog_limit=static_cast<std::size_t>(limit);
+        }
         else if(option=="--headless-dialog-response"&&n+2<argc){
             const auto code=selector(argv[++n]);const std::string text=argv[++n];
             if(code>2||text.size()>4096||headless_dialog_responses.size()>=32)
@@ -1275,6 +1282,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("--headless-dialog-ok requires a finite headless run with nonzero ticks and no other scripted dialog response");
     if(!headless_dialog_responses.empty()&&(!headless_main||!ticks_set||!ticks_limit||render_window||headless_window_dialog_ok||headless_dialog_ok))
         throw odh::FormatError("--headless-dialog-response requires a finite headless run and is mutually exclusive with other scripted dialog responses");
+    if(headless_info_dialog_limit&&(!headless_main||!ticks_set||!ticks_limit||render_window||headless_window_interaction||
+       headless_window_dialog_ok||headless_dialog_ok||!headless_dialog_responses.empty()))
+        throw odh::FormatError("informational dialog test input requires a finite headless run without other scripted dialog inputs");
     if(headless_window_stand_tick&&(!headless_window_interaction||*headless_window_stand_tick>=ticks_limit))
         throw odh::FormatError("--headless-window-stand-tick requires --headless-window-interaction and a tick below the limit");
     if(headless_window_go_here&&(!headless_window_interaction||!headless_window_stand_tick||
@@ -4296,6 +4306,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(member.id==id&&member.generation==entity->generation)return &group;
         return nullptr;
     };
+    std::function<bool(odh::ObjectPositionIdentity)> live_architectural_position_available;
     const auto admit_dynamic_group_member=[&](odh::ObjectPositionIdentity identity)->std::optional<bool>{
         const auto* e=world.find(identity.id);const auto* group=dynamic_group_for(identity.id);
         if(!e||e->generation!=identity.generation||!group||!e->definition||!e->entry_points||e->entry_points->size()<=15)return {};
@@ -4312,7 +4323,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }else master=group->multitile?e->definition->master_guid==std::optional<std::uint32_t>{group->definition_guid}:
             !e->definition->master_guid&&e->definition->guid==group->definition_guid;
         return e->kind==odh::EntityKind::object&&!e->ui_ghost&&candidate->definition.sub_index!=-1&&master&&
-            !(static_cast<std::uint16_t>(*flags)&0xc000U)&&!*light&&*category!=8&&!e->entry_points->at(15).action;
+            (!(static_cast<std::uint16_t>(*flags)&0xc000U)||
+                live_architectural_position_available&&live_architectural_position_available(identity))&&!*light&&*category!=8&&
+            (!e->entry_points->at(15).action||live_architectural_position_available&&live_architectural_position_available(identity));
     };
     std::unique_ptr<odh::DynamicObjectGroups> live_dynamic_groups;
     std::function<bool(odh::ObjectPositionIdentity,std::int16_t)> execute_dynamic_entry8;
@@ -8841,6 +8854,9 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("social SLOT verification actor identity is unavailable");
         const auto generation=actor->generation;
         const auto& architecture=render_lot->runtime_architecture_resource().architecture;
+        odh::WallEdgeBuildResult edges;
+        if(architecture_object_state)edges=odh_host::live_household_wall_edges(world,architecture,*architecture_object_state,target.level);
+        else{
         auto appearance=saved_wall_appearance(*restored_world,*definition_index,architecture,true);
         std::set<std::int16_t> known;
         for(auto& input:appearance.inputs){
@@ -8871,7 +8887,8 @@ struct PlacementCandidateProbe {
                 throw odh::FormatError("social SLOT live architectural inventory is incomplete");
         }
         const auto live_appearance=odh::derive_wall_appearance(architecture,appearance.inputs);
-        auto edges=odh::resolve_initial_wall_edges(architecture,live_appearance,target.level);
+        edges=odh::resolve_initial_wall_edges(architecture,live_appearance,target.level);
+        }
         if(edges.status!=odh::WallEdgeBuildStatus::ready)
             throw odh::FormatError("social SLOT wall edges are unresolved: "+edges.diagnostic);
         return [&,actor_id,generation,target,live_placement,edges=std::move(edges.edges)](odh::RoutePoint point){
@@ -9491,9 +9508,13 @@ struct PlacementCandidateProbe {
             a.user_out_of_bounds=!prepared.buildable[offset];a.wall_segments=prepared.levels[pos.level-1].walls[offset].segments;
             const auto floor=odh::prepared_precise_floor(prepared,pos.x,pos.y,pos.level);if(!floor)return {};a.precise_floor=*floor;
             const auto flags=word(id,13),exclusive=word(id,63);
-            if(!flags||!exclusive||((*exclusive&2)&&(*flags&15)))return {}; // OccupiedWalls is not serialized in SavedWallTile.
-            // Occupancy cannot influence this admitted wall test (no exclusive
-            // required segments); zero is an unused operand, not an empty-wall claim.
+            if(!flags||!exclusive)return {};
+            if(architecture_object_state){const auto& owner=*architecture_object_state;
+                const auto& occupied=owner.occupied_walls[std::size_t(pos.level-1)];
+                if(owner.object_support.width!=prepared.width||owner.object_support.height!=prepared.height||
+                   occupied.size()!=std::size_t(prepared.width)*prepared.height||offset>=occupied.size()||(occupied[offset]&~15U))return {};
+                a.occupied_walls=occupied[offset];
+            }else if((*exclusive&2)&&(*flags&15))return {};
             const auto& raw=render_lot->runtime_architecture_resource().architecture;
             if(raw.width!=prepared.width||raw.height!=prepared.height||!raw.altitude||raw.altitude->size()!=prepared.buildable.size())return {};
             const auto height=[&](auto xx,auto yy){return raw.altitude->at(static_cast<std::size_t>(yy)*raw.width+xx)[1];};
@@ -9558,6 +9579,9 @@ struct PlacementCandidateProbe {
             context.prepared=&*render_lot->prepared_architecture();context.architecture=&render_lot->render_architecture();
             context.rooms=&*render_lot->runtime_room_map();context.groups=live_physical_groups();
             context.object_support=current_object_support();context.position_registry=current_position_registry();
+            context.architecture_objects=architecture_object_state?&*architecture_object_state:nullptr;
+            context.wall_appearance_changed=[&]{if(!architecture_object_state)return false;
+                render_lot->set_runtime_wall_appearance(architecture_object_state->wall_appearance);return true;};
             context.thread_for=callee_vm_for;context.owner_for=[&](auto selected)->std::optional<odh::CodeOwner>{
                 const auto it=runtime_object_threads.find(selected);return it==runtime_object_threads.end()?std::nullopt:std::optional<odh::CodeOwner>{it->second->owner};};
             context.memory=memory;context.primitive_factory=[&](const odh::VmMemory&){return person_primitive;};context.source_still_matches=current;
@@ -9587,7 +9611,9 @@ struct PlacementCandidateProbe {
             const auto* group=dynamic_group_for(id);
             const bool direct_subpart=group&&!group->multitile&&group->members.size()==1&&group->base_id==id&&def->definition.sub_index!=-1;
             return ((def->definition.master_id==0&&!def->definition.is_multitile)||direct_subpart)&&!e->definition->master_guid&&
-                !e->entry_points->at(15).action&&!(static_cast<std::uint16_t>(*flags)&0xc000U)&&(*light==0||registered_light);
+                (!e->entry_points->at(15).action||live_architectural_position_available&&live_architectural_position_available(target))&&
+                (!(static_cast<std::uint16_t>(*flags)&0xc000U)||
+                    live_architectural_position_available&&live_architectural_position_available(target))&&(*light==0||registered_light);
         };
         change.admit_single_ordinary=[&](auto target){return admit_single_profile(target,false);};
         if(registry_positions)change.admit_single_constructed=[&](auto target)->std::optional<bool>{
@@ -9623,7 +9649,13 @@ struct PlacementCandidateProbe {
             // it cannot certify a light by recomputing spatial queries alone.
             return word(id,29)&&*word(id,29)==static_cast<std::int16_t>(static_cast<std::int32_t>(room)-1);
         };
+        change.architectural_wall_style_change=[&](auto target,bool set){
+            if(!registered_position_current()||!registry_positions->change.architectural_wall_style_change)return false;
+            return registry_positions->change.architectural_wall_style_change(target,set);
+        };
         change.wall_use=[&](auto target,bool set,bool exclusive){
+            if(architecture_object_state)return registered_position_current()&&registry_positions->change.wall_use&&
+                registry_positions->change.wall_use(target,set,exclusive);
             if(!current()||target.id!=id||!set)return false;const auto flags=word(id,13),direction=word(id,1);
             const auto* e=world.find(id);if(!flags||!direction||!e->position||!e->entry_points||e->entry_points->size()<=6)return false;
             const auto& prepared=*render_lot->prepared_architecture();const auto& pos=*e->position;
@@ -13700,6 +13732,13 @@ struct PlacementCandidateProbe {
         placement_resources=std::make_unique<odh_host::ObjectTradeResourceLibrary>(session_context->game_root,
             *definition_index,globals->archive,globals->entry);
         placement_resources->preload(world.snapshot());
+        live_architectural_position_available=[&](odh::ObjectPositionIdentity identity){
+            if(!architecture_object_state||!placement_resources)return false;
+            auto* registry=current_position_registry();const auto* e=world.find(identity.id);
+            if(!registry||!registry->complete||!e||e->generation!=identity.generation||!e->definition||e->ui_ghost)return false;
+            const auto flags=e->object_words.find(40);if(flags==e->object_words.end()||!(std::uint16_t(flags->second)&0xc000U))return false;
+            const auto* resource=placement_resources->find(e->definition->guid);return resource&&resource->wall_style.has_value();
+        };
         // VMSnap/VMRoutingFrame may synchronously create the ordinary GOTO
         // resource to request passage. Admit its immutable metadata now, not
         // inside an unrelated running primitive. No World body/Init is run.
@@ -13712,6 +13751,7 @@ struct PlacementCandidateProbe {
             world,*render_lot->prepared_architecture(),render_lot->runtime_architecture_resource().architecture,
             *render_lot->runtime_room_map(),snap_avatar_position,*placement_slots,random});
         state->slot_diagnostics=record_slot_diagnostics;
+        state->architecture_objects=[&]{return architecture_object_state?&*architecture_object_state:nullptr;};
         state->wall_inputs=saved_wall_appearance(*restored_world,*definition_index,
             render_lot->runtime_architecture_resource().architecture,true).inputs;
         state->groups=live_physical_groups;state->vm_for=callee_vm_for;
@@ -13720,6 +13760,9 @@ struct PlacementCandidateProbe {
             odh_host::SessionObjectPositionContext context;
             context.world=&world;context.resources=placement_resources.get();
             context.object_support=current_object_support();
+            context.architecture_objects=architecture_object_state?&*architecture_object_state:nullptr;
+            context.wall_appearance_changed=[&]{if(!architecture_object_state)return false;
+                render_lot->set_runtime_wall_appearance(architecture_object_state->wall_appearance);return true;};
             context.position_registry=current_position_registry();
             context.prepared=&*render_lot->prepared_architecture();
             context.architecture=&render_lot->runtime_architecture_resource().architecture;
@@ -14236,7 +14279,9 @@ struct PlacementCandidateProbe {
                 if(!candidate||!flags||!light||!category)return {};
                 return e->kind==odh::EntityKind::object&&!e->ui_ghost&&candidate->definition.master_id!=0&&
                     candidate->definition.sub_index!=-1&&e->definition->master_guid==std::optional<std::uint32_t>{group->definition_guid}&&
-                    !(static_cast<std::uint16_t>(*flags)&0xc000U)&&!*light&&*category!=8&&!e->entry_points->at(15).action;
+                    (!(static_cast<std::uint16_t>(*flags)&0xc000U)||
+                live_architectural_position_available&&live_architectural_position_available(identity))&&!*light&&*category!=8&&
+            (!e->entry_points->at(15).action||live_architectural_position_available&&live_architectural_position_available(identity));
             };
             // Same-room dynamic support-slot footprint retirement is a distinct
             // source service, not ordinary position unregister. Leave it
@@ -22354,6 +22399,16 @@ struct PlacementCandidateProbe {
             if(!answer_vm_dialog(0,"headless_scripted_confirm"))break;
             headless_dialog_ok_sent=true;
         }
+        // Explicit bounded test input: acknowledge only an informational OK
+        // notice. Questions, selectors, text inputs and the ordinary UI retain
+        // their pending dialog. Use the same ticket-checked response as a click.
+        if(pending_vm_dialog&&headless_info_dialog_answers.size()<headless_info_dialog_limit&&
+           pending_vm_dialog->instruction.operands[5]==0&&pending_vm_dialog->prompt.choices.empty()&&
+           pending_vm_dialog->input.empty()){
+            const auto answered=*pending_vm_dialog;
+            if(!answer_vm_dialog(0,"headless_informational_confirm",std::string{}))break;
+            headless_info_dialog_answers.emplace_back(ticks,answered);
+        }
         if(pending_vm_dialog&&!render_window&&!headless_window_interaction)break;
 #ifdef ODH_HAVE_X11
         if(render_window_host||headless_window_interaction||headless_window_neighborhood_tick){
@@ -24518,6 +24573,17 @@ struct PlacementCandidateProbe {
         <<json_bytes(measured_house_property_value?"resolved":"unresolved")<<",\"property_value\":";
     if(measured_house_property_value)std::cout<<*measured_house_property_value;else std::cout<<"null";
     std::cout<<",\"diagnostic\":"<<json_bytes(house_property_diagnostic)<<",\"tick\":"<<ticks<<'}';
+    std::cout<<",\"headless_info_dialog_ok_limit\":"<<headless_info_dialog_limit
+        <<",\"headless_info_dialog_answers\":[";
+    for(std::size_t n=0;n<headless_info_dialog_answers.size();++n){
+        if(n)std::cout<<',';
+        const auto& item=headless_info_dialog_answers[n];const auto& state=item.second;
+        std::cout<<"{\"tick\":"<<item.first<<",\"ticket\":"<<state.ticket
+            <<",\"caller\":"<<state.source.context.caller<<",\"routine\":"<<state.source.key.id
+            <<",\"pc\":"<<state.source.pc<<",\"type\":0,\"response\":0,\"title\":"<<json_utf8(state.prompt.title)
+            <<",\"message\":"<<json_utf8(state.prompt.message)<<'}';
+    }
+    std::cout<<']';
     std::cout<<",\"headless_dialog_responses_requested\":"<<headless_dialog_responses.size()
         <<",\"headless_dialog_responses_consumed\":"<<headless_dialog_response_index
         <<",\"blocking_dialog_responses\":"<<vm_dialog_response_count

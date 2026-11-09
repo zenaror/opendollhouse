@@ -54,6 +54,9 @@ struct ObjectPositionChangeServices {
     // Invoked by source-load replay before SetWallUse, only for FlagField2
     // architectural bits. Ordinary placement still uses its existing admission.
     std::function<bool(ObjectPositionIdentity)> architectural_wall_style;
+    // Source ordinary Pre(false) / Post(true), before SetWallUse. Absent
+    // capability cannot authorize architectural admission by itself.
+    std::function<bool(ObjectPositionIdentity,bool set)> architectural_wall_style_change;
     std::function<bool(ObjectPositionIdentity,const EntityPosition&,bool set)> object_supported;
     // These execute actual EP8/EP9 with entity registers and source contexts;
     // false means unavailable/incomplete, never an authored BHAV false result.

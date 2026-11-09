@@ -6,6 +6,8 @@
 #include <map>
 #include <tuple>
 #include <memory>
+#include <algorithm>
+#include <set>
 
 namespace odh_host {
 namespace {
@@ -61,16 +63,41 @@ struct Replay {
         }else if(e->kind!=EntityKind::avatar)return false;
         return ctx.admit_loaded_entity(id);
     }
-    bool architectural(ObjectPositionIdentity id){
-        if(state.wall_appearance.applications.size()>=4096)return false;
+    std::optional<std::vector<WallAppearanceApplication>> current_applications(std::int16_t target)const{
+        const auto& prior=state.wall_appearance.applications;
+        // Old checkpoints may contain repeated diagnostic events. Validate the
+        // original bounded records before compacting; this cannot repair an
+        // invalid checkpoint or relax its allocation/mask limits.
+        if(prior.size()>4096)return {};
+        for(const auto& item:prior)
+            if(item.id<=0||(item.applied_sides&~9U)||(item.ignored_sides&~6U))return {};
+        std::vector<WallAppearanceApplication> result;result.reserve(std::min<std::size_t>(4096,prior.size()+1));
+        std::set<std::int16_t> seen;
+        for(auto it=prior.rbegin();it!=prior.rend();++it){
+            if(it->id!=target&&ctx.world->find(it->id)&&seen.insert(it->id).second)
+                result.push_back(*it);
+        }
+        if(result.size()>=4096)return {};
+        std::reverse(result.begin(),result.end());return result;
+    }
+    bool architectural(ObjectPositionIdentity id,bool set=true){
+        if(!current()||!current_applications(id.id))return false;
         const auto* e=entity(id);const auto index=tile(id);const auto flags=word(id,40),placement=word(id,13);
-        if(!e||!index||!flags||!placement||!e->definition||!ctx.resolved_wall_style)return false;
-        const auto style=ctx.resolved_wall_style(id);if(!style||!entity(id)||state.wall_appearance.applications.size()>=4096)return false;
-        // A provider callback can enter the same live lifecycle. Refresh from
-        // its published authority rather than overwrite it with a stale cache.
-        read_faces();
+        if(!e||!index||!flags||!placement||!e->definition||(set&&!ctx.resolved_wall_style))return false;
+        const auto original_position=*e->position;const auto original_guid=e->definition->guid;
+        const auto style=set?ctx.resolved_wall_style(id):std::optional<WallAppearanceStyle>{WallAppearanceStyle{0,0,{}}};
+        // The provider may reenter a live lifecycle. Never dereference the old
+        // Entity pointer or combine its tile with a new/OOW/reused body.
+        e=entity(id);
+        if(!style||!e||!e->definition||e->definition->guid!=original_guid||!e->position||
+           !(*e->position==original_position)||word(id,40)!=flags||word(id,13)!=placement||
+           tile(id)!=index)return false;
         // Preserve the provider/resource identity of sprite-backed styles.
         if(style->resource_guid&&style->resource_guid!=e->definition->guid)return false;
+        // A provider callback can enter the same live lifecycle. Refresh both
+        // published faces and diagnostics, never overwrite its nested writes.
+        auto applications=current_applications(id.id);if(!applications)return false;
+        read_faces();
         const auto pos=*e->position;const bool door=(std::uint16_t(*flags)&0x8000U)!=0;
         const unsigned quarter=(pos.direction&1U)?0U:unsigned(pos.direction)/2U;
         WallAppearanceApplication application{id.id};
@@ -81,14 +108,16 @@ struct Replay {
             const auto x=std::uint32_t(pos.x/16),y=std::uint32_t(pos.y/16);const auto level=std::uint8_t(pos.level);
             const FaceKey key{level,y,x,segment};const auto previous=faces.find(key);const bool exists=previous!=faces.end();
             const bool door_state=door?style->raw_style!=0:exists&&previous->second.door;
-            const auto door_owner=door?id.id:exists?previous->second.door_owner:std::int16_t{0};
-            const auto door_generation=door?id.generation:exists?previous->second.door_generation:std::uint64_t{0};
+            const auto door_owner=door?(set?id.id:std::int16_t{0}):exists?previous->second.door_owner:std::int16_t{0};
+            const auto door_generation=door?(set?id.generation:std::uint64_t{0}):exists?previous->second.door_generation:std::uint64_t{0};
             const auto present=(ctx.prepared->levels[std::size_t(level-1)].walls[*index].segments&segment)!=0;
-            WallAppearanceFace face{x,y,level,segment,*style,id.id,door_owner,id.generation,door_generation,door_state,present};
+            WallAppearanceFace face{x,y,level,segment,*style,set?id.id:std::int16_t{0},door_owner,
+                set?id.generation:std::uint64_t{0},door_generation,door_state,present};
             if(exists){++state.wall_appearance.overwritten_faces;previous->second=face;}else faces.emplace(key,face);
             application.applied_sides|=std::uint8_t(1U<<side);
         }
-        state.wall_appearance.applications.push_back(application);publish_faces();return current();
+        applications->push_back(application);
+        state.wall_appearance.applications=std::move(*applications);publish_faces();return current();
     }
     bool wall_use(ObjectPositionIdentity id,bool set,bool exclusive){
         const auto* e=entity(id);const auto index=tile(id);const auto placement=word(id,13);
@@ -98,7 +127,7 @@ struct Replay {
         const auto rotate=[](std::uint32_t value,unsigned by){return ((value<<(4U-by))&15U)|((value&15U)>>by);};
         // Source caches placement bits BEFORE actual EP6 can change them.
         const auto used=std::uint8_t(rotate(std::uint16_t(*placement)%15U,rotation));
-        if(e->entry_points->at(6).action){
+        if(!e->dead&&e->entry_points->at(6).action){
             if(!ctx.execute_entry)return false;
             const auto segments=ctx.prepared->levels[std::size_t(pos.level-1)].walls[*index].segments;
             const auto main=rotate(segments,(4U-rotation)%4U);std::uint16_t adjacency=0;
@@ -124,9 +153,14 @@ LotPositionWallConsumers bind_lot_position_wall_consumers(LotPositionLoadContext
     for(std::size_t level=0;level<2;++level)
         need(prepared.levels[level].walls.size()==cells&&state.occupied_walls[level].size()==cells,
             "live wall consumer grid extent mismatch");
+    need(state.object_support.width==prepared.width&&state.object_support.height==prepared.height,
+        "live wall consumer state owner extent mismatch");
+    for(const auto& level:state.occupied_walls)for(const auto mask:level)
+        need((mask&~15U)==0,"live wall consumer occupancy contains invalid segments");
     auto replay=std::make_shared<Replay>(std::move(context),state);
     return {[replay](auto id,bool set,bool exclusive){return replay->wall_use(id,set,exclusive);},
-        [replay](auto id){return replay->architectural(id);}};
+        [replay](auto id){return replay->architectural(id);},
+        [replay](auto id,bool set){return replay->architectural(id,set);}};
 }
 LotPositionLoadResult replay_imported_lot_positions(LotPositionLoadContext context){
     LotPositionLoadResult result;

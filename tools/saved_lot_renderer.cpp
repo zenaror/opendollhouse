@@ -377,7 +377,7 @@ bool SavedLotRenderer::runtime_wall_appearance_current() const {
     // An added architectural object also needs its actual source event, rather
     // than retaining a known-old empty appearance. Normal Sim motion is ignored.
     for(std::int16_t cursor=0;;){const auto next=saved_.world->next_entity(cursor);if(!next)break;cursor=*next;
-        const auto* e=saved_.world->find(cursor);if(!e||e->kind!=odh::EntityKind::object)continue;
+        const auto* e=saved_.world->find(cursor);if(!e||e->kind!=odh::EntityKind::object||e->dead||!e->position||e->attachment)continue;
         const auto flags=e->object_words.find(40);
         if(flags!=e->object_words.end()&&(std::uint16_t(flags->second)&0xc000U)&&!runtime_wall_owners_.count(cursor))return false;
     }
@@ -407,18 +407,22 @@ void SavedLotRenderer::set_runtime_wall_appearance(std::optional<odh::WallAppear
         if(face.x>=geometry.width||face.y>=geometry.height||face.level<1||face.level>2||
            (face.segment!=odh::wall_top_left&&face.segment!=odh::wall_top_right)||(previous&&key<=*previous))
             throw odh::FormatError("runtime wall appearance face extent or ordering invalid");
-        capture(face.owner,face.generation);
-        if(face.style.resource_guid&&face.style.resource_guid!=owners.at(face.owner).guid)
-            throw odh::FormatError("runtime wall appearance resource differs from source owner");
+        if(!odh::is_canonical_cleared_wall_face(face)){
+            capture(face.owner,face.generation);
+            if(face.style.resource_guid&&face.style.resource_guid!=owners.at(face.owner).guid)
+                throw odh::FormatError("runtime wall appearance resource differs from source owner");
+        }
         if(face.door_owner)capture(face.door_owner,face.door_generation);
         else if(face.door||face.door_generation)throw odh::FormatError("runtime door appearance lacks event owner");
         previous=key;
     }
-    for(const auto& application:appearance->applications)capture(application.id,{});
+    // Applications are bounded event history, not live ownership. A legitimate
+    // delete leaves a canonical clear; its former numeric ID must not make the
+    // next renderer require a retired object or authenticate a reused number.
     std::size_t count=0;
     for(std::int16_t cursor=0;;){const auto next=saved_.world->next_entity(cursor);if(!next)break;cursor=*next;
         if(++count>4096)throw odh::FormatError("runtime wall appearance World exceeds entity budget");
-        const auto* e=saved_.world->find(cursor);if(!e||e->kind!=odh::EntityKind::object)continue;
+        const auto* e=saved_.world->find(cursor);if(!e||e->kind!=odh::EntityKind::object||e->dead||!e->position||e->attachment)continue;
         const auto flags=e->object_words.find(40);
         if(flags!=e->object_words.end()&&(std::uint16_t(flags->second)&0xc000U))capture(cursor,{});
     }

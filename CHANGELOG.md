@@ -31,6 +31,9 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Preparação de portas e janelas para compra, mantendo as verificações dos
+  objetos já instalados.
+- Posicionamento e preservação de objetos de parede ao salvar e reabrir.
 - Abertura de perfis antigos que ainda não possuem uma pasta de personagens
   criados pelo jogador.
 - Leitura das famílias da instalação original Complete Collection, evitando
