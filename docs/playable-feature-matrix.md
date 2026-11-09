@@ -12,7 +12,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Incêndios | Parcial | Fogo criado e reação de pânico observados, com salvamento e continuação após reabrir. Completar propagação, morte de Sims, objetos queimados e cinzas, combate manual, bombeiros por telefone ou alarme e apresentação. |
 | Roubo, polícia e alarme contra roubo | Em aberto | Chegada do ladrão, detecção, roubo, chamada manual ou por alarme, intervenção policial e consequências sobre os bens ao continuar a partida. |
 | Bebês | Em aberto | Nascimento ou adoção conforme as regras originais, cuidados, crescimento para criança, intervenções e continuidade da família após salvar. |
-| Morte e tentativa de recuperar o Sim | Em aberto | Morte, chegada da Morte, lápide ou urna, interação para tentar recuperar o personagem e preservação do resultado e da identidade. |
+| Morte e tentativa de recuperar o Sim | Parcial | Morte de uma moradora, urna e continuação após salvar/reabrir observadas em um percurso. Validar as demais causas, a chegada e interação com a Morte, a tentativa de recuperar o Sim e os demais resultados persistentes. |
 | Relações e serviços | Parcial | Perfis sociais e serviços além dos casos já observados. |
 | Carreiras e habilidades | Parcial | Seleção, horários, pagamento, promoção e progressão mais amplos. |
 | Famílias e vizinhança | Parcial | Criação com adulto e criança, cancelamentos, renomeação e exclusão elegível observados pelas telas, com reabertura dos dados e encerramento normal do aplicativo. O diagnóstico ainda aponta memória não liberada ao encerrar. Completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. |
