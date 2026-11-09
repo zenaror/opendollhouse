@@ -297,4 +297,45 @@ class UnexpectedWindowTermination(unittest.TestCase):
         self.assertFalse(driver.finalize_outcome(report));self.assertFalse(report['shutdown_gate_passed'])
         self.assertFalse(report['family_lot']['accepted'])
 
+class ExactSchemaMigration(Gates):
+    def migration(self):
+        old={**self.sections,b'SIMS':(1,b'\x01\x00legacy-clock')}
+        new={**self.changed,b'SIMS':(1,b'\x02\x00native-clock'),b'NPER':(1,b'exact-native-personal')}
+        proof=dict(schema='family-reopen-migration-v1',verified=True,added_sections=['NPER'],
+                   changed_sections=['RELA','SIMS'],nper_sha256=driver.hashlib.sha256(new[b'NPER'][1]).hexdigest(),
+                   before_sha256='before',after_sha256='after',fresh_catalog_reconstruction=True,reference_sha256='')
+        return old,new,proof
+    def test_exact_cpp_receipt_and_rela_rules_are_both_required(self):
+        old,new,proof=self.migration()
+        driver.bind_migration_proof(proof,'before','after')
+        result=driver.compare_reopen(old,new,self.old,self.new,[5,6],migration=proof)
+        self.assertEqual(result['changed_sections'],['RELA','SIMS'])
+        with self.assertRaises(ValueError):driver.compare_reopen(old,new,self.old,self.new,[5,6])
+        wrong=copy.deepcopy(self.new);wrong['relationship_sources'][-1]['pairs']=1
+        with self.assertRaises(ValueError):driver.compare_reopen(old,new,self.old,wrong,[5,6],migration=proof)
+    def test_no_section_flags_schema_or_personal_receipt_loophole(self):
+        old,new,proof=self.migration()
+        variants=[({**new,b'NPER':(0,b'exact-native-personal')},proof),
+                  ({**new,b'NPER':(1,b'extra-record')},proof),
+                  ({**new,b'WRLD':(1,b'changed')},proof),
+                  ({**new,b'SIMS':(0,b'\x02\x00native-clock')},proof),
+                  ({**new,b'SIMS':(1,b'\x03\x00native-clock')},proof),
+                  (new,{**proof,'verified':False}),(new,{**proof,'changed_sections':['SIMS']}),
+                  (new,{**proof,'added_sections':['NPER','OTHER']})]
+        for actual,receipt in variants:
+            with self.subTest(actual=actual,receipt=receipt),self.assertRaises(ValueError):
+                driver.compare_reopen(old,actual,self.old,self.new,[5,6],migration=receipt)
+    def test_proof_bound_to_actual_archives_and_fresh_then_cached_chain(self):
+        _,_,proof=self.migration()
+        for before,after,reference in [('wrong','after',None),('before','wrong',None),('before','after','arbitrary')]:
+            with self.subTest(before=before,after=after,reference=reference),self.assertRaises(ValueError):
+                driver.bind_migration_proof(proof,before,after,reference)
+        cached={**proof,'fresh_catalog_reconstruction':False,'reference_sha256':'first-proven'}
+        driver.bind_migration_proof(cached,'before','after','first-proven')
+        with self.assertRaises(ValueError):driver.bind_migration_proof(cached,'before','after')
+    def test_archive_allows_only_canonical_sims_upgrade_not_relations(self):
+        old,new,proof=self.migration();new[b'RELA']=old[b'RELA'];proof['changed_sections']=['SIMS']
+        driver.compare_reopen(old,new,self.old,self.old,[5,6],True,proof)
+        with self.assertRaises(ValueError):driver.compare_reopen(old,new,self.old,self.new,[5,6],True,proof)
+
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -9,13 +9,13 @@ implementado ou observado em parte; não significa sistema completo.
 | Scripts, objetos e interações | Parcial | Ciclo completo de criação, execução, cancelamento e retirada em mais perfis. |
 | Movimento e animação | Parcial | Escadas, obstáculos, personagens e ações nos percursos integrados. |
 | Necessidades e autonomia | Parcial | Dia residencial completo, sem ações falhando silenciosamente. |
-| Incêndios | Em aberto | A ação de fogo solicitada pelo fogão ainda encerra a execução. Completar criação e propagação, relógio, morte de Sims, objetos queimados e cinzas, combate manual, bombeiros por telefone ou alarme e persistência. |
+| Incêndios | Parcial | Fogo criado e reação de pânico observados, com salvamento e continuação após reabrir. Completar propagação, morte de Sims, objetos queimados e cinzas, combate manual, bombeiros por telefone ou alarme e apresentação. |
 | Roubo, polícia e alarme contra roubo | Em aberto | Chegada do ladrão, detecção, roubo, chamada manual ou por alarme, intervenção policial e consequências sobre os bens ao continuar a partida. |
 | Bebês | Em aberto | Nascimento ou adoção conforme as regras originais, cuidados, crescimento para criança, intervenções e continuidade da família após salvar. |
 | Morte e tentativa de recuperar o Sim | Em aberto | Morte, chegada da Morte, lápide ou urna, interação para tentar recuperar o personagem e preservação do resultado e da identidade. |
 | Relações e serviços | Parcial | Perfis sociais e serviços além dos casos já observados. |
 | Carreiras e habilidades | Parcial | Seleção, horários, pagamento, promoção e progressão mais amplos. |
-| Famílias e vizinhança | Parcial | Completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. Criação de rascunho, renomeação, exclusão elegível e cancelamentos já observados em percurso delimitado. |
+| Famílias e vizinhança | Parcial | Criação com adulto e criança, cancelamentos, renomeação e exclusão elegível observados pelas telas, com reabertura dos dados após as alterações. Corrigir a falha de memória no encerramento; completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. |
 | Compra e venda | Parcial | Grupos de várias peças, posicionamento, cancelamento e orçamento. |
 | Construção | Parcial | Ferramentas completas, pisos superiores, custo e atualização da circulação. |
 | Salvamento | Parcial | Estados ativos e transições de família/lote/destino do conjunto completo. |

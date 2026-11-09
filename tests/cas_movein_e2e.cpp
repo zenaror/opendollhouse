@@ -6,6 +6,10 @@
 #include "linux_private_family.hpp"
 #include "linux_simitone_cas_member.hpp"
 #include "resource.hpp"
+#include "native_wardrobe_resources.hpp"
+#include "linux_user_config.hpp"
+#include "odh/relationship_snapshot_codec.hpp"
+#include "odh/session_archive.hpp"
 #include "odh/family.hpp"
 #include "odh/family_overlay.hpp"
 #include "odh/lot.hpp"
@@ -25,6 +29,7 @@
 
 #include <algorithm>
 #include <set>
+#include <tuple>
 #include <filesystem>
 #include <cstdlib>
 #include <charconv>
@@ -819,9 +824,11 @@ int inspect_management(const fs::path& game,bool layout){
     std::cout<<"}\n";return 0;
 }
 
+#include "family_reopen_migration.hpp"
 }
 
 int main(int argc, char** argv) try {
+    if(argc>=5&&std::string(argv[1])=="--inspect-family-reopen-migration")return family_reopen::inspect(argc,argv);
     if(argc>=2&&std::string(argv[1])=="--inspect-travel-return"){
         if(argc!=4)throw std::runtime_error("usage: --inspect-travel-return ARCHIVE NEIGHBORHOOD_IFF");
         return inspect_travel_return(argv[2],argv[3]);

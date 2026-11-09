@@ -34,8 +34,9 @@ Ainda não há uma versão completa jogável publicada.
 - Carregamento de roupas, rostos e outros recursos de aparência, evitando buscas
   repetidas nos arquivos do jogo.
 - Ordem das entradas rápidas de teclado e mouse na janela nativa, preservando
-  exclusões de texto e cliques sucessivos; o percurso completo de gestão de
-  famílias pelas telas ainda precisa de validação.
+  exclusões de texto e cliques sucessivos. Criação, renomeação e exclusão de
+  famílias foram observadas pelas telas, com reabertura dos dados; o
+  encerramento da interface ainda apresenta uma falha de memória.
 - Continuação doméstica no cenário de incêndio validado: criação do fogo e
   reação de pânico prosseguiram, com salvamento e reabertura da partida. A
   aparência, as consequências, o combate ao fogo e o atendimento dos bombeiros

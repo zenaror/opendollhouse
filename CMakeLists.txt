@@ -745,7 +745,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # with CTest: it requires an external installed game and is invoked explicitly.
   add_executable(odh-cas-movein-e2e tests/cas_movein_e2e.cpp)
   target_include_directories(odh-cas-movein-e2e PRIVATE tools)
-  target_link_libraries(odh-cas-movein-e2e PRIVATE odh_ts1_travel_return odh_session_bundle odh_linux_family_session_journal odh_linux_travel_session odh_linux_simitone_cas_member
+  target_link_libraries(odh-cas-movein-e2e PRIVATE odh_saved_appearance odh_ts1_travel_return odh_session_bundle odh_linux_family_session_journal odh_linux_travel_session odh_linux_simitone_cas_member
     odh_session_entry odh_lot_locations odh_family odh_family_overlay odh_formats odh_community_lot_store)
   if(TARGET odh_neighborhood_screen)
     target_link_libraries(odh-cas-movein-e2e PRIVATE odh_neighborhood_screen odh_lot_context)

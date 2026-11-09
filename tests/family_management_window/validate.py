@@ -199,10 +199,23 @@ def stable_family(before, after, family):
     return new
 
 
-def compare_reopen(before_sections, after_sections, before, after, admitted_nids, deleted=False):
-    need(set(before_sections) == set(after_sections), 'reopen section set changed')
+def compare_reopen(before_sections, after_sections, before, after, admitted_nids, deleted=False, migration=None):
+    if migration is None:
+        need(set(before_sections) == set(after_sections), 'reopen section set changed')
+    else:
+        need(migration.get('schema')=='family-reopen-migration-v1' and migration.get('verified') is True,
+             'missing exact native migration verification')
+        need(set(after_sections)==set(before_sections)|{b'NPER'} and b'NPER' not in before_sections,
+             'migration added/removed sections outside NPER')
+        need(after_sections[b'NPER'][0]==1 and migration.get('added_sections')==['NPER'], 'migration NPER flags/schema mismatch')
+        need(migration.get('nper_sha256')==hashlib.sha256(after_sections[b'NPER'][1]).hexdigest(), 'migration personal receipt hash differs')
+        need(before_sections[b'SIMS'][0]==after_sections[b'SIMS'][0]==1, 'migration SIMS flags differ')
+        need(before_sections[b'SIMS'][1][:2]==b'\x01\x00' and after_sections[b'SIMS'][1][:2]==b'\x02\x00', 'migration SIMS versions differ')
     changed = [name for name in before_sections if before_sections[name] != after_sections[name]]
-    need(set(changed) <= {b'RELA'}, 'reopen changed sections outside relationship admission: '+repr(changed))
+    allowed={b'RELA'} if migration is None else {b'RELA',b'SIMS'}
+    need(set(changed) <= allowed, 'reopen changed sections outside exact typed admission: '+repr(changed))
+    if migration is not None:
+        need(migration.get('changed_sections')==[name.decode('ascii') for name in changed], 'migration changed-section receipt differs')
     key = lambda row: (row['matrix'], row['id'], row['generation'])
     old = {key(row): row for row in before['relationship_sources']}
     new = {key(row): row for row in after['relationship_sources']}
@@ -213,8 +226,23 @@ def compare_reopen(before_sections, after_sections, before, after, admitted_nids
     need(set(extra) == expected, 'reopen did not admit exactly the newly authenticated neighbor sources')
     need(all(row['pairs'] == 0 for row in extra.values()), 'zero-tick admission invented relationship values')
     if deleted:
-        need(not changed, 'after deletion the original checkpoint must reopen byte-identically')
+        need(set(changed)<=({b'SIMS'} if migration else set()), 'after deletion changed data beyond exact schema migration')
     return dict(changed_sections=[x.decode('ascii') for x in changed], new_empty_neighbor_sources=sorted(admitted_nids) if not deleted else [])
+
+
+
+def bind_migration_proof(proof, before_sha, after_sha, reference_sha=None):
+    need(proof.get('schema')=='family-reopen-migration-v1' and proof.get('verified') is True,
+         'native migration proof absent')
+    need(proof.get('before_sha256')==before_sha and proof.get('after_sha256')==after_sha,
+         'native migration proof archive hashes differ')
+    if reference_sha is None:
+        need(proof.get('fresh_catalog_reconstruction') is True and proof.get('reference_sha256')=='',
+             'first migration lacks fresh shared-provider expectation')
+    else:
+        need(proof.get('fresh_catalog_reconstruction') is False and proof.get('reference_sha256')==reference_sha,
+             'cached migration is not chained to the freshly proven archive')
+    return proof
 
 
 def child_preview_ready(before_preview,before_button,preview,button,stable):
@@ -611,7 +639,10 @@ def main():
         window=None
         save()
 
+    migration_reference=None
+
     def reopen_probe(label, admitted_nids, deleted=False):
+        nonlocal migration_reference
         need(process is None, 'probe requires stopped management window')
         before_files=inventory(profile)
         probe_root=args.output/(label+'-probe')
@@ -625,13 +656,47 @@ def main():
         record=smoke.run('reopen',copied_checkpoint,0,[],[],expected_base=baseline_session['tick'],
                          expected_source_hash=args.checkpoint_sha256,automatic_dialog_ok=False,report_validator=valid,
                          profile_source=profile,expected_profile_hashes=before_files)
-        need(record['ok'], 'cold reopen failed: '+repr(record['errors']))
-        after=inspect('--inspect-session',record['save'])
-        comparison=compare_reopen(baseline_sections,sections(Path(record['save'])),baseline_session,after,admitted_nids,deleted)
-        if deleted:
-            need(record['save_sha256'] == args.checkpoint_sha256, 'final cold input changed after auxiliary archive')
-        report['probes'].append(dict(stage=label,process=record,comparison=comparison))
-        need(inventory(profile) == before_files, 'probe modified its management source profile')
+        observation=dict(stage=label,process=record,comparison_passed=False)
+        report['probes'].append(observation);save() # Preserve evidence even if typed validation rejects it.
+        try:
+            need(record['ok'], 'cold reopen failed: '+repr(record['errors']))
+            after=inspect('--inspect-session',record['save'])
+            after_sections=sections(Path(record['save']))
+            proof=None
+            if b'NPER' not in baseline_sections and b'NPER' in after_sections:
+                probe_env=env.copy()
+                for key,child in (('XDG_CONFIG_HOME','config'),('XDG_DATA_HOME','data'),('XDG_STATE_HOME','state'),('XDG_CACHE_HOME','cache')):
+                    probe_env[key]=str(Path(record['xdg_profile'])/child)
+                options=['--inspect-family-reopen-migration',args.game_root,copied_checkpoint,record['save']]
+                if migration_reference:
+                    need(sha(migration_reference['save'])==migration_reference['sha256'], 'proven migration reference changed')
+                    options += ['--personal-reference',migration_reference['save'],migration_reference['sha256']]
+                options += list(map(str,[] if deleted else admitted_nids))
+                proof=inspect(*options,environment=probe_env)
+                bind_migration_proof(proof,args.checkpoint_sha256,record['save_sha256'],
+                                     migration_reference['sha256'] if migration_reference else None)
+                observation['migration']=proof;save()
+            comparison=compare_reopen(baseline_sections,after_sections,baseline_session,after,admitted_nids,deleted,proof)
+            if deleted and proof is None:
+                need(record['save_sha256'] == args.checkpoint_sha256, 'final cold input changed after auxiliary archive')
+            observation.update(comparison=comparison,comparison_passed=True);save()
+            if proof is not None and migration_reference is None:
+                # One modern-schema fixed point, not a second 79-FAR expectation per case.
+                migrated_profile=Path(record['xdg_profile']);migrated_files=inventory(migrated_profile)
+                stable=smoke.run('schema-fixed-point',Path(record['save']),0,[],[],expected_base=baseline_session['tick'],
+                    expected_source_hash=record['save_sha256'],automatic_dialog_ok=False,report_validator=valid,
+                    profile_source=migrated_profile,expected_profile_hashes=migrated_files)
+                observation['schema_fixed_point']=stable;save()
+                need(stable['ok'], 'modern schema fixed point failed: '+repr(stable['errors']))
+                need(stable['save_sha256']==record['save_sha256'] and Path(stable['save']).read_bytes()==Path(record['save']).read_bytes(),
+                     'modern schema is not byte-stable on zero-tick cold roundtrip')
+                need(sections(Path(stable['save']))==after_sections,'modern schema section/flag fixed point changed')
+                need(inventory(migrated_profile)==migrated_files,'fixed-point probe changed its source profile')
+                migration_reference=dict(save=record['save'],sha256=record['save_sha256'],proof=proof)
+                report['migration_reference']=migration_reference;save()
+            need(inventory(profile) == before_files, 'probe modified its management source profile')
+        except Exception as exc:
+            observation['comparison_passed']=False;observation['error']=str(exc);save();raise
         save()
 
     def selected_picker_row(label, expected):
