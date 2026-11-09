@@ -118,6 +118,35 @@ int main(int argc,char** argv) {
         auto bad=request;bad.body_strings.push_back({1,"duplicate"});rejects(input,bad,"duplicate replacement index");
         bad=request;bad.name=std::string("bad\0name",8);rejects(input,bad,"embedded NUL");
         bad=request;bad.guid=0x7FD96B54;rejects(input,bad,"template GUID reuse");
+        for(const auto species_guid:{0x4a70df92U,0x7bea0977U}){
+            auto pieces=parse(input);std::vector<std::uint8_t> pet(input.begin(),input.begin()+64);
+            for(auto& piece:pieces){
+                if(piece.type=="OBJD"){piece.id=130;patch32le(piece.payload,28,species_guid);patch16le(piece.payload,38,204);}
+                if(piece.type=="STR#")piece.id=204;
+                chunk(pet,piece.type,piece.id,piece.flags,piece.label,piece.payload);
+            }
+            auto selected=request;selected.source=odh::TemplatePersonSource{species_guid,130,204};
+            const auto cloned=parse(odh::clone_template_person(pet,selected));
+            const auto words=definition_words(find(cloned,"OBJD",130));
+            need(static_cast<std::uint32_t>(static_cast<std::uint16_t>(words[14]))+(static_cast<std::uint32_t>(static_cast<std::uint16_t>(words[15]))<<16)==selected.guid&&words[19]==204&&words[41]==2000,"explicit species template preserves its authenticated descriptor while publishing new GUID/catalog");
+            need(find(cloned,"ZZZZ",0xBEEF).payload==find(pieces,"ZZZZ",0xBEEF).payload,"species clone preserves unknown authored chunks");
+            auto mismatched=selected;mismatched.source->body_strings_id=200;rejects(pet,mismatched,"species BodyStringID mismatch");
+            mismatched=selected;mismatched.source->guid^=1;rejects(pet,mismatched,"species source GUID mismatch");
+        }
+        {
+            auto pieces=parse(input);std::vector<std::uint8_t> source27(input.begin(),input.begin()+64);
+            std::vector<std::string> fields(27);for(std::size_t i=0;i<fields.size();++i)fields[i]="preserved"+std::to_string(i);
+            for(auto& piece:pieces){if(piece.type=="OBJD")patch16le(piece.payload,38,200);if(piece.type=="STR#")piece.payload=strings(fields);chunk(source27,piece.type,piece.id,piece.flags,piece.label,piece.payload);}
+            auto extended=request;extended.source=odh::TemplatePersonSource{0x7fd96b54U,128,200};extended.body_strings.clear();
+            for(std::uint16_t i=27;i<35;++i)extended.body_strings.push_back({i,"wardrobe"+std::to_string(i)});
+            const auto parsed=parse(odh::clone_template_person(source27,extended));const auto& bytes=find(parsed,"STR#",200).payload;
+            std::string raw(bytes.begin(),bytes.end());std::istringstream stream(raw,std::ios::binary);const auto expanded=odh::read_strings(odh::View(stream,raw.size()));
+            need(expanded.entries.size()==35&&expanded.remaining_bytes==35,"actual human template27 grows exactly to35 with per-entry padding");
+            for(std::size_t i=0;i<27;++i)need(expanded.entries[i].value==fields[i]&&expanded.entries[i].language==1&&expanded.entries[i].comment.empty(),"bounded suffix expansion preserves every earlier source field");
+            for(std::size_t i=27;i<35;++i)need(expanded.entries[i].value=="wardrobe"+std::to_string(i),"new source wardrobe suffix is explicitly written");
+            auto invalid=extended;invalid.body_strings.push_back({35,"outside"});rejects(source27,invalid,"bounded wardrobe suffix rejects index35");
+            invalid=extended;invalid.source.reset();rejects(source27,invalid,"legacy template caller cannot acquire suffix extension implicitly");
+        }
         if(argc>1) {
             const std::filesystem::path path(argv[1]);std::ifstream far(path,std::ios::binary);
             if(!far)throw std::runtime_error("cannot open supplied Objects.far");

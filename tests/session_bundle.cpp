@@ -1,4 +1,7 @@
 #include "odh/session_bundle.hpp"
+#include "odh/session_entry.hpp"
+#include "odh/family_overlay.hpp"
+#include "odh/neighbor_context.hpp"
 #include "odh/seated_session_continuation.hpp"
 #include <algorithm>
 #include <cmath>
@@ -1568,6 +1571,140 @@ odh::SessionBundle npc_avatar_fixture(bool reuse_original=false) {
         vm.snapshot().status,false,false,false});
     return bundle;
 }
+void character_family_execution_cases() {
+    // Behavior matrix: actual Generic dispatch -> changed owners -> complete
+    // archive -> cold selected entry. The independent NPC Sleep Thread remains
+    // NPCA, including when its source GUID is appended to the selected FAMI.
+    for(const unsigned operation:{4u,33u,6u,104u}) {
+        auto bundle=npc_avatar_fixture();
+        odh::World world;require(world.restore_snapshot(bundle.world),"family mutation source World");
+        odh::Nbrs raw{0,73,{},0};raw.entries.resize(42,{0,{}});
+        std::vector<odh::DefinitionCandidate> definitions;
+        std::vector<std::uint32_t> subset;
+        std::map<std::int16_t,odh::NativePersonalIdentity> identities;
+        for(const auto& m:bundle.household_roster){
+            std::vector<std::int16_t> words(88);words[61]=21;
+            raw.entries[m.neighbor_id-1]={1,odh::make_simitone_character_neighbor(m.neighbor_id,m.guid,words)};
+            identities.emplace(m.neighbor_id,odh::NativePersonalIdentity{m.neighbor_id,m.guid,m.object_definition_id,m.character_asset,m.character_fingerprint});
+            subset.push_back(m.guid);
+            const auto slash=m.character_asset.find_last_of('/');
+            definitions.push_back({m.character_asset.substr(0,slash),m.character_asset.substr(slash+1),m.object_definition_id,
+                {138,m.guid,2,0,0,false,32,0}});
+            require(world.replace_person_data(m.id,std::vector<std::int16_t>(88))&&world.set_person_data(m.id,31,m.neighbor_id)&&world.set_person_data(m.id,61,21),"real resident family identity words");
+        }
+        const auto& npc=bundle.npc_avatars.front().origin;
+        raw.entries[39]={1,odh::make_simitone_character_neighbor(40,npc.guid,std::vector<std::int16_t>(88))};
+        identities.emplace(40,odh::NativePersonalIdentity{40,npc.guid,npc.object_definition_id,
+            odh::native_personal_resource_key(npc.source,npc.asset),npc.character_fingerprint});
+        std::array<std::uint8_t,32> neighborhood{};neighborhood.fill(0x91);
+        odh::Family home{};home.version=9;home.family_number=bundle.host.family_number;home.house_number=7;
+        home.budget=1234;home.unknown=24;home.member_guids=subset;
+        odh::Family foreign=home;foreign.house_number=0;foreign.family_number=999;foreign.member_guids.clear();
+        std::vector<odh::FamilyEntry> families{{21,home},{22,foreign}};
+        const auto home_identity=odh::family_overlay_identity(families.front());
+        odh::Ts1CharacterFamilySnapshot shared;shared.neighborhood_identity=neighborhood;
+        odh::Ts1CharacterFamilyState state(shared,families,{{21,home_identity},{22,odh::family_overlay_identity(families.back())}});
+        odh::NativePersonalState personal(raw,neighborhood);odh::NeighborContext neighbors(raw);neighbors.bind_personal_state(&personal);
+        odh::Ts1FamilyConsumers consumers;
+        consumers.neighbor_family=[&](auto id){const auto value=neighbors.person_data(id,61);return value?std::optional<std::int16_t>{value->value}:std::nullopt;};
+        consumers.set_neighbor_family=[&](auto id,auto family,bool clear,auto&){personal.set_family(identities.at(id),family,clear);return true;};
+        consumers.set_runtime_family=[&](auto nid,auto family,bool clear,auto&){
+            const auto id=static_cast<std::int16_t>(nid==40?3:nid-40);
+            return world.set_person_data(id,61,family)&&(!clear||world.set_person_data(id,67,0));
+        };
+        consumers.publish_family=[&](const auto& family,bool,auto&){for(auto& row:families)if(row.chunk_id==family.chunk_id)row=family;return true;};
+        consumers.append_runtime_subset=[&](auto family,auto guid,auto&){if(family==21)odh::admit_ts1_runtime_subset_member(subset,guid);return true;};
+        consumers.refresh_person_types=[&](auto&){odh::refresh_ts1_family_person_types(world,state.family(21)->family.member_guids,true);return true;};
+        consumers.family_changed=[](auto,auto&){return true;};consumers.verify_family=[](auto&){return true;};
+        const auto invoke=[&](unsigned mode,std::int16_t nid){
+            const auto handler=odh::ts1_family_primitive({&state,&neighbors,[]{return std::optional<std::uint16_t>{21};},consumers});
+            odh::Vm vm({{odh::routine_key(4096),odh::Bhav{0x8002,{{1,254,255,{static_cast<std::uint8_t>(mode),0,0,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}},world.vm_memory(),{},handler);
+            require(vm.start(odh::routine_key(4096),{1,1,nid})==odh::VmStatus::running,"family source dispatch begins");
+            vm.temps()[0]=22;
+            require(vm.run(16)==odh::VmStatus::returned_true,"family source dispatch completes actual mutation");
+        };
+        if(operation==6){invoke(6,41);invoke(6,42);}else invoke(operation==104?4:operation,operation==104?40:41);
+        bundle.world=world.snapshot();bundle.personal_state=personal.snapshot();
+        bundle.character_family=odh::SessionCharacterFamily{state.snapshot(),subset};
+        bundle.family_lease=odh::SessionFamilyLease{neighborhood,home_identity,1,21};
+        const auto before_threads=bundle.runtime_entities.size();const auto before_npc=odh::encode_vm_snapshot(bundle.npc_avatars.front().runtime.vm);
+        const auto bytes=odh::encode_session_bundle(bundle);
+        const auto cold=odh::decode_session_bundle(bytes,bundle.resources);
+        const odh::LotLocations locations{{odh::LotLocation{7,0,0}},0};
+        // The identity-only entry is deliberately available for empty FAMI.
+        const auto current=odh::resolve_session_entry(1,7,"House07.iff",locations,
+            odh::FamilyContext(families),neighbors,odh::DefinitionIndex(definitions),true);
+        const auto execution=odh::resolve_session_execution_entry(current,cold,neighbors,odh::DefinitionIndex(definitions));
+        require(execution.members.size()==2&&cold.runtime_entities.size()==before_threads&&cold.npc_avatars.size()==1&&
+            odh::encode_vm_snapshot(cold.npc_avatars.front().runtime.vm)==before_npc,
+            "cold execution retains both HHRD Threads and exact NPCA origin/Thread");
+        require(cold.character_family->runtime_subset.size()==(operation==104?3u:2u),"same family does not duplicate execution subset; NPC joins without HHRD promotion");
+        if(operation==6)require(state.family(21)&&state.family(21)->family.member_guids.empty(),"last member removal leaves FAMI provider and both live Threads");
+        if(operation==33)require(state.family(22)->family.member_guids==std::vector<std::uint32_t>{bundle.host.resident_guid},"Generic33 uses actual Temp0 foreign destination");
+        auto bad=cold;bad.household_roster.front().neighbor_id=40;
+        rejects([&]{(void)odh::resolve_session_execution_entry(current,bad,neighbors,odh::DefinitionIndex(definitions));},"cold rejects a swapped NID even with CFAM");
+        bad=cold;bad.character_family->runtime_subset.push_back(0xdeadbeef);
+        rejects([&]{(void)odh::encode_session_bundle(bad);},"CFAM cannot invent a Thread without HHRD or NPCA");
+        bad=cold;bad.character_family.reset();
+        auto legacy_current=current;
+        for(const auto guid:state.family(21)->family.member_guids){
+            const auto nid=neighbors.id_for_guid(guid);require(bool(nid),"current FAMI retains exact neighbor");
+            legacy_current.members.push_back({guid,*nid,{},{},128});
+        }
+        if(operation==4)require(odh::resolve_session_execution_entry(legacy_current,bad,neighbors,odh::DefinitionIndex(definitions)).members.size()==2,
+            "legacy unchanged member identities still resolve after same-family reordering");
+        else rejects([&]{(void)odh::resolve_session_execution_entry(legacy_current,bad,neighbors,odh::DefinitionIndex(definitions));},"legacy profile cannot silently acquire changed-family execution");
+        std::cout<<"PASS character-family save/cold operation "<<operation<<'\n';
+    }
+}
+
+void created_character_continuation_cases() {
+    auto materialized=npc_avatar_fixture();
+    auto& origin=materialized.npc_avatars.front().origin;
+    origin.source="PlayerData/Characters/User1001.iff";origin.asset.clear();
+    auto& owner=materialized.npc_avatars.front().runtime.resource_owners.front();
+    owner.source=origin.source;owner.asset.clear();
+    odh::SessionFamilyLease lease;lease.neighborhood_identity.fill(0x12);lease.family_identity.fill(0x34);
+    lease.occupancy_epoch=1;lease.family_chunk_id=materialized.host.family_chunk_id;materialized.family_lease=lease;
+    odh::Ts1CreatedCharacter created;
+    created.identity={origin.neighbor_id,origin.guid,origin.object_definition_id,origin.source,origin.character_fingerprint};
+    created.seed=odh::make_original_character_neighbor(origin.neighbor_id,origin.guid,"User1001.iff");
+    odh::SessionCharacterFamily state;state.shared.neighborhood_identity=lease.neighborhood_identity;
+    state.shared.revision=2;state.shared.characters={created};
+    odh::Ts1FamilyRoster row;row.family_chunk_id=lease.family_chunk_id;row.source_identity=lease.family_identity;row.revision=2;
+    for(const auto& member:materialized.household_roster)row.members.push_back(member.guid);
+    row.members.push_back(created.identity.guid);state.shared.rosters={row};state.runtime_subset=row.members;
+    materialized.character_family=state;
+    auto pending=materialized;pending.npc_avatars.clear();
+    // Keep World-owned bank accounting coherent when deriving this synthetic
+    // preconstructor fixture; removing a vector entry leaves word_count stale.
+    odh::World pending_world;
+    require(pending_world.restore_snapshot(materialized.world)&&pending_world.remove(origin.id),
+        "derive pending fixture through the actual World owner");
+    pending.world=pending_world.snapshot();
+    pending.scheduler.entities.erase(std::remove_if(pending.scheduler.entities.begin(),pending.scheduler.entities.end(),[&](const auto& e){return e.id==origin.id;}),pending.scheduler.entities.end());
+    const auto stopped=odh::encode_vm_snapshot(pending.runtime_entities.front().vm);
+    const auto wire=odh::encode_session_bundle(pending);const auto cold=odh::decode_session_bundle(wire);
+    require(cold.npc_avatars.empty()&&cold.world.entities.size()==2&&
+        odh::encode_vm_snapshot(cold.runtime_entities.front().vm)==stopped&&
+        !cold.character_family->shared.characters.front().seed.person_data,
+        "owned pending identity preserves source continuation without a fabricated body or person bank");
+    const auto constructed=odh::decode_session_bundle(odh::encode_session_bundle(materialized));
+    require(constructed.npc_avatars.size()==1&&constructed.runtime_entities.size()==2&&
+        constructed.npc_avatars.front().origin.source==created.identity.character_asset,
+        "materialized owned identity keeps exact NPC origin instead of entering HHRD");
+    auto bad=pending;bad.character_family->shared.characters.clear();
+    rejects([&]{(void)odh::encode_session_bundle(bad);},"pending identity requires exact creation receipt");
+    bad=pending;bad.character_family->shared.rosters.front().members.pop_back();
+    rejects([&]{(void)odh::encode_session_bundle(bad);},"pending identity requires current FAMI membership");
+    bad=materialized;bad.character_family->shared.characters.front().identity.character_fingerprint[0]^=1;
+    rejects([&]{(void)odh::encode_session_bundle(bad);},"materialized receipt cannot change exact NPC character hash");
+    // A valid World with the body present must fail the CFAM absence rule,
+    // not the lower-level World snapshot accounting guard.
+    bad=pending;bad.world=materialized.world;
+    rejects([&]{(void)odh::encode_session_bundle(bad);},"a live body cannot use the preconstructor absence exception");
+}
+
 void npc_avatar_cases() {
     const auto bundle=npc_avatar_fixture();const auto bytes=odh::encode_session_bundle(bundle);
     const auto decoded=odh::decode_session_bundle(bytes);
@@ -3205,6 +3342,8 @@ void blocking_dialog_archive_cases() {
 }
 
 int main() {
+    character_family_execution_cases();
+    created_character_continuation_cases();
     {
         auto bundle=fixture();
         const auto legacy=odh::encode_session_bundle(bundle);
@@ -3283,6 +3422,19 @@ int main() {
             restored_managed.family_lease->family_identity==lease.family_identity&&
             restored_managed.family_lease->neighborhood_identity==lease.neighborhood_identity&&
             odh::encode_session_bundle(restored_managed)==encoded,"managed family lease round-trip");
+        odh::SessionCharacterFamily family_state;family_state.shared.neighborhood_identity=lease.neighborhood_identity;
+        family_state.runtime_subset={managed.host.resident_guid};managed.character_family=family_state;
+        const auto with_family=odh::encode_session_bundle(managed);
+        const auto cold_family=odh::decode_session_bundle(with_family);
+        require(cold_family.character_family&&cold_family.character_family->runtime_subset==family_state.runtime_subset&&
+            odh::encode_session_bundle(cold_family)==with_family,"CFAM preserves current family runtime subset independently of original HHRD");
+        auto wrong_family=managed;wrong_family.character_family->shared.neighborhood_identity[0]^=1;
+        rejects([&]{odh::encode_session_bundle(wrong_family);},"CFAM cannot rebind managed neighborhood provenance");
+        wrong_family=managed;wrong_family.character_family->runtime_subset={0};
+        rejects([&]{odh::encode_session_bundle(wrong_family);},"CFAM runtime subset zero GUID is rejected");
+        auto missing_family=odh::decode_session_archive(with_family);
+        for(auto& section:missing_family.sections)if(section.id==std::array<char,4>{{'C','F','A','M'}})section.required=false;
+        rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(missing_family));},"CFAM is a required state carrier, never ignorable optional metadata");
         auto bad=managed;bad.family_lease->occupancy_epoch=0;
         rejects([&]{(void)odh::encode_session_bundle(bad);},"zero occupancy epoch rejected");
         bad=managed;bad.family_lease->family_identity.fill(0);

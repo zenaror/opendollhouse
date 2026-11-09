@@ -15,7 +15,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Morte e tentativa de recuperar o Sim | Em aberto | Morte, chegada da Morte, lápide ou urna, interação para tentar recuperar o personagem e preservação do resultado e da identidade. |
 | Relações e serviços | Parcial | Perfis sociais e serviços além dos casos já observados. |
 | Carreiras e habilidades | Parcial | Seleção, horários, pagamento, promoção e progressão mais amplos. |
-| Famílias e vizinhança | Parcial | Criação com adulto e criança, cancelamentos, renomeação e exclusão elegível observados pelas telas, com reabertura dos dados após as alterações. Corrigir a falha de memória no encerramento; completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. |
+| Famílias e vizinhança | Parcial | Criação com adulto e criança, cancelamentos, renomeação e exclusão elegível observados pelas telas, com reabertura dos dados e encerramento normal do aplicativo. O diagnóstico ainda aponta memória não liberada ao encerrar. Completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. |
 | Compra e venda | Parcial | Grupos de várias peças, posicionamento, cancelamento e orçamento. |
 | Construção | Parcial | Ferramentas completas, pisos superiores, custo e atualização da circulação. |
 | Salvamento | Parcial | Estados ativos e transições de família/lote/destino do conjunto completo. |

@@ -46,6 +46,7 @@ CreatedLinuxPrivateFamily create_linux_private_family(
     const std::string& family_name_utf8,
     const std::vector<LinuxPrivateFamilyMemberDraft>& members,
     std::int32_t initial_budget = 20000,
-    CharacterGuidSource guid_source = {});
+    CharacterGuidSource guid_source = {},
+    const std::function<bool(std::uint32_t)>& guid_available = {});
 
 } // namespace odh_host

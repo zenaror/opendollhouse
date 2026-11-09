@@ -14,7 +14,8 @@ void validate_original_family_departure_personal(const SessionBundle& envelope,
  const auto& trip=*source.travel;const auto& pending=*trip.pending;
  if(pending.original->source_temps[2]!=1||trip.neighborhood_identity!=immutable.neighborhood_identity())
   throw FormatError("vacation family departure lacks original family1/source identity");
- const auto bound=(source.personal_state&&source.personal_state->catalog)?immutable.with_catalog(*source.personal_state->catalog):immutable;
+ const auto owned=source.character_family?immutable.with_created_characters(source.character_family->shared):immutable;
+ const auto bound=(source.personal_state&&source.personal_state->catalog)?owned.with_catalog(*source.personal_state->catalog):owned;
  NativePersonalState validated(bound.neighbors(),bound.neighborhood_identity(),{},bound.catalog());
  if(source.personal_state)validated.restore(*source.personal_state);
  for(const auto& departing:pending.departure_members){const auto& id=departing.member;
@@ -96,13 +97,19 @@ std::optional<std::int16_t> Ts1TravelPersonInheritanceSource::inherited_value(
  return index<record.person_data->size()?(*record.person_data)[index]:std::int16_t{0};
 }
 namespace {
-const SessionHouseholdMember& member(const SessionBundle& bundle,const Ts1TravelMember& identity){
- const auto found=std::find_if(bundle.household_roster.begin(),bundle.household_roster.end(),[&](const auto& m){return m.guid==identity.guid&&m.neighbor_id==identity.neighbor_id&&m.object_definition_id==identity.definition_chunk_id&&m.character_asset==identity.character_asset&&m.character_fingerprint==identity.character_fingerprint;});
- if(found==bundle.household_roster.end())throw FormatError("travel return member resource identity changed");return *found;
-}
-const Entity& avatar(const SessionBundle& bundle,const SessionHouseholdMember& identity){
- const auto found=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),[&](const auto& e){return e.id==identity.id&&e.generation==identity.generation;});
- if(found==bundle.world.entities.end()||found->dead||found->kind!=EntityKind::avatar||!found->definition||found->definition->guid!=identity.guid||found->person_data.size()<=61||found->person_data[31]!=identity.neighbor_id||static_cast<std::uint16_t>(found->person_data[61])!=bundle.host.family_chunk_id)throw FormatError("travel return avatar no longer matches live family resource identity");return *found;
+const Entity& return_avatar(const SessionBundle& bundle,const Ts1TravelMember& identity){
+ WorldEntityReference ref{};std::size_t carriers=0;
+ for(const auto& m:bundle.household_roster)if(m.guid==identity.guid&&m.neighbor_id==identity.neighbor_id&&
+    m.object_definition_id==identity.definition_chunk_id&&m.character_asset==identity.character_asset&&m.character_fingerprint==identity.character_fingerprint){ref={m.id,m.generation};++carriers;}
+ for(const auto& n:bundle.npc_avatars){const auto& o=n.origin;
+  if(o.guid==identity.guid&&o.neighbor_id==identity.neighbor_id&&o.object_definition_id==identity.definition_chunk_id&&
+     native_personal_resource_key(o.source,o.asset)==identity.character_asset&&o.character_fingerprint==identity.character_fingerprint){ref={o.id,o.generation};++carriers;}}
+ if(carriers!=1)throw FormatError("travel return lacks exactly one original HOME HHRD or NPCA resource carrier");
+ const auto found=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),[&](const auto& e){return e.id==ref.id&&e.generation==ref.generation;});
+ if(found==bundle.world.entities.end()||found->dead||found->ui_ghost||found->kind!=EntityKind::avatar||!found->definition||
+    found->definition->guid!=identity.guid||found->person_data.size()<=31||found->person_data[31]!=identity.neighbor_id)
+    throw FormatError("travel return body no longer matches its exact original HOME resource identity");
+ return *found;
 }
 bool proven_lot_local_word(std::size_t index){
  // F pin VMAvatar.cs612 tick counter;659-708 local object-ID head seek;
@@ -161,13 +168,15 @@ PreparedTs1TravelReturn prepare_ts1_travel_return(const SessionSourceCheckpoint&
  const auto& active=checkpoint.active();
  PreparedTs1TravelReturn result;result.home_=decode_session_bundle(*envelope.travel_home_session,std::nullopt,limits);
  result.source_checkpoint_sha256_=checkpoint.digest();result.suspended_home_sha256_=sha256(envelope.travel_home_session->data(),envelope.travel_home_session->size());
+ if(result.home_.character_family&&!active.character_family)throw FormatError("return dropped character/family state");
+ if(active.character_family)project_session_character_family(result.home_,*active.character_family);
  if(result.home_.personal_state&&!active.personal_state)throw FormatError("return dropped shared personal records");
  if(active.personal_state)project_native_personal_session(result.home_,*active.personal_state);
  NeighborInventory inventory(Ngbh{});inventory.restore(*active.neighbor_inventory);
  if(state.protocol==Ts1TravelProtocol::original_6e598)validate_original_travel_capture(active);
  constexpr unsigned need_motives[7]={9,6,5,15,7,8,14}; // Type2 GUID0..6 source order.
  for(const auto& identity:ts1_travel_departure_members(state)){
-  const auto& home_actor=avatar(result.home_,member(result.home_,identity));const auto& visited_actor=resolve_ts1_travel_departure_avatar(active,identity);
+  const auto& home_actor=return_avatar(result.home_,identity);const auto& visited_actor=resolve_ts1_travel_departure_avatar(active,identity);
   if(visited_actor.motives.size()!=16)throw FormatError("travel return requires the actual source motive bank");
   if(state.protocol==Ts1TravelProtocol::legacy_pin)for(unsigned key=0;key<7;++key){const auto token=inventory.get_data(identity.neighbor_id,key);if(!token||*token!=static_cast<std::uint16_t>(visited_actor.motives[need_motives[key]]))throw FormatError("travel return motive token differs from the sealed source avatar");}
   const auto size=std::max(home_actor.person_data.size(),visited_actor.person_data.size());

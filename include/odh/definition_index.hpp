@@ -26,6 +26,11 @@ public:
     // Resolve a multitile master within the same explicit source/asset and
     // MasterID, SubIndex=-1. Missing/duplicate globally ambiguous GUIDs fail.
     const DefinitionCandidate* unique_master(const DefinitionCandidate&) const;
+    // A verified newly created PRIVATE character may append one previously
+    // absent GUID. Existing entries/ambiguities never change; all previously
+    // returned candidate pointers remain valid. Host owns exact file/content
+    // authentication and the script/checkpoint publication boundary.
+    void append_created_character(const DefinitionCandidate&);
     std::size_t guid_count() const{return definitions_.size();}
     // Bounded owned snapshot for catalog consumers; ambiguities are retained.
     std::vector<DefinitionCandidate> snapshot_candidates() const;
@@ -35,6 +40,8 @@ public:
 private:
     std::map<std::uint32_t,std::vector<DefinitionCandidate>> definitions_;
     std::size_t candidates_=0;
+    DefinitionIndexLimits limits_;
+    std::uint64_t provenance_bytes_=0;
     std::vector<std::pair<std::uint32_t,std::size_t>> provider_order_;
 };
 }

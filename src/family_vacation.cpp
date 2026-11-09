@@ -35,10 +35,16 @@ void valid_phase(const FamilyVacationPhase& p,const FamilyVacationSnapshot& s){
 FamilyVacationRow family_vacation_seed(const FamilyEntry& entry,const FamilyVacationDigest& identity,bool active){
     FamilyVacationRow out;out.family_chunk_id=entry.chunk_id;out.family_identity=identity;out.serialized_family_number=entry.family.family_number;out.fami_version=entry.family.version;out.active=active;
     if(out.fami_version>9)throw FormatError("vacation FAMI version lacks source profile");
-    if(out.fami_version>=8){const auto& f=entry.family;const auto need=out.fami_version==9?16U:4U;
-        if(f.remaining_bytes!=f.tail_bytes.size()||f.tail_bytes.size()<need)throw FormatError("vacation FAMI suffix incomplete");
+    if(out.fami_version>=8){const auto& f=entry.family;
+        // Vacation owns the first serialized DWORD, not the later six spell
+        // words. Original installed FAMI9 can carry only three DWORDs; retain
+        // that raw extent without inventing the missing magic fields.
+        if(f.remaining_bytes!=f.tail_bytes.size()||f.tail_bytes.size()<4)throw FormatError("vacation FAMI suffix incomplete");
         std::uint32_t word=0;for(unsigned n=0;n<4;++n)word|=std::uint32_t(f.tail_bytes[n])<<(8*n);
-        if(out.fami_version==9&&(!f.original_v9_extension||f.original_v9_extension->extension_dword!=word))throw FormatError("vacation typed FAMI9 seed differs from raw suffix");
+        if(out.fami_version==9&&
+           ((f.tail_bytes.size()>=16)!=f.original_v9_extension.has_value()||
+            (f.original_v9_extension&&f.original_v9_extension->extension_dword!=word)))
+            throw FormatError("vacation typed FAMI9 seed differs from raw suffix");
         out.seed_word=word;out.current_word=word;
     }
     // Original 004100cf initializes +13c to zero before v<=7 deserialize,

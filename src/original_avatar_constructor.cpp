@@ -53,7 +53,7 @@ NpcAvatarStartupResult initialize_original_avatar(World& world,Vm& thread,std::i
  std::uint64_t budget,const VmPrimitive& primitive,bool scheduler_running_now,const std::function<bool()>& self_deleted){
  NpcAvatarStartupResult result;const auto fail=[&](std::string message){result.diagnostic=std::move(message);return result;};
  const auto* initial=world.find(id);if(!initial||!request.original_semantics||!request.original_residential||!request.constructor_neighbor||!inputs.birth_time||
-  request.creation.position()!=CreateObjectPosition::out_of_world||request.direct_placement||initial->person_data.size()!=256||initial->motives.size()!=16||
+  initial->person_data.size()!=256||initial->motives.size()!=16||
   initial->position||initial->attachment||thread.dispatch_active()||thread.status()!=VmStatus::ready||thread.run_generation()!=0||!owner||!budget||entries.entries.size()<=8||
   !request.original_main_prepared||!request.original_initial_tick||!request.original_lookup_flags||!request.original_curves_ready||!request.original_guarded_init||!request.original_definition_version)return fail("original initializer lacks its fresh body, explicit source profile or native lifecycle consumers");
  const WorldEntityReference ref{id,initial->generation};
@@ -80,7 +80,12 @@ NpcAvatarStartupResult initialize_original_avatar(World& world,Vm& thread,std::i
   if(!world.declare_object_word(id,58,*request.original_definition_version))throw FormatError("original definition version publication failed");
   const auto main=entries.entries[1].action;
   if(main<=255||!thread.has_routine(routine_key(main),owner))return fail("original constructor Main resource is absent");
-  if(thread.start_after_reset(routine_key(main),{id,id,0,owner},{0,0,0,0},true)!=VmStatus::running)return fail("original constructor Main preparation failed");
+  // Common Create42 captures these inputs before construction. Resolve the
+  // raw StackObject at the actual Main preparation boundary, never bind an
+  // earlier generation or reinterpret it as a NeighborID.
+  const auto* main_stack=world.find(request.main_stack_object);
+  const auto stack_id=main_stack?main_stack->id:std::int16_t{0};
+  if(thread.start_after_reset(routine_key(main),{id,id,stack_id,owner},{request.main_param,0,0,0},true)!=VmStatus::running)return fail("original constructor Main preparation failed");
   result.main_started=true;std::string prepare_diagnostic;
   if(!request.original_main_prepared(ref,thread,prepare_diagnostic))return fail("original Main owner binding: "+prepare_diagnostic);
   std::uint64_t initial_main_steps=0;

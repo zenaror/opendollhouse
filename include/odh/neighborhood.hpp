@@ -19,7 +19,9 @@ struct NeighborRelationship {
 };
 // Runtime-only selective personal overlay. Never encoded as NBRS container data.
 struct NativePersonalProjection {
-    std::uint8_t profile=1; // Original6e598 selective v9, legacy travel tokens unchanged.
+    std::uint8_t profile=1; //1: original selective v9;2: same seed schema plus explicit source family61/67 writes.
+    // Profile2 never raises the source serialized schema or invents its other
+    // missing fields. Schema0 retains its absent seed bank. Only NPER4 membership writers publish it.
     std::uint8_t schema_version=9;
     std::array<std::uint8_t,88> present{};
     std::array<std::int16_t,88> values{};

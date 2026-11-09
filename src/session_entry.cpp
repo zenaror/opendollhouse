@@ -1,5 +1,6 @@
 #include "odh/session_entry.hpp"
 #include "odh/formats.hpp"
+#include "odh/session_bundle.hpp"
 
 #include <map>
 #include <set>
@@ -10,7 +11,7 @@ namespace odh {
 SessionEntry resolve_session_entry(unsigned mode, std::uint16_t house,
     std::string house_file, const LotLocations& locations,
     const FamilyContext& families, const NeighborContext& neighbors,
-    const DefinitionIndex& characters) {
+    const DefinitionIndex& characters, bool identity_only) {
     if (!neighborhood_mode_supported(mode))
         throw FormatError("selected neighborhood mode is unsupported");
     if (house == 0 || house >= 99)
@@ -25,11 +26,10 @@ SessionEntry resolve_session_entry(unsigned mode, std::uint16_t house,
 
     const auto* family = families.by_house(static_cast<std::int16_t>(house));
     if (!family) throw FormatError("selected house has no resident family");
-    if (family->family.member_guids.empty())
-        throw FormatError("selected family has no members");
-
     SessionEntry result{mode, house, std::move(house_file), family->chunk_id,
                         family->family.family_number, {}};
+    if (identity_only) return result;
+    if (family->family.member_guids.empty()) throw FormatError("selected family has no members without an accepted continuation");
     result.members.reserve(family->family.member_guids.size());
     std::set<std::uint32_t> seen;
     for (const auto guid : family->family.member_guids) {
@@ -59,6 +59,74 @@ SessionEntry resolve_session_entry(unsigned mode, std::uint16_t house,
                                   character->asset, character->chunk_id});
     }
     return result;
+}
+
+SessionEntry resolve_session_execution_entry(const SessionEntry& current,
+    const SessionBundle& saved, const NeighborContext& neighbors,
+    const DefinitionIndex& characters) {
+    if (!saved.generic_execution || (saved.household_roster.empty()&&!saved.npc_primary) ||
+        saved.host.house_number != current.house_number ||
+        saved.host.neighborhood_mode != current.neighborhood_mode ||
+        saved.host.family_chunk_id != current.family_chunk_id ||
+        saved.host.family_number != current.family_number)
+        throw FormatError("accepted execution checkpoint differs from the selected residence");
+    if(saved.npc_primary){
+        if(!saved.character_family||!saved.travel||
+           !saved.household_roster.empty()||!saved.runtime_entities.empty())
+            throw FormatError("NPC execution entry lacks exact checkpoint provenance");
+        const auto ref=*saved.npc_primary;
+        const auto npc=std::find_if(saved.npc_avatars.begin(),saved.npc_avatars.end(),[&](const auto& n){return n.origin.id==ref.id&&n.origin.generation==ref.generation;});
+        if(npc==saved.npc_avatars.end()||ref.id!=saved.host.runtime_avatar_id||npc->origin.guid!=saved.host.resident_guid||npc->origin.neighbor_id!=saved.host.resident_neighbor_id||
+           std::count_if(saved.npc_avatars.begin(),saved.npc_avatars.end(),[&](const auto& n){return n.origin.id==ref.id;})!=1)
+            throw FormatError("NPC execution primary differs from HOST");
+        if(std::count_if(saved.world.entities.begin(),saved.world.entities.end(),[&](const auto& e){return e.id==ref.id&&e.generation==ref.generation&&
+            e.kind==EntityKind::avatar&&!e.dead&&!e.ui_ghost&&e.definition&&e.definition->guid==npc->origin.guid&&
+            e.person_data.size()>31&&e.person_data[31]==npc->origin.neighbor_id;})!=1)
+            throw FormatError("NPC execution primary differs from the exact saved World identity");
+        const auto& o=npc->origin;const auto* neighbor=neighbors.by_id(o.neighbor_id);
+        if(!neighbor||neighbor->guid!=o.guid)throw FormatError("NPC execution primary differs from replayed neighbor catalog");
+        if(saved.personal_state&&saved.personal_state->catalog){
+        const auto& definitions=saved.personal_state->catalog->definitions;
+        const bool catalogued=std::count_if(definitions.begin(),definitions.end(),[&](const auto& d){return d.guid==o.guid&&d.source==o.source&&d.asset==o.asset&&d.definition_chunk_id==o.object_definition_id&&d.fingerprint==o.character_fingerprint;})==1;
+        const bool created=std::count_if(saved.character_family->shared.characters.begin(),saved.character_family->shared.characters.end(),[&](const auto& c){return c.identity.guid==o.guid&&c.identity.neighbor_id==o.neighbor_id&&c.identity.definition_chunk_id==o.object_definition_id&&c.identity.character_asset==native_personal_resource_key(o.source,o.asset)&&c.identity.character_fingerprint==o.character_fingerprint;})==1;
+        if(!catalogued&&!created)throw FormatError("NPC execution primary differs from exact catalog/creation resource");
+        }
+        SessionEntry out=current;out.members.clear();out.npc_primary=SessionNpcExecutionAnchor{{o.guid,o.neighbor_id,o.source,o.asset,o.object_definition_id},ref,o.character_fingerprint};return out;
+    }
+    // A legacy archive has no changed-roster receipt. Its strict equality
+    // contract remains intact; CFAM is required for a different current FAMI.
+    if (!saved.character_family) {
+        if (current.members.size() != saved.household_roster.size())
+            throw FormatError("legacy execution roster differs from current family");
+        for (const auto& member : saved.household_roster)
+            if (std::none_of(current.members.begin(),current.members.end(),[&](const auto& m){
+                return m.guid==member.guid && m.neighbor_id==member.neighbor_id;
+            })) throw FormatError("legacy execution member is outside current family");
+    }
+    SessionEntry out=current; out.members.clear();
+    std::set<std::uint32_t> guids; std::set<std::int16_t> ids;
+    for (const auto& member : saved.household_roster) {
+        const auto* neighbor=neighbors.by_id(member.neighbor_id);
+        if (!guids.insert(member.guid).second || !ids.insert(member.neighbor_id).second ||
+            !neighbor || neighbor->guid!=member.guid)
+            throw FormatError("accepted execution member differs from its exact NBRS identity");
+        const DefinitionCandidate* exact=nullptr;
+        if (const auto* choices=characters.candidates(member.guid)) for (const auto& candidate:*choices)
+            if (candidate.definition.version==138 && candidate.definition.object_type==2 &&
+                candidate.chunk_id==member.object_definition_id &&
+                candidate.source+"/"+candidate.asset==member.character_asset) {
+                if (exact) throw FormatError("accepted execution character is ambiguous");
+                exact=&candidate;
+            }
+        if (!exact) throw FormatError("accepted execution character resource differs from HHRD");
+        out.members.push_back({member.guid,member.neighbor_id,exact->source,exact->asset,exact->chunk_id});
+    }
+    const auto primary=std::find_if(saved.household_roster.begin(),saved.household_roster.end(),[&](const auto& member){
+        return member.id==saved.host.runtime_avatar_id && member.guid==saved.host.resident_guid &&
+            member.neighbor_id==saved.host.resident_neighbor_id;
+    });
+    if (primary==saved.household_roster.end()) throw FormatError("accepted execution primary lacks its exact HHRD origin");
+    return out;
 }
 
 SessionEntry resolve_visit_session_entry(const SessionEntry& home,

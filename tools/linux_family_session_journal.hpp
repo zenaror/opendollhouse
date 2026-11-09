@@ -69,7 +69,7 @@ private:
     FamilySessionJournal(std::vector<odh::FamilyEntry>,std::array<std::uint8_t,32>,
         std::optional<odh::FamilyOverlay>,std::uint16_t,std::uint16_t,
         std::optional<odh::FamilyOverlay>,bool verify_disk, LinuxNeighborhoodStorage storage);
-    void validate_bundle(const odh::SessionBundle&) const;
+    void validate_bundle(const odh::SessionBundle&,bool publishing=false) const;
     bool carry_accepted() const;
     void commit_overlay(const odh::FamilyOverlay&);
     std::vector<odh::FamilyEntry> source_;

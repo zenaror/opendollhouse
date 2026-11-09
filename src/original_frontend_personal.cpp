@@ -17,14 +17,44 @@ std::optional<bool> original_frontend_personal_save_required(const OriginalFront
 
 struct OriginalFrontendPersonalSource::Data {
     std::string owned;
-    Nbrs neighbors;
+    Nbrs neighbors, raw;
+    std::vector<NeighborRecord> owned_neighbors;
+    void rebuild(){neighbors=catalog?hydrate_owned_native_personal_neighbors(raw,*catalog,owned_neighbors):merge_owned_neighbor_seeds(raw,owned_neighbors);}
     std::optional<NativePersonalCatalog> catalog;
+    std::optional<Ts1CharacterFamilySnapshot> created;
     std::array<std::uint8_t,32> identity{};
 };
 OriginalFrontendPersonalSource OriginalFrontendPersonalSource::with_catalog(const NativePersonalCatalog& catalog) const {
     if(catalog.neighborhood_identity!=data_->identity)throw FormatError("frontend hydrated catalog neighborhood differs");
     if(data_->catalog){if(encode_native_personal_catalog(*data_->catalog)!=encode_native_personal_catalog(catalog))throw FormatError("frontend hydrated catalog changed");return *this;}
-    auto data=std::make_shared<Data>(*data_);data->neighbors=hydrate_native_personal_neighbors(data_->neighbors,catalog);data->catalog=catalog;return OriginalFrontendPersonalSource(std::move(data));
+    auto data=std::make_shared<Data>(*data_);data->catalog=catalog;data->rebuild();return OriginalFrontendPersonalSource(std::move(data));
+}
+OriginalFrontendPersonalSource OriginalFrontendPersonalSource::with_owned_neighbors(const std::vector<NeighborRecord>& owned) const {
+    auto data=std::make_shared<Data>(*data_);
+    // Full immutable receipts: an existing seed cannot silently disappear or
+    // change merely because its avatar left FAMI or the current house.
+    const auto supplied=merge_owned_neighbor_seeds(data->raw,owned);
+    (void)merge_owned_neighbor_seeds(supplied,data->owned_neighbors);
+    for(const auto& old:data->owned_neighbors)
+        if(std::none_of(owned.begin(),owned.end(),[&](const auto& n){return n.neighbor_id==old.neighbor_id&&n.guid==old.guid;}))
+            throw FormatError("frontend owned neighbor receipt disappeared");
+    data->owned_neighbors=owned;data->rebuild();return OriginalFrontendPersonalSource(std::move(data));
+}
+OriginalFrontendPersonalSource OriginalFrontendPersonalSource::with_created_characters(const Ts1CharacterFamilySnapshot& snapshot) const {
+    if(snapshot.neighborhood_identity!=data_->identity)throw FormatError("frontend created-character neighborhood differs");
+    validate_ts1_character_family_snapshot(snapshot);
+    if(data_->created)validate_ts1_character_family_successor(*data_->created,snapshot);
+    auto owned=data_->owned_neighbors;
+    for(const auto& c:snapshot.characters)if(std::none_of(owned.begin(),owned.end(),[&](const auto& n){return n.neighbor_id==c.seed.neighbor_id;}))owned.push_back(c.seed);
+    auto result=with_owned_neighbors(owned);
+    auto data=std::make_shared<Data>(*result.data_);data->created=snapshot;
+    // Validate existing matching receipts as well as newly appended seeds.
+    std::vector<NeighborRecord> created;for(const auto& c:snapshot.characters)created.push_back(c.seed);
+    (void)merge_owned_neighbor_seeds(data->neighbors,created);
+    return OriginalFrontendPersonalSource(std::move(data));
+}
+bool OriginalFrontendPersonalSource::is_created_neighbor(std::int16_t nid,std::uint32_t guid) const {
+    return std::any_of(data_->owned_neighbors.begin(),data_->owned_neighbors.end(),[&](const auto& n){return n.neighbor_id==nid&&n.guid==guid;});
 }
 const NativePersonalCatalog* OriginalFrontendPersonalSource::catalog() const {return data_->catalog?&*data_->catalog:nullptr;}
 const Nbrs& OriginalFrontendPersonalSource::neighbors() const {return data_->neighbors;}
@@ -41,6 +71,7 @@ OriginalFrontendPersonalSource read_original_frontend_personal_source(const View
     }});
     if(!found)throw FormatError("original frontend source lacksNBRS1");
     // NativePersonalState authenticates immutable seed shape/uniqueness too.
+    data->raw=data->neighbors;
     NativePersonalState checked(data->neighbors,data->identity);
     return OriginalFrontendPersonalSource(std::move(data));
 }
@@ -53,14 +84,19 @@ std::vector<NativePersonalSource> cohort(const OriginalFrontendPersonalSource& s
     std::map<std::uint32_t,std::vector<std::int16_t>> indices;
     for(const auto& row:source.neighbors().entries)if(row.record)indices[row.record->guid].push_back(row.record->neighbor_id);
     std::vector<NativePersonalSource> out;std::set<std::int16_t> selected;
+    bool original_prefix=true;
     for(const auto& row:source.neighbors().entries){
-        if(!row.record)break; //425b05's first NULL terminates the original vector.
+        if(!row.record){original_prefix=false;continue;} //425b05 original prefix remains bounded by first NULL.
         const auto& seed=*row.record;
+        if(!original_prefix&&!source.is_created_neighbor(seed.neighbor_id,seed.guid))continue;
         bool live_guid=false;for(const auto& e:snapshot.entities)if(!e.dead&&!e.ui_ghost&&e.kind==EntityKind::avatar&&e.definition&&e.definition->guid==seed.guid)live_guid=true;
         if(!live_guid)continue;
         const auto& candidates=indices.at(seed.guid);std::optional<std::int16_t> mapped;
         if(lookup)mapped=lookup(seed.guid);
-        else if(source.catalog())mapped=native_personal_catalog_lookup(*source.catalog(),seed.guid);
+        else if(source.catalog()){
+            mapped=native_personal_catalog_lookup(*source.catalog(),seed.guid);
+            if(!mapped&&candidates.size()==1&&source.is_created_neighbor(candidates.front(),seed.guid))mapped=candidates.front();
+        }
         else if(candidates.size()==1)mapped=candidates.front();
         else throw FormatError("original frontend ambiguous GUID requires its authenticated original catalog index");
         if(!mapped)continue; //Original index lookup returned absent; no body is selected.

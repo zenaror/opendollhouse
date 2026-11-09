@@ -100,7 +100,7 @@ struct SavedAppearanceResources::Impl {
     SavedAppearanceCatalogDiagnostics scan_diagnostics;
     std::vector<std::unique_ptr<Archive>> extra_archives;
     std::map<std::string,Named> files;
-    std::vector<std::string> file_order;
+    std::vector<std::string> file_order,appearance_order,skin_file_order;
     template<class Decode> auto decode(const Named& selected,Decode decoder){
         if(selected.archive)return decoder(selected.archive->view(selected.archive->select(selected.entry)));
         std::ifstream input(selected.entry,std::ios::binary);if(!input)throw odh::FormatError("saved appearance loose resource unavailable");
@@ -124,7 +124,9 @@ struct SavedAppearanceResources::Impl {
         auto add=[&](auto& index,const std::string& name,const std::string& entry,Archive* archive=nullptr,bool retain_duplicates=false){bounded_name(name);
             if(++count>8192||(bytes+=name.size()+entry.size())>(catalog_mode?4u*1024u*1024u:256u*1024u))
                 throw odh::FormatError("saved appearance named resource budget exceeded");
-            auto& selected=index[fold(name)];
+            const auto key=fold(name);
+            if(&index==&appearances&&!index.count(key))appearance_order.push_back(key);
+            auto& selected=index[key];
             // TS1Provider.BuildDictionary and TS1BCFProvider assign later
             // filename/name entries. The caller supplies a stable source order.
             if(catalog_mode&&!retain_duplicates)selected.clear();
@@ -164,9 +166,7 @@ struct SavedAppearanceResources::Impl {
             for(const auto& name:parsed_appearances)add(appearances,name,entry.name,&archive);
             for(const auto& name:parsed_animations)add(clips,name,entry.name,&archive);
         };
-        if(catalog_mode){for(const auto& key:file_order)if(key.size()>=4&&key.substr(key.size()-4)==".bcf"){
-            const auto& selected=files.at(key);scan_bcf(*selected.archive,selected.archive->select(selected.entry));}}
-        else for(const auto& entry:animations.entries){const auto key=fold(entry.name);
+        if(!catalog_mode)for(const auto& entry:animations.entries){const auto key=fold(entry.name);
             if(key.size()>=4&&key.substr(key.size()-4)==".bcf")scan_bcf(animations,entry);}
         std::vector<std::string> roots;if(!skins.empty())roots.push_back(skins);
         roots.insert(roots.end(),loose_roots.begin(),loose_roots.end());
@@ -185,7 +185,9 @@ struct SavedAppearanceResources::Impl {
                 paths.push_back(item.path());}
             std::sort(paths.begin(),paths.end());
             for(const auto& path:paths){const auto ext=fold(path.extension().string());
-                auto& group=skin_files[fold(path.filename().string())];if(catalog_mode)group.clear();group.push_back(path);
+                const auto skin_key=fold(path.filename().string());
+                if(!skin_files.count(skin_key))skin_file_order.push_back(skin_key);
+                auto& group=skin_files[skin_key];if(catalog_mode)group.clear();group.push_back(path);
                 if(ext==".cmx"){
                     if(catalog_mode){const auto key=basename(path.string());if(cmx_seen.insert(key).second)cmx_order.push_back(key);continue;}
                     odh::AppearanceCollection decoded;
@@ -196,13 +198,20 @@ struct SavedAppearanceResources::Impl {
             }
         }
         if(catalog_mode){
-            for(const auto& key:file_order)if(key.size()>=4&&key.substr(key.size()-4)==".cmx"&&cmx_seen.insert(key).second)
-                cmx_order.push_back(key);
-            for(const auto& key:cmx_order){const auto selected=file(animations,key);odh::AppearanceCollection decoded;
+            // TS1BCFProvider enumerates the ONE projected BCF/CMX provider in
+            // registration order before indexing its internal appearance names.
+            // First key insertion establishes clothing order; later hosts select
+            // the actual payload. Do not scan all BCFs before all CMXs.
+            std::vector<std::string> ordered=file_order;std::set<std::string> seen(ordered.begin(),ordered.end());
+            for(const auto& key:cmx_order)if(seen.insert(key).second)ordered.push_back(key);
+            for(const auto& key:ordered){
+                if(key.size()<4)continue;const auto ext=key.substr(key.size()-4);
+                if(ext==".bcf"){const auto& selected=files.at(key);scan_bcf(*selected.archive,selected.archive->select(selected.entry));continue;}
+                if(ext!=".cmx")continue;
+                const auto selected=file(animations,key);odh::AppearanceCollection decoded;
                 try{decoded=decode(selected,[](const auto& view){return odh::read_cmx_appearances(view);});}
                 catch(const odh::FormatError& error){
-                    note_metadata_failure((selected.archive?selected.archive->path:std::string{"loose"})+" ["+selected.entry+"]",error);
-                    continue;
+                    note_metadata_failure((selected.archive?selected.archive->path:std::string{"loose"})+" ["+selected.entry+"]",error);continue;
                 }
                 for(const auto& appearance:decoded.appearances)add(appearances,appearance.name,selected.entry,selected.archive);
             }
@@ -465,13 +474,14 @@ SavedAppearance SavedAppearanceResources::resolve_gestures(const odh::ObjmPerson
     return out;
 }
 
-std::vector<odh::WardrobeCatalogAsset> SavedAppearanceResources::wardrobe_catalog(
+SavedAppearanceResourceCatalog SavedAppearanceResources::resource_catalog(
  const std::filesystem::path& game_root,const std::string& animation_far,const std::string& textures_far,
  const std::string& skins_directory,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots){
  if(sources.empty()&&loose_roots.empty())throw odh::FormatError("wardrobe metadata requires the admitted catalog-mode provider");
  Impl provider(animation_far,textures_far,{},{},skins_directory,sources,loose_roots,true);
  const auto root=std::filesystem::canonical(game_root);
- std::vector<odh::WardrobeCatalogAsset> result;
+ SavedAppearanceResourceCatalog catalog;auto& result=catalog.assets;
+ std::map<std::pair<odh::WardrobeAssetKind,std::string>,std::uint32_t> ordinals;
  std::size_t text_bytes=0;std::uint64_t content_bytes=0;
  std::map<std::pair<std::string,std::string>,std::array<std::uint8_t,32>> hashes;
  const auto add=[&](odh::WardrobeAssetKind kind,const std::string& name,const Named& selected){
@@ -489,6 +499,7 @@ std::vector<odh::WardrobeCatalogAsset> SavedAppearanceResources::wardrobe_catalo
     content_bytes+=view.size();std::string bytes(static_cast<std::size_t>(view.size()),'\0');view.read(0,bytes.data(),bytes.size());return odh::sha256(bytes.data(),bytes.size());
    });hash=hashes.emplace(key,digest).first;
   }
+  ordinals.emplace(std::make_pair(kind,fold(name)),static_cast<std::uint32_t>(result.size()));
   result.push_back({kind,name,source,asset,hash->second,static_cast<std::uint64_t>(result.size())});
  };
  for(const auto& names:provider.appearances){
@@ -500,5 +511,19 @@ std::vector<odh::WardrobeCatalogAsset> SavedAppearanceResources::wardrobe_catalo
  for(const auto& item:provider.files)if(item.first.size()>=4&&item.first.substr(item.first.size()-4)==".bmp")textures.insert(item.first);
  for(const auto& item:provider.skin_files)if(item.first.size()>=4&&item.first.substr(item.first.size()-4)==".bmp")textures.insert(item.first);
  for(const auto& name:textures)add(odh::WardrobeAssetKind::texture,name.substr(0,name.size()-4),provider.file(provider.textures,name));
- return result;
+ for(const auto& name:provider.appearance_order)catalog.appearance_order.push_back(ordinals.at({odh::WardrobeAssetKind::appearance,name}));
+ std::set<std::string> texture_seen;
+ const auto add_texture_order=[&](const std::string& name){
+  if(name.size()<4||name.substr(name.size()-4)!=".bmp"||!texture_seen.insert(name).second)return;
+  catalog.texture_order.push_back(ordinals.at({odh::WardrobeAssetKind::texture,name.substr(0,name.size()-4)}));
+ };
+ for(const auto& name:provider.file_order)add_texture_order(name);
+ for(const auto& name:provider.skin_file_order)add_texture_order(name);
+ if(catalog.appearance_order.size()+catalog.texture_order.size()!=result.size())throw odh::FormatError("character catalog order does not cover selected resource names");
+ return catalog;
+}
+std::vector<odh::WardrobeCatalogAsset> SavedAppearanceResources::wardrobe_catalog(
+ const std::filesystem::path& game_root,const std::string& animation_far,const std::string& textures_far,
+ const std::string& skins_directory,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots){
+ return resource_catalog(game_root,animation_far,textures_far,skins_directory,sources,loose_roots).assets;
 }

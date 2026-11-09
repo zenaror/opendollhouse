@@ -80,6 +80,31 @@ struct Fixture {
     void run(){require(vm.start(odh::routine_key(4096),{1,1,2})==odh::VmStatus::running&&
         vm.run(1)==odh::VmStatus::returned_true,"evaluate placement in actual source46 dispatch");}
 };
+void verify_family_creation_authority(){
+ for(const unsigned mode:{4U,6U,32U,33U,288U}){
+  Fixture f;f.obstacles({2});unsigned calls=0;bool scope=true;odh::LiveObjectCreationPlacementSource retained;
+  auto services=f.services;services.entry_point5=[&](const odh::AvatarPositionEntryPoint5Request& request)->std::optional<bool>{
+   ++calls;require(request.object_creation_source&&odh::live_object_creation_active_dispatch_matches(*request.object_creation_source),"VerifyFamily bilateral EP5 retains its actual instruction lease");return false;
+  };
+  odh::AvatarPositionValid validator(f.world,services);
+  odh::VmPrimitive handler=[&](const auto& frame,const auto& instruction,const auto&,const auto& dispatch){
+   const auto lease=dispatch.origin->instruction_lease(frame);require(lease.has_value(),"ordinary GenericCall owns its real instruction lease");
+   odh::LiveObjectCreationPlacementSource proof{dispatch.origin,dispatch.origin->run_generation(),1,f.world.find(1)->generation,[&]{return scope;}};
+   proof.active_dispatch=odh::LiveObjectCreationActiveDispatch{frame,instruction,dispatch,lease,&frame};retained=proof;
+   const auto before=f.geometry_calls;const auto result=validator.evaluate_creation(proof,1,f.world.find(1)->generation,f.candidate,0,0);
+   if(mode==32){
+    require(result.status==odh::AvatarPositionValidStatus::blocked&&calls==2&&f.geometry_calls>before,"actual VerifyFamily uses bilateral collision checks, preserving game false");
+    auto copy=frame;auto forged=proof;forged.active_dispatch->protected_frame=&copy;
+    require(!odh::live_object_creation_active_dispatch_matches(forged),"equal copied Generic frame cannot borrow the exact source lease");
+   }else require(result.status==odh::AvatarPositionValidStatus::unsupported&&calls==0&&f.geometry_calls==before,"other Generic modes or nonzero mode high byte cannot authorize creation placement");
+   return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+  };
+  const auto key=odh::routine_key(4700);odh::Instruction instruction{1,254,255,{static_cast<std::uint8_t>(mode),static_cast<std::uint8_t>(mode>>8),0,0,0,0,0,0}};
+  odh::Vm vm({{key,{0x8002,{instruction},{},odh::Bhav::Metadata{0,4,0,0}}}},f.world.vm_memory(),{},handler);
+  require(vm.start(key,{4,4,0})==odh::VmStatus::running&&vm.run(8)==odh::VmStatus::returned_true,"real GenericCall source executes without fabricated pending state");
+  require(!odh::live_object_creation_active_dispatch_matches(retained),"VerifyFamily creation proof expires at dispatch return");
+ }
+}
 void active_creation_avatar_authority(){
     for(const bool lifecycle_check:{false,true})for(const bool admit:{false,true}){
         Fixture f;f.obstacles({2});bool scope=true,expire_during=false;unsigned effects=0;odh::LiveObjectCreationPlacementSource retained;
@@ -902,6 +927,6 @@ void shared_placement_direct_targets(){
     }
 }
 }
-int main(){try{active_creation_avatar_authority();host_constructor_avatar_authority();original_recovery_avatar_authority();retired_container_avatar_authority();creation_avatar_authority();shared_placement_direct_targets();prepared_direct_authorization();route_execution_scope();ranged_relative_placement_scope();route_api_requires_opcode45();overlap_order_and_effects();floor_and_flags();callbacks_and_generations();live_snap_avatar_position_valid_ep5();
+int main(){try{verify_family_creation_authority();active_creation_avatar_authority();host_constructor_avatar_authority();original_recovery_avatar_authority();retired_container_avatar_authority();creation_avatar_authority();shared_placement_direct_targets();prepared_direct_authorization();route_execution_scope();ranged_relative_placement_scope();route_api_requires_opcode45();overlap_order_and_effects();floor_and_flags();callbacks_and_generations();live_snap_avatar_position_valid_ep5();
     std::cout<<checks<<" avatar PositionValid checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"avatar PositionValid: "<<error.what()<<'\n';return 1;}}

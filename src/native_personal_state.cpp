@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "odh/native_personal_state.hpp"
+#include "odh/ts1_character_family.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -48,10 +49,10 @@ void identity(const NativePersonalIdentity& id){
  (void)native_personal_resource_locator(id.character_asset);
 }
 void projection(const NativePersonalProjection& p){
- if(p.profile!=1||p.schema_version<1||p.schema_version>9)throw FormatError("personal record schema/profile unsupported");
+ if((p.profile!=1&&p.profile!=2)||(p.profile==1&&p.schema_version<1)||p.schema_version>9||(p.profile==2&&!p.present[61]))throw FormatError("personal record schema/profile unsupported");
  for(std::size_t i=0;i<p.present.size();++i){
   const auto field=std::find_if(std::begin(fields),std::end(fields),[&](const auto& f){return f.index==i;});
-  if(p.present[i]>1||(p.present[i]&&(field==std::end(fields)||field->minimum>p.schema_version)))
+  if(p.present[i]>1||(p.present[i]&&(field==std::end(fields)||(field->minimum>p.schema_version&&!(p.profile==2&&(i==61||i==67))))))
    throw FormatError("personal record field presence violates selective schema");
   if(!p.present[i]&&p.values[i]!=0)throw FormatError("absent personal field carries a value");
  }
@@ -122,17 +123,18 @@ void apply_original_neighbor_personal(const NeighborRecord& n,std::vector<std::i
 }
 void apply_native_personal_projection(const NativePersonalProjection& p,std::vector<std::int16_t>& bank){
  projection(p);
- for(const auto f:fields)if(f.minimum<=p.schema_version&&p.present[f.index]){
+ for(const auto f:fields)if((f.minimum<=p.schema_version||(p.profile==2&&(f.index==61||f.index==67)))&&p.present[f.index]){
   if(f.index>=bank.size())throw FormatError("personal loader target bank lacks a present field");
  }
- for(const auto f:fields)if(f.minimum<=p.schema_version&&p.present[f.index])bank[f.index]=p.values[f.index];
+ for(const auto f:fields)if((f.minimum<=p.schema_version||(p.profile==2&&(f.index==61||f.index==67)))&&p.present[f.index])bank[f.index]=p.values[f.index];
 }
 void validate_native_personal_snapshot(const NativePersonalSnapshot& s){
- if((s.version!=1&&s.version!=2&&s.version!=3)||(s.version==1&&s.catalog)||(s.version==2&&!s.catalog)||(s.version!=3&&!s.wardrobes.empty())||(s.version==3&&s.wardrobes.empty())||!nonzero(s.neighborhood_identity)||s.records.size()>4096||s.wardrobes.size()>4096)throw FormatError("personal snapshot header unsupported");
+ if((s.version!=1&&s.version!=2&&s.version!=3&&s.version!=4)||(s.version==1&&s.catalog)||(s.version==2&&!s.catalog)||(s.version<3&&!s.wardrobes.empty())||(s.version==3&&s.wardrobes.empty())||!nonzero(s.neighborhood_identity)||s.records.size()>4096||s.wardrobes.size()>4096)throw FormatError("personal snapshot header unsupported");
  if(s.catalog){validate_native_personal_catalog(*s.catalog);if(s.catalog->neighborhood_identity!=s.neighborhood_identity)throw FormatError("personal catalog neighborhood differs");}
  std::int16_t previous=0;
  for(const auto& r:s.records){identity(r.identity);projection(r.projection);
-  if(r.identity.neighbor_id<=previous||!r.revision||static_cast<unsigned>(r.writer)<1||static_cast<unsigned>(r.writer)>4)
+  if(r.projection.profile==2&&(s.version!=4||r.writer!=NativePersonalWriteSource::family_membership))throw FormatError("explicit family-write field requires NPER4 membership provenance");
+  if(r.identity.neighbor_id<=previous||!r.revision||static_cast<unsigned>(r.writer)<1||static_cast<unsigned>(r.writer)>(s.version==4?5U:4U))
    throw FormatError("personal record order/revision/writer invalid");
   previous=r.identity.neighbor_id;
   if(s.catalog)for(std::size_t i=0;i<s.catalog->bindings.size();++i)if(s.catalog->bindings[i].neighbor_id==r.identity.neighbor_id){const auto& d=s.catalog->definitions[i];
@@ -167,7 +169,7 @@ void validate_native_personal_successor(const NativePersonalSnapshot& before,con
  validate_native_personal_snapshot(before);validate_native_personal_snapshot(after);
  if(before.catalog&&(!after.catalog||encode_native_personal_catalog(*before.catalog)!=encode_native_personal_catalog(*after.catalog)))throw FormatError("personal successor changes or removes its admitted hydrated catalog");
  if(before.neighborhood_identity!=after.neighborhood_identity)throw FormatError("personal successor neighborhood changed");
- if(before.version==3&&after.version!=3)throw FormatError("personal successor removes wardrobe profile");
+ if(before.version>=3&&after.version<before.version)throw FormatError("personal successor removes wardrobe profile");
  for(const auto& old:before.wardrobes){
   const auto next=std::lower_bound(after.wardrobes.begin(),after.wardrobes.end(),old.identity.neighbor_id,
       [](const auto& r,auto nid){return r.identity.neighbor_id<nid;});
@@ -175,7 +177,7 @@ void validate_native_personal_successor(const NativePersonalSnapshot& before,con
      !same_native_personal_identity(old.identity,next->identity)||next->revision<old.revision)
    throw FormatError("personal successor drops, rolls back or rebinds wardrobe");
   auto a=before,b=after;a.records.clear();b.records.clear();a.catalog.reset();b.catalog.reset();
-  a.wardrobes={old};b.wardrobes={*next};b.wardrobes.front().revision=old.revision;
+  a.wardrobes={old};b.wardrobes={*next};b.wardrobes.front().revision=old.revision;a.version=b.version=3;
   if(encode_native_personal_snapshot(a)!=encode_native_personal_snapshot(b))
    throw FormatError("personal successor changes accepted wardrobe seed or choice");
  }
@@ -187,17 +189,18 @@ void validate_native_personal_successor(const NativePersonalSnapshot& before,con
      !same_native_personal_identity(old.identity,next->identity)||next->seed_words!=old.seed_words||next->revision<old.revision)
    throw FormatError("personal successor drops, rolls back or changes an authenticated record");
   if(next->revision==old.revision){
-   NativePersonalSnapshot a{1,before.neighborhood_identity,{old}},b{1,after.neighborhood_identity,{*next}};
+   NativePersonalSnapshot a{4,before.neighborhood_identity,{old}},b{4,after.neighborhood_identity,{*next}};
    if(encode_native_personal_snapshot(a)!=encode_native_personal_snapshot(b))throw FormatError("personal successor changes a value without a writer revision");
   }
  }
 }
 NativePersonalState::NativePersonalState(const Nbrs& seed,const std::array<std::uint8_t,32>& digest,
- std::set<std::int16_t> retired,const NativePersonalCatalog* catalog):retired_(std::move(retired)){
+ std::set<std::int16_t> retired,const NativePersonalCatalog* catalog,const std::vector<NeighborRecord>& owned):retired_(std::move(retired)){
  state_.neighborhood_identity=digest;
  if(catalog){if(catalog->neighborhood_identity!=digest)throw FormatError("personal catalog source digest differs");state_.version=2;state_.catalog=*catalog;}
  validate_native_personal_snapshot(state_);
- const auto owned_seed=catalog?hydrate_native_personal_neighbors(seed,*catalog,retired_):seed;
+ const auto owned_seed=catalog?hydrate_owned_native_personal_neighbors(seed,*catalog,owned,retired_):
+    (owned.empty()?seed:merge_owned_neighbor_seeds(seed,owned));
  if(owned_seed.entries.size()>4096)throw FormatError("personal seed exceeds neighbor count limit");
  for(const auto& entry:owned_seed.entries){
   if(entry.marker==0&&!entry.record)continue;
@@ -210,7 +213,7 @@ NativePersonalState::NativePersonalState(const Nbrs& seed,const std::array<std::
 }
 std::map<std::int16_t,NeighborRecord> NativePersonalState::materialize(const NativePersonalSnapshot& s) const {
  validate_native_personal_snapshot(s);
- if((s.version!=3&&s.version!=state_.version)||bool(s.catalog)!=bool(state_.catalog)||(s.catalog&&encode_native_personal_catalog(*s.catalog)!=encode_native_personal_catalog(*state_.catalog)))throw FormatError("personal restore catalog was not admitted before seed construction");
+ if((s.version!=3&&s.version!=4&&s.version!=state_.version)||bool(s.catalog)!=bool(state_.catalog)||(s.catalog&&encode_native_personal_catalog(*s.catalog)!=encode_native_personal_catalog(*state_.catalog)))throw FormatError("personal restore catalog was not admitted before seed construction");
  if(s.neighborhood_identity!=state_.neighborhood_identity)throw FormatError("personal snapshot neighborhood differs");
  for(const auto& r:s.wardrobes){const auto seed=seeds_.find(r.identity.neighbor_id);
   if(seed==seeds_.end()&&retired_.count(r.identity.neighbor_id))continue;
@@ -229,6 +232,47 @@ std::map<std::int16_t,NeighborRecord> NativePersonalState::materialize(const Nat
 }
 const NeighborRecord* NativePersonalState::by_id(std::int16_t nid) const {
  const auto i=effective_.find(nid);return i==effective_.end()?nullptr:&i->second;
+}
+void validate_ts1_created_character(const Ts1CreatedCharacter& c){
+ const auto& id=c.identity;const auto& n=c.seed;
+ if(id.neighbor_id<=0||!id.guid||id.character_asset.empty()||id.character_asset.size()>4096||!nonzero(id.character_fingerprint)||
+    id.neighbor_id!=n.neighbor_id||id.guid!=n.guid||n.native_personal||n.version!=10||n.unknown3!=std::optional<std::int32_t>{0}||
+    n.name.empty()||n.name.size()>256||n.name.find('\0')!=std::string::npos||n.mystery_zero||n.person_mode!=0||n.person_data||n.unknown_neg_one!=-1||!n.relationships.empty()||
+    (n.name.size()%2==0?n.name_padding!=std::optional<std::uint8_t>{0}:n.name_padding.has_value()))throw FormatError("created character differs from exact original schema0 resource/neighbor seed");
+ const auto loc=native_personal_resource_locator(id.character_asset);
+ if(!loc.character_catalog||loc.source.compare(0,22,"PlayerData/Characters/")!=0)throw FormatError("created character must name owned private character data");
+ if(n.name!=loc.source.substr(loc.source.find_last_of('/')+1))throw FormatError("created original neighbor name differs from private filename");
+}
+void NativePersonalState::admit_created_character(const Ts1CreatedCharacter& c){
+ validate_ts1_created_character(c);const auto nid=c.identity.neighbor_id;
+ const auto old=seeds_.find(nid);
+ if(old!=seeds_.end()){
+  const auto same=[](const NeighborRecord& a,const NeighborRecord& b){return encode_nbrs(Nbrs{0,73,{{1,a}},0})==encode_nbrs(Nbrs{0,73,{{1,b}},0});};
+  if(!same(old->second,c.seed)||retired_.count(nid))throw FormatError("created personal seed conflicts with source");
+  const auto record=std::lower_bound(state_.records.begin(),state_.records.end(),nid,[](const auto& r,auto id){return r.identity.neighbor_id<id;});
+  if(record!=state_.records.end()&&record->identity.neighbor_id==nid){if(!same_native_personal_identity(record->identity,c.identity))throw FormatError("created personal identity changed");return;}
+  if(state_.version==4)return; // Exact seed-only admission is already complete.
+ }else if(seeds_.size()>=4096)throw FormatError("created personal seed count exceeds budget");
+ if(epoch_==UINT64_MAX||state_.records.size()>=4096)throw FormatError("created personal revision/count exceeded");
+ auto candidate=state_;candidate.version=4;validate_native_personal_snapshot(candidate);
+ if(epoch_==UINT64_MAX)throw FormatError("created personal seed epoch exhausted");
+ seeds_.emplace(nid,c.seed);state_=std::move(candidate);++epoch_;
+}
+void NativePersonalState::set_family(const NativePersonalIdentity& id,std::int16_t family,bool clear_lingering_house){
+ identity(id);const auto seed=seeds_.find(id.neighbor_id);
+ if(seed==seeds_.end()||retired_.count(id.neighbor_id)||seed->second.guid!=id.guid||(seed->second.person_data&&seed->second.person_data->size()<=67)||epoch_==UINT64_MAX)
+  throw FormatError("family write lacks exact existing neighbor person bank");
+ auto candidate=state_;candidate.version=4;auto where=std::lower_bound(candidate.records.begin(),candidate.records.end(),id.neighbor_id,[](const auto& r,auto nid){return r.identity.neighbor_id<nid;});
+ if(where==candidate.records.end()||where->identity.neighbor_id!=id.neighbor_id){
+  if(candidate.records.size()>=4096)throw FormatError("family personal record budget exceeded");auto projection=original_neighbor_seed_projection(seed->second);
+  if(!projection){projection=NativePersonalProjection{};projection->profile=2;projection->schema_version=0;}
+  where=candidate.records.insert(where,{id,1,NativePersonalWriteSource::family_membership,*projection,seed->second.person_data});
+ }else{
+  if(!same_native_personal_identity(where->identity,id)||where->revision==UINT64_MAX)throw FormatError("family neighbor resource identity/revision changed");++where->revision;where->writer=NativePersonalWriteSource::family_membership;
+ }
+ where->projection.present[61]=1;where->projection.values[61]=family;
+ if(clear_lingering_house){where->projection.profile=2;where->projection.present[67]=1;where->projection.values[67]=0;}
+ validate_native_personal_snapshot(candidate);auto effective=materialize(candidate);state_=std::move(candidate);effective_.swap(effective);++epoch_;
 }
 void NativePersonalState::restore(const NativePersonalSnapshot& s){
  if(changed())validate_native_personal_successor(state_,s);
@@ -263,7 +307,7 @@ PreparedNativeWardrobeCommit NativePersonalState::prepare_wardrobes(const std::v
    out.candidate_.wardrobes.insert(found,std::move(fresh));
   }
  }
- out.candidate_.version=3;validate_native_personal_successor(state_,out.candidate_);
+ out.candidate_.version=std::max(out.candidate_.version,3U);validate_native_personal_successor(state_,out.candidate_);
  (void)materialize(out.candidate_);(void)encode_native_personal_snapshot(out.candidate_);return out;
 }
 bool NativePersonalState::source_current(const PreparedNativeWardrobeCommit& p) const {
@@ -332,8 +376,8 @@ std::vector<std::uint8_t> encode_native_personal_snapshot(const NativePersonalSn
   if(r.seed_words)for(auto word:*r.seed_words)put(static_cast<std::uint16_t>(word),2);
   for(std::size_t i=0;i<r.projection.present.size();++i){put(r.projection.present[i],1);if(r.projection.present[i])put(static_cast<std::uint16_t>(r.projection.values[i]),2);}
  }
- if(s.version==2||s.version==3){const auto catalog=s.catalog?encode_native_personal_catalog(*s.catalog):std::vector<std::uint8_t>{};put(catalog.size(),4);b.insert(b.end(),catalog.begin(),catalog.end());}
- if(s.version==3){put(s.wardrobes.size(),4);for(const auto& r:s.wardrobes){const auto& id=r.identity;
+ if(s.version>=2&&s.version<=4){const auto catalog=s.catalog?encode_native_personal_catalog(*s.catalog):std::vector<std::uint8_t>{};put(catalog.size(),4);b.insert(b.end(),catalog.begin(),catalog.end());}
+ if(s.version>=3&&s.version<=4){put(s.wardrobes.size(),4);for(const auto& r:s.wardrobes){const auto& id=r.identity;
   put(static_cast<std::uint16_t>(id.neighbor_id),2);put(id.guid,4);put(id.definition_chunk_id,2);text(id.character_asset);
   b.insert(b.end(),id.character_fingerprint.begin(),id.character_fingerprint.end());put(r.revision,8);
   const auto& w=r.wardrobe;put(w.rule_profile,4);put(w.body_str_id,2);
@@ -361,8 +405,8 @@ NativePersonalSnapshot decode_native_personal_snapshot(const std::vector<std::ui
   for(std::size_t i=0;i<r.projection.present.size();++i){r.projection.present[i]=static_cast<std::uint8_t>(get(1));if(r.projection.present[i])r.projection.values[i]=signed16(static_cast<std::uint16_t>(get(2)));}
   s.records.push_back(std::move(r));
  }
- if(s.version==2||s.version==3){const auto n=get(4);if(n>3u*1024u*1024u||n>b.size()-at)throw FormatError("personal catalog outside bounded snapshot");std::vector<std::uint8_t> raw(b.begin()+at,b.begin()+at+n);at+=n;if(n)s.catalog=decode_native_personal_catalog(raw);}
- if(s.version==3){const auto n=get(4);if(n>4096)throw FormatError("wardrobe record count exceeds limit");
+ if(s.version>=2&&s.version<=4){const auto n=get(4);if(n>3u*1024u*1024u||n>b.size()-at)throw FormatError("personal catalog outside bounded snapshot");std::vector<std::uint8_t> raw(b.begin()+at,b.begin()+at+n);at+=n;if(n)s.catalog=decode_native_personal_catalog(raw);}
+ if(s.version>=3&&s.version<=4){const auto n=get(4);if(n>4096)throw FormatError("wardrobe record count exceeds limit");
   for(std::uint64_t i=0;i<n;++i){NativeWardrobeRecord r;auto& id=r.identity;id.neighbor_id=signed16(static_cast<std::uint16_t>(get(2)));id.guid=static_cast<std::uint32_t>(get(4));id.definition_chunk_id=static_cast<std::uint16_t>(get(2));id.character_asset=text();for(auto& v:id.character_fingerprint)v=static_cast<std::uint8_t>(get(1));r.revision=get(8);
    auto& w=r.wardrobe;w.rule_profile=static_cast<std::uint32_t>(get(4));w.body_str_id=static_cast<std::uint16_t>(get(2));
    for(auto& v:w.source_fields)v=optional_text();for(auto& v:w.seed)v=optional_text();for(auto& v:w.strings)v=optional_text();

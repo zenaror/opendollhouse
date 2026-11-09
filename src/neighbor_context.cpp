@@ -1,4 +1,7 @@
 #include "odh/neighbor_context.hpp"
+#include "odh/ts1_character_family.hpp"
+#include <limits>
+#include <sstream>
 #include "odh/world.hpp"
 #include "odh/native_personal_state.hpp"
 #include <algorithm>
@@ -29,7 +32,24 @@ NeighborContext::NeighborContext(Nbrs source):source_(std::move(source)) {
 const NeighborRecord* NeighborContext::by_id(std::int16_t id) const {
     const auto active=active_.find(id);
     if(active!=active_.end()&&personal_)if(const auto* changed=personal_->by_id(id))return changed;
+    if(const auto owned=created_.find(id);owned!=created_.end())return &owned->second;
     return active==active_.end()?nullptr:&*source_.entries[ordered_[active->second].serialized_index].record;
+}
+void NeighborContext::admit_created_character(const Ts1CreatedCharacter& character){
+    validate_ts1_created_character(character);
+    const auto& seed=character.seed;const auto existing=active_.find(seed.neighbor_id);
+    const auto* old=existing==active_.end()?nullptr:(created_.count(seed.neighbor_id)?&created_.at(seed.neighbor_id):&*source_.entries[ordered_[existing->second].serialized_index].record);
+    const auto same=[](const NeighborRecord& a,const NeighborRecord& b){return encode_nbrs(Nbrs{0,73,{{1,a}},0})==encode_nbrs(Nbrs{0,73,{{1,b}},0});};
+    if(old&&!same(*old,seed))throw FormatError("created neighbor ID conflicts with immutable or owned seed");
+    for(const auto& row:ordered_)if(row.id!=seed.neighbor_id){const auto* n=by_id(row.id);if(n&&n->guid==seed.guid)throw FormatError("created neighbor GUID already belongs to another record");}
+    if(created_.count(seed.neighbor_id))return;
+    if(created_.size()>=1024||(!old&&active_.size()>=4096))throw FormatError("owned neighbor creation budget exceeded");
+    // Stage index storage before inserting the stable owned node.
+    auto order=ordered_;if(!old)order.push_back({seed.neighbor_id,std::numeric_limits<std::size_t>::max()});
+    std::stable_sort(order.begin(),order.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+    auto active=active_;for(std::size_t i=0;i<order.size();++i)active[order[i].id]=i;
+    auto guids=guids_,owned_guids=created_guids_;guids[seed.guid]=seed.neighbor_id;owned_guids[seed.guid]=seed.neighbor_id;
+    created_.emplace(seed.neighbor_id,seed);ordered_.swap(order);active_.swap(active);guids_.swap(guids);created_guids_.swap(owned_guids);
 }
 std::optional<std::int16_t> NeighborContext::instance_id(const World& world,std::int16_t neighbor) const {
     const auto* record=by_id(neighbor);
@@ -52,7 +72,8 @@ void NeighborContext::bind_native_personal_catalog(const NativePersonalCatalog& 
     original_guids_=std::move(mapped);
 }
 std::optional<std::int16_t> NeighborContext::id_for_guid(std::uint32_t guid) const {
-    if(original_guids_){const auto i=original_guids_->find(guid);return i==original_guids_->end()?std::nullopt:std::optional<std::int16_t>{i->second};}
+    if(original_guids_){const auto i=original_guids_->find(guid);if(i!=original_guids_->end())return i->second;
+        const auto owned=created_guids_.find(guid);return owned==created_guids_.end()?std::nullopt:std::optional<std::int16_t>{owned->second};}
     const auto found=guids_.find(guid);return found==guids_.end()?std::nullopt:std::optional<std::int16_t>{found->second};
 }
 std::int16_t NeighborContext::next(std::int16_t current) const {
@@ -65,8 +86,8 @@ std::int16_t NeighborContext::next_of_guid(std::int16_t current,std::uint32_t gu
     const auto next=std::upper_bound(ordered_.begin(),ordered_.end(),current,
         [](auto id,const auto& entry){return id<entry.id;});
     for(auto candidate=next;candidate!=ordered_.end();++candidate){
-        const auto& entry=source_.entries[candidate->serialized_index];
-        if(entry.record&&entry.record->guid==guid)return candidate->id;
+        const auto* record=by_id(candidate->id);
+        if(record&&record->guid==guid)return candidate->id;
     }
     return -1;
 }

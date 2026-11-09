@@ -43,6 +43,7 @@ RelationshipState::RelationshipState(const NeighborContext& context, Relationshi
             ++pairs_; values_+=relation.values.size();
         }
     }
+    if(!admit_missing_neighbor_sources(context))throw FormatError("effective neighbor relationship admission exceeded its source bounds");
 }
 RelationshipSnapshot RelationshipState::snapshot() const {
     RelationshipSnapshot result{limits_,{},pairs_,values_};
@@ -105,10 +106,9 @@ bool RelationshipState::restore_snapshot(const RelationshipSnapshot& snapshot) {
 bool RelationshipState::admit_missing_neighbor_sources(const NeighborContext& context) {
     if(fresh_||sources_.size()>limits_.sources||pairs_>limits_.pairs||values_>limits_.values)return false;
     std::map<Source,Pairs> additions;auto pairs=pairs_,values=values_;
-    for(const auto& entry:context.source().entries){
-        if(!entry.record)continue;
-        const auto& record=*entry.record;const Source key{RelationshipMatrix::neighbor,record.neighbor_id,0};
-        if(sources_.count(key))continue; // Saved/live progress always wins over the catalog seed.
+    const auto add_record=[&](const NeighborRecord& record){
+        const Source key{RelationshipMatrix::neighbor,record.neighbor_id,0};
+        if(sources_.count(key))return true; // Saved/live progress always wins over the catalog seed.
         if(additions.size()>=limits_.sources-sources_.size())return false;
         Pairs added;
         for(const auto& relation:record.relationships){
@@ -119,6 +119,16 @@ bool RelationshipState::admit_missing_neighbor_sources(const NeighborContext& co
             ++pairs;values+=relation.values.size();
         }
         if(!additions.emplace(key,std::move(added)).second)return false;
+        return true;
+    };
+    // Keep legacy raw records (including signed IDs) and strict duplicate
+    // target validation. Gameplay additions are owned by NeighborContext and
+    // deliberately do not mutate that immutable serialized source.
+    for(const auto& entry:context.source().entries)if(entry.record&&!add_record(*entry.record))return false;
+    for(auto id=context.next(0);id>0;id=context.next(id)){
+        const Source key{RelationshipMatrix::neighbor,id,0};
+        if(sources_.count(key)||additions.count(key))continue;
+        const auto* record=context.by_id(id);if(!record||!add_record(*record))return false;
     }
     if(additions.empty())return true;
     auto candidate=sources_;candidate.merge(additions);

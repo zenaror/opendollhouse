@@ -7,6 +7,7 @@
 #include <vector>
 namespace odh {
 struct SessionBundle;
+struct Ts1CharacterFamilySnapshot;
 struct SessionBundleLimits;
 struct Ts1TravelMember {
     std::uint32_t guid=0;
@@ -61,6 +62,9 @@ struct Ts1TravelState {
     std::int32_t family_number=0;
     std::uint64_t occupancy_epoch=0;
     std::array<std::uint8_t,32> neighborhood_identity{},family_identity{};
+    // TRIP4 binds current membership to the CFAM roster revision. Travelers
+    // retain the exact previously admitted execution identities.
+    std::optional<std::uint64_t> family_roster_revision;
     std::vector<Ts1TravelMember> permanent_roster,travelers; // Current admitted subset, not a pending departure group.
     std::uint32_t caller_guid=0;
     std::int16_t caller_neighbor_id=0,transit_info=0;
@@ -77,6 +81,10 @@ std::int16_t ts1_travel_departure_transit(const Ts1TravelState&);
 // carrier. Does not promote a visitor to household/control/occupancy authority.
 const Entity& resolve_ts1_travel_departure_avatar(const SessionBundle&,const Ts1TravelMember&);
 void validate_ts1_travel_state(const Ts1TravelState&);
+// Current ordered FAMI projection; execution/traveler and pending identities
+// are preserved. The caller resolves every current resource independently.
+void synchronize_ts1_travel_family_roster(Ts1TravelState&,const Ts1CharacterFamilySnapshot&,
+    const std::vector<Ts1TravelMember>& current);
 void seal_ts1_travel_request(Ts1TravelState&,const SessionBundle&);
 void validate_ts1_travel_bundle(const SessionBundle&);
 void validate_ts1_travel_bundle(const SessionBundle&,const SessionBundleLimits&);

@@ -1,4 +1,8 @@
 #include "odh/sha256.hpp"
+#include "odh/ts1_travel_return.hpp"
+#include "odh/session_source_checkpoint.hpp"
+#include "odh/session_entry.hpp"
+#include "odh/original_companion_protocol.hpp"
 #include "saved_avatar_containment_fixture.hpp"
 #include "odh/avatar_person_data.hpp"
 #include "odh/world_snapshot_codec.hpp"
@@ -6,6 +10,7 @@
 #include "odh/single_resident_session_restore.hpp"
 #include "odh/seated_session_continuation.hpp"
 #include "saved_action_owner_cache.hpp"
+#include "household_go_here_session.hpp"
 #include <fstream>
 #include <algorithm>
 #include <filesystem>
@@ -39,9 +44,11 @@ struct Execution {
     odh::Playback playback;
     odh::Vm vm;
     Execution(odh::World& world,std::int16_t id,odh::RandomState& rng,bool missing=false,
-        const odh::RoutineOwners& extra={}):
+        const odh::RoutineOwners& extra={},odh::VmPrimitive other={}):
         controllers(world,id,[&rng]{rng.next(100);}),playback(world,{}),
-        vm(odh::RoutineSet{},world.vm_memory(),{},controllers.sleep_primitive(),
+        vm(odh::RoutineSet{},world.vm_memory(),{},[this,other](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+            return instruction.opcode!=0&&other?other(frame,instruction,temps,dispatch):controllers.sleep_primitive()(frame,instruction,temps,dispatch);
+        },
             resident_owners(id,missing,extra)){
         require(controllers.bind(vm)&&playback.bind(vm),"bind resident graph");}
     void schedule(odh::EntityVmScheduler& scheduler,std::int16_t id){require(scheduler.add(id,vm,
@@ -572,6 +579,376 @@ void npc_restore_tests(bool reuse_original=false,bool original_protocol=false) {
     rejects([&]{odh::HouseholdSessionRestore::prepare(bytes,f.resources,f.selection,f.roster,conflicting,
         f.lot,f.bootstrap,21,{}, {},metadata);},"NPC claims original lot identity");
 }
+// Real queue/VM/Routing checkpoints: NPCA execution anchor, NPCA nonanchor,
+// and the existing mixed HHRD/NPCA profile share the same command service.
+void npc_go_here_execution_tests(){
+    using GoHere=odh_host::HouseholdGoHereSession;
+    constexpr odh::CodeOwner destination_owner=0x80000000U;
+    {
+        // Make19 may publish a private neighbor before Generic4 changes FAMI.
+        // That receipt alone must not revoke an unchanged HHRD selection.
+        Fixture f(16);f.start();f.step();auto saved=f.snapshot();saved.generic_execution=true;
+        odh::SessionFamilyLease lease;lease.neighborhood_identity.fill(1);lease.family_identity.fill(2);
+        lease.occupancy_epoch=1;lease.family_chunk_id=21;saved.family_lease=lease;
+        odh::SessionCharacterFamily family;family.shared.neighborhood_identity=lease.neighborhood_identity;family.shared.revision=1;
+        odh::Ts1CreatedCharacter created;created.identity={99,0xabcdef,128,"PlayerData/Characters/User99.iff",{}};
+        created.identity.character_fingerprint.fill(9);created.seed=odh::make_original_character_neighbor(99,0xabcdef,"User99.iff");
+        family.shared.characters={created};for(const auto& member:saved.household_roster)family.runtime_subset.push_back(member.guid);
+        saved.character_family=family;const auto& first=saved.household_roster.front();saved.ui_state=odh::SessionUiState{first.id,first.generation,first.guid};
+        auto restored=prepare(odh::encode_session_bundle(saved),f);
+        require(restored->ui_state()&&restored->ui_state()->active_actor==first.id,
+            "creation-only CFAM preserves exact unchanged household selection before Add");
+        std::cout<<"NPCA UI creation-only CFAM/HHRD regression PASS"<<std::endl;
+    }
+    for(bool npc_anchor:{false,true})for(std::int16_t walker:{1,2})for(int boundary:{0,1,2}){
+        // 0: ordinary Destination before first dispatch; 1: ordinary walking;
+        // 2: historical ghost continuation, kept only for compatibility.
+        const bool historical=boundary==2;
+        const auto* boundary_name=boundary==0?"queued":boundary==1?"ordinary":"ghost";
+        std::cout<<"NPCA Go Here matrix anchor="<<(npc_anchor?"NPRM":"HHRD")<<" walker="<<walker<<" boundary="<<boundary_name<<" RUN"<<std::endl;
+        odh::World world;odh::WorldSnapshot baseline=world.snapshot();
+        std::array<odh::Entity,2> metadata;
+        std::array<odh::CodeOwner,2> main_owner{};
+        std::array<std::uint32_t,2> guid{{0xfc72c0c1U,0xfc72c0c2U}};
+        for(std::int16_t id:{1,2}){
+            require(world.create(id,odh::EntityKind::avatar,{2,88,1,16})&&world.define_type(id,guid[id-1])&&
+                world.set_person_data(id,31,static_cast<std::int16_t>(40+id))&&world.set_person_data(id,61,21)&&
+                world.define_entry_points(id,{{0,4096}}),"Go Here cohort exact character metadata");
+            metadata[id-1]=*world.find(id);
+            if(!npc_anchor&&id==1)baseline=world.snapshot();
+            require(world.set_position(id,{4,4+16*(id-1),1,0}),"Go Here cohort placement");
+            main_owner[id-1]=npc_anchor||id==2?guid[id-1]:static_cast<odh::CodeOwner>(id);
+        }
+        odh::RoutineSet idle{{odh::routine_key(4096),odh::Bhav{0x8002,
+            {{17,0,0,{0,0,1,0}}},{},odh::Bhav::Metadata{0,4,4,0}}}};
+        const auto action=go_here_program();
+        odh::SlotRecord slot{};slot.type=3;slot.standing=1;slot.flags=0x55;slot.snap_target_slot=-1;
+        slot.proximity=std::array<std::int32_t,3>{16,16,16};slot.gradient_bits=0x3E400000;
+        slot.facing=-2;slot.resolution=16;
+        odh::SlotTable slots{0,10,{slot,slot},0};
+        struct Graph {
+            odh::World& world;odh::RandomState random{777};odh::EntityVmScheduler scheduler{4};
+            odh::RouteGrid grid{64,64};std::array<std::unique_ptr<odh::Routing>,2> route;
+            std::array<std::unique_ptr<Execution>,2> actor;std::uint64_t tick=0;
+            Graph(odh::World& w,const odh::SlotTable& slots,odh::CodeOwner destination_owner):world(w){
+                for(std::int16_t id:{1,2}){const auto i=static_cast<std::size_t>(id-1);
+                    route[i]=std::make_unique<odh::Routing>(world,grid,slots);
+                    // This fixture has one known room on level1. It still
+                    // authenticates the caller, actual Destination and grid.
+                    route[i]->set_room_pair_provider([this](const auto& actor,const auto& target)
+                        ->std::optional<std::pair<std::uint16_t,std::uint16_t>>{
+                        if(actor.level!=1||target.level!=1||!grid.contains({actor.x,actor.y})||!grid.contains({target.x,target.y}))return {};
+                        return std::pair<std::uint16_t,std::uint16_t>{1,1};
+                    });
+                    route[i]->set_route_goal_validator([this,id,destination_owner](const odh::VmFrame& frame,odh::RoutePoint point){
+                        const auto* caller=world.frame_entity(frame,odh::VmEntityRole::caller);
+                        const auto* target=world.frame_entity(frame,odh::VmEntityRole::stack_object);
+                        return caller&&caller->id==id&&caller->position&&target&&target->definition&&target->definition->guid==0x7c4&&
+                            target->position&&target->position->level==caller->position->level&&frame.context.code_owner==destination_owner&&
+                            point==odh::RoutePoint{target->position->x,target->position->y}&&grid.walkable(point);
+                    });
+                    actor[i]=std::make_unique<Execution>(world,id,random,true,odh::RoutineOwners{},
+                        [this,i](const auto& f,const auto& ins,const auto& t,const auto& d){
+                            return ins.opcode==17?actor[i]->controllers.interaction_primitive()(f,ins,t,d):route[i]->primitive()(f,ins,t,d);});
+                    require(route[i]->bind(actor[i]->vm),"Go Here route binds the actual actor VM");
+                    require(scheduler.add(id,actor[i]->vm,[this,i](auto tick){route[i]->tick(tick);return actor[i]->controllers.advance(tick);},
+                        [this,i]{return actor[i]->controllers.observe();},[this,i]{return actor[i]->controllers.notify();}),"Go Here actor scheduled once");
+                }
+            }
+            void step(){if(!scheduler.tick(++tick,16,8)){
+                std::string why="Go Here real scheduler tick "+std::to_string(tick)+": "+scheduler.diagnostic();
+                for(std::size_t i=0;i<actor.size();++i)why+=" actor="+std::to_string(i+1)+" vm="+actor[i]->vm.diagnostic()+
+                    " queue="+actor[i]->controllers.interactions().diagnostic()+" route="+route[i]->diagnostic();
+                throw std::runtime_error(why);
+            }}
+        } live(world,slots,destination_owner);
+        for(std::int16_t id:{1,2}){
+            auto& vm=live.actor[id-1]->vm;require(vm.install_owner(main_owner[id-1],idle),"install actual Main bank");
+            require(vm.start(odh::routine_key(4096),{id,id,id,main_owner[id-1]},{120})==odh::VmStatus::running,"start actual cohort Main");
+        }
+        live.step();auto& walking=*live.actor[walker-1];
+        require(walking.vm.install_owner(destination_owner,action),"install Destination action in requesting Thread");
+        GoHere::ConstructedDestination receipt;GoHere::Services services;
+        services.source_still_matches=[&]{return world.find(walker)&&world.find(walker)->person_data[61]==21;};
+        services.construct=[&](const auto& position,const auto& current,std::string*)->std::optional<GoHere::ConstructedDestination>{
+            require(current()&&world.create_runtime_object(3,0x7c4,{},std::vector<odh::EntryPoint>(31))&&world.set_position(3,position),"Go Here actual Destination creation");
+            odh::Interaction row{};row.action=4096;row.label_index=2;
+            receipt={3,world.find(3)->generation,destination_owner,walking.vm.shared_program_for_owner(destination_owner),odh::Ttab{odh::TtabStatus::decoded,1,9,true,0,{row}}};return receipt;
+        };
+        GoHere command(world,walker,walking.vm,walking.controllers,*live.route[walker-1]);
+        require(command.request({36,4+16*(walker-1),1,0},services),"same Go Here service admits actual selected actor");
+        if(historical)require(world.set_ui_ghost(3,true)&&world.set_static_footprint(3,false),"explicit historical marker profile");
+        if(boundary)for(unsigned n=0;n<8&&!live.route[walker-1]->active();++n)live.step();
+        require(boundary?live.route[walker-1]->active():!live.route[walker-1]->active(),"checkpoint is actual queued or walking boundary");
+        odh::SessionResourceCodeOwner destination;destination.owner=destination_owner;destination.resource_guid=0x7c4;
+        destination.source="Objects.far";destination.asset="Destination.iff";destination.definition_chunk_id=128;
+        destination.tree_table_id=128;destination.root_routine=4096;destination.bank_kind=odh::SessionCodeBankKind::complete_private;
+        destination.routine_fingerprint=odh::session_loaded_bank_fingerprint(action);
+        const odh::SessionCreatedObject origin{3,world.find(3)->generation,0x7c4,destination.source,destination.asset,128};
+        odh::SessionDynamicActionOwner dynamic;dynamic.owner=destination_owner;dynamic.target_id=3;dynamic.target_generation=origin.generation;
+        dynamic.target_guid=0x7c4;dynamic.source=destination.source;dynamic.asset=destination.asset;dynamic.definition_chunk_id=128;
+        dynamic.tree_table_id=128;dynamic.root_routine=4096;dynamic.routine_fingerprint=odh::session_action_routine_fingerprint(action);
+        odh::SessionBundle saved;saved.generic_execution=true;saved.next_code_owner=destination_owner+1;saved.resources.resource_fingerprint.fill(0x5a);
+        saved.host.neighborhood_mode=2;saved.host.house_number=23;saved.host.family_chunk_id=21;saved.host.family_number=12;
+        saved.host.runtime_avatar_id=1;saved.host.resident_guid=guid[0];saved.host.resident_neighbor_id=41;
+        odh::LotContext lot(23,std::vector<std::int16_t>(64));odh::Ts1BootstrapGlobals bootstrap;
+        saved.host.global_values=globals(lot,bootstrap);saved.host.tick=live.tick;saved.host.random_seed=live.random.seed();
+        saved.world=world.snapshot();saved.scheduler=live.scheduler.snapshot();saved.relationships=odh::RelationshipState{}.snapshot();
+        odh::SessionFamilyLease lease;lease.neighborhood_identity.fill(1);lease.family_identity.fill(2);lease.occupancy_epoch=1;lease.family_chunk_id=21;saved.family_lease=lease;
+        odh::SessionCharacterFamily family;family.shared.neighborhood_identity=lease.neighborhood_identity;family.shared.revision=1;
+        odh::Ts1FamilyRoster row;row.family_chunk_id=21;row.source_identity=lease.family_identity;row.revision=1;row.members={guid[0],guid[1]};
+        family.shared.rosters={row};family.runtime_subset=row.members;saved.character_family=family;
+        odh::Ts1TravelState trip;trip.home_house=7;trip.current_house=23;trip.home_mode=1;trip.current_mode=2;trip.family_chunk_id=21;trip.family_number=12;
+        trip.occupancy_epoch=1;trip.neighborhood_identity=lease.neighborhood_identity;trip.family_identity=lease.family_identity;trip.family_activated=true;
+        trip.family_roster_revision=1;trip.caller_guid=guid[0];trip.caller_neighbor_id=41;
+        if(npc_anchor)saved.npc_primary=odh::WorldEntityReference{1,world.find(1)->generation};
+        for(std::int16_t id:{1,2}){
+            auto state=live.actor[id-1]->snapshot(id);
+            odh::SessionResourceCodeOwner main;main.owner=main_owner[id-1];main.resource_guid=guid[id-1];main.source="WorldNPC.far";
+            main.asset="NPC"+std::to_string(id)+".iff";main.definition_chunk_id=128;main.root_routine=4096;
+            main.identity=odh::SessionCodeOwnerIdentity::resource_guid;main.bank_kind=odh::SessionCodeBankKind::complete_private;
+            main.routine_fingerprint=odh::session_loaded_bank_fingerprint(idle);
+            if(npc_anchor||id==2)state.resource_owners.push_back(main);
+            if(id==walker){
+                if(boundary){state.route=live.route[id-1]->capture_local_session_route(destination_owner);require(state.route.has_value(),"capture actual walking controller");}
+                if(historical)state.dynamic_action_owners={dynamic};else state.resource_owners.push_back(destination);
+            }
+            std::sort(state.resource_owners.begin(),state.resource_owners.end(),[](const auto& a,const auto& b){return a.owner<b.owner;});
+            odh::Ts1TravelMember traveler;traveler.guid=guid[id-1];traveler.neighbor_id=static_cast<std::int16_t>(40+id);traveler.definition_chunk_id=128;traveler.character_fingerprint.fill(static_cast<std::uint8_t>(id));
+            if(npc_anchor||id==2){odh::SessionNpcAvatar npc;
+                npc.origin={id,world.find(id)->generation,guid[id-1],traveler.neighbor_id,main.source,main.asset,128,traveler.character_fingerprint};
+                npc.primary_owner=main.owner;npc.selected_name="Synthetic NPC";npc.runtime=state;saved.npc_avatars.push_back(npc);
+                traveler.character_asset=odh::native_personal_resource_key(main.source,main.asset);
+            }else{odh::SessionHouseholdMember member;member.id=id;member.generation=world.find(id)->generation;member.guid=guid[id-1];
+                member.neighbor_id=traveler.neighbor_id;member.object_definition_id=128;member.character_asset="UserData/Characters/User00001.iff";member.character_fingerprint=traveler.character_fingerprint;
+                saved.household_roster.push_back(member);saved.runtime_entities.push_back(state);traveler.character_asset=member.character_asset;}
+            trip.permanent_roster.push_back(traveler);trip.travelers.push_back(traveler);
+        }
+        saved.travel=trip;saved.neighbor_inventory=odh::NeighborInventorySnapshot{};
+        if(!historical)saved.created_objects={origin};
+        saved.ui_state=odh::SessionUiState{walker,world.find(walker)->generation,guid[walker-1]};
+        const auto bytes=odh::encode_session_bundle(saved);
+        auto removed=saved;auto& members=removed.character_family->shared.rosters.front().members;
+        members.erase(std::remove(members.begin(),members.end(),guid[walker-1]),members.end());
+        auto& permanent=removed.travel->permanent_roster;
+        permanent.erase(std::remove_if(permanent.begin(),permanent.end(),[&](const auto& m){return m.guid==guid[walker-1];}),permanent.end());
+        rejects([&]{odh::encode_session_bundle(removed);},"current FAMI removal revokes selection even while the old Thread/route survives");
+        const auto resolve_npc=[&](const odh::SessionNpcAvatarOrigin& o){
+            const auto found=std::find_if(saved.npc_avatars.begin(),saved.npc_avatars.end(),[&](const auto& n){return n.origin.id==o.id;});
+            if(found==saved.npc_avatars.end()||o.guid!=found->origin.guid||o.neighbor_id!=found->origin.neighbor_id||o.source!=found->origin.source||
+               o.asset!=found->origin.asset||o.character_fingerprint!=found->origin.character_fingerprint||o.generation!=found->origin.generation)
+                throw odh::FormatError("Go Here NPC metadata identity changed");
+            return metadata[o.id-1];
+        };
+        const auto resolve_object=[&](const odh::SessionCreatedObject& o){
+            if(o.id!=origin.id||o.generation!=origin.generation||o.guid!=origin.guid||o.source!=origin.source||o.asset!=origin.asset||o.definition_chunk_id!=origin.definition_chunk_id)
+                throw odh::FormatError("Go Here Destination creation receipt changed");
+            odh::World resource;require(resource.create_runtime_object(3,0x7c4,{},std::vector<odh::EntryPoint>(31)),"Destination immutable resource metadata");
+            auto body=*resource.find(3);body.generation=o.generation;return body;
+        };
+        auto restored=odh::HouseholdSessionRestore::prepare(bytes,saved.resources,saved.host,saved.household_roster,baseline,lot,bootstrap,21,{},resolve_object,resolve_npc,trip);
+        (void)restored->consume_travel();Graph cold(restored->world(),slots,destination_owner);
+        std::vector<odh::SessionExecutionBinding> residents,npcs;
+        for(std::int16_t id:{1,2}){
+            auto& e=*cold.actor[id-1];
+            if(!npc_anchor&&id==1)require(e.vm.install_owner(1,idle),"restore household native bank");
+            if(!restored->resource_owners(id).empty())restored->install_resource_owners(id,e.vm,[&](const auto& owner){
+                require(owner.source==(owner.owner==destination_owner?destination.source:std::string{"WorldNPC.far"}),"restore exact actor source bank");
+                return std::make_pair(owner.owner==destination_owner?action:idle,std::optional<odh::SessionLinkedSemiglobal>{});});
+            if(historical&&id==walker)restored->install_dynamic_action_owners(id,e.vm,[&](const auto& binding){
+                require(binding.source==dynamic.source&&binding.asset==dynamic.asset,"restore exact historical action bank");return std::make_pair(action,std::optional<odh::SessionLinkedSemiglobal>{});});
+            (npc_anchor||id==2?npcs:residents).push_back({id,&e.vm,&e.controllers,&e.playback,{}});
+        }
+        restored->restore_execution(residents,npcs,cold.scheduler,cold.random,cold.tick);
+        auto& selected=*cold.actor[walker-1];
+        if(boundary)require(cold.route[walker-1]->restore_local_session_route(*restored->local_route(walker),destination_owner),"cold binds route to same actual NPC/HH VM");
+        GoHere::CreatedDestinationBinding binding;binding.destination=receipt;binding.destination.program=selected.vm.shared_program_for_owner(destination_owner);
+        binding.origin=origin;binding.resource_owner=destination;
+        GoHere resumed(restored->world(),walker,selected.vm,selected.controllers,*cold.route[walker-1]);
+        const auto before_steps=selected.vm.steps();const auto before_spatial=restored->world().snapshot().spatial_revision;
+        require(historical?resumed.restore(*restored->local_route(walker),dynamic):
+            boundary?resumed.restore_created(*restored->local_route(walker),binding):resumed.restore_created_pending(binding),"cold restores selected actor Go Here bookkeeping");
+        require(selected.vm.steps()==before_steps&&restored->world().snapshot().spatial_revision==before_spatial&&resumed.status()=="queued",
+            "cold adoption does not dispatch another VM or mutate the World");
+        auto forged=binding;forged.destination.program=walking.vm.shared_program_for_owner(destination_owner);
+        if(!historical){GoHere rejected(restored->world(),walker,selected.vm,selected.controllers,*cold.route[walker-1]);
+            require(!rejected.restore_created_pending(forged),"another Thread bank cannot impersonate the restored actor owner");}
+        const auto other=static_cast<std::size_t>(2-walker);const auto other_position=restored->world().find(static_cast<std::int16_t>(other+1))->position;
+        for(unsigned n=0;n<80&&resumed.status()=="queued";++n){cold.step();resumed.observe();}
+        require(resumed.status()!="queued"&&resumed.result()==std::optional<bool>{true}&&
+            !(restored->world().find(walker)->position==saved.world.entities[walker-1].position)&&
+            restored->world().find(static_cast<std::int16_t>(other+1))->position==other_position,
+            "selected primary/nonprimary moves and completes; other actor keeps its own position and Thread");
+        std::cout<<"NPCA Go Here matrix anchor="<<(npc_anchor?"NPRM":"HHRD")<<" walker="<<walker<<" boundary="<<boundary_name<<" PASS"<<std::endl;
+    }
+}
+
+void npc_primary_execution_tests(){
+ for(const auto protocol:{odh::Ts1TravelProtocol::legacy_pin,odh::Ts1TravelProtocol::original_6e598}){
+    Fixture home_fixture(16);home_fixture.start();
+    for(std::int16_t id:{1,2})require(home_fixture.world.set_person_data(id,31,static_cast<std::int16_t>(40+id))&&
+        home_fixture.world.set_person_data(id,61,21),"HOME household keeps its actual neighbor and family words");
+    constexpr odh::CodeOwner owner=0xfc72c0c0U;
+    auto npc_program=program();
+    npc_program.emplace(odh::routine_key(4097),odh::Bhav{0x8002,{{1,1,255,{17,0,0,0,0,0,0,0}},{0,254,255,{}}},{},odh::Bhav::Metadata{0,4,4,0}});
+    odh::VmPrimitive return_dispatch;
+    const odh::VmPrimitive dispatch=[&](const auto& frame,const auto& instruction,const auto& temps,const auto& source){
+        if(!return_dispatch)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"return not requested"};
+        return return_dispatch(frame,instruction,temps,source);
+    };
+    require(home_fixture.world.create(3,odh::EntityKind::avatar,{2,88,1,16})&&
+        home_fixture.world.define_type(3,owner)&&home_fixture.world.set_person_data(3,31,40)&&
+        home_fixture.world.set_person_data(3,61,21)&&home_fixture.world.define_entry_points(3,{{0,4096}}),"HOME NPC exact original body");
+    Execution home_npc(home_fixture.world,3,home_fixture.rng,true,{{owner,npc_program}});
+    home_npc.schedule(home_fixture.scheduler,3);
+    require(home_npc.vm.start(odh::routine_key(4096),{3,3,3,owner},{7})==odh::VmStatus::running,"HOME NPC Main");home_fixture.step();
+    odh::SessionNpcAvatar origin;origin.origin={3,home_fixture.world.find(3)->generation,owner,40,
+        "GameData/Objects/WorldNPC.far","Pizza.iff",128,{}};origin.origin.character_fingerprint.fill(0x6a);
+    origin.primary_owner=owner;origin.selected_name="Synthetic Pizza";
+    odh::SessionResourceCodeOwner code;code.owner=owner;code.resource_guid=owner;code.source=origin.origin.source;
+    code.asset=origin.origin.asset;code.definition_chunk_id=128;code.root_routine=4096;
+    code.identity=odh::SessionCodeOwnerIdentity::resource_guid;code.bank_kind=odh::SessionCodeBankKind::complete_private;
+    code.routine_fingerprint=odh::session_loaded_bank_fingerprint(npc_program);
+    auto home=home_fixture.snapshot();home.generic_execution=true;origin.runtime=home_npc.snapshot(3);origin.runtime.resource_owners={code};home.npc_avatars={origin};
+    odh::SessionFamilyLease lease;lease.neighborhood_identity.fill(1);lease.family_identity.fill(2);lease.occupancy_epoch=1;lease.family_chunk_id=21;
+    home.family_lease=lease;home.neighbor_inventory=odh::NeighborInventorySnapshot{};home.neighbor_inventory->version=static_cast<std::uint32_t>(protocol);
+    odh::SessionCharacterFamily family;family.shared.neighborhood_identity=lease.neighborhood_identity;family.shared.revision=1;
+    odh::Ts1FamilyRoster row;row.family_chunk_id=21;row.source_identity=lease.family_identity;row.revision=1;
+    for(const auto& member:home.household_roster)row.members.push_back(member.guid);row.members.push_back(owner);
+    family.shared.rosters={row};family.runtime_subset=row.members;home.character_family=family;
+    const auto raw_home=odh::encode_session_bundle(home);
+    odh::World destination;require(destination.create(9,odh::EntityKind::avatar,{2,88,1,16})&&
+        destination.define_type(9,owner)&&destination.set_person_data(9,31,40)&&destination.set_person_data(9,61,21)&&
+        destination.define_entry_points(9,{{0,4096}})&&destination.set_position(9,{14,20,1,2}),"destination actual NPC constructor");
+    odh::RandomState random(777);Execution live(destination,9,random,true,{{owner,npc_program}},dispatch);
+    odh::EntityVmScheduler scheduler(4);live.schedule(scheduler,9);
+    require(live.vm.start(odh::routine_key(4096),{9,9,9,owner},{7})==odh::VmStatus::running,"NPC-only primary starts its real Main");
+    require(live.controllers.interactions().enqueue_source_user(odh::routine_key(4096),{9,9,9,owner},
+        std::vector<std::int16_t>{2,0,0,0},4),"NPC primary accepts a real source user action");
+    require(scheduler.tick(1,16,8),"NPC primary dispatches its actual action/controller graph");
+    require(!live.controllers.interactions().snapshot().actions.empty()&&!live.vm.snapshot().immediate_continuations.empty(),
+        "save boundary retains the real action and parked Main");
+    // The actual legacy Generic17 producer reads Global34. A serialized32
+    // destination has no such source word; use the supported64-word source.
+    odh::LotContext lot(23,std::vector<std::int16_t>(64));std::uint64_t tick=1;
+    auto active=home;active.host.house_number=23;active.host.neighborhood_mode=2;active.host.runtime_avatar_id=9;
+    active.host.resident_guid=owner;active.host.resident_neighbor_id=40;active.host.global_values=globals(lot,home_fixture.bootstrap);
+    active.household_roster.clear();active.runtime_entities.clear();active.relationships=odh::RelationshipState{}.snapshot();
+    active.character_family->runtime_subset={owner};active.npc_primary=odh::WorldEntityReference{9,destination.find(9)->generation};
+    active.npc_avatars.front().origin.id=9;active.npc_avatars.front().origin.generation=destination.find(9)->generation;
+    odh::Ts1TravelState trip;trip.protocol=protocol;trip.home_house=7;trip.current_house=23;trip.home_mode=1;trip.current_mode=2;trip.family_chunk_id=21;trip.family_number=12;
+    trip.occupancy_epoch=1;trip.neighborhood_identity=lease.neighborhood_identity;trip.family_identity=lease.family_identity;trip.family_activated=true;
+    for(const auto& member:home.household_roster)trip.permanent_roster.push_back({member.guid,member.neighbor_id,member.object_definition_id,member.character_asset,member.character_fingerprint});
+    const odh::Ts1TravelMember traveler{owner,40,128,odh::native_personal_resource_key(origin.origin.source,origin.origin.asset),origin.origin.character_fingerprint};
+    trip.permanent_roster.push_back(traveler);trip.travelers={traveler};trip.caller_guid=owner;trip.caller_neighbor_id=40;
+    trip.family_roster_revision=1;active.travel=trip;
+    const auto capture=[&]{auto out=active;out.host.tick=tick;out.host.random_seed=random.seed();out.world=destination.snapshot();out.scheduler=scheduler.snapshot();
+        out.npc_avatars[0].runtime=live.snapshot(9);out.npc_avatars[0].runtime.resource_owners={code};return out;};
+    const auto saved=capture();const auto bytes=odh::encode_session_bundle(saved);
+    odh::Nbrs replayed;replayed.version=62;replayed.entries.resize(40);
+    odh::NeighborRecord neighbor;neighbor.version=10;neighbor.neighbor_id=40;neighbor.guid=owner;neighbor.name="Pizza";
+    replayed.entries.back()={1,neighbor};odh::NeighborContext neighbor_context(replayed);
+    odh::SessionEntry selected{2,23,"House23.iff",21,12,{}};
+    const odh::DefinitionIndex no_characters(std::vector<odh::DefinitionCandidate>{});
+    const auto entry=odh::resolve_session_execution_entry(selected,saved,neighbor_context,no_characters);
+    require(entry.members.empty()&&entry.npc_primary&&entry.npc_primary->reference==*saved.npc_primary&&
+        entry.npc_primary->resource.character_source==origin.origin.source&&entry.npc_primary->fingerprint==origin.origin.character_fingerprint,
+        "frontend selects the exact NPCA execution resource without creating a household identity");
+    auto forged_entry=saved;forged_entry.npc_primary->generation++;
+    rejects([&]{odh::resolve_session_execution_entry(selected,forged_entry,neighbor_context,no_characters);},"frontend rejects reused NPC execution reference");
+    odh::NeighborContext absent_neighbor(odh::Nbrs{});
+    rejects([&]{odh::resolve_session_execution_entry(selected,saved,absent_neighbor,no_characters);},"frontend rejects missing replayed NPC catalog identity");
+    const auto metadata=[&](const odh::SessionNpcAvatarOrigin& identity){
+        if(identity.guid!=owner||identity.neighbor_id!=40||identity.source!=origin.origin.source||identity.asset!=origin.origin.asset||identity.object_definition_id!=128||identity.character_fingerprint!=origin.origin.character_fingerprint)
+            throw odh::FormatError("NPC primary exact resource changed");
+        odh::World source;require(source.create(identity.id,odh::EntityKind::avatar,{2,88,1,16})&&source.define_type(identity.id,owner)&&source.set_person_data(identity.id,31,40)&&source.set_person_data(identity.id,61,21)&&source.define_entry_points(identity.id,{{0,4096}}),"NPC primary resource metadata");
+        auto body=*source.find(identity.id);body.generation=identity.generation;return body;
+    };
+    const auto prepare_primary=[&](const auto& wire){return odh::HouseholdSessionRestore::prepare(wire,saved.resources,saved.host,{},odh::World{}.snapshot(),lot,home_fixture.bootstrap,21,{}, {},metadata,trip);};
+    auto reopened=prepare_primary(bytes);require(reopened->consume_travel().has_value(),"consume exact NPC-primary travel authority");
+    odh::RandomState restored_random(999);std::uint64_t restored_tick=999;Execution cold(reopened->world(),9,restored_random,true,{},dispatch);
+    odh::EntityVmScheduler cold_scheduler(4);cold.schedule(cold_scheduler,9);
+    reopened->install_resource_owners(9,cold.vm,[&](const auto& identity){require(identity.owner==owner&&identity.source==code.source&&identity.asset==code.asset,"NPCA resource owner is exact");return std::make_pair(npc_program,std::optional<odh::SessionLinkedSemiglobal>{});});
+    reopened->restore_execution({},{{9,&cold.vm,&cold.controllers,&cold.playback,{}}},cold_scheduler,restored_random,restored_tick);
+    auto observed=saved;observed.world=reopened->world().snapshot();observed.scheduler=cold_scheduler.snapshot();observed.npc_avatars[0].runtime=cold.snapshot(9);observed.npc_avatars[0].runtime.resource_owners={code};
+    require(observed.runtime_entities.empty()&&observed.household_roster.empty()&&odh::encode_session_bundle(observed)==bytes,"NPC primary reopens byte-exact with one real Thread and zero HHRD");
+    for(unsigned n=0;n<3;++n){require(scheduler.tick(++tick,16,8)&&cold_scheduler.tick(++restored_tick,16,8),"resume both actual schedulers");}
+    observed.host.tick=restored_tick;observed.host.random_seed=restored_random.seed();observed.world=reopened->world().snapshot();observed.scheduler=cold_scheduler.snapshot();observed.npc_avatars[0].runtime=cold.snapshot(9);observed.npc_avatars[0].runtime.resource_owners={code};
+    require(odh::encode_session_bundle(observed)==odh::encode_session_bundle(capture()),"NPC primary continues without Init or Main restart");
+    auto bad=saved;bad.npc_primary->generation++;rejects([&]{odh::encode_session_bundle(bad);},"forged primary reference");
+    bad=saved;bad.runtime_entities={bad.npc_avatars.front().runtime};rejects([&]{odh::encode_session_bundle(bad);},"duplicate primary Thread view");
+    bad=saved;bad.npc_primary.reset();rejects([&]{odh::encode_session_bundle(bad);},"missing required primary carrier");
+    bad=saved;bad.npc_avatars.front().origin.source="GameData/Objects/Other.far";rejects([&]{prepare_primary(odh::encode_session_bundle(bad));},"forged primary resource source");
+    bad=saved;bad.host.resident_neighbor_id++;rejects([&]{odh::encode_session_bundle(bad);},"forged primary neighbor");
+    bad=saved;bad.npc_avatars.clear();rejects([&]{odh::encode_session_bundle(bad);},"missing exact primary NPCA record");
+    bad=saved;bad.npc_avatars[0].runtime.resource_owners[0].routine_fingerprint[0]^=1;
+    rejects([&]{auto forged=prepare_primary(odh::encode_session_bundle(bad));Execution thread(forged->world(),9,restored_random,true);
+        forged->install_resource_owners(9,thread.vm,[&](const auto&){return std::make_pair(npc_program,std::optional<odh::SessionLinkedSemiglobal>{});});},"forged primary Main bank");
+    auto optional_marker=odh::decode_session_archive(bytes);
+    for(auto& section:optional_marker.sections)if(section.id==std::array<char,4>{{'N','P','R','M'}})section.required=false;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(optional_marker));},"NPC primary cannot masquerade as an optional legacy view");
+    bad=saved;bad.character_family->shared.rosters[0].members.pop_back();bad.travel->permanent_roster.pop_back();
+    (void)odh::encode_session_bundle(bad); // The surviving Thread itself remains valid after removal.
+    bad.ui_state=odh::SessionUiState{9,bad.npc_primary->generation,owner};
+    rejects([&]{odh::encode_session_bundle(bad);},"execution primary does not grant control after removal from current family");
+    // The SAME reopened NPCA VM dispatches the return as a real user action;
+    // no replacement executor or synthetic continuation is introduced.
+    std::optional<odh::Ts1TravelRequest> pending_return;
+    odh::NeighborInventory return_inventory(odh::Ngbh{}, {},protocol);return_inventory.restore(*saved.neighbor_inventory);
+    return_dispatch=[&](const auto& frame,const auto& instruction,const auto& temps,const auto& source){
+        require(source.origin==&cold.vm&&instruction.opcode==1&&instruction.operands[0]==17,"return executes on the one reopened NPCA Thread");
+        odh::Ts1TravelRequest pending;pending.destination=-1;pending.thread_owner={9,reopened->world().find(9)->generation};
+        pending.run_generation=source.origin->run_generation();pending.ticket=source.ticket;pending.source_frame=frame;pending.source_instruction=instruction;
+        if(protocol==odh::Ts1TravelProtocol::legacy_pin){
+            const auto transit=reopened->lot().read(34);
+            require(transit.has_value(),"legacy Generic17 requires its actual restored Global34 source");
+            pending.departure_transit=*transit;
+        }else pending.departure_transit=temps[3];
+        pending.departure_members={{traveler,pending.thread_owner}};
+        if(protocol==odh::Ts1TravelProtocol::original_6e598){
+            auto effects=odh::prepare_original_travel_capture(reopened->world(),return_inventory,neighbor_context,
+                pending.thread_owner,pending.departure_members,temps,0,0,false,[&](const auto& reference){
+                    require(reference==pending.thread_owner,"original return resolves the same exact NPC source");return traveler;
+                });
+            pending.original=std::move(effects.receipt);
+            require(return_inventory.commit_replacement(std::move(effects.inventory)),"publish actual original return effects");
+        }
+        pending_return=std::move(pending);
+        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true_next_tick,{}};
+    };
+    cold.vm.temps()[0]=-1;cold.vm.temps()[1]=0;cold.vm.temps()[2]=0;cold.vm.temps()[3]=0;
+    require(cold.controllers.interactions().enqueue_source_user(odh::routine_key(4097),{9,9,9,owner},std::nullopt,4),"queue actual return after cold resume");
+    for(unsigned attempts=0;!pending_return&&attempts<16;++attempts)
+        require(cold_scheduler.tick(++restored_tick,16,8),"reopened NPC executes source return action");
+    require(pending_return.has_value(),"actual Generic17 return reaches its sealed next-tick boundary");
+    auto returned_source=saved;returned_source.host.tick=restored_tick;returned_source.host.random_seed=restored_random.seed();
+    returned_source.world=reopened->world().snapshot();returned_source.scheduler=cold_scheduler.snapshot();
+    returned_source.npc_avatars[0].runtime=cold.snapshot(9);returned_source.npc_avatars[0].runtime.resource_owners={code};
+    returned_source.travel->pending=std::move(pending_return);
+    if(protocol==odh::Ts1TravelProtocol::legacy_pin){
+        constexpr unsigned needs[7]={9,6,5,15,7,8,14};
+        for(unsigned key=0;key<7;++key)return_inventory.set_data(40,key,static_cast<std::uint16_t>(reopened->world().find(9)->motives[needs[key]]));
+    }
+    returned_source.neighbor_inventory=return_inventory.snapshot();
+    odh::seal_ts1_travel_request(*returned_source.travel,returned_source);
+    if(protocol==odh::Ts1TravelProtocol::legacy_pin){
+        auto wrong_transit=returned_source;wrong_transit.travel->pending->departure_transit=1;
+        rejects([&]{odh::encode_session_bundle(wrong_transit);},"legacy departure cannot replace actual Global34 with a declared transit value");
+        auto absent_transit=returned_source;
+        absent_transit.host.global_values.erase(std::remove_if(absent_transit.host.global_values.begin(),absent_transit.host.global_values.end(),
+            [](const auto& word){return word.index==34;}),absent_transit.host.global_values.end());
+        rejects([&]{odh::encode_session_bundle(absent_transit);},"legacy departure still rejects missing actual Global34");
+    }
+    auto envelope=home;envelope.travel=returned_source.travel;envelope.neighbor_inventory=returned_source.neighbor_inventory;
+    envelope.travel_home_session=raw_home;envelope.travel_visited_session=odh::encode_session_bundle(returned_source);
+    const auto wire=odh::encode_session_bundle(envelope);const auto digest=odh::sha256(wire.data(),wire.size());
+    const auto accepted=odh::decode_session_source_checkpoint(wire,digest);const auto receipt=odh::prepare_ts1_travel_return(accepted);
+    require(*accepted.envelope().travel_home_session==raw_home&&!receipt.home().npc_primary&&receipt.home().household_roster.size()==2&&
+        odh::encode_vm_snapshot(receipt.home().npc_avatars.front().runtime.vm)==odh::encode_vm_snapshot(home.npc_avatars.front().runtime.vm),"NPC return preserves raw HOME origin and its original Thread");
+    auto wrong_head=digest;wrong_head[0]^=1;rejects([&]{odh::decode_session_source_checkpoint(wire,wrong_head);},"NPC primary does not weaken accepted raw head");
+ }
+}
+
 void legacy_avatar_containment_tests(){
     Fixture source;source.start();source.step();auto saved=source.snapshot();
     saved_avatar_fixture_profile(source.baseline);
@@ -944,6 +1321,8 @@ void retired_household_source_tests(){
 void tests(){
     retired_household_source_tests();
     offworld_resident_restore_tests();
+    npc_primary_execution_tests();
+    npc_go_here_execution_tests();
     traveling_avatar_resource_restore_tests();
     travel_restore_authority_tests();
     shared_check_register_restore_tests();

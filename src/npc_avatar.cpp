@@ -195,8 +195,54 @@ NpcAvatarStartupResult initialize_npc_avatar(World& world,Vm& thread,std::int16_
     const NpcAvatarRequest& request,const EntryPointTable& entries,const NpcAvatarBodyInputs& inputs,
     RandomState& random,std::optional<std::uint16_t> current_family,const NpcPositionAttempt& position,
     std::uint64_t budget,const VmPrimitive& primitive,bool scheduler_running_now,const std::function<bool()>& self_deleted) {
-    if(request.original_semantics)return initialize_original_avatar(world,thread,id,owner,request,entries,inputs,random,
-        budget,primitive,scheduler_running_now,self_deleted);
+    if(request.original_semantics){
+        NpcAvatarStartupResult result;
+        const auto fail=[&](const std::string& why){result.completed=false;result.diagnostic=why;return result;};
+        const auto* initial=world.find(id);
+        if(!valid_request(request)||!caller_present(world,request)||!initial||!same_entries(*initial,entries))
+            return fail("original NPC startup requires its complete captured request and exact live source");
+        const auto generation=initial->generation;
+        const bool out_of_world=request.direct_placement?!request.direct_placement->destination:
+            request.creation.position()==CreateObjectPosition::out_of_world;
+        if((!out_of_world||request.direct_placement)&&!position)return fail("original NPC creation lacks its common placement service");
+        result=initialize_original_avatar(world,thread,id,owner,request,entries,inputs,random,
+            budget,primitive,scheduler_running_now,self_deleted);
+        if(!result.completed||result.self_deleted)return result;
+        // The original selective loader owns personal state. Never follow it
+        // with the pinned copy88 inheritance or PIN needs/name initialization.
+        // Creation still owns the ordinary SetPosition/UnderneathMe lifecycle.
+        const auto attempt=[&](bool ignore)->std::optional<bool>{
+            if(!caller_present(world,request)||!avatar_present(world,id,generation,request.guid()))return {};
+            auto destination=out_of_world?EntityPosition{-32768,-32768,1,request.direct_placement?request.direct_placement->direction:std::uint8_t{0}}:request.position;
+            if(ignore){const auto* caller=world.find(request.caller);if(!caller->position)return false;
+                destination.x=caller->position->x;destination.y=caller->position->y;destination.level=caller->position->level;}
+            ++result.position_attempts;
+            const auto status=position(world,id,destination,request.caller,ignore);
+            if(!avatar_present(world,id,generation,request.guid()))return {};
+            const auto* actor=world.find(id);
+            if(status==NpcPositionAttemptStatus::placed)return !actor->attachment&&
+                (out_of_world?!actor->position:actor->position&&*actor->position==destination)?std::optional<bool>{true}:std::nullopt;
+            if(status==NpcPositionAttemptStatus::blocked&&!actor->attachment&&!actor->position)return false;
+            return {};
+        };
+        try{
+        if(out_of_world&&!request.direct_placement){
+            if(!world.place_out_of_world(id,0))return fail("original NPC OOW placement failed");
+        }else{
+            const auto placed=attempt(false);
+            if(!placed||(out_of_world&&!*placed))return fail("original NPC common placement is unsupported or changed its exact state");
+        }
+        const auto* placed=world.find(id);
+        if(request.creation.position()==CreateObjectPosition::underneath_me&&placed&&!placed->position&&!placed->attachment){
+            const auto retry=attempt(true);if(!retry)return fail("original NPC UnderneathMe retry is unsupported or changed its exact state");
+        }
+        placed=world.find(id);
+        if(request.creation.position()!=CreateObjectPosition::out_of_world&&placed&&!placed->position&&!placed->attachment){
+            result.placement_blocked=true;return fail("original NPC non-OOW creation remained out of world; caller cleanup required");
+        }
+        return result;
+        }catch(const std::exception& error){return fail(error.what());}
+    }
     NpcAvatarStartupResult result;
     const auto fail=[&](const std::string& why){result.diagnostic=why;return result;};
     const auto* actor=world.find(id);

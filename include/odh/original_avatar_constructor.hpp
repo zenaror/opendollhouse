@@ -5,6 +5,9 @@ namespace odh {
 // Original6e598 fresh constructor and synchronous reset path. It operates on the
 // real newly allocated body/Thread; failure requires discarding the candidate.
 // Does not reinterpret or reinitialize any existing/reopened avatar.
+// initialize_npc_avatar validates the captured request and performs its common
+// creation placement after this fresh OOW initialization; this function owns no
+// independent floor publication or copy88 inheritance.
 NpcAvatarStartupResult initialize_original_avatar(World&,Vm&,std::int16_t,CodeOwner,
     const NpcAvatarRequest&,const EntryPointTable&,const NpcAvatarBodyInputs&,RandomState&,
     std::uint64_t,const VmPrimitive&,bool,const std::function<bool()>&);

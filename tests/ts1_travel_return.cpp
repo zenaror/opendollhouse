@@ -79,6 +79,50 @@ std::vector<std::uint8_t> native_sims1_archive(const std::vector<std::uint8_t>& 
  }
  return odh::encode_session_archive(archive);
 }
+void current_family_travel_matrix(){
+ for(const bool remove_last:{false,true}){
+  auto envelope=remove_last?return_envelope():travel_test::departure_party_envelope();
+  const auto immutable_home=*envelope.travel_home_session;
+  auto active=odh::decode_session_bundle(*envelope.travel_visited_session);
+  odh::SessionCharacterFamily shared;
+  shared.shared.neighborhood_identity=active.family_lease->neighborhood_identity;shared.shared.revision=1;
+  odh::Ts1FamilyRoster row;row.family_chunk_id=active.host.family_chunk_id;row.source_identity=active.family_lease->family_identity;row.revision=1;
+  auto members=active.travel->permanent_roster;
+  if(remove_last)members.clear();else members.pop_back(); // Nontraveling former resident remains a HOME Thread.
+  for(const auto& m:members)row.members.push_back(m.guid);shared.shared.rosters={row};
+  for(const auto& m:active.household_roster)shared.runtime_subset.push_back(m.guid);
+  active.character_family=shared;
+  const auto request=active.travel->pending;active.travel->pending.reset();
+  odh::synchronize_ts1_travel_family_roster(*active.travel,shared.shared,members);
+  if(!remove_last)active.travel->pending=request;
+  envelope.travel=active.travel;odh::project_session_character_family(envelope,shared);
+  envelope.travel_visited_session=odh::encode_session_bundle(active);
+  const auto bytes=odh::encode_session_bundle(envelope);
+  const auto digest=odh::sha256(bytes.data(),bytes.size());
+  const auto accepted=odh::decode_session_source_checkpoint(bytes,digest);
+  require(*accepted.envelope().travel_home_session==immutable_home&&accepted.active().travel->family_roster_revision==std::optional<std::uint64_t>{1},
+      "TRIP4 membership change preserves the exact raw THOM and typed accepted checkpoint");
+  require(accepted.active().travel->permanent_roster.size()==members.size()&&
+      accepted.active().household_roster.size()==active.household_roster.size()&&
+      accepted.envelope().household_roster.size()==envelope.household_roster.size(),
+      "current FAMI, visited HHRD and suspended HOME execution remain distinct");
+  if(!remove_last){
+   const auto projected=odh::prepare_ts1_travel_return(accepted);
+   require(projected.source_checkpoint_sha256()==digest&&projected.home().character_family&&
+       projected.home().character_family->shared.rosters.front().members==row.members&&
+       projected.home().household_roster.size()==3,
+       "return carries shared current FAMI without deleting the nontraveling former resident Thread");
+  }
+  auto wrong=envelope;wrong.character_family->shared.rosters.front().revision=2;wrong.character_family->shared.revision=2;
+  rejects([&]{odh::encode_session_bundle(wrong);},"TRIP4 cannot bind a different CFAM revision");
+  wrong=envelope;wrong.travel->family_roster_revision.reset();
+  rejects([&]{odh::encode_session_bundle(wrong);},"old TRIP profiles retain strict permanent/Thread cohort contract");
+  auto wrong_head=digest;wrong_head[0]^=1;
+  rejects([&]{odh::decode_session_source_checkpoint(bytes,wrong_head);},"membership changes never weaken accepted raw head authentication");
+  std::cout<<"PASS current family travel "<<(remove_last?"empty-FAMI cold":"foreign member return")<<'\n';
+ }
+}
+
 void accepted_raw_return_identity(){
  const auto envelope=return_envelope();const auto canonical=odh::encode_session_bundle(envelope);
  unsigned converted=0;const auto legacy=native_sims1_archive(canonical,converted);
@@ -133,6 +177,7 @@ void accepted_raw_return_identity(){
 }
 }
 int main(){try{
+ current_family_travel_matrix();
  accepted_raw_return_identity();
  const auto envelope=return_envelope();const auto original=odh::decode_session_bundle(*envelope.travel_home_session);const auto before=odh::encode_session_bundle(envelope);
  const auto returned=odh::prepare_ts1_travel_return(envelope);const auto& home=returned.home();require(!returned.requires_original_personal_persistence_resolution(),"unchanged personal bank needs no invented field rule");

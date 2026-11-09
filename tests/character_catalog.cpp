@@ -99,6 +99,30 @@ int main() {
         rejects([&]{(void)odh::read_character_catalog(temp.path/"missing");},
                 "missing character directory rejected");
 
+        const auto optional=odh::read_character_catalog_if_present(dir);
+        require(optional.size()==catalog.size()&&optional[0].definition.guid==catalog[0].definition.guid&&
+                optional[1].asset==catalog[1].asset,"present optional catalog preserves strict provider selection and identity");
+        const auto absent=temp.path/"legacy-profile/data/Characters";
+        require(odh::read_character_catalog_if_present(absent).empty()&&!std::filesystem::exists(temp.path/"legacy-profile"),
+                "legacy profile with no private catalog yields no definitions and creates no directories");
+        const odh::DefinitionIndex no_owned(odh::read_character_catalog_if_present(absent));
+        require(!no_owned.unique(0x2002),"missing optional directory cannot satisfy a required owned character identity");
+        const auto empty=temp.path/"Empty";std::filesystem::create_directory(empty);
+        require(odh::read_character_catalog_if_present(empty).empty(),"existing empty private catalog is a real empty provider");
+        rejects([&]{(void)odh::read_character_catalog_if_present({});},"unknown source path is not known optional absence");
+        rejects([&]{(void)odh::read_character_catalog_if_present(temp.path/"legacy-profile/../Characters");},
+                "parent traversal cannot be interpreted as missing catalog");
+        const auto regular=temp.path/"NotDirectory";write(regular,"not a catalog");
+        rejects([&]{(void)odh::read_character_catalog_if_present(regular);},"existing regular file is not optional absence");
+        rejects([&]{(void)odh::read_character_catalog_if_present(regular/"Characters");},"non-directory path component remains a failure");
+        const auto linked=temp.path/"Linked";std::filesystem::create_directory_symlink(dir,linked);
+        rejects([&]{(void)odh::read_character_catalog_if_present(linked);},"existing directory symlink remains rejected");
+        const auto dangling=temp.path/"Dangling";std::filesystem::create_directory_symlink(temp.path/"absent-target",dangling);
+        rejects([&]{(void)odh::read_character_catalog_if_present(dangling);},"dangling symlink is not known directory absence");
+        rejects([&]{(void)odh::read_character_catalog_if_present(malformed);},"malformed present catalog never falls back to empty");
+        limits={};limits.files=1;
+        rejects([&]{(void)odh::read_character_catalog_if_present(dir,limits);},"optional catalog preserves exact scan budget");
+
         std::cout<<"PASS deterministic bounded Character IFF scan and OBJD person filtering\n";
         std::cout<<"PASS malformed files and missing folders fail explicitly\n";
         return 0;

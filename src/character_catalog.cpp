@@ -13,6 +13,20 @@ bool iff_extension(const std::filesystem::path& path) {
 }
 }
 
+std::vector<DefinitionCandidate> read_character_catalog_if_present(
+    const std::filesystem::path& directory,const CharacterCatalogLimits& limits){
+    if(directory.empty())throw FormatError("optional character catalog has no source path");
+    for(const auto& component:directory)if(component=="..")
+        throw FormatError("optional character catalog path contains parent traversal");
+    std::error_code error;
+    const auto status=std::filesystem::symlink_status(directory,error);
+    if(error==std::errc::no_such_file_or_directory||
+       (!error&&status.type()==std::filesystem::file_type::not_found))return {};
+    // Reuse the required reader for every existing/error case. In particular
+    // a dangling symlink is an existing symlink, never a missing catalog.
+    return read_character_catalog(directory,limits);
+}
+
 std::vector<DefinitionCandidate> read_character_catalog(
     const std::filesystem::path& directory, const CharacterCatalogLimits& limits) {
     std::error_code error;

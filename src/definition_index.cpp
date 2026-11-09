@@ -1,6 +1,6 @@
 #include "odh/definition_index.hpp"
 namespace odh {
-DefinitionIndex::DefinitionIndex(const std::vector<DefinitionCandidate>& source,const DefinitionIndexLimits& limits){
+DefinitionIndex::DefinitionIndex(const std::vector<DefinitionCandidate>& source,const DefinitionIndexLimits& limits):limits_(limits){
     if(source.size()>limits.candidates)throw FormatError("object definition candidate budget exceeded");
     auto available=limits.provenance_bytes;
     for(const auto& candidate:source){
@@ -11,7 +11,20 @@ DefinitionIndex::DefinitionIndex(const std::vector<DefinitionCandidate>& source,
     }
     provider_order_.reserve(source.size());
     for(const auto& candidate:source){auto& group=definitions_[candidate.definition.guid];provider_order_.push_back({candidate.definition.guid,group.size()});group.push_back(candidate);}
-    candidates_=source.size();
+    candidates_=source.size();provenance_bytes_=limits.provenance_bytes-available;
+}
+void DefinitionIndex::append_created_character(const DefinitionCandidate& c){
+    if(!c.definition.guid||c.definition.object_type!=2||c.definition.is_multitile||c.definition.master_id||
+       c.source.empty()||c.source.find('\0')!=std::string::npos||c.asset.find('\0')!=std::string::npos||
+       definitions_.count(c.definition.guid))throw FormatError("created character cannot replace or alias an installed definition");
+    if(candidates_>=limits_.candidates||provenance_bytes_>limits_.provenance_bytes||c.source.size()>limits_.provenance_bytes-provenance_bytes_||
+       c.asset.size()>limits_.provenance_bytes-provenance_bytes_-c.source.size())throw FormatError("created character definition/provenance budget exceeded");
+    // Allocate before publication. Inserting a different std::map node leaves
+    // every old vector and its returned DefinitionCandidate pointers intact.
+    std::vector<DefinitionCandidate> group{c};provider_order_.reserve(provider_order_.size()+1);
+    const auto added=definitions_.emplace(c.definition.guid,std::move(group));
+    if(!added.second)throw FormatError("created character definition appeared during admission");
+    provider_order_.push_back({c.definition.guid,0});++candidates_;provenance_bytes_+=c.source.size()+c.asset.size();
 }
 std::vector<DefinitionCandidate> DefinitionIndex::snapshot_candidates() const {
     std::vector<DefinitionCandidate> result;result.reserve(candidates_);

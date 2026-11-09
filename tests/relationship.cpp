@@ -1,5 +1,6 @@
 #include "odh/relationship.hpp"
 #include "odh/relationship_snapshot_codec.hpp"
+#include "odh/ts1_character_family.hpp"
 #include <iostream>
 #include <algorithm>
 #include <cstdlib>
@@ -95,6 +96,30 @@ void neighbor_admission() {
     odh::NeighborContext filtered(catalog({entry(3),entry(4)}));
     require(unchanged.admit_missing_neighbor_sources(filtered)&&!unchanged.value(11,12,0),
         "effective catalog admission does not reintroduce a logically deleted neighbor");
+}
+void gameplay_neighbor_admission(){
+ auto seed=catalog({entry(11,{{1,12,{55}}}),entry(12)});
+ // This case serializes its prior NBRS as well as its relationships. Version4
+ // writes an explicit padding byte after every even-length name (including
+ // the existing helper's empty name); the relationship-only fixtures need none.
+ for(auto& row:seed.entries)row.record->name_padding=0;
+ odh::NeighborContext neighbors(std::move(seed));odh::RelationshipState state(neighbors);
+ const auto raw=odh::encode_nbrs(neighbors.source());const auto before=odh::encode_relationship_snapshot(state.snapshot());
+ odh::Ts1CreatedCharacter created;created.identity={21,0x10203040U,128,"PlayerData/Characters/User00021.iff",{}};created.identity.character_fingerprint[0]=1;
+ auto& n=created.seed;n.version=10;n.unknown3=0;n.name="User00021.iff";if(n.name.size()%2==0)n.name_padding=0;n.person_mode=0;n.neighbor_id=21;n.guid=created.identity.guid;n.unknown_neg_one=-1;
+ neighbors.admit_created_character(created);
+ require(odh::encode_nbrs(neighbors.source())==raw,"gameplay identity leaves immutable relationship/NBRS seed bytes unchanged");
+ require(state.admit_missing_neighbor_sources(neighbors)&&state.source_count()==3&&state.pair_count()==1&&state.value_count()==1&&state.value(11,12,0)==55,"new known-empty relationship source joins existing bounded owner without replacing progress");
+ odh::World world;avatar(world,101,21);auto primitive=state.primitive(world);
+ require(yes(dispatch(primitive,instruction(0,1,0,7,77)))&&state.value(21,12,0)==77,"newly created original schema0 character can execute its first actual relationship write");
+ const auto saved=odh::encode_relationship_snapshot(state.snapshot());
+ require(state.admit_missing_neighbor_sources(neighbors)&&odh::encode_relationship_snapshot(state.snapshot())==saved,"repeated creation admission preserves the actual new relationship progress");
+ odh::RelationshipState cold;require(cold.restore_snapshot(odh::decode_relationship_snapshot(saved))&&cold.admit_missing_neighbor_sources(neighbors)&&cold.value(21,12,0)==77,"cold RELA reuses gameplay neighbor source without Init or re-seeding");
+ odh::RelationshipState freshly_loaded(neighbors);require(freshly_loaded.source_count()==3&&freshly_loaded.pair_count()==1,"new relationship owner sees already admitted dynamic identities as known empty");
+ require(world.set_person_data(101,31,22),"unknown neighbor fixture");require(unsupported(dispatch(primitive,instruction())),"an unregistered neighboring ID is never inferred from a body");
+ odh::RelationshipState limited;auto full=odh::decode_relationship_snapshot(before);full.limits.sources=2;
+ require(limited.restore_snapshot(full),"restore actual full relationship budget");const auto bounded=odh::encode_relationship_snapshot(limited.snapshot());
+ require(!limited.admit_missing_neighbor_sources(neighbors)&&odh::encode_relationship_snapshot(limited.snapshot())==bounded,"dynamic source budget failure preserves all existing relationship state atomically");
 }
 void semantics() {
     auto tail=entry(44,{{1,70000,std::vector<std::int32_t>(300,0x1234FFFF)}});
@@ -351,6 +376,6 @@ void retire_neighbor_identity() {
 }
 }
 int main() {
-    try {neighbor_admission();source_delete_and_body_gc();semantics();variables_and_atomicity();objects_and_limits();retire_object_identity();retire_neighbor_identity();actual_vm();std::cout<<"relationship: "<<checks<<" checks passed\n";return 0;}
+    try {neighbor_admission();gameplay_neighbor_admission();source_delete_and_body_gc();semantics();variables_and_atomicity();objects_and_limits();retire_object_identity();retire_neighbor_identity();actual_vm();std::cout<<"relationship: "<<checks<<" checks passed\n";return 0;}
     catch (const std::exception& e) {std::cerr<<"relationship: "<<e.what()<<'\n';return 1;}
 }

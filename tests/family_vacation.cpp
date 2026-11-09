@@ -35,6 +35,40 @@ void seed_and_codec(){
  require(odh::family_vacation_available_count(occupied)==std::optional<std::int16_t>{7},"Generic27 decrements once per distinct40..48 across all real families including0");
  auto incomplete=source;incomplete[2].family.tail_bytes.resize(2);incomplete[2].family.remaining_bytes=2;rejects([&]{odh::make_family_vacation_state(incomplete,digest(1),nullptr);},"v8 incomplete suffix does not invent data");
 }
+// Per-field availability: a known booking DWORD does not claim the later
+// magic suffix. The actual MAXIS FAMI9 default has12 zero bytes, but no ID,
+// member-count or zero-value exception is used by the vacation reader.
+void suffix_field_matrix(){
+ const auto decode=[](const std::vector<std::uint8_t>& bytes){std::string raw(bytes.begin(),bytes.end());std::istringstream stream(raw,std::ios::binary);return odh::read_fami(odh::View(stream,raw.size()));};
+ for(const unsigned version:{7U,8U,9U})for(std::size_t extent=0;extent<=19;++extent){
+  auto entry=family(17,23,5,7);entry.family.version=version;
+  entry.family.tail_bytes.assign(extent,0xa5);entry.family.remaining_bytes=extent;
+  if(extent>=4)for(unsigned n=0;n<4;++n)entry.family.tail_bytes[n]=static_cast<std::uint8_t>(40U>>(8*n));
+  const auto wire=odh::encode_preserved_fami(entry.family);entry.family=decode(wire);
+  require(odh::encode_preserved_fami(entry.family)==wire,"all FAMI suffix extents preserve complete raw bytes");
+  if(version>=8&&extent<4){rejects([&]{odh::family_vacation_seed(entry,digest(3));},"partial booking DWORD remains unavailable");continue;}
+  const auto seed=odh::family_vacation_seed(entry,digest(3));
+  require(seed.seed_word==std::optional<std::uint32_t>{version>=8?40U:0U},"booking follows real first DWORD or legacy ctor zero only");
+  if(version==9&&extent<16){
+   require(!entry.family.original_v9_extension,"partial magic tail never acquires six invented spell words");
+   rejects([&]{odh::FamilySpells spells(entry);},"magic consumer still requires its complete six source words");
+  }
+  auto bank=odh::make_family_vacation_state({entry},digest(1),nullptr);const auto encoded=odh::encode_family_vacation_snapshot(bank.snapshot());
+  require(odh::encode_family_vacation_snapshot(odh::decode_family_vacation_snapshot(encoded))==encoded,"vacation carrier keeps exact source binding across suffix profiles");
+  auto next=bank.snapshot();next.families.front().current_word=41;const auto projected=odh::project_family_vacation_families({entry},next);
+  const auto changed=odh::encode_preserved_fami(projected.front().family);
+  if(version<8)require(changed==wire,"legacy runtime booking never appends source bytes");
+  else {auto expected=wire;const auto start=40+4*entry.family.member_guids.size();for(unsigned n=0;n<4;++n)expected[start+n]=static_cast<std::uint8_t>(41U>>(8*n));require(changed==expected,"booking projection patches only actual first DWORD and retains all following source bytes");}
+ }
+ auto exact=family(29,-1,0,7);exact.family.version=9;exact.family.member_guids.clear();exact.family.tail_bytes.assign(12,0);exact.family.remaining_bytes=12;
+ const auto raw=odh::encode_preserved_fami(exact.family);exact.family=decode(raw);const auto seed=odh::family_vacation_seed(exact,digest(5));
+ require(seed.seed_word==std::optional<std::uint32_t>{0}&&!exact.family.original_v9_extension&&odh::encode_preserved_fami(exact.family)==raw,"installed MAXIS three-DWORD variant is known booking0 with raw12byte tail unmodified");
+ auto forged=exact;forged.family.original_v9_extension=odh::FamilyV9Extension{};rejects([&]{odh::family_vacation_seed(forged,digest(5));},"typed complete magic claim cannot cover a short suffix");
+ forged=exact;++forged.family.remaining_bytes;rejects([&]{odh::family_vacation_seed(forged,digest(5));},"declared raw extent mismatch remains rejected");
+ auto complete=family(29,3,5,9,40);complete.family.original_v9_extension.reset();rejects([&]{odh::family_vacation_seed(complete,digest(5));},"complete raw FAMI9 requires matching decoded typed metadata");
+ complete=family(29,3,5,9,40);complete.family.original_v9_extension->extension_dword=41;rejects([&]{odh::family_vacation_seed(complete,digest(5));},"typed/raw booking disagreement remains rejected");
+ complete.family.version=10;rejects([&]{odh::family_vacation_seed(complete,digest(5));},"unproved future version remains rejected");
+}
 void prepare_publish_restore(){
  const auto identity=digest(1);const std::vector<odh::FamilyEntry> source={family(0,-1,0),family(5,6,5),family(7,8,0)};
  auto bank=odh::make_family_vacation_state(source,identity,nullptr);const auto baseline=bank.snapshot();
@@ -142,4 +176,4 @@ void family_personal_proof(bool progress,std::size_t physical_words){
 }
 
 }
-int main(){try{seed_and_codec();prepare_publish_restore();projection_and_legacy();saved_carrier_successor();lifecycle();for(const auto words:{88U,101U,256U}){family_personal_proof(true,words);family_personal_proof(false,words);}std::cout<<"family_vacation checks="<<checks<<'\n';return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{seed_and_codec();suffix_field_matrix();prepare_publish_restore();projection_and_legacy();saved_carrier_successor();lifecycle();for(const auto words:{88U,101U,256U}){family_personal_proof(true,words);family_personal_proof(false,words);}std::cout<<"family_vacation checks="<<checks<<'\n';return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

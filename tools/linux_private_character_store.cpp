@@ -120,12 +120,20 @@ void write_new_file(int directory_fd,const std::filesystem::path& path,
 }
 } // namespace
 
+std::uint32_t choose_linux_private_character_guid(const std::filesystem::path& installed,
+    const std::filesystem::path& owned,CharacterGuidSource source,const std::function<bool(std::uint32_t)>& available){
+    if(!source)source=secure_guid;std::set<std::uint32_t> used;
+    collect_guids(installed,used,false);collect_guids(owned,used,true);
+    for(unsigned attempt=0;attempt<256;++attempt){const auto guid=source();if(guid&&guid!=kTemplateGuid&&!used.count(guid)&&(!available||available(guid)))return guid;}
+    throw std::runtime_error("could not select an unused character GUID before source appearance selection");
+}
+
 CreatedPrivateCharacter create_linux_private_character(
         const std::vector<std::uint8_t>& template_iff,
         const std::filesystem::path& installed_characters,
         const std::filesystem::path& private_characters,
         const odh::TemplatePersonRequest& request,
-        CharacterGuidSource guid_source) {
+        CharacterGuidSource guid_source,const std::function<bool(std::uint32_t)>& guid_available) {
     if(private_characters.empty()||!private_characters.is_absolute())
         throw std::invalid_argument("private character directory must be an absolute path");
     if(!guid_source)guid_source=secure_guid;
@@ -156,7 +164,8 @@ CreatedPrivateCharacter create_linux_private_character(
     std::uint32_t guid=0;
     for(unsigned attempt=0;attempt<256;++attempt) {
         const auto candidate=guid_source();
-        if(candidate==0||candidate==kTemplateGuid||used_guids.count(candidate))continue;
+        if(candidate==0||candidate==kTemplateGuid||(request.source&&candidate==request.source->guid)||
+           used_guids.count(candidate)||(guid_available&&!guid_available(candidate)))continue;
         guid=candidate;
         auto final_request=request;
         final_request.guid=guid;

@@ -57,6 +57,19 @@ int main(){try{
     need(catalog.size()==2,"created person was not discovered by the private catalog");
     need(std::any_of(catalog.begin(),catalog.end(),[&](const auto& c){return c.definition.guid==chosen_guid;}),"private catalog did not expose created GUID");
 
+    const auto absent_private=temp.path/"not-created/Characters";
+    unsigned selected_draws=0;
+    const auto selected=odh_host::choose_linux_private_character_guid(installed,absent_private,[&]{return ++selected_draws==1?installed_guid:0xABCDEF00U;});
+    need(selected==0xABCDEF00U&&selected_draws==2&&!std::filesystem::exists(absent_private),"source GUID selection precedes appearance without publishing files or directories");
+    unsigned attempts=0;
+    const auto catalog_selected=odh_host::choose_linux_private_character_guid(installed,private_dir,[&]{return ++attempts==1?0xD00D0001U:0xD00D0002U;},[](auto value){return value!=0xD00D0001U;});
+    need(catalog_selected==0xD00D0002U&&attempts==2,"whole immutable definition catalog participates in GUID admission");
+    attempts=0;bool exhausted=false;
+    try{(void)odh_host::choose_linux_private_character_guid(installed,private_dir,[&]{++attempts;return chosen_guid;});}catch(const std::runtime_error&){exhausted=true;}
+    need(exhausted&&attempts==256,"GUID selection has a real bounded collision failure");
+    const auto guarded=odh_host::create_linux_private_character(template_bytes,installed,private_dir,request,[]{return 0xD00D0003U;},[](auto value){return value==0xD00D0003U;});
+    need(guarded.guid==0xD00D0003U&&odh_host::remove_linux_private_character_if_unchanged(guarded)&&!std::filesystem::exists(guarded.path),"created immutable file can be removed only through its exact source receipt");
+
     const auto target=temp.path/"symlink-target";std::filesystem::create_directories(target);
     const auto link=temp.path/"private-link";std::filesystem::create_directory_symlink(target,link);
     bool rejected=false;try{(void)odh_host::create_linux_private_character(template_bytes,installed,link,request,[]{return 0xABCDEF01;});}

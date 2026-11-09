@@ -30,7 +30,7 @@ struct NativePersonalIdentity {
     std::array<std::uint8_t,32> character_fingerprint{};
 };
 bool same_native_personal_identity(const NativePersonalIdentity&,const NativePersonalIdentity&);
-enum class NativePersonalWriteSource : std::uint8_t { generic25=1, retirement=2, family17=3, frontend_save=4 };
+enum class NativePersonalWriteSource : std::uint8_t { generic25=1, retirement=2, family17=3, frontend_save=4, family_membership=5 };
 struct NativePersonalRecord {
     NativePersonalIdentity identity;
     std::uint64_t revision=0;
@@ -53,8 +53,8 @@ struct NativePersonalSnapshot {
     std::uint32_t version=1;
     std::array<std::uint8_t,32> neighborhood_identity{};
     std::vector<NativePersonalRecord> records; // Strict ascending positive NID.
-    std::optional<NativePersonalCatalog> catalog; // Required in v2; optional in explicit v3.
-    std::vector<NativeWardrobeRecord> wardrobes; // Independent ascending positive NID, explicit v3 only.
+    std::optional<NativePersonalCatalog> catalog; // Required in v2; optional in explicit v3/v4.
+    std::vector<NativeWardrobeRecord> wardrobes; // Independent ascending positive NID, explicit v3/v4 only.
 };
 void validate_native_personal_snapshot(const NativePersonalSnapshot&);
 void validate_native_personal_successor(const NativePersonalSnapshot&,const NativePersonalSnapshot&);
@@ -71,6 +71,7 @@ void apply_native_personal_projection(const NativePersonalProjection&,std::vecto
 
 struct NativePersonalSource {NativePersonalIdentity identity;WorldEntityReference body;};
 class NativePersonalState;
+struct Ts1CreatedCharacter;
 class PreparedNativePersonalCommit {
 public:
     PreparedNativePersonalCommit()=default;
@@ -99,12 +100,20 @@ private:
 class NativePersonalState {
 public:
     NativePersonalState(const Nbrs&,const std::array<std::uint8_t,32>& neighborhood_identity,
-        std::set<std::int16_t> retired_neighbors={},const NativePersonalCatalog* catalog=nullptr);
+        std::set<std::int16_t> retired_neighbors={},const NativePersonalCatalog* catalog=nullptr,
+        const std::vector<NeighborRecord>& owned_seeds={});
     NativePersonalState(const NativePersonalState&)=delete;
     NativePersonalState& operator=(const NativePersonalState&)=delete;
     const NeighborRecord* by_id(std::int16_t) const;
+    // Gameplay receipts append an exact new immutable seed, then ordinary
+    // personal projections use the same NID/GUID/resource identity. No World
+    // entity or family is created here. Host authenticates private bytes.
+    void admit_created_character(const Ts1CreatedCharacter&);
+    // Source family membership owns this one neighbor field even off lot.
+    // The immutable seed is preserved; live avatar61 is the caller's next step.
+    void set_family(const NativePersonalIdentity&,std::int16_t,bool clear_lingering_house=false);
     const NativePersonalSnapshot& snapshot() const {return state_;}
-    bool changed() const {return !state_.records.empty()||state_.catalog.has_value()||!state_.wardrobes.empty();}
+    bool changed() const {return state_.version==4||!state_.records.empty()||state_.catalog.has_value()||!state_.wardrobes.empty();}
     const NativeWardrobeRecord* wardrobe_by_id(std::int16_t) const;
     PreparedNativeWardrobeCommit prepare_wardrobes(const std::vector<NativeWardrobeSource>&,
         const std::vector<WardrobeCatalogAsset>&) const;

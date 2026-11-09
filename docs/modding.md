@@ -71,6 +71,18 @@ Adultos e crianças usam estruturas corporais próprias. Animais também exigem
 aparência, ações e estado adequados: um gambá visitante não se torna membro
 da família apenas por compartilhar características de outro animal.
 
+O vendedor pode estar cadastrado na vizinhança antes de aparecer na loja.
+Cadastrar sua identidade, colocá-lo no lote e incluí-lo em uma família são
+operações separadas. Uma rotina que cria seu cadastro precisa esperar a etapa
+de entrada no lote para pedir uma caminhada ou uma animação.
+
+Se o vendedor passar a morar com uma família, conserve sua identidade, aparência,
+relações e tarefas em andamento. A mudança da lista de moradores preserva o
+personagem que já está na casa. A saída do lote e a exclusão definitiva seguem
+seus próprios procedimentos. Ao salvar no meio dessa mudança, registre tanto a
+família atual quanto os personagens presentes e suas ações, para continuar a
+partida corretamente.
+
 Uma fantasia humana pode deixar vazias as peças separadas de alguns gestos das
 mãos. Preserve as seis posições da tabela, mesmo quando o valor for vazio.
 Esse gesto não acrescentará outra peça de mão; um nome preenchido continua

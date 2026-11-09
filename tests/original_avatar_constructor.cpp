@@ -79,7 +79,61 @@ void constructor(bool sentinel,bool residential){
  require(!odh::initialize_npc_avatar(world,vm,2,owner,request,table,input,random,{},{}).completed&&main_calls==1,"already initialized body cannot be reinitialized through fresh constructor");
  current=false;require(odh::resolve_original_load_avatar_request(34,neighbors,world,residential,[&]{return current;}).status!=odh::NpcAvatarRequestStatus::ready,"expired frontend scope cannot allocate");
 }
+
+// A newly made original character has no serialized bank. Its later ordinary
+// Create42 owns real constructor/Init/Main effects AND the captured placement.
+void created_character_creation(unsigned mode,bool blocked,bool unsupported,bool wrong_source){
+ odh::World world{{},odh::AttributePolicy::ts1_bounded};
+ require(world.create(1,odh::EntityKind::object,{1,0,0})&&world.set_position(1,{96,112,1,6}),"real creator has captured floor pose");
+ auto raw=seed(0,10);raw.name="User00001.iff";
+ odh::NeighborContext neighbors({0,62,{{1,raw}},0});odh::VmFrame source;source.context={1,1,34,owner};
+ odh::Ts1Temps temps{};temps[0]=71;
+ odh::CreateObjectInstanceRequest creation{0,static_cast<std::uint8_t>(mode),static_cast<std::uint8_t>(4|2|16),0,0};
+ auto selected=odh::resolve_npc_avatar_request(creation,source,temps,neighbors,world);
+ require(selected.request.has_value(),"common UseNeighbor geometry is resolved before construction");
+ auto request=*selected.request;request.original_semantics=true;request.original_residential=true;request.original_definition_version=138;
+ request.constructor_neighbor=raw;request.requested_neighbor=raw;
+ // PassObjectIDs keeps the source StackObject raw until Main; a NeighborID
+ // that is not a World ID becomes null rather than another actor's body.
+ const auto table=entries();require(odh::materialize_npc_avatar(world,2,request,definition(),table,0),"schema0 creates real original256 body");
+ unsigned init_calls=0,main_calls=0,attempts=0;
+ odh::RoutineSet routines{
+  {odh::routine_key(4096),routine({assign(18,77,123,254)})},
+  {odh::routine_key(4097),routine({{15,0,253,{}}})},
+  {odh::routine_key(4098),routine({assign(18,77,999,254)})}};
+ odh::Vm vm({},world.vm_memory(),{},[&](const auto&,const auto&,const auto&,const auto&){++main_calls;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::continue_next_tick,{}};},odh::RoutineOwners{{owner,std::move(routines)}});
+ request.original_main_prepared=[&](auto,auto& actual,std::string&){require(actual.stack().back().arguments==std::vector<std::int16_t>({71,0,0,0})&&actual.stack().back().context.stack_object==0,"captured MainParam and actual raw MainStackObject retain their own meanings");return true;};
+ request.original_guarded_init=[&](auto,auto&,auto,const auto& operation){++init_calls;return operation();};
+ request.original_initial_tick=[&](auto,auto& actual,auto budget,std::string&){return actual.run(budget)==odh::VmStatus::next_tick;};
+ request.original_lookup_flags=[](auto,std::string&){return true;};request.original_curves_ready=[](auto,std::string&){return true;};
+ odh::NpcAvatarBodyInputs input;input.body=odh::AvatarBodyStrings{27,0,"adult","body","head",{},"ignored PIN name",{"ignored PIN name"}};
+ input.global_walk=strings("walk");input.global_swim=strings("swim");input.birth_time=odh::NpcAvatarBirthTime{2001,1,2,3,4};odh::RandomState random{123};
+ if(wrong_source)++request.caller_generation;
+ const auto position=[&](auto& actual,auto id,const auto& destination,auto caller,bool ignore){
+  ++attempts;require(init_calls==2&&main_calls==1&&actual.find(id)->person_data.size()==256&&actual.find(id)->person_data[31]==34&&actual.find(id)->person_data[77]==123,"position follows real selective Init/Main without copy88 or EP8");
+  require(ignore==(attempts==2)&&caller==1,"only UnderneathMe retries while ignoring the exact caller group");
+  if(mode==6){require(destination.x==-32768&&destination.y==-32768&&destination.level==1&&!ignore,"common OOW plan still reaches complete source placement lifecycle");
+   if(blocked)return odh::NpcPositionAttemptStatus::blocked;
+   require(actual.place_out_of_world(id,destination.direction),"OOW callback publishes actual scalar state");return odh::NpcPositionAttemptStatus::placed;}
+  if(unsupported)return odh::NpcPositionAttemptStatus::unsupported;
+  if(blocked)return odh::NpcPositionAttemptStatus::blocked;
+  if(mode==5&&attempts==1){require(actual.set_position(1,{128,144,1,6}),"caller moves during first genuine placement check");return odh::NpcPositionAttemptStatus::blocked;}
+  if(ignore)require(destination.x==128&&destination.y==144,"retry reads changed live caller pose");
+  require(actual.set_position(id,destination),"callback publishes actual captured position");return odh::NpcPositionAttemptStatus::placed;
+ };
+ const auto result=odh::initialize_npc_avatar(world,vm,2,owner,request,table,input,random,{},position);
+ if(wrong_source){require(!result.completed&&init_calls==0&&main_calls==0&&attempts==0&&vm.run_generation()==0,"wrong source generation is rejected before Init/Main/placement");return;}
+ require(init_calls==2&&main_calls==1&&world.find(2)->person_data.size()==256&&world.find(2)->person_data[7]!=1000,"new original character never acquires PIN defaults or88-word bank");
+ if(unsupported){require(!result.completed&&!result.placement_blocked&&attempts==1,"unsupported placement is neither game false nor success");return;}
+ if(blocked){require(!result.completed&&result.placement_blocked==(mode!=6)&&attempts==(mode==5?2U:1U)&&!world.find(2)->position,"blocked creation retains real constructor effects; impossible OOW rejection stays unsupported");return;}
+ require(result.completed&&result.main_started&&result.inheritance.empty()&&result.body->selected_name==raw.name,"schema0 original initialization completes without copy88 or random resource name");
+ require(attempts==(mode==5?2U:1U)&&bool(world.find(2)->position)==(mode!=6),"literal OOW keeps its captured plan and other operands perform real placement");
+ require(world.find(2)->person_data[31]==34&&world.find(2)->person_data[77]==123&&world.find(2)->motives[5]==70&&world.find(2)->motives[7]==-40,"real original constructor and Init effects survive placement");
+}
 }
 int main(){try{schemas();for(bool sentinel:{false,true})for(bool residential:{false,true})constructor(sentinel,residential);
+ for(unsigned mode:{0U,5U,6U})created_character_creation(mode,false,false,false);
+ for(unsigned mode:{0U,5U,6U})created_character_creation(mode,true,false,false);
+ created_character_creation(0,false,true,false);created_character_creation(6,false,false,true);
  std::cout<<"original avatar constructor: "<<checks<<" checks\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

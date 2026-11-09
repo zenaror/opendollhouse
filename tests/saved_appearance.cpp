@@ -429,6 +429,27 @@ int main(int argc,char** argv){try{
  SavedAppearanceResources overrides(a.string(),t.string(),"rig.bcf","adult",skins.string(),with_override);
  check(overrides.resolve_body(expansion_body).parts.front().texture_far==override_far.string()&&
        overrides.resolve_body(expansion_body).parts.front().texture_entry=="Later/LOOSE-TEXTURE.BMP");
+ // Character selection consumes first logical-key insertion order, separately
+ // from the legacy alphabetic wardrobe export and later-host resource winners.
+ const auto ordered_far=dir.path/"character-order.far";
+ const std::string ordered_cmx="// synthetic CMX\nversion 300\n0\n1\nc900mc_order\n1\n0\n1\nROOT\nxskin-loose\n0\n0\n0\n";
+ far(ordered_far,{{"first.cmx",ordered_cmx},{"second.bcf",appearance("b900mcchd_order",{"xskin-loose"})},
+    {"z-last-texture.bmp",loose_bitmap()},{"a-next-texture.bmp",loose_bitmap()}});
+ const auto overwrite_far=dir.path/"character-order-overwrite.far";
+ far(overwrite_far,{{"third.bcf",appearance("c900mc_order",{"xskin-loose"})}});
+ auto character_sources=all_fars;character_sources.push_back(ordered_far.string());character_sources.push_back(overwrite_far.string());
+ const auto character_catalog=SavedAppearanceResources::resource_catalog(dir.path,a.string(),t.string(),skins.string(),character_sources,{});
+ const auto order_index=[&](const auto& order,const std::string& name){
+  for(std::size_t i=0;i<order.size();++i){check(order[i]<character_catalog.assets.size(),"ordered catalog index is bounded");if(character_catalog.assets[order[i]].name==name)return i;}
+  throw std::runtime_error("ordered catalog key absent");
+ };
+ const auto head_position=order_index(character_catalog.appearance_order,"c900mc_order");
+ check(head_position<order_index(character_catalog.appearance_order,"b900mcchd_order"),"mixed CMX before BCF remains first-key clothing order");
+ check(character_catalog.assets[character_catalog.appearance_order[head_position]].asset=="third.bcf","later internal host wins without moving first-key insertion order");
+ check(order_index(character_catalog.texture_order,"z-last-texture")<order_index(character_catalog.texture_order,"a-next-texture"),"texture provider order is preserved independently from alphabetic export");
+ const auto legacy_order=SavedAppearanceResources::wardrobe_catalog(dir.path,a.string(),t.string(),skins.string(),character_sources,{});
+ check(legacy_order.size()==character_catalog.assets.size(),"legacy resource export retains one selected receipt per key");
+ for(std::size_t i=0;i<legacy_order.size();++i)check(legacy_order[i].name==character_catalog.assets[i].name&&legacy_order[i].asset==character_catalog.assets[i].asset,"ordered export does not change old wardrobe canonical receipts");
  // Wardrobe receipts come from the renderer's actual selected mapping,
  // not an independent filename census. Exercise both FAR-vs-loose texture
  // aliases and a later container whose internal appearance name is unchanged.

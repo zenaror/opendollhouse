@@ -54,6 +54,46 @@ Nbrs hydrate_native_personal_neighbors(const Nbrs& raw,const NativePersonalCatal
     for(std::size_t i=0;i<actual.size();++i)if(actual[i].guid!=c.bindings[i].guid||actual[i].neighbor_id!=c.bindings[i].neighbor_id)throw FormatError("hydrated catalog allocation receipt differs from immutable source");
     return out;
 }
+Nbrs merge_owned_neighbor_seeds(const Nbrs& raw,const std::vector<NeighborRecord>& owned){
+    if(raw.entries.size()>4096||owned.size()>4096)throw FormatError("owned neighbor seed count exceeds4096");
+    constexpr NbrsLimits limits{4u*1024u*1024u,4u*1024u*1024u,4096,256,65536,16384,65536};
+    std::size_t decoded=0,relations=0,values=0;
+    const auto bound=[&](const NeighborRecord& n){
+        if(n.name.size()>256||(n.person_data&&n.person_data->size()>256)||n.relationships.size()>16384-relations)throw FormatError("owned neighbor decoded source exceeds bounds");
+        relations+=n.relationships.size();const auto fixed=n.name.size()+(n.person_data?n.person_data->size()*2:0);
+        if(fixed>4u*1024u*1024u-decoded)throw FormatError("owned neighbor decoded bytes exceed bounds");decoded+=fixed;
+        for(const auto& r:n.relationships){if(r.values.size()>65536-values||r.values.size()>(4u*1024u*1024u-decoded)/4)throw FormatError("owned neighbor relationship budget exceeded");values+=r.values.size();decoded+=r.values.size()*4;}
+    };
+    for(const auto& e:raw.entries)if(e.record)bound(*e.record);for(const auto& n:owned)bound(n);
+    // Validate complete fields before making the bounded owned copy.
+    auto checked=raw;checked.remaining_bytes=0;(void)encode_nbrs(checked,limits);
+    auto out=raw;std::set<std::int16_t> ids;std::set<std::uint32_t> guids;
+    for(const auto& n:owned){
+        if(n.neighbor_id<=0||n.neighbor_id>4096||!n.guid||!ids.insert(n.neighbor_id).second||!guids.insert(n.guid).second)
+            throw FormatError("owned neighbor receipt has invalid/repeated manager identity");
+        const auto index=static_cast<std::size_t>(n.neighbor_id-1);
+        for(std::size_t i=0;i<out.entries.size();++i)if(out.entries[i].record&&out.entries[i].record->guid==n.guid&&i!=index)
+            throw FormatError("owned neighbor GUID already belongs to another manager slot");
+        if(index>=out.entries.size())out.entries.resize(index+1,NeighborEntry{0,{}});
+        auto& slot=out.entries[index];
+        if(slot.record){
+            if(slot.record->neighbor_id!=n.neighbor_id||slot.record->guid!=n.guid||
+               encode_nbrs(Nbrs{0,73,{{1,*slot.record}},0},limits)!=encode_nbrs(Nbrs{0,73,{{1,n}},0},limits))
+                throw FormatError("owned neighbor manager slot conflicts with immutable seed");
+        }else slot={1,n};
+    }
+    checked=out;checked.remaining_bytes=0;(void)encode_nbrs(checked,limits);return out;
+}
+Nbrs hydrate_owned_native_personal_neighbors(const Nbrs& raw,const NativePersonalCatalog& catalog,
+    const std::vector<NeighborRecord>& owned,const std::set<std::int16_t>& reserved){
+    validate_native_personal_catalog(catalog);
+    std::vector<NeighborRecord> original_receipts;
+    // Old native catalogs can already own CAS definitions. Reconstruct exactly
+    // that producer's input; newer owned files do not perturb its old allocator.
+    for(const auto& n:owned)if(std::any_of(catalog.definitions.begin(),catalog.definitions.end(),[&](const auto& d){return d.guid==n.guid;}))original_receipts.push_back(n);
+    const auto input=merge_owned_neighbor_seeds(raw,original_receipts);
+    return merge_owned_neighbor_seeds(hydrate_native_personal_neighbors(input,catalog,reserved),owned);
+}
 std::optional<std::int16_t> native_personal_catalog_lookup(const NativePersonalCatalog& c,std::uint32_t guid){for(std::size_t i=0;i<c.definitions.size();++i)if(c.definitions[i].object_type==2&&c.bindings[i].guid==guid)return c.bindings[i].neighbor_id;return {};}
 std::vector<std::uint8_t> encode_native_personal_catalog(const NativePersonalCatalog& c){validate_native_personal_catalog(c);std::vector<std::uint8_t> b;const auto put=[&](std::uint64_t x,unsigned n){for(unsigned i=0;i<n;++i)b.push_back(static_cast<std::uint8_t>(x>>(8*i)));};put(c.version,4);b.insert(b.end(),c.neighborhood_identity.begin(),c.neighborhood_identity.end());put(c.definitions.size(),4);
     for(std::size_t i=0;i<c.definitions.size();++i){const auto& d=c.definitions[i];put(d.provider_ordinal,4);put(d.guid,4);put(d.object_type,2);put(d.definition_chunk_id,2);put(d.source.size(),2);b.insert(b.end(),d.source.begin(),d.source.end());put(d.asset.size(),2);b.insert(b.end(),d.asset.begin(),d.asset.end());b.insert(b.end(),d.fingerprint.begin(),d.fingerprint.end());put(static_cast<std::uint16_t>(c.bindings[i].neighbor_id),2);}return b;

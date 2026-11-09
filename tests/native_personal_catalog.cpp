@@ -96,5 +96,52 @@ void resources(){namespace fs=std::filesystem;const auto fixture=fs::temp_direct
     input.pop_back();odh::DefinitionIndex missing(input);rejects([&]{odh_host::admit_original_frontend_catalog_resources(missing,root,n,src.neighborhood_identity(),{},&c);},"cold cannot remove a persisted provider resource");
 }
 void provider(){odh::ObjectDefinition a{},b{};a.guid=900;a.object_type=2;b.guid=100;b.object_type=2;const std::vector<odh::DefinitionCandidate> input{{"one.iff",{},128,a},{"two.iff",{},128,b},{"alias.iff",{},129,a}};odh::DefinitionIndex index(input);const auto ordered=index.provider_snapshot_candidates();const auto sorted=index.snapshot_candidates();require(ordered[0].source=="one.iff"&&ordered[1].source=="two.iff"&&ordered[2].source=="alias.iff"&&sorted[0].definition.guid==100&&!index.unique(900),"new provider API preserves all actual input candidates and duplicate order without changing legacy sorted ambiguity");}
+void owned_cold_order() {
+    const auto raw=seed();const auto immutable=source(raw);
+    const auto catalog=odh::build_native_personal_catalog(raw,immutable.neighborhood_identity(),definitions());
+    const auto original=odh::encode_native_personal_catalog(catalog);
+    odh::Ts1CreatedCharacter child;
+    child.identity={6,1001,128,"PlayerData/Characters/User1001.iff",{}};child.identity.character_fingerprint.fill(0x71);
+    child.seed=odh::make_original_character_neighbor(6,1001,"User1001.iff");
+    odh::Ts1CharacterFamilySnapshot family;family.neighborhood_identity=immutable.neighborhood_identity();family.revision=1;family.characters={child};
+    const std::vector<odh::NeighborRecord> owned{child.seed};
+    // The original allocator first consumes5,3,1. Publishing a later owned
+    // slot6 before replay must not turn6 into a newly selected LASTNULL slot.
+    const auto effective=odh::hydrate_owned_native_personal_neighbors(raw,catalog,owned);
+    require(effective.entries.size()==6&&effective.entries[4].record->guid==901&&effective.entries[2].record->guid==902&&
+        effective.entries[0].record->guid==903&&effective.entries[5].record->guid==1001,
+        "cold replays exact original NPC slots before merging later creation receipt");
+    const auto left=immutable.with_created_characters(family).with_catalog(catalog);
+    const auto right=immutable.with_catalog(catalog).with_created_characters(family);
+    require(odh::encode_nbrs(left.neighbors())==odh::encode_nbrs(right.neighbors())&&
+        odh::encode_nbrs(left.with_created_characters(family).neighbors())==odh::encode_nbrs(left.neighbors()),
+        "frontend owned admission is order-independent and repeated admission does not erase/shift slots");
+    odh::NativePersonalState state(raw,immutable.neighborhood_identity(),{},&catalog,owned);
+    state.admit_created_character(child);
+    require(state.snapshot().records.empty(),"preconstructor new identity keeps an absent person bank and no invented record");
+    state.set_family(child.identity,21,true);
+    const auto wire=odh::encode_native_personal_snapshot(state.snapshot());
+    odh::NativePersonalState cold(raw,immutable.neighborhood_identity(),{},&catalog,owned);
+    cold.admit_created_character(child);cold.restore(odh::decode_native_personal_snapshot(wire));
+    require(cold.by_id(6)&&!cold.by_id(6)->person_data&&cold.by_id(6)->native_personal&&
+        cold.by_id(6)->native_personal->present[61]&&cold.by_id(6)->native_personal->values[61]==21&&
+        odh::encode_native_personal_catalog(*cold.snapshot().catalog)==original,
+        "cold before constructor preserves only genuine Generic4 words and original NPC catalog");
+    auto forged=owned;forged[0].neighbor_id=5;
+    rejects([&]{odh::hydrate_owned_native_personal_neighbors(raw,catalog,forged);},"owned receipt cannot steal catalog NPC slot");
+    auto wrong=catalog;wrong.bindings[1].neighbor_id=6;
+    rejects([&]{odh::hydrate_owned_native_personal_neighbors(raw,wrong,owned);},"wrong persisted original binding is not normalized around owned rows");
+    // Legacy CAS definitions already in an old catalog retain their original
+    // input seeds; later CAS records cannot retroactively alter that producer.
+    auto cas=*record(6,1101).record;auto old_defs=definitions();auto d=definition(18,1101);
+    d.source="PlayerData/Characters/Cas1101.iff";d.asset.clear();old_defs.push_back(d);
+    const auto old_raw=odh::merge_owned_neighbor_seeds(raw,{cas});
+    const auto old_catalog=odh::build_native_personal_catalog(old_raw,immutable.neighborhood_identity(),old_defs);
+    auto later=*record(7,1102).record;
+    const auto replay=odh::hydrate_owned_native_personal_neighbors(raw,old_catalog,{cas,later});
+    require(replay.entries[5].record->guid==1101&&replay.entries[6].record->guid==1102&&replay.entries[4].record->guid==901,
+        "legacy catalog CAS remains bound while a later receipt is merged only after old replay");
 }
-int main(){try{matrix();constructor();provider();resources();std::cout<<"native personal catalog: "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+
+}
+int main(){try{owned_cold_order();matrix();constructor();provider();resources();std::cout<<"native personal catalog: "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

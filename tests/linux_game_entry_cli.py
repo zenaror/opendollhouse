@@ -442,12 +442,31 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-go-here-resume-") as director
     for key in ("DISPLAY", "WAYLAND_DISPLAY", "ODH_STATE_DIR"):
         env.pop(key, None)
     launch = [binary, "--game-root", str(root)]
+    # The installed synthetic household is unmanaged: saving ODHS alone does
+    # not create a neighborhood overlay. Supply the regression's actual profile
+    # precondition explicitly, using the existing empty ODHF/v2 fixture format
+    # (44-byte header, real Neighborhood SHA256, zero assignment records).
+    # It owns no character, family assignment, occupancy lease or fabricated Sim.
+    neighborhood_identity = hashlib.sha256((root / "UserData" / "Neighborhood.iff").read_bytes()).digest()
+    overlay_directory = Path(env["XDG_CONFIG_HOME"]) / "opendollhouse" / "player-state"
+    overlay_directory.mkdir(parents=True)
+    fixture_overlay = overlay_directory / f"neighborhood-{neighborhood_identity.hex()}.odhp"
+    fixture_overlay.write_bytes(struct.pack("<4sHH32sI", b"ODHF", 2, 0, neighborhood_identity, 0))
     fresh = subprocess.run(launch + ["--mode", "1", "--house", "7", "--language", "1",
         "--headless-ticks", "1", "--save-session-on-exit"],
         capture_output=True, text=True, env=env, timeout=30)
     check(fresh.returncode == 0, fresh.stderr)
     path = Path(json.loads(fresh.stdout)["saved_session_path"])
     original = path.read_bytes()
+    # This profile now has its prepared neighborhood overlay and real ODHS
+    # checkpoint, without owning CAS/Make19 character files. Operations below
+    # exercise the real launcher with that profile, not only a reader helper.
+    overlays = list((Path(env["XDG_CONFIG_HOME"]) / "opendollhouse" /
+                     "player-state").glob("neighborhood-*.odhp"))
+    private_characters = Path(env["XDG_DATA_HOME"]) / "opendollhouse" / "Characters"
+    check(len(overlays) == 1 and overlays[0] == fixture_overlay and not private_characters.exists(),
+          "saved installed household has its real overlay and no private character catalog")
+    overlay_before = overlays[0].read_bytes()
     resume = launch + ["--load-session", str(path), "--headless-ticks", "3"]
     # A valid integrated request reaches the ordinary menu consumer. This
     # fixture deliberately has no TTAB: the exact authored row in its rejection
@@ -471,8 +490,9 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-go-here-resume-") as director
     query_report=json.loads(query.stdout)
     check(query_report["menu_query"]["world_unchanged"] and query_report["menu_query"]["random_unchanged"] and
           query_report["ticks"] == query_report["resumed_tick"] and not query_report["player_submissions"] and
-          Path(query_report["saved_session_path"]).read_bytes() == original,
-          "zero-tick menu discovery submits no action and preserves actual whole-session bytes")
+          Path(query_report["saved_session_path"]).read_bytes() == original and
+          overlays[0].read_bytes() == overlay_before and not private_characters.exists(),
+          "zero-tick resumed legacy overlay without owned characters preserves source head/whole session and creates no catalog or actions")
     # Exercise the real resumed app and serialized session, including the batch
     # limit. Repeated same-target queries must preserve legacy output exactly.
     for count in (2, 32):

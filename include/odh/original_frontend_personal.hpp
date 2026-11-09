@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 #include "odh/native_personal_state.hpp"
+#include "odh/ts1_character_family.hpp"
 #include "odh/original_lot_classification.hpp"
 #include <memory>
 namespace odh {
@@ -26,7 +27,12 @@ class OriginalFrontendPersonalSource {
 public:
     const Nbrs& neighbors() const;
     OriginalFrontendPersonalSource with_catalog(const NativePersonalCatalog&) const;
+    OriginalFrontendPersonalSource with_owned_neighbors(const std::vector<NeighborRecord>&) const;
+    // Exact owned creation receipts append only; immutable commercial bytes and
+    // the original neighborhood identity remain unchanged.
+    OriginalFrontendPersonalSource with_created_characters(const Ts1CharacterFamilySnapshot&) const;
     const NativePersonalCatalog* catalog() const;
+    bool is_created_neighbor(std::int16_t,std::uint32_t) const;
     const std::array<std::uint8_t,32>& neighborhood_identity() const;
 private:
     struct Data;

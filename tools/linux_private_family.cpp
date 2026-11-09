@@ -1,4 +1,5 @@
 #include "linux_private_family.hpp"
+#include <set>
 
 #include "linux_family_overlay_store.hpp"
 #include "linux_text_codec.hpp"
@@ -98,7 +99,7 @@ CreatedLinuxPrivateFamily create_linux_private_family(
         const std::filesystem::path& overlay_path,
         const std::string& family_name_utf8,
         const std::vector<LinuxPrivateFamilyMemberDraft>& members,
-        std::int32_t initial_budget,CharacterGuidSource guid_source) {
+        std::int32_t initial_budget,CharacterGuidSource guid_source,const std::function<bool(std::uint32_t)>& guid_available) {
     if(members.empty()||members.size()>8||initial_budget<0)
         throw std::invalid_argument("CAS family must have 1..8 members and a nonnegative budget");
     if(overlay_path.empty()||overlay_path.filename().empty())
@@ -123,6 +124,17 @@ CreatedLinuxPrivateFamily create_linux_private_family(
         (void)odh::apply_neighbor_overlay(source.neighbors,source.identity,*initial_overlay);
     }
 
+    std::set<std::uint32_t> reserved;
+    for(const auto& entry:source.neighbors.entries)if(entry.record)reserved.insert(entry.record->guid);
+    for(const auto& family:source.families)reserved.insert(family.family.member_guids.begin(),family.family.member_guids.end());
+    if(initial_overlay){
+        for(const auto& c:initial_overlay->creations)for(const auto& n:c.members)reserved.insert(n.guid);
+        if(initial_overlay->character_family)for(const auto& c:initial_overlay->character_family->characters)reserved.insert(c.identity.guid);
+        if(initial_overlay->personal_state&&initial_overlay->personal_state->catalog)
+            for(const auto& d:initial_overlay->personal_state->catalog->definitions)reserved.insert(d.guid);
+        for(const auto& n:odh::retired_family_members(*initial_overlay))reserved.insert(n.guid);
+    }
+    const auto available=[&](std::uint32_t guid){return !reserved.count(guid)&&(!guid_available||guid_available(guid));};
     std::vector<CreatedPrivateCharacter> created;
     bool committed=false;
     try {
@@ -135,8 +147,8 @@ CreatedLinuxPrivateFamily create_linux_private_family(
             request.biography=utf8_to_legacy_text(member.biography_utf8,language,16384);
             request.body_strings=member.body_strings;
             const auto character=create_linux_private_character(template_iff,installed_characters,
-                private_characters,request,guid_source);
-            created.push_back(character);
+                private_characters,request,guid_source,available);
+            created.push_back(character);reserved.insert(character.guid);
             family_members.push_back({character.guid,member.person_data});
         }
 

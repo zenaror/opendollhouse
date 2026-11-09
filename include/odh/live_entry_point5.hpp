@@ -22,6 +22,9 @@ enum class LiveEntryPoint5State { evaluated_true, evaluated_false, unsupported }
 // real object construction. The callback must expire with that construction
 // scope; it authenticates the actual active or suspended source without a fake opcode.
 // Exact source dispatch retained only within the synchronous factory scope.
+// Lease-backed sources are Create42, Burn9 and Generic1 mode32 VerifyFamily;
+// the latter really constructs/places missing family bodies after SelectWholeFamily.
+// Other Generic modes, query roots and copied frames grant no creation proof.
 // No saved frame or synthetic pending state can satisfy the VM's active proof.
 struct LiveObjectCreationActiveDispatch {
     VmFrame frame;

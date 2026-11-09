@@ -8,6 +8,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Serviços C++ de cadastro de personagens e mudança de família, com preservação
+  de identidades e ações. A integração dos percursos originais segue em desenvolvimento.
 - Motor experimental C/C++ com leitores de recursos, execução parcial de scripts,
   movimento, personagens, objetos e salvamento de sessões delimitadas.
 - Interface Linux experimental para vizinhança, famílias, simulação, compra e
@@ -29,14 +31,18 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Abertura de perfis antigos que ainda não possuem uma pasta de personagens
+  criados pelo jogador.
+- Leitura das famílias da instalação original Complete Collection, evitando
+  uma falha antes de abrir a casa.
 - Carregamento dos recursos de ações entre Sims durante interações em andamento,
   incluindo pedidos de passagem, preservando a fila e o salvamento.
 - Carregamento de roupas, rostos e outros recursos de aparência, evitando buscas
   repetidas nos arquivos do jogo.
 - Ordem das entradas rápidas de teclado e mouse na janela nativa, preservando
   exclusões de texto e cliques sucessivos. Criação, renomeação e exclusão de
-  famílias foram observadas pelas telas, com reabertura dos dados; o
-  encerramento da interface ainda apresenta uma falha de memória.
+  famílias foram observadas pelas telas, com reabertura dos dados e encerramento
+  normal. A versão de diagnóstico ainda aponta memória não liberada ao encerrar.
 - Continuação doméstica no cenário de incêndio validado: criação do fogo e
   reação de pânico prosseguiram, com salvamento e reabertura da partida. A
   aparência, as consequências, o combate ao fogo e o atendimento dos bombeiros

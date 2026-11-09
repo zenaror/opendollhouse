@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/family.hpp"
+#include "odh/ts1_character_family.hpp"
 #include "odh/family_vacation.hpp"
 #include "odh/neighborhood.hpp"
 #include "odh/type_attributes.hpp"
@@ -143,6 +144,7 @@ struct FamilyOverlay {
     std::vector<FamilyPropertyRelease> property_releases{}; // Chronological v10 records.
     std::optional<NativePersonalSnapshot> personal_state; // v11, shared neighborhood authority.
     std::optional<FamilyVacationOverlayState> family_vacation; // v12, one neighborhood owner.
+    std::optional<Ts1CharacterFamilySnapshot> character_family; //v13, gameplay-created identities and current FAMI roster.
 
 };
 
@@ -170,6 +172,17 @@ FamilyOverlay plan_neighborhood_type_attributes_overlay(
 FamilyOverlay plan_neighborhood_personal_overlay(const std::array<std::uint8_t,32>&,
     const FamilyOverlay*,const NativePersonalSnapshot&);
 
+// Carries exact neighbor/roster successor through the SAME neighborhood CAS.
+// Stable family identities are authenticated against original/creation seeds,
+// independently from current roster and budget. Does not allocate World actors.
+// Exact receipt-owned NBRS seeds (CAS plus gameplay creations), in creation
+// order. These are merged into manager slots only after catalog replay.
+std::vector<NeighborRecord> family_overlay_owned_neighbor_seeds(const FamilyOverlay&);
+FamilyOverlay plan_neighborhood_character_family_overlay(const std::vector<FamilyEntry>&,
+    const std::array<std::uint8_t,32>&,const FamilyOverlay*,const Ts1CharacterFamilySnapshot&);
+std::array<std::uint8_t,32> family_overlay_source_identity(const std::vector<FamilyEntry>&,
+    const FamilyOverlay*,std::uint16_t family_chunk_id);
+
 // Epoch counts occupancy periods, including legacy move-ins. A retained ticket
 // is a full-resume candidate only when its house and epoch match current occupancy;
 // otherwise it is available solely for validated portable household extraction.
@@ -190,6 +203,8 @@ struct FamilyOverlayReplay {
     std::vector<FamilyEntry> families;
     std::vector<FamilyOverlayFamilyState> states;
     std::vector<FamilyPropertyHead> properties; // Keyed by house within this neighborhood identity.
+    // Includes source-detached empty FAMI objects for an existing CurrentFamily
+    // and terminal save lease. Provider/selection uses families above.
 };
 FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>&,
     const std::array<std::uint8_t, 32>& neighborhood_identity, const FamilyOverlay&);

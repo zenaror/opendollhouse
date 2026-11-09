@@ -74,6 +74,12 @@ FamilyOverlayCreation make_simitone_family_creation(
         reserved_guids.insert(entry.record->guid);
     }
     if(current_overlay){
+        if(current_overlay->character_family)for(const auto& c:current_overlay->character_family->characters){
+            neighbor_ids.insert(c.identity.neighbor_id);reserved_guids.insert(c.identity.guid);
+        }
+        if(current_overlay->personal_state&&current_overlay->personal_state->catalog){
+            for(const auto& binding:current_overlay->personal_state->catalog->bindings){if(binding.neighbor_id>0)neighbor_ids.insert(binding.neighbor_id);reserved_guids.insert(binding.guid);}
+        }
         for(const auto& creation:current_overlay->creations)for(const auto& member:creation.members){
             neighbor_ids.insert(member.neighbor_id);reserved_guids.insert(member.guid);
         }

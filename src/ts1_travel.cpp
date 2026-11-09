@@ -83,7 +83,7 @@ const Entity& resolve_ts1_travel_departure_avatar(const SessionBundle& b,const T
  for(const auto& npc:b.npc_avatars)if(npc.origin.id==ref.id&&npc.origin.generation==ref.generation){
   const auto& o=npc.origin;
   if(!request.departure_transit||npc.runtime.id!=ref.id||o.guid!=identity.guid||o.neighbor_id!=identity.neighbor_id||
-     o.object_definition_id!=identity.definition_chunk_id||o.source!=identity.character_asset||!o.asset.empty()||
+     o.object_definition_id!=identity.definition_chunk_id||native_personal_resource_key(o.source,o.asset)!=identity.character_asset||
      o.character_fingerprint!=identity.character_fingerprint)
    throw FormatError("travel departure visitor carrier resource mismatch");
   ++carriers;
@@ -91,14 +91,35 @@ const Entity& resolve_ts1_travel_departure_avatar(const SessionBundle& b,const T
  if(carriers!=1)throw FormatError("travel departure body lacks one authenticated resident or visitor carrier");
  return *body;
 }
+void synchronize_ts1_travel_family_roster(Ts1TravelState& state,const Ts1CharacterFamilySnapshot& shared,
+    const std::vector<Ts1TravelMember>& members){
+ validate_ts1_character_family_snapshot(shared);
+ if(shared.neighborhood_identity!=state.neighborhood_identity)throw FormatError("travel membership belongs to another neighborhood");
+ const auto* row=find_ts1_family_roster(shared,state.family_chunk_id);
+ if(!row){if(state.family_roster_revision)throw FormatError("travel membership receipt disappeared");return;}
+ if(row->source_identity!=state.family_identity||row->members.size()!=members.size())throw FormatError("travel membership source or count differs");
+ for(std::size_t n=0;n<members.size();++n)if(row->members[n]!=members[n].guid)throw FormatError("travel membership order differs from FAMI");
+ if(state.pending&&state.family_roster_revision!=std::optional<std::uint64_t>{row->revision})
+    throw FormatError("travel membership changed after its sealed departure instruction");
+ auto next=state;next.family_roster_revision=row->revision;next.permanent_roster=members;
+ validate_ts1_travel_state(next);state=std::move(next);
+}
 void validate_ts1_travel_state(const Ts1TravelState& s){
  if(s.protocol!=Ts1TravelProtocol::legacy_pin&&s.protocol!=Ts1TravelProtocol::original_6e598)throw FormatError("travel semantic protocol unsupported");
  const auto zero=[](const auto& a){return std::all_of(a.begin(),a.end(),[](auto v){return v==0;});};
- if(!s.home_mode||s.home_mode==6||s.home_mode>7||!s.current_mode||s.current_mode==6||s.current_mode>7||!s.home_house||s.home_house>98||!s.current_house||s.current_house>98||zero(s.neighborhood_identity)||zero(s.family_identity)||s.permanent_roster.empty()||s.permanent_roster.size()>8||s.travelers.empty()||s.travelers.size()>8)throw FormatError("invalid permanent travel family identity");
+ if(!s.home_mode||s.home_mode==6||s.home_mode>7||!s.current_mode||s.current_mode==6||s.current_mode>7||!s.home_house||s.home_house>98||!s.current_house||s.current_house>98||zero(s.neighborhood_identity)||zero(s.family_identity)||(!s.family_roster_revision&&s.permanent_roster.empty())||(s.family_roster_revision&&!*s.family_roster_revision)||s.permanent_roster.size()>8||s.travelers.empty()||s.travelers.size()>8)throw FormatError("invalid permanent travel family identity");
  std::set<std::uint32_t> guids;std::set<std::int16_t> nids;
  for(const auto& m:s.permanent_roster)if(!m.guid||m.neighbor_id<=0||m.character_asset.empty()||m.character_asset.size()>4096||zero(m.character_fingerprint)||!guids.insert(m.guid).second||!nids.insert(m.neighbor_id).second)throw FormatError("invalid permanent travel roster");
- guids.clear();bool caller=false;
- for(const auto& m:s.travelers){if(!guids.insert(m.guid).second||std::none_of(s.permanent_roster.begin(),s.permanent_roster.end(),[&](const auto& p){return same_ts1_travel_member(m,p);}))throw FormatError("travel roster differs from permanent family");if(m.guid==s.caller_guid&&m.neighbor_id==s.caller_neighbor_id)caller=true;}
+ guids.clear();nids.clear();bool caller=false;
+ for(const auto& m:s.travelers){
+  if(!m.guid||m.neighbor_id<=0||m.character_asset.empty()||m.character_asset.size()>4096||zero(m.character_fingerprint)||
+     !guids.insert(m.guid).second||!nids.insert(m.neighbor_id).second||
+     (!s.family_roster_revision&&std::none_of(s.permanent_roster.begin(),s.permanent_roster.end(),[&](const auto& p){return same_ts1_travel_member(m,p); })))
+    throw FormatError("travel execution identity differs from its admitted profile");
+  for(const auto& current:s.permanent_roster)if((current.guid==m.guid||current.neighbor_id==m.neighbor_id)&&!same_ts1_travel_member(current,m))
+    throw FormatError("current FAMI and traveler disagree on an existing character identity");
+  if(m.guid==s.caller_guid&&m.neighbor_id==s.caller_neighbor_id)caller=true;
+ }
  if(!caller)throw FormatError("originating travel caller absent");
  if(s.pending&&(s.pending->destination!=-1&&(s.pending->destination<1||s.pending->destination>98)))throw FormatError("invalid deferred travel destination");
  if(s.pending){
@@ -137,6 +158,22 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
  if(!b.neighbor_inventory||(b.family_lease?(!s.occupancy_epoch||b.family_lease->family_chunk_id!=s.family_chunk_id||b.family_lease->occupancy_epoch!=s.occupancy_epoch||b.family_lease->neighborhood_identity!=s.neighborhood_identity||b.family_lease->family_identity!=s.family_identity):s.occupancy_epoch!=0)||b.host.family_chunk_id!=s.family_chunk_id||b.host.family_number!=s.family_number)throw FormatError("travel state lacks matching inventory or home lease");
  const bool envelope=b.travel_visited_session.has_value();
  if(envelope!=b.travel_home_session.has_value()||b.host.house_number!=(envelope?s.home_house:s.current_house)||b.host.neighborhood_mode!=(envelope?s.home_mode:s.current_mode))throw FormatError("travel host lot differs from explicit home/visited relationship");
+ if(s.family_roster_revision){
+  if(!b.character_family)throw FormatError("TRIP4 lacks its required CFAM membership receipt");
+  const auto* current=find_ts1_family_roster(b.character_family->shared,s.family_chunk_id);
+  if(!current||current->revision!=*s.family_roster_revision||current->source_identity!=s.family_identity||
+     current->members.size()!=s.permanent_roster.size())throw FormatError("TRIP4 current FAMI receipt changed");
+  for(std::size_t n=0;n<current->members.size();++n)if(current->members[n]!=s.permanent_roster[n].guid)
+    throw FormatError("TRIP4 permanent roster differs from current ordered FAMI");
+  if(!envelope)for(const auto& traveler:s.travelers){
+   std::size_t carriers=0;
+   for(const auto& m:b.household_roster)if(m.guid==traveler.guid&&m.neighbor_id==traveler.neighbor_id&&
+       m.object_definition_id==traveler.definition_chunk_id&&m.character_asset==traveler.character_asset&&m.character_fingerprint==traveler.character_fingerprint)++carriers;
+   for(const auto& n:b.npc_avatars){const auto& o=n.origin;if(o.guid==traveler.guid&&o.neighbor_id==traveler.neighbor_id&&
+       o.object_definition_id==traveler.definition_chunk_id&&native_personal_resource_key(o.source,o.asset)==traveler.character_asset&&o.character_fingerprint==traveler.character_fingerprint)++carriers;}
+   if(carriers!=1)throw FormatError("TRIP4 traveler lacks its exact HHRD or NPCA execution origin");
+  }
+ }else{
  const auto& roster=(envelope||s.current_house==s.home_house)?s.permanent_roster:s.travelers;
  if(b.household_roster.size()!=roster.size()){
   std::string actual,expected;
@@ -149,6 +186,7 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
    ", pending="+(s.pending?std::to_string(s.pending->destination):"none")+")");
  }
  for(const auto& m:b.household_roster)if(std::none_of(roster.begin(),roster.end(),[&](const auto& p){return p.guid==m.guid&&p.neighbor_id==m.neighbor_id&&p.definition_chunk_id==m.object_definition_id&&p.character_asset==m.character_asset&&p.character_fingerprint==m.character_fingerprint;}))throw FormatError("travel runtime roster resource mismatch");
+ }
  if(envelope){
   const auto reject_nested=[&](const std::vector<std::uint8_t>& bytes){const auto archive=decode_session_archive(bytes,limits.archive);for(const auto& sec:archive.sections)if(sec.id==std::array<char,4>{{'T','V','I','S'}}||sec.id==std::array<char,4>{{'T','H','O','M'}})throw FormatError("nested travel envelope");};
   reject_nested(*b.travel_visited_session);reject_nested(*b.travel_home_session);
@@ -156,6 +194,11 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
   if(s.protocol==Ts1TravelProtocol::original_6e598&&(!original.neighbor_inventory||original.neighbor_inventory->version!=2))throw FormatError("travel suspended HOME semantic profile changed");
   if(!active.travel||encode_ts1_travel_state(*active.travel)!=encode_ts1_travel_state(s)||active.host.house_number==s.home_house||active.host.family_budget!=b.host.family_budget||!active.neighbor_inventory||!b.neighbor_inventory)throw FormatError("travel envelope active state mismatch");
   if(original.family_spells&&!active.family_spells)throw FormatError("travel active state dropped its originating family spell carrier");
+  if(original.character_family&&!active.character_family)throw FormatError("travel active state dropped character/family state");
+  if(original.character_family&&active.character_family)validate_ts1_character_family_successor(original.character_family->shared,active.character_family->shared);
+  if(b.character_family.has_value()!=active.character_family.has_value()||
+     (b.character_family&&encode_ts1_character_family_snapshot(b.character_family->shared)!=encode_ts1_character_family_snapshot(active.character_family->shared)))
+    throw FormatError("travel envelope character/family shared state differs from active source");
   if(original.personal_state&&!active.personal_state)throw FormatError("travel active state dropped personal records");
   if(original.personal_state&&active.personal_state)validate_native_personal_successor(*original.personal_state,*active.personal_state);
   if(original.type_attributes&&!active.type_attributes)throw FormatError("travel active state dropped its originating type attributes");
@@ -178,9 +221,9 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
   NeighborInventory ai(Ngbh{}),bi(Ngbh{});ai.restore(*active.neighbor_inventory);bi.restore(*b.neighbor_inventory);
   // Compare through the existing canonical bundle codec, preserving unknown
   // inventory item order/duplicates rather than normalizing semantic keys.
-  auto normalized=b;normalized.travel.reset();normalized.travel_visited_session.reset();normalized.travel_home_session.reset();normalized.host.family_budget=original.host.family_budget;normalized.neighbor_inventory=original.neighbor_inventory;normalized.family_spells=original.family_spells;normalized.type_attributes=original.type_attributes;normalized.personal_state=original.personal_state;normalized.family_vacation=original.family_vacation;
-  auto active_check=active;active_check.travel.reset();active_check.neighbor_inventory=b.neighbor_inventory;active_check.family_spells=b.family_spells;active_check.type_attributes=b.type_attributes;active_check.personal_state=b.personal_state;active_check.family_vacation=b.family_vacation;
-  auto active_original=active;active_original.travel.reset();
+  auto normalized=b;normalized.travel.reset();normalized.travel_visited_session.reset();normalized.travel_home_session.reset();normalized.host.family_budget=original.host.family_budget;normalized.neighbor_inventory=original.neighbor_inventory;normalized.family_spells=original.family_spells;normalized.type_attributes=original.type_attributes;normalized.personal_state=original.personal_state;normalized.family_vacation=original.family_vacation;normalized.character_family=original.character_family;
+  auto active_check=active;if(!active_check.npc_primary)active_check.travel.reset();active_check.neighbor_inventory=b.neighbor_inventory;active_check.family_spells=b.family_spells;active_check.type_attributes=b.type_attributes;active_check.personal_state=b.personal_state;active_check.family_vacation=b.family_vacation;
+  auto active_original=active;if(!active_original.npc_primary)active_original.travel.reset();
   original.travel.reset();
   if(original.host.house_number!=s.home_house||original.host.neighborhood_mode!=s.home_mode||encode_session_bundle(normalized,limits)!=encode_session_bundle(original,limits)||encode_session_bundle(active_check,limits)!=encode_session_bundle(active_original,limits))throw FormatError("suspended home bytes or authoritative family/inventory carrier changed");
  }
@@ -242,7 +285,7 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
  }
 }
 std::vector<std::uint8_t> encode_ts1_travel_state(const Ts1TravelState& s){
- validate_ts1_travel_state(s);W w;const bool modern=s.pending&&s.pending->departure_transit.has_value();w.n(s.protocol==Ts1TravelProtocol::original_6e598?3:modern?2:1,2);w.n(s.home_mode,1);w.n(s.current_mode,1);w.n(s.home_house,2);w.n(s.current_house,2);w.n(s.family_chunk_id,2);w.n(static_cast<std::uint32_t>(s.family_number),4);w.n(s.occupancy_epoch,8);for(auto x:s.neighborhood_identity)w.n(x,1);for(auto x:s.family_identity)w.n(x,1);
+ validate_ts1_travel_state(s);W w;const bool modern=s.pending&&s.pending->departure_transit.has_value();const auto profile=s.protocol==Ts1TravelProtocol::original_6e598?3u:modern?2u:1u;w.n(s.family_roster_revision?4u:profile,2);if(s.family_roster_revision){w.n(profile,2);w.n(*s.family_roster_revision,8);}w.n(s.home_mode,1);w.n(s.current_mode,1);w.n(s.home_house,2);w.n(s.current_house,2);w.n(s.family_chunk_id,2);w.n(static_cast<std::uint32_t>(s.family_number),4);w.n(s.occupancy_epoch,8);for(auto x:s.neighborhood_identity)w.n(x,1);for(auto x:s.family_identity)w.n(x,1);
  const auto members=[&](const auto& list){w.n(list.size(),1);for(const auto& m:list){w.n(m.guid,4);w.n(static_cast<std::uint16_t>(m.neighbor_id),2);w.n(m.definition_chunk_id,2);w.text(m.character_asset);for(auto x:m.character_fingerprint)w.n(x,1);}};
  members(s.permanent_roster);members(s.travelers);w.n(s.caller_guid,4);w.n(static_cast<std::uint16_t>(s.caller_neighbor_id),2);w.n(static_cast<std::uint16_t>(s.transit_info),2);w.n(s.family_activated,1);w.n(s.pending.has_value(),1);
  if(s.pending){const auto& p=*s.pending;w.n(static_cast<std::uint16_t>(p.destination),2);w.n(static_cast<std::uint16_t>(p.thread_owner.id),2);w.n(p.thread_owner.generation,8);w.n(p.run_generation,8);w.n(p.ticket,8);VmSnapshot source;source.stack={p.source_frame};source.action_tree_known=true;w.bytes(encode_vm_snapshot(source));w.n(p.source_instruction.opcode,2);w.n(p.source_instruction.on_true,1);w.n(p.source_instruction.on_false,1);for(auto x:p.source_instruction.operands)w.n(x,1);w.n(p.continuation.has_value(),1);if(p.continuation)w.bytes(encode_vm_snapshot(*p.continuation));
@@ -266,7 +309,7 @@ std::vector<std::uint8_t> encode_ts1_travel_state(const Ts1TravelState& s){
  return std::move(w.b);
 }
 Ts1TravelState decode_ts1_travel_state(const std::vector<std::uint8_t>& bytes){
- R r{bytes};const auto version=r.n(2);if(version!=1&&version!=2&&version!=3)throw FormatError("unsupported travel state version");Ts1TravelState s;s.protocol=version==3?Ts1TravelProtocol::original_6e598:Ts1TravelProtocol::legacy_pin;s.home_mode=r.n(1);s.current_mode=r.n(1);s.home_house=r.n(2);s.current_house=r.n(2);s.family_chunk_id=r.n(2);s.family_number=static_cast<std::int32_t>(r.n(4));s.occupancy_epoch=r.n(8);for(auto& x:s.neighborhood_identity)x=r.n(1);for(auto& x:s.family_identity)x=r.n(1);
+ R r{bytes};auto version=r.n(2);Ts1TravelState s;if(version==4){version=r.n(2);s.family_roster_revision=r.n(8);if(!*s.family_roster_revision)throw FormatError("TRIP4 lacks membership revision");}if(version!=1&&version!=2&&version!=3)throw FormatError("unsupported travel state version");s.protocol=version==3?Ts1TravelProtocol::original_6e598:Ts1TravelProtocol::legacy_pin;s.home_mode=r.n(1);s.current_mode=r.n(1);s.home_house=r.n(2);s.current_house=r.n(2);s.family_chunk_id=r.n(2);s.family_number=static_cast<std::int32_t>(r.n(4));s.occupancy_epoch=r.n(8);for(auto& x:s.neighborhood_identity)x=r.n(1);for(auto& x:s.family_identity)x=r.n(1);
  const auto members=[&](auto& list){auto n=r.n(1);if(n>8)throw FormatError("travel roster exceeds limit");for(unsigned i=0;i<n;++i){Ts1TravelMember m;m.guid=r.n(4);m.neighbor_id=static_cast<std::int16_t>(r.n(2));m.definition_chunk_id=r.n(2);m.character_asset=r.text();for(auto& x:m.character_fingerprint)x=r.n(1);list.push_back(std::move(m));}};
  members(s.permanent_roster);members(s.travelers);s.caller_guid=r.n(4);s.caller_neighbor_id=static_cast<std::int16_t>(r.n(2));s.transit_info=static_cast<std::int16_t>(r.n(2));auto activated=r.n(1);if(activated>1)throw FormatError("invalid travel activation flag");s.family_activated=activated!=0;auto flag=r.n(1);if(flag>1)throw FormatError("invalid travel request flag");
  if(flag){Ts1TravelRequest p;p.destination=static_cast<std::int16_t>(r.n(2));p.thread_owner.id=static_cast<std::int16_t>(r.n(2));p.thread_owner.generation=r.n(8);p.run_generation=r.n(8);p.ticket=r.n(8);auto source=decode_vm_snapshot(r.bytes());if(source.stack.size()!=1)throw FormatError("invalid travel source frame extent");p.source_frame=source.stack.front();p.source_instruction.opcode=r.n(2);p.source_instruction.on_true=r.n(1);p.source_instruction.on_false=r.n(1);for(auto& x:p.source_instruction.operands)x=r.n(1);auto seal=r.n(1);if(seal>1)throw FormatError("invalid travel seal flag");if(seal)p.continuation=decode_vm_snapshot(r.bytes());

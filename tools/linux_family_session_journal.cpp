@@ -95,6 +95,7 @@ FamilySessionJournal::FamilySessionJournal(std::vector<odh::FamilyEntry> source,
     state_ = *found;
     const auto family = std::find_if(replay.families.begin(), replay.families.end(),
         [&](const auto& value) { return value.chunk_id == family_id; });
+    if(family==replay.families.end())throw odh::FormatError("managed occupancy lost its retained CurrentFamily object");
     family_number_ = family->family.family_number;
     member_guids_ = family->family.member_guids;
     std::sort(member_guids_.begin(), member_guids_.end());
@@ -233,7 +234,7 @@ void FamilySessionJournal::verify_current() const {
     if (!same(read_linux_family_overlay(overlay_path_), expected_))
         throw std::runtime_error("family session player state changed; reopen the neighborhood");
 }
-void FamilySessionJournal::validate_bundle(const odh::SessionBundle& bundle) const {
+void FamilySessionJournal::validate_bundle(const odh::SessionBundle& bundle,bool publishing) const {
     if (!bundle.family_lease || !same(*bundle.family_lease, lease()) ||
         bundle.host.house_number != state_.house_number || bundle.host.family_chunk_id != state_.family_chunk_id ||
         bundle.host.family_number != family_number_ || !bundle.host.family_budget || *bundle.host.family_budget < 0)
@@ -241,8 +242,31 @@ void FamilySessionJournal::validate_bundle(const odh::SessionBundle& bundle) con
     std::vector<std::uint32_t> guids;
     for (const auto& member : bundle.household_roster) guids.push_back(member.guid);
     std::sort(guids.begin(), guids.end());
-    if (guids != member_guids_)
-        throw odh::FormatError("session archive roster differs from the managed family");
+    if(!bundle.character_family){
+        if((runtime_overlay()&&runtime_overlay()->character_family)||guids!=member_guids_)
+            throw odh::FormatError("session archive omits current family state or differs from the legacy managed roster");
+        return;
+    }
+    const auto& shared=bundle.character_family->shared;
+    if(shared.neighborhood_identity!=identity_)throw odh::FormatError("session character/family neighborhood differs from journal");
+    const auto* before=runtime_overlay()&&runtime_overlay()->character_family?&*runtime_overlay()->character_family:nullptr;
+    if(before){
+        if(publishing)odh::validate_ts1_character_family_successor(*before,shared);
+        else odh::validate_ts1_character_family_successor(shared,*before);
+    }
+    // HHRD owns exact resource-bound resident Threads. FAMI membership is a
+    // different source list: Generic6 leaves RuntimeSubset/Thread untouched,
+    // and Generic4 may add an avatar with an existing NPCA construction origin.
+    // World/VM/constructor identity validation remains in the complete codec.
+    const auto* row=odh::find_ts1_family_roster(shared,state_.family_chunk_id);
+    if(row&&row->source_identity!=state_.family_identity)throw odh::FormatError("session current roster changes the managed family identity");
+    if(!publishing&&before){
+        const auto* current=odh::find_ts1_family_roster(*before,state_.family_chunk_id);
+        if(bool(row)!=bool(current)||(row&&(row->revision!=current->revision||row->members!=current->members)))
+            throw odh::FormatError("accepted session current family roster is stale");
+    }
+    const auto accepted=runtime_overlay()?*runtime_overlay():odh::FamilyOverlay{identity_,{}};
+    if(publishing)(void)odh::plan_neighborhood_character_family_overlay(source_,identity_,&accepted,shared);
 }
 void FamilySessionJournal::validate_restore(const std::vector<std::uint8_t>& encoded) const {
     verify_current();
@@ -265,7 +289,7 @@ std::filesystem::path FamilySessionJournal::publish(odh::SessionBundle bundle,
     if (bundle.family_lease && !same(*bundle.family_lease, lease()))
         throw odh::FormatError("cannot publish a session from another family occupancy");
     bundle.family_lease = lease();
-    validate_bundle(bundle);
+    validate_bundle(bundle,true);
     if (state_.checkpoint_sha256 && !checkpoint_path() &&
         !odh::same_session_household_roster(carry_members_, bundle.household_roster))
         throw odh::FormatError("first destination checkpoint differs from the applied carry roster");
@@ -276,6 +300,7 @@ std::filesystem::path FamilySessionJournal::publish(odh::SessionBundle bundle,
         (!property_value||state_.value_in_arch==*property_value);
     auto replacement = unchanged ? *expected_ : odh::plan_family_checkpoint_overlay(source_, identity_, &*expected_,
         state_.family_chunk_id, state_.house_number, state_.occupancy_epoch, *bundle.host.family_budget, digest,property_value);
+    if(bundle.character_family)replacement=odh::plan_neighborhood_character_family_overlay(source_,identity_,&replacement,bundle.character_family->shared);
     if(expected_->type_attributes&&!bundle.type_attributes)
         throw odh::FormatError("checkpoint cannot omit the current shared neighborhood type attributes");
     if(expected_->personal_state&&!bundle.personal_state)

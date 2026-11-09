@@ -557,11 +557,11 @@ Options parse_options(int argc, char** argv) {
             (result.house && *result.house != bundle.host.house_number) ||
             (result.resident_id && *result.resident_id != static_cast<unsigned>(bundle.host.resident_neighbor_id)))
             throw odh::FormatError("explicit launch options conflict with the saved session");
-        if (bundle.household_roster.empty() && !result.single_resident_session)
+        if (bundle.household_roster.empty() && !bundle.npc_primary && !result.single_resident_session)
             throw odh::FormatError("legacy single-resident session requires explicit --single-resident-session");
-        if (!bundle.household_roster.empty() && result.single_resident_session)
+        if ((!bundle.household_roster.empty()||bundle.npc_primary) && result.single_resident_session)
             throw odh::FormatError("household session cannot use --single-resident-session");
-        if (bundle.runtime_entities.size() != (bundle.household_roster.empty() ? 1u : bundle.household_roster.size()))
+        if (bundle.runtime_entities.size() != (bundle.npc_primary?0u:bundle.household_roster.empty()?1u:bundle.household_roster.size()))
             throw odh::FormatError("session VM roster does not match its household profile");
         result.mode = bundle.host.neighborhood_mode;
         result.language = bundle.resources.language_code;
@@ -613,7 +613,7 @@ Options parse_options(int argc, char** argv) {
         if(request.tick>*result.headless_ticks)
             throw odh::FormatError("resident interaction sequence ticks must fit within the bounded run");
     if (result.headless_resident_interaction && result.load_session &&
-        (!result.restore_bundle || result.restore_bundle->household_roster.empty()))
+        (!result.restore_bundle || (result.restore_bundle->household_roster.empty()&&!result.restore_bundle->npc_primary)))
         throw odh::FormatError("resumed resident interaction requires a saved whole-household session");
     if(result.headless_cancel_interaction_tick){
         const auto interaction_tick=result.headless_resident_interaction?
@@ -656,14 +656,21 @@ Options parse_options(int argc, char** argv) {
                  [&](const auto& request){return request.actor_id==actor_id;})))
             throw odh::FormatError("resident Go Here and selected-object input require different actors");
         if(result.load_session) {
-            if(!result.restore_bundle || result.restore_bundle->household_roster.empty())
+            if(!result.restore_bundle || (result.restore_bundle->household_roster.empty()&&!result.restore_bundle->npc_primary))
                 throw odh::FormatError("resumed resident Go Here requires a saved whole-household session");
             const auto& bundle=*result.restore_bundle;
             const auto member=std::find_if(bundle.household_roster.begin(),bundle.household_roster.end(),
                 [&](const auto& item){return item.id==actor_id;});
-            if(member==bundle.household_roster.end() ||
-               std::none_of(bundle.world.entities.begin(),bundle.world.entities.end(),[&](const auto& entity){
-                   return entity.id==member->id && entity.generation==member->generation &&
+            std::optional<odh::WorldEntityReference> reference;
+            if(member!=bundle.household_roster.end())reference=odh::WorldEntityReference{member->id,member->generation};
+            else if(bundle.character_family){
+                const auto* family=odh::find_ts1_family_roster(bundle.character_family->shared,bundle.host.family_chunk_id);
+                for(const auto& npc:bundle.npc_avatars)if(npc.origin.id==actor_id&&family&&
+                    std::find(family->members.begin(),family->members.end(),npc.origin.guid)!=family->members.end())
+                    reference=odh::WorldEntityReference{npc.origin.id,npc.origin.generation};
+            }
+            if(!reference||std::none_of(bundle.world.entities.begin(),bundle.world.entities.end(),[&](const auto& entity){
+                   return entity.id==reference->id && entity.generation==reference->generation &&
                        entity.kind==odh::EntityKind::avatar && entity.position.has_value() && !entity.ui_ghost;
                }))
                 throw odh::FormatError("resumed resident Go Here actor is not a positioned live saved household member");
@@ -760,8 +767,8 @@ void load_travel_session(Options& options) {
         bundle.resources.language_code != options.language ||
         !options.house || bundle.host.house_number != *options.house)
         throw odh::FormatError("travel session does not match the selected neighborhood, language or lot");
-    if (bundle.household_roster.empty() != options.single_resident_session ||
-        bundle.runtime_entities.size() != (bundle.household_roster.empty() ? 1u : bundle.household_roster.size()))
+    if ((bundle.household_roster.empty()&&!bundle.npc_primary) != options.single_resident_session ||
+        bundle.runtime_entities.size() != (bundle.npc_primary?0u:bundle.household_roster.empty()?1u:bundle.household_roster.size()))
         throw odh::FormatError("travel session does not match the household runtime profile");
     options.resident_id = static_cast<unsigned>(bundle.host.resident_neighbor_id);
 #else
@@ -1039,7 +1046,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
         const std::filesystem::path& game, unsigned house,
         const odh::SessionEntry& session, const odh::SessionEntryMember& resident,
         const std::optional<std::filesystem::path>& neighborhood_graphics,
-        const std::filesystem::path& player_character_directory,const std::filesystem::path& userdata) {
+        const std::filesystem::path& player_character_directory,const std::filesystem::path& userdata,
+        const odh::FamilyOverlay* owned_overlay=nullptr) {
     RuntimePlan plan;
     std::set<std::filesystem::path> unique_resources;
     const auto record_resource = [&](const std::filesystem::path& path) {
@@ -1124,6 +1132,39 @@ RuntimePlan build_runtime_arguments(const Options& options,
             throw odh::FormatError("player character resource exceeds the 64 MiB limit");
         return resolved;
     };
+    // Receipt-owned files are discovery inputs, independently of current FAMI
+    // or HHRD presence. Their hashes are authenticated by their creation/catalog
+    // owners, and they never enter the immutable commercial META manifest.
+    std::vector<std::filesystem::path> owned_definition_files;
+    if (owned_overlay && !player_character_directory.empty()) {
+        odh::CharacterCatalogLimits private_limits;
+        private_limits.files=1024;private_limits.total_file_bytes=64ull*1024ull*1024ull;
+        private_limits.person_definitions=4096;
+        const odh::DefinitionIndex owned(odh::read_character_catalog_if_present(player_character_directory,private_limits));
+        std::set<std::uint32_t> receipt_guids;
+        const auto discover=[&](std::uint32_t guid,const odh::NativePersonalIdentity* receipt){
+            if(!receipt_guids.insert(guid).second) throw odh::FormatError("private character has duplicate creation receipts");
+            const auto* definition=owned.unique(guid);
+            if(!definition || definition->definition.version!=138 || definition->definition.object_type!=2)
+                throw odh::FormatError("receipt-owned private character is missing or ambiguous");
+            odh::SessionEntryMember member{guid,1,"PlayerData/Characters",definition->asset,definition->chunk_id};
+            const auto file=resolve_character(member);
+            if(receipt && (receipt->definition_chunk_id!=definition->chunk_id ||
+                receipt->character_asset!="PlayerData/Characters/"+definition->asset ||
+                odh_host::fingerprint_transfer_resource(file)!=receipt->character_fingerprint))
+                throw odh::FormatError("private character differs from its creation receipt");
+            if(owned_overlay->personal_state && owned_overlay->personal_state->catalog) {
+                for(const auto& old:owned_overlay->personal_state->catalog->definitions) if(old.guid==guid)
+                    if(old.source!="PlayerData/Characters/"+definition->asset || !old.asset.empty() ||
+                       old.definition_chunk_id!=definition->chunk_id || old.fingerprint!=odh_host::fingerprint_transfer_resource(file))
+                        throw odh::FormatError("private character differs from its original catalog receipt");
+            }
+            owned_definition_files.push_back(file);
+        };
+        for(const auto& family:owned_overlay->creations) for(const auto& member:family.members) discover(member.guid,nullptr);
+        if(owned_overlay->character_family) for(const auto& character:owned_overlay->character_family->characters)
+            discover(character.identity.guid,&character.identity);
+    }
     std::vector<std::filesystem::path> character_files;
     for (const auto& member : session.members) {
         const auto character=resolve_character(member);
@@ -1162,9 +1203,51 @@ RuntimePlan build_runtime_arguments(const Options& options,
                 character_files.push_back(path);
         }
     }
-    const auto selected_character=resolve_character(resident);
-    if (std::find(character_files.begin(), character_files.end(), selected_character) == character_files.end())
-        throw odh::FormatError("selected resident character resource is absent from the resolved family");
+    std::filesystem::path selected_character;
+    std::string selected_semiglobal="PersonGlobals.iff";
+    if(session.npc_primary){
+        const auto& anchor=*session.npc_primary;
+        if(anchor.resource.guid!=resident.guid||anchor.resource.neighbor_id!=resident.neighbor_id)
+            throw odh::FormatError("selected NPC differs from the authenticated execution anchor");
+        const auto locator=odh::native_personal_resource_locator(odh::native_personal_resource_key(resident.character_source,resident.character_asset));
+        if(locator.character_catalog){
+            const std::filesystem::path logical(locator.source);const auto parent=logical.parent_path().generic_string();
+            const auto root=parent=="UserData/Characters"?characters:parent=="PlayerData/Characters"?player_character_directory:std::filesystem::path{};
+            if(root.empty()||std::filesystem::is_symlink(root/logical.filename()))throw odh::FormatError("NPC execution character path is invalid");
+            selected_character=std::filesystem::canonical(root/logical.filename());
+            if(selected_character.parent_path()!=std::filesystem::canonical(root))throw odh::FormatError("NPC execution character escaped its catalog");
+        }else selected_character=require_file(game,game/locator.source);
+        const auto inspect=[&](const auto& view){
+            if(view.size()>16u*1024u*1024u)throw odh::FormatError("NPC execution resource exceeds bounds");
+            std::string bytes(static_cast<std::size_t>(view.size()),'\0');view.read(0,bytes.data(),bytes.size());
+            if(odh::sha256(bytes.data(),bytes.size())!=anchor.fingerprint)throw odh::FormatError("NPC execution character bytes changed");
+            unsigned found=0;std::optional<std::string> link;
+            odh::iff_chunks(view,[&](const auto& chunk){
+                if(chunk.type=="OBJD"&&chunk.id==resident.object_definition_id){
+                    const auto definition=odh::read_object_definition(chunk.payload);
+                    if(definition.guid!=resident.guid||definition.object_type!=2)throw odh::FormatError("NPC execution definition changed");++found;
+                }else if(chunk.type=="GLOB"){
+                    if(link)throw odh::FormatError("NPC execution GLOB is ambiguous");link=odh::read_glob(chunk.payload).name;
+                    if(link->empty()||link->find_first_of("/\\:.")!=std::string::npos||link->find('\0')!=std::string::npos)
+                        throw odh::FormatError("NPC execution GLOB is not a flat resource name");
+                }
+            });if(found!=1)throw odh::FormatError("NPC execution definition is missing or ambiguous");
+            if(link){
+                std::optional<std::string> exact;
+                const auto fold=[](std::string text){for(auto& c:text)c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));return text;};
+                std::ifstream stream(global_far,std::ios::binary);const odh::View archive(stream,std::filesystem::file_size(global_far));
+                for(const auto& entry:odh::far1_index(archive))if(fold(entry.name)==fold(*link+".iff")){
+                    if(exact)throw odh::FormatError("NPC execution semiglobal is ambiguous");exact=entry.name;
+                }
+                if(!exact)throw odh::FormatError("NPC execution semiglobal is absent");selected_semiglobal=*exact;
+            }
+        };
+        if(locator.asset.empty())with_iff_file(selected_character.string(),inspect);else with_far_entry(selected_character.string(),locator.asset,inspect);
+    }else{
+        selected_character=resolve_character(resident);
+        if(std::find(character_files.begin(),character_files.end(),selected_character)==character_files.end())
+            throw odh::FormatError("selected resident character resource is absent from the resolved family");
+    }
     // Expansion/Downloads FARs contain external floors and walls too. Index
     // their material entries before loose files, as in the TS1 providers.
     // These archives already belong to the resource manifest; do not change
@@ -1212,10 +1295,13 @@ RuntimePlan build_runtime_arguments(const Options& options,
     auto& args = plan.arguments;
     args = {"odh-person", "--avatar-file", selected_character.string(),
         std::to_string(resident.object_definition_id), "--semiglobal", global_far.string(),
-        "PersonGlobals.iff", "--global", global_far.string(), "Global.iff",
+        selected_semiglobal, "--global", global_far.string(), "Global.iff",
         "--lot", house_file.string(), std::to_string(house), "--zoning", zoning.string(),
         "--neighborhood", neighborhood.string(), "--activate-family", "--language",
         std::to_string(options.language), "--object-definitions", objects_far.string()};
+    if(session.npc_primary&&!resident.character_asset.empty()){
+        args[1]="--avatar";args.insert(args.begin()+3,resident.character_asset);
+    }
     for (const auto& archive : shared)
         append(args, {"--object-definitions", archive.string()});
     for (const auto& archive : expansions)
@@ -1223,6 +1309,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
     for (const auto& archive : download_archives)
         append(args, {"--object-definitions", archive.string()});
     for (const auto& character : character_definition_files)
+        append(args, {"--character-definition-file", character.string()});
+    for (const auto& character : owned_definition_files)
         append(args, {"--character-definition-file", character.string()});
     for (const auto& character : character_files)
         append(args, {"--object-definition-file", character.string()});
@@ -2259,6 +2347,60 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
         const auto fresh_origin=[&](const odh::Ts1TravelState& claim,
                 const std::shared_ptr<odh_host::FamilySessionJournal>& journal){
             const auto overlay=journal?journal->runtime_overlay():odh_host::read_linux_family_overlay_for_neighborhood(userdata/"Neighborhood.iff",storage);
+            if(claim.family_roster_revision){
+                if(!journal||!overlay||!overlay->character_family)throw odh::FormatError("TRIP4 lacks current managed character/family authority");
+                journal->verify_current();const auto lease=journal->lease();
+                if(lease.family_chunk_id!=claim.family_chunk_id||lease.occupancy_epoch!=claim.occupancy_epoch||
+                   lease.family_identity!=claim.family_identity||lease.neighborhood_identity!=claim.neighborhood_identity)
+                    throw odh::FormatError("TRIP4 permanent lease changed");
+                const auto* row=odh::find_ts1_family_roster(*overlay->character_family,claim.family_chunk_id);
+                if(!row||row->revision!=*claim.family_roster_revision)throw odh::FormatError("TRIP4 current FAMI revision changed");
+                auto checked=claim;odh::synchronize_ts1_travel_family_roster(checked,*overlay->character_family,claim.permanent_roster);
+                const auto home=odh::load_session_entry(userdata,claim.home_mode,claim.home_house,
+                    static_cast<std::uint8_t>(options.language),&*overlay,player_character_directory,nullptr,true);
+                if(home.family_chunk_id!=claim.family_chunk_id||home.family_number!=claim.family_number)
+                    throw odh::FormatError("TRIP4 home assignment changed");
+                std::optional<odh::Nbrs> raw;
+                with_iff_file((userdata/"Neighborhood.iff").string(),[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+                    if(chunk.type=="NBRS"&&chunk.id==1){if(raw)throw odh::FormatError("ambiguous travel NBRS1");raw=odh::read_nbrs(chunk.payload);}
+                });});
+                if(!raw)throw odh::FormatError("TRIP4 immutable neighbor source missing");
+                const auto owned=odh::family_overlay_owned_neighbor_seeds(*overlay);
+                std::set<std::int16_t> retired;for(const auto& member:odh::retired_family_members(*overlay))retired.insert(member.neighbor_id);
+                const auto* catalog=overlay->personal_state&&overlay->personal_state->catalog?&*overlay->personal_state->catalog:nullptr;
+                const odh::NeighborContext neighbors(catalog?odh::hydrate_owned_native_personal_neighbors(*raw,*catalog,owned,retired):odh::merge_owned_neighbor_seeds(*raw,owned));
+                std::uint64_t remaining=64u*1024u*1024u;
+                std::set<std::uint32_t> verified;
+                const auto verify=[&](const odh::Ts1TravelMember& member){
+                    if(!verified.insert(member.guid).second)return;
+                    const auto* neighbor=neighbors.by_id(member.neighbor_id);
+                    if(!neighbor||neighbor->guid!=member.guid||retired.count(member.neighbor_id))throw odh::FormatError("TRIP4 neighbor identity changed or retired");
+                    const auto locator=odh::native_personal_resource_locator(member.character_asset);
+                    std::filesystem::path path;
+                    if(locator.character_catalog){
+                        const std::filesystem::path logical(locator.source);const auto parent=logical.parent_path().generic_string();
+                        const auto root=parent=="UserData/Characters"?userdata/"Characters":parent=="PlayerData/Characters"?player_character_directory:std::filesystem::path{};
+                        if(root.empty()||std::filesystem::is_symlink(root/logical.filename()))throw odh::FormatError("TRIP4 character catalog path is invalid");
+                        path=std::filesystem::canonical(root/logical.filename());
+                        if(path.parent_path()!=std::filesystem::canonical(root))throw odh::FormatError("TRIP4 character escaped its catalog");
+                    }else path=require_file(game,game/locator.source);
+                    const auto inspect=[&](const auto& view){
+                        if(view.size()>remaining||view.size()>16u*1024u*1024u)throw odh::FormatError("TRIP4 resource verification exceeds bounds");remaining-=view.size();
+                        std::string bytes(static_cast<std::size_t>(view.size()),'\0');view.read(0,bytes.data(),bytes.size());
+                        if(odh::sha256(bytes.data(),bytes.size())!=member.character_fingerprint)throw odh::FormatError("TRIP4 resource bytes changed");
+                        unsigned found=0;odh::iff_chunks(view,[&](const auto& chunk){if(chunk.type=="OBJD"&&chunk.id==member.definition_chunk_id){
+                            const auto definition=odh::read_object_definition(chunk.payload);
+                            if(definition.guid!=member.guid||definition.object_type!=2)throw odh::FormatError("TRIP4 OBJD identity changed");++found;
+                        }});if(found!=1)throw odh::FormatError("TRIP4 OBJD missing or ambiguous");
+                    };
+                    if(locator.asset.empty())with_iff_file(path.string(),inspect);else with_far_entry(path.string(),locator.asset,inspect);
+                };
+                for(const auto& member:claim.permanent_roster)verify(member);
+                for(const auto& member:claim.travelers)verify(member);
+                auto origin=claim;origin.current_house=origin.home_house;origin.current_mode=origin.home_mode;
+                origin.pending.reset();origin.family_activated=false;origin.transit_info=0;
+                return origin;
+            }
             const auto entry=odh::load_session_entry(userdata,claim.home_mode,claim.home_house,
                 static_cast<std::uint8_t>(options.language),overlay?&*overlay:nullptr,player_character_directory);
             odh_host::IntegratedSessionContext context;context.family_journal=journal;
@@ -2314,11 +2456,19 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             // of the visited lot's manifest and before any VM is constructed.
             const auto home_bundle=odh::decode_session_bundle(trip.suspended_home);
             const auto overlay=journal?journal->runtime_overlay():odh_host::read_linux_family_overlay_for_neighborhood(userdata/"Neighborhood.iff",storage);
-            const auto home_entry=odh::load_session_entry(userdata,trip.origin.home_mode,trip.origin.home_house,static_cast<std::uint8_t>(options.language),overlay?&*overlay:nullptr,player_character_directory);
+            auto home_resources=home_bundle;
+            if(outer.character_family)odh::project_session_character_family(home_resources,*outer.character_family);
+            const auto home_entry=odh::load_session_entry(userdata,trip.origin.home_mode,trip.origin.home_house,static_cast<std::uint8_t>(options.language),overlay?&*overlay:nullptr,player_character_directory,&home_resources);
+            if(trip.origin.family_roster_revision){
+                trip.origin.travelers.clear();for(const auto& member:home_bundle.household_roster)
+                    trip.origin.travelers.push_back({member.guid,member.neighbor_id,member.object_definition_id,member.character_asset,member.character_fingerprint});
+                trip.origin.caller_guid=home_bundle.host.resident_guid;trip.origin.caller_neighbor_id=home_bundle.host.resident_neighbor_id;
+                odh::validate_ts1_travel_state(trip.origin);
+            }
             const auto selected=std::find_if(home_entry.members.begin(),home_entry.members.end(),[&](const auto& m){return m.guid==home_bundle.host.resident_guid&&m.neighbor_id==home_bundle.host.resident_neighbor_id;});
             if(selected==home_entry.members.end())throw odh::FormatError("suspended home selection no longer identifies its originating resident");
             auto home_options=travel_options;home_options.mode=trip.origin.home_mode;home_options.house=trip.origin.home_house;
-            const auto home_plan=build_runtime_arguments(home_options,game,trip.origin.home_house,home_entry,*selected,graphics_resource,player_character_directory,userdata);
+            const auto home_plan=build_runtime_arguments(home_options,game,trip.origin.home_house,home_entry,*selected,graphics_resource,player_character_directory,userdata,overlay?&*overlay:nullptr);
             const auto identity=odh_host::identify_session_resources(game,home_plan.resources,static_cast<std::uint8_t>(options.language),home_plan.expansion_mask);
             if(odh::encode_session_resource_identity(home_bundle.resources)!=odh::encode_session_resource_identity(identity))throw odh::FormatError("suspended home resource manifest changed during temporary travel");
             // A return-pending or onward request can skip ordinary active-lot
@@ -2328,20 +2478,21 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 const auto& active=checkpoint.active;
                 std::vector<std::uint32_t> travelers;for(const auto& member:trip.state.travelers)travelers.push_back(member.guid);
                 const auto source_entry=odh::load_visit_session_entry(userdata,trip.origin.home_mode,trip.origin.home_house,
-                    trip.state.current_mode,trip.state.current_house,travelers,static_cast<std::uint8_t>(options.language),overlay?&*overlay:nullptr,player_character_directory);
-                const auto source_resident=std::find_if(source_entry.members.begin(),source_entry.members.end(),[&](const auto& member){return member.guid==active.host.resident_guid&&member.neighbor_id==active.host.resident_neighbor_id;});
-                if(source_resident==source_entry.members.end()||active.household_roster.size()!=source_entry.members.size()||active.resources.language_code!=options.language||active.host.neighborhood_mode!=trip.state.current_mode||active.host.house_number!=trip.state.current_house||active.host.family_chunk_id!=source_entry.family_chunk_id||active.host.family_number!=source_entry.family_number)
+                    trip.state.current_mode,trip.state.current_house,travelers,static_cast<std::uint8_t>(options.language),overlay?&*overlay:nullptr,player_character_directory,&active);
+                const auto source_member=std::find_if(source_entry.members.begin(),source_entry.members.end(),[&](const auto& member){return member.guid==active.host.resident_guid&&member.neighbor_id==active.host.resident_neighbor_id;});
+                const auto* source_resident=source_entry.npc_primary?&source_entry.npc_primary->resource:source_member!=source_entry.members.end()?&*source_member:nullptr;
+                if(!source_resident||active.household_roster.size()!=source_entry.members.size()||active.resources.language_code!=options.language||active.host.neighborhood_mode!=trip.state.current_mode||active.host.house_number!=trip.state.current_house||active.host.family_chunk_id!=source_entry.family_chunk_id||active.host.family_number!=source_entry.family_number)
                     throw odh::FormatError("source visited checkpoint no longer matches its originating family, selected traveler, language or lot");
                 // This helper resolves and fingerprints resources only; no
                 // household transfer, occupancy ticket or move is performed.
-                const auto source_members=odh_host::identify_transfer_household(source_entry,game,player_character_directory,storage);
+                const auto source_members=source_entry.members.empty()?std::vector<odh::HouseholdTransferIdentity>{}:odh_host::identify_transfer_household(source_entry,game,player_character_directory,storage);
                 for(const auto& saved:active.household_roster){
                     const auto member=std::find_if(source_members.begin(),source_members.end(),[&](const auto& value){return value.guid==saved.guid&&value.neighbor_id==saved.neighbor_id;});
                     if(member==source_members.end()||member->object_definition_id!=saved.object_definition_id||member->character_asset!=saved.character_asset||member->character_fingerprint!=saved.character_fingerprint)
                         throw odh::FormatError("source visited traveler resource identity changed before deferred travel");
                 }
                 auto source_options=travel_options;source_options.mode=trip.state.current_mode;source_options.house=trip.state.current_house;
-                const auto source_plan=build_runtime_arguments(source_options,game,trip.state.current_house,source_entry,*source_resident,graphics_resource,player_character_directory,userdata);
+                const auto source_plan=build_runtime_arguments(source_options,game,trip.state.current_house,source_entry,*source_resident,graphics_resource,player_character_directory,userdata,overlay?&*overlay:nullptr);
                 const auto source_identity=odh_host::identify_session_resources(game,source_plan.resources,static_cast<std::uint8_t>(options.language),source_plan.expansion_mask);
                 if(odh::encode_session_resource_identity(active.resources)!=odh::encode_session_resource_identity(source_identity))
                     throw odh::FormatError("source visited resources or expansion profile changed before deferred travel");
@@ -2357,8 +2508,10 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
         };
         // Legacy HOME archives carry the neighborhood in the hash of the whole
         // resource manifest. Numeric lot/family identifiers alone are not enough.
-        const auto legacy_matches_home=[&](const odh::SessionBundle& saved,const odh::SessionEntry& session,
+        const auto legacy_matches_home=[&](const odh::SessionBundle& saved,const odh::SessionEntry& identity_entry,
                 const std::array<std::uint8_t,32>& neighborhood){
+            const auto session=odh::load_session_entry(userdata,identity_entry.neighborhood_mode,identity_entry.house_number,
+                static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,player_character_directory);
             if(saved.family_lease||saved.host.house_number!=session.house_number||
                saved.host.neighborhood_mode!=session.neighborhood_mode||saved.host.family_chunk_id!=session.family_chunk_id||
                saved.host.family_number!=session.family_number||saved.household_roster.size()!=session.members.size())return false;
@@ -2502,17 +2655,48 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     throw odh::FormatError("managed family save has no current occupancy authority");
                 }
 #endif
-                const auto session = [&](){
+                auto session = [&](){
 #ifdef __linux__
                     if(temporary_trip&&!temporary_trip->returning&&temporary_trip->state.current_house!=temporary_trip->origin.home_house){
+                        if(temporary_trip->arrival){
+                            auto departure=odh::decode_session_bundle(temporary_trip->departure);
+                            if(departure.character_family){
+                                // Resources and execution anchoring retain their origin.
+                                // Current FAMI may also name packaged NPC travelers.
+                                const auto& party=temporary_trip->state.travelers;
+                                departure.household_roster.erase(std::remove_if(departure.household_roster.begin(),departure.household_roster.end(),[&](const auto& member){
+                                    return std::none_of(party.begin(),party.end(),[&](const auto& traveler){return traveler.guid==member.guid&&traveler.neighbor_id==member.neighbor_id;});
+                                }),departure.household_roster.end());
+                                if(departure.household_roster.empty()){
+                                    const auto npc=std::find_if(departure.npc_avatars.begin(),departure.npc_avatars.end(),[&](const auto& value){return value.origin.guid==temporary_trip->state.caller_guid&&value.origin.neighbor_id==temporary_trip->state.caller_neighbor_id;});
+                                    if(npc==departure.npc_avatars.end())throw odh::FormatError("NPC-only departure lacks its exact caller origin");
+                                    departure.npc_primary=odh::WorldEntityReference{npc->origin.id,npc->origin.generation};
+                                    departure.runtime_entities.clear();departure.host.runtime_avatar_id=npc->origin.id;
+                                    departure.host.resident_guid=npc->origin.guid;departure.host.resident_neighbor_id=npc->origin.neighbor_id;
+                                    departure.host.house_number=static_cast<std::uint16_t>(house);departure.host.neighborhood_mode=static_cast<std::uint8_t>(options.mode);
+                                    departure.travel=temporary_trip->state;options.resident_id=static_cast<unsigned>(npc->origin.neighbor_id);
+                                    return odh::load_visit_session_entry(userdata,temporary_trip->origin.home_mode,temporary_trip->origin.home_house,
+                                        options.mode,static_cast<std::uint16_t>(house),{},static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,player_character_directory,&departure);
+                                }
+                                const auto& anchor=departure.household_roster.front();
+                                departure.host.runtime_avatar_id=anchor.id;departure.host.resident_guid=anchor.guid;
+                                departure.host.resident_neighbor_id=anchor.neighbor_id;
+                                departure.host.house_number=static_cast<std::uint16_t>(house);
+                                departure.host.neighborhood_mode=static_cast<std::uint8_t>(options.mode);
+                                options.resident_id=static_cast<unsigned>(anchor.neighbor_id);
+                                std::vector<std::uint32_t> execution;for(const auto& member:departure.household_roster)execution.push_back(member.guid);
+                                return odh::load_visit_session_entry(userdata,temporary_trip->origin.home_mode,temporary_trip->origin.home_house,
+                                    options.mode,static_cast<std::uint16_t>(house),execution,static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,player_character_directory,&departure);
+                            }
+                        }
                         std::vector<std::uint32_t> travelers;
                         const auto& resources=temporary_trip->arrival?temporary_trip->origin.permanent_roster:temporary_trip->state.travelers;
                         for(const auto& member:resources)travelers.push_back(member.guid);
                         return odh::load_visit_session_entry(userdata,temporary_trip->origin.home_mode,temporary_trip->origin.home_house,
-                            options.mode,static_cast<std::uint16_t>(house),travelers,static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,player_character_directory);
+                            options.mode,static_cast<std::uint16_t>(house),travelers,static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,player_character_directory,options.restore_bundle?&*options.restore_bundle:nullptr);
                     }
 #endif
-                    return odh::load_session_entry(userdata, options.mode,static_cast<std::uint16_t>(house),static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,player_character_directory);
+                    return odh::load_session_entry(userdata, options.mode,static_cast<std::uint16_t>(house),static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,player_character_directory,nullptr,true);
                 }();
                 std::shared_ptr<const odh::InstalledOccupancyRetirement> occupancy_retirement;
 #ifdef __linux__
@@ -2574,6 +2758,10 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         if(options.restore_bundle->travel)continue;
                     }
                 }
+                if(!temporary_trip || temporary_trip->returning)
+                    session=odh::load_session_entry(userdata,options.mode,static_cast<std::uint16_t>(house),
+                        static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,
+                        player_character_directory,options.restore_bundle?&*options.restore_bundle:nullptr);
                 if (family_journal&&!property_lot&&(!temporary_trip||temporary_trip->returning)) {
                     const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
                     auto plan = odh::prepare_installed_occupancy_retirement(source, *family_overlay,
@@ -2595,8 +2783,10 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 #endif
                 if (!options.single_resident_session && session.members.size() > 8)
                     throw odh::FormatError("integrated household exceeds the eight-resident TS1 runtime profile");
-                const odh::SessionEntryMember* resident = nullptr;
-                if (options.resident_id) {
+                const odh::SessionEntryMember* resident = session.npc_primary?&session.npc_primary->resource:nullptr;
+                if(resident&&options.resident_id&&resident->neighbor_id!=*options.resident_id)
+                    throw odh::FormatError("explicit resident differs from the NPC execution anchor");
+                if (!resident&&options.resident_id) {
                     const auto found = std::find_if(session.members.begin(), session.members.end(),
                         [&](const auto& member) { return member.neighbor_id == *options.resident_id; });
                     if (found == session.members.end()) throw odh::FormatError("resident is not in the selected family");
@@ -2604,7 +2794,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }
                 // Fresh households choose their first resident automatically;
                 // a restored checkpoint has already supplied resident_id above.
-                else resident = &session.members.front();
+                else if(!resident) resident = &session.members.front();
 #ifdef ODH_HAVE_X11
                 if (window) {
                     window->resize(800,600);
@@ -2612,7 +2802,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }
 #endif
                 auto plan = build_runtime_arguments(options, game, house, session, *resident,
-                    graphics_resource, player_character_directory,userdata);
+                    graphics_resource, player_character_directory,userdata,family_overlay?&*family_overlay:nullptr);
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
                 if(session_log) {
                     session_log->stage("runtime-plan-ready");
@@ -2661,7 +2851,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         throw odh::FormatError("saved session family or resident no longer matches the selected lot");
                     if (!bundle.household_roster.empty()) {
                         if (bundle.household_roster.size() != session.members.size())
-                            throw odh::FormatError("saved household roster differs from the current FAMI family");
+                            throw odh::FormatError("saved household roster differs from the authenticated execution cohort");
                         for (const auto& saved_member : bundle.household_roster) {
                             const auto found = std::find_if(session.members.begin(), session.members.end(),
                                 [&](const auto& member) { return member.neighbor_id == saved_member.neighbor_id; });
@@ -2669,7 +2859,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                                 found->object_definition_id != saved_member.object_definition_id ||
                                 std::filesystem::path(found->character_source + "/" + found->character_asset) !=
                                     std::filesystem::path(saved_member.character_asset))
-                                throw odh::FormatError("saved household member identity differs from the current FAMI family");
+                                throw odh::FormatError("saved household member identity differs from the authenticated execution cohort");
                         }
                     }
                 }
@@ -2760,6 +2950,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 options.resume_build_mode=false;
                 options.paused_before_build_mode=false;
                 session_context.single_resident_session = options.single_resident_session;
+                session_context.npc_execution_primary=session.npc_primary.has_value();
                 if (!options.single_resident_session) {
                     const auto characters = require_directory(game, userdata / "Characters");
                     for (const auto& member : session.members) {

@@ -49,7 +49,8 @@ std::vector<const SessionRuntimeEntity*> avatar_runtime_states(const SessionBund
 // continuations retain their existing roster rules.
 const SessionRuntimeEntity* dynamic_route_resident(const SessionBundle& bundle) {
     const SessionRuntimeEntity* result=nullptr;
-    for(const auto& state:bundle.runtime_entities) {
+    for(const auto* state_ptr:avatar_runtime_states(bundle)) {
+        const auto& state=*state_ptr;
         if(state.dynamic_action_owners.empty())continue;
         if(result||state.dynamic_action_owners.size()!=1||!root_route(state))
             throw FormatError("household restore supports exactly one dynamic Go Here walker and owner");
@@ -286,9 +287,7 @@ void validate_owner(const VmContext& context,const SessionRuntimeEntity& state) 
 }
 void validate_runtime(const SessionBundle& bundle) {
     validate_seated_session_continuations(bundle);
-    for(const auto& npc:bundle.npc_avatars)if(!npc.runtime.dynamic_action_owners.empty())
-        throw FormatError("NPC dynamic Go Here marker owners are not a supported restore boundary");
-    if(bundle.household_roster.empty()||bundle.scheduler.faulted)
+    if((bundle.household_roster.empty()&&!bundle.npc_primary)||bundle.scheduler.faulted)
         throw FormatError("household restore requires a complete nonfaulted version-2 roster");
     for(const auto* state_ptr:avatar_runtime_states(bundle)) {
     const auto& state=*state_ptr;
@@ -438,7 +437,7 @@ std::unique_ptr<HouseholdSessionRestore> HouseholdSessionRestore::prepare(
     if(bundle.travel.has_value()!=expected_travel.has_value()||
        (bundle.travel&&encode_ts1_travel_state(*bundle.travel)!=encode_ts1_travel_state(*expected_travel)))
         throw FormatError("TRIP restore requires explicitly authenticated matching travel state");
-    if(expected_roster.empty()||!same_session_household_roster(bundle.household_roster,expected_roster))
+    if((expected_roster.empty()&&!bundle.npc_primary)||!same_session_household_roster(bundle.household_roster,expected_roster))
         throw FormatError("saved household roster differs from family, World or character resources");
     const auto& host=bundle.host;
     if(host.neighborhood_mode!=selection.neighborhood_mode||host.house_number!=selection.house_number||

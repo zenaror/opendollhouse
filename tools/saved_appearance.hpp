@@ -27,6 +27,13 @@ struct SavedAppearanceCatalogDiagnostics {
     std::uint64_t malformed_resources=0;
     std::vector<std::string> resource_errors; // At most16 entries, each <=512 bytes.
 };
+// One bounded metadata owner, with separate ordered indices for TS1 clothing
+// collection selection. assets retains the legacy wardrobe export order/ordinals;
+// index vectors add no second copy of the asset strings/content receipts.
+struct SavedAppearanceResourceCatalog {
+    std::vector<odh::WardrobeCatalogAsset> assets;
+    std::vector<std::uint32_t> appearance_order,texture_order;
+};
 class SavedAppearanceResources {
 public:
     SavedAppearanceResources(const std::string& animation_far, const std::string& textures_far,
@@ -42,6 +49,11 @@ public:
     // Metadata-only export of THIS provider's selected outfit names/files.
     // No skeleton, scene, mesh, image or animation execution is required.
     static std::vector<odh::WardrobeCatalogAsset> wardrobe_catalog(
+        const std::filesystem::path& game_root,const std::string& animation_far,
+        const std::string& textures_far,const std::string& skins_directory,
+        const std::vector<std::string>& far_sources,const std::vector<std::string>& extra_skin_directories);
+
+    static SavedAppearanceResourceCatalog resource_catalog(
         const std::filesystem::path& game_root,const std::string& animation_far,
         const std::string& textures_far,const std::string& skins_directory,
         const std::vector<std::string>& far_sources,const std::vector<std::string>& extra_skin_directories);

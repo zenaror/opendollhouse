@@ -3,6 +3,8 @@
 #include "odh/character_catalog.hpp"
 #include "odh/lot.hpp"
 #include "odh/sha256.hpp"
+#include "odh/session_bundle.hpp"
+#include "odh/native_personal_catalog.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -59,9 +61,18 @@ SessionEntry load_visit_session_entry(const std::filesystem::path& user_data,
         unsigned home_mode, std::uint16_t home_house, unsigned mode,
         std::uint16_t house, const std::vector<std::uint32_t>& travelers,
         std::uint8_t language, const FamilyOverlay* overlay,
-        const std::filesystem::path& player_characters) {
+        const std::filesystem::path& player_characters, const SessionBundle* checkpoint) {
+    std::optional<SessionBundle> resource_selection;
+    if(checkpoint && checkpoint->character_family){
+        if(checkpoint->host.house_number!=house || checkpoint->host.neighborhood_mode!=mode)
+            throw FormatError("visited execution checkpoint differs from selected destination");
+        // Only the resource lookup uses the permanent lot's FAMI assignment.
+        // Original accepted bytes and the actual visited HOST remain untouched.
+        resource_selection=*checkpoint;resource_selection->host.house_number=home_house;
+        resource_selection->host.neighborhood_mode=static_cast<std::uint8_t>(home_mode);
+    }
     const auto home = load_session_entry(user_data, home_mode, home_house,
-        language, overlay, player_characters);
+        language, overlay, player_characters,resource_selection?&*resource_selection:nullptr);
     if (!neighborhood_mode_supported(mode) || !house || house >= 99)
         throw FormatError("temporary visit mode or house is unsupported");
     std::optional<LotLocations> locations;
@@ -84,13 +95,23 @@ SessionEntry load_visit_session_entry(const std::filesystem::path& user_data,
         });
     });
     if (!simi) throw FormatError("temporary visit destination has no valid SIMI1");
+    if(resource_selection&&home.npc_primary){
+        if(house==home_house||std::count_if(locations->lots.begin(),locations->lots.end(),[&](const auto& lot){return lot.house==house;})!=1)
+            throw FormatError("NPC visit destination differs from selected lot");
+        auto visit=home;visit.neighborhood_mode=mode;visit.house_number=house;visit.house_file=file.string();return visit;
+    }
+    if(resource_selection){
+        std::vector<std::uint32_t> execution;for(const auto& member:home.members)execution.push_back(member.guid);
+        return resolve_visit_session_entry(home,mode,house,file.string(),*locations,execution);
+    }
     return resolve_visit_session_entry(home, mode, house, file.string(), *locations, travelers);
 }
 
 SessionEntry load_session_entry(const std::filesystem::path& user_data,
         unsigned mode, std::uint16_t house, std::uint8_t language,
         const FamilyOverlay* saved_overlay,
-        const std::filesystem::path& player_character_directory) {
+        const std::filesystem::path& player_character_directory,
+        const SessionBundle* checkpoint, bool identity_only) {
     if (!neighborhood_mode_supported(mode))
         throw FormatError("selected neighborhood mode is unsupported");
     if (house == 0 || house >= 99) throw FormatError("selected house is outside the selectable range");
@@ -128,10 +149,11 @@ SessionEntry load_session_entry(const std::filesystem::path& user_data,
         });
     });
     if (!raw_neighbors) throw FormatError("Neighborhood.iff has no NBRS1 table");
+    const auto original_neighbors=*raw_neighbors;
     if (saved_overlay) {
         family_entries = apply_family_overlay(family_entries, *neighborhood_identity,
                                                *saved_overlay);
-        if (!saved_overlay->creations.empty())
+        if (!saved_overlay->creations.empty() || saved_overlay->character_family)
             *raw_neighbors = apply_neighbor_overlay(*raw_neighbors, *neighborhood_identity,
                                                      *saved_overlay);
     }
@@ -149,6 +171,24 @@ SessionEntry load_session_entry(const std::filesystem::path& user_data,
     });
     if (!has_simi) throw FormatError("selected house has no valid SIMI1");
 
+    if(checkpoint&&checkpoint->npc_primary){
+        if(!saved_overlay)throw FormatError("NPC execution entry requires the accepted owned overlay");
+        const auto owned=family_overlay_owned_neighbor_seeds(*saved_overlay);
+        std::set<std::int16_t> retired;
+        for(const auto& member:retired_family_members(*saved_overlay))retired.insert(member.neighbor_id);
+        *raw_neighbors=checkpoint->personal_state&&checkpoint->personal_state->catalog?
+            hydrate_owned_native_personal_neighbors(original_neighbors,*checkpoint->personal_state->catalog,owned,retired):
+            merge_owned_neighbor_seeds(original_neighbors,owned);
+        // Replay the original allocator first, then hide archived identities in
+        // place. Erasing slots would renumber a persisted NPC catalog binding.
+        for(auto& row:raw_neighbors->entries)if(row.record){
+            if(retired.count(row.record->neighbor_id)){row={0,{}};continue;}
+            auto& links=row.record->relationships;
+            links.erase(std::remove_if(links.begin(),links.end(),[&](const auto& link){
+                return link.key_count==1&&link.key>=1&&link.key<=4096&&retired.count(static_cast<std::int16_t>(link.key));
+            }),links.end());
+        }
+    }
     const FamilyContext families(family_entries);
     const NeighborContext neighbors(std::move(*raw_neighbors));
     auto character_candidates=read_character_catalog(user_data / "Characters");
@@ -178,8 +218,22 @@ SessionEntry load_session_entry(const std::filesystem::path& user_data,
         }
     }
     const DefinitionIndex characters(character_candidates);
-    return resolve_session_entry(mode, house, house_file.string(), *locations,
-                                 families, neighbors, characters);
+    const auto current=resolve_session_entry(mode,house,house_file.string(),*locations,
+        families,neighbors,characters,identity_only || (checkpoint && checkpoint->character_family));
+    if (identity_only || !checkpoint) return current;
+    const auto execution=resolve_session_execution_entry(current,*checkpoint,neighbors,characters);
+    for (const auto& member:checkpoint->household_roster) {
+        const auto& resolved=*std::find_if(execution.members.begin(),execution.members.end(),
+            [&](const auto& value){return value.guid==member.guid;});
+        const auto root=resolved.character_source=="UserData/Characters"?user_data/"Characters":
+            resolved.character_source=="PlayerData/Characters"?player_character_directory:std::filesystem::path{};
+        if (root.empty()) throw FormatError("execution character has an unknown catalog root");
+        with_iff_file(root/resolved.character_asset,[&](const auto& view){
+            if(identity_of(view)!=member.character_fingerprint)
+                throw FormatError("accepted HHRD character bytes changed");
+        });
+    }
+    return execution;
 }
 
 } // namespace odh

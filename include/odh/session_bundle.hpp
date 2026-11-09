@@ -1,5 +1,6 @@
 #pragma once
 #include "odh/family_vacation.hpp"
+#include "odh/ts1_character_family.hpp"
 #include "odh/installed_lot_limits.hpp"
 
 #include "odh/entity_scheduler_snapshot_codec.hpp"
@@ -303,6 +304,12 @@ struct SessionUiState {
 
 // Values only. The host must rebuild matching resources, programs, callbacks,
 // and presentation state before applying these snapshots to a fresh session.
+// CurrentFamily.RuntimeSubset is independent of FAMI membership: Generic6
+// deliberately does not remove from it; Generic4 appends, Generic32 selects all.
+struct SessionCharacterFamily {
+    Ts1CharacterFamilySnapshot shared;
+    std::vector<std::uint32_t> runtime_subset;
+};
 struct SessionBundle {
     // Required NINV/TRIP profiles. Legacy nontravel archives omit both unchanged.
     std::optional<NeighborInventorySnapshot> neighbor_inventory;
@@ -317,7 +324,11 @@ struct SessionBundle {
     std::optional<SessionSimulationState> simulation; // Absent in older archives.
     SessionResourceIdentity resources;
     SessionHostState host;
-    std::vector<SessionHouseholdMember> household_roster; // Empty only for legacy HOST v1.
+    std::vector<SessionHouseholdMember> household_roster; // Exact owned resident Threads, separate from mutable FAMI.
+    // NPRM1 selects an existing NPCA Thread as the execution anchor. It never
+    // duplicates that Thread in the legacy resident roster or changes origin.
+    std::optional<WorldEntityReference> npc_primary;
+    std::optional<SessionCharacterFamily> character_family; // Required CFAM1 when present; shared state+actual RuntimeSubset.
     WorldSnapshot world;
     RelationshipSnapshot relationships;
     std::vector<SessionRuntimeEntity> runtime_entities; // Strictly ascending IDs.
@@ -420,3 +431,9 @@ SessionBundle decode_session_bundle(
     SessionBundleLimits limits = {});
 
 } // namespace odh
+
+namespace odh {
+// Carry the shared character/family successor across an existing execution
+// checkpoint. HHRD/NPCA/Threads and the target's runtime subset stay local.
+void project_session_character_family(SessionBundle&,const SessionCharacterFamily&);
+}

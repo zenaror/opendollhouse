@@ -22,4 +22,13 @@ std::vector<DefinitionCandidate> read_character_catalog(
     const std::filesystem::path& directory,
     const CharacterCatalogLimits& limits = {});
 
+// Private profiles that have never created a character may have no catalog
+// directory yet. Only a known missing path is empty; existing invalid paths,
+// symlinks, enumeration/format errors and every scan bound remain strict.
+// This does not make any receipt optional: consumers must still resolve its
+// exact GUID/resource from the returned definitions. Never creates directories.
+std::vector<DefinitionCandidate> read_character_catalog_if_present(
+    const std::filesystem::path& directory,
+    const CharacterCatalogLimits& limits = {});
+
 } // namespace odh

@@ -23,7 +23,8 @@ struct NpcAvatarRequest {
     // is the real OOW sentinel; absent plan is only Generic19/20 construction.
     std::optional<CreateObjectPlacementPlan> direct_placement;
     std::uint32_t guid() const {return direct_resource_guid?direct_resource_guid:requested_neighbor.guid;}
-    // Explicit original transport constructor, never inferred from NBRS format.
+    // Explicit original fresh constructor (transport or authenticated created
+    // character receipt), never inferred from NBRS format or bank width.
     bool original_semantics=false;
     std::optional<bool> original_residential;
     std::optional<std::int16_t> original_definition_version;
@@ -102,6 +103,9 @@ struct NpcAvatarStartupResult : AvatarStartupResult {
     std::optional<AvatarBodyDescriptor> body;
     std::vector<NeighborInheritance> inheritance;
 };
+// Original-profile requests keep the real256-word selective initializer and
+// initial Main tick, then use the same captured creation placement lifecycle.
+// Pinned-profile requests below retain their existing construction order.
 // Private World + private RNG + caller-bound VM/resources, external safe point.
 // Init0/EP8 use disposable self/self/stack0 checks (exactly four zeros each,
 // including ExecuteEntryPoint's normalization of the source null Init array);

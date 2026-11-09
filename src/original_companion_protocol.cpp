@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "odh/original_companion_protocol.hpp"
+#include "odh/native_personal_state.hpp"
 #include "odh/session_bundle.hpp"
 #include <algorithm>
 #include <set>
@@ -20,8 +21,9 @@ Ts1TravelMember authenticated(const World& world,WorldEntityReference ref,const 
 bool item_matches(const InventoryItem& i,const OriginalCompanionMarker& m){return i.type==m.type&&i.guid==m.guid&&i.count==m.count;}
 void append_effect(std::vector<InventoryItem>& items,std::uint32_t key,std::int16_t count){if(count)items.push_back({2,key,static_cast<std::uint16_t>(count)});}
 std::string npc_asset(const SessionNpcAvatarOrigin& o){
- const std::filesystem::path p(o.source);if(!o.asset.empty()||p.parent_path().filename()!="Characters")throw FormatError("original travel NPC carrier is not a character IFF");
- return std::string(o.source.rfind("PlayerData/",0)==0?"PlayerData/Characters/":"UserData/Characters/")+p.filename().string();
+ // Exact resource locator preserves a packaged NPC's origin when source FAMI
+ // membership changes. Membership never converts NPCA into a character file.
+ return native_personal_resource_key(o.source,o.asset);
 }
 }
 std::array<std::int16_t,11> original_travel_values(const Entity& e){

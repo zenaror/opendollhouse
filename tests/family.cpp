@@ -159,8 +159,10 @@ int main() {
     const auto source_budget=source[3].family.budget;
     source[0].family.member_guids.clear();source[3].family.house_number=8;source.clear();
     const auto original_budget=context.by_house(7)->family.budget;
-    context.by_house(7)->family.budget=original_budget-30;
-    require(context.by_house(7)->chunk_id==1&&context.by_house(7)->family.budget==original_budget-30&&
+    const std::int32_t changed_budget=12345;
+    require(changed_budget!=original_budget,"owned-copy test uses a distinct representable budget");
+    context.by_house(7)->family.budget=changed_budget;
+    require(context.by_house(7)->chunk_id==1&&context.by_house(7)->family.budget==changed_budget&&
             source_budget!=context.by_house(7)->family.budget&&
             odh::FamilyContext::contains(*context.by_id(65535),0xffffffffU),
             "runtime family budget changes only the owned copy of original family data");

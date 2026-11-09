@@ -28,5 +28,11 @@ NativePersonalCatalog build_native_personal_catalog(const Nbrs&,const std::array
 // Current filesystem/resource authentication remains the host's prerequisite.
 Nbrs hydrate_native_personal_neighbors(const Nbrs&,const NativePersonalCatalog&,
     const std::set<std::int16_t>& reserved={});
+// Merge explicit owned identity receipts into original manager slots without
+// reallocating a persisted synthetic NPC binding. Caller authenticates receipt
+// origins/resources. Conflicting NID/GUID/seed bytes are never redirected.
+Nbrs merge_owned_neighbor_seeds(const Nbrs&,const std::vector<NeighborRecord>&);
+Nbrs hydrate_owned_native_personal_neighbors(const Nbrs&,const NativePersonalCatalog&,
+    const std::vector<NeighborRecord>&,const std::set<std::int16_t>& reserved={});
 std::optional<std::int16_t> native_personal_catalog_lookup(const NativePersonalCatalog&,std::uint32_t);
 } //namespace odh

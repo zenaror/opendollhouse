@@ -82,7 +82,7 @@ std::vector<std::uint8_t> encode_str3(const std::vector<StringEntry>& entries,
 }
 
 std::vector<std::uint8_t> patch_body_strings(const ChunkData& chunk,
-                                             const std::vector<TemplateBodyString>& replacements) {
+                                             const std::vector<TemplateBodyString>& replacements,bool authenticated_source) {
     std::string raw(reinterpret_cast<const char*>(chunk.payload.data()), chunk.payload.size());
     std::istringstream stream(raw, std::ios::in | std::ios::binary);
     const auto table = read_strings(View(stream, chunk.payload.size()));
@@ -101,7 +101,16 @@ std::vector<std::uint8_t> patch_body_strings(const ChunkData& chunk,
     }
     auto entries = table.entries;
     for (const auto& replacement : replacements) {
-        if (replacement.index >= entries.size()) throw FormatError("body-string index is outside STR# 200");
+        if(replacement.index>=entries.size()){
+            // Original templates contain27 human /34 pet default-language
+            // strings. Authenticated Make19 writes the wardrobe tail through
+            // index34; preserve old fields/comments/padding and add only that
+            // bounded missing suffix. Legacy CAS requests retain strict bounds.
+            if(!authenticated_source||entries.size()<27||replacement.index>=35||
+               !std::all_of(entries.begin(),entries.end(),[](const auto& e){return e.language==1;}))
+                throw FormatError("body-string index is outside authenticated template extension");
+            while(entries.size()<=replacement.index){entries.push_back({1,"",""});padding.push_back(0xA3);}
+        }
         validate_string_bytes(replacement.bytes, "body-string replacement");
         if (entries[replacement.index].language != 1)
             throw FormatError("TemplatePerson body-string index is not in the English source set");
@@ -133,7 +142,10 @@ std::vector<ChunkData> parse_chunks(const std::vector<std::uint8_t>& bytes) {
 
 std::vector<std::uint8_t> clone_template_person(const std::vector<std::uint8_t>& template_iff,
                                                 const TemplatePersonRequest& request) {
-    if (request.guid == 0 || request.guid == kPersonGuid) throw FormatError("new person GUID is invalid or unchanged");
+    const auto source_guid=request.source?request.source->guid:kPersonGuid;
+    const auto source_objd=request.source?request.source->definition_chunk_id:kPersonObjd;
+    const auto source_body=request.source?request.source->body_strings_id:kBodyStrings;
+    if(!source_guid||request.guid==0||request.guid==source_guid)throw FormatError("new person GUID is invalid or unchanged");
     if (request.language == 0 || request.language > 20) throw FormatError("TS1 language code must be 1..20");
     if (template_iff.size() < kHeaderSize || template_iff.size() > request.maximum_iff_bytes)
         throw FormatError("template IFF is outside configured size bounds");
@@ -150,11 +162,11 @@ std::vector<std::uint8_t> clone_template_person(const std::vector<std::uint8_t>&
     ChunkData* body = nullptr;
     ChunkData* catalog = nullptr;
     for (auto& chunk : chunks) {
-        if (chunk.type == "OBJD" && chunk.id == kPersonObjd) {
+        if (chunk.type == "OBJD" && chunk.id == source_objd) {
             if (person) throw FormatError("ambiguous TemplatePerson OBJD 128");
             person = &chunk;
         }
-        if (chunk.type == "STR#" && chunk.id == kBodyStrings) {
+        if (chunk.type == "STR#" && chunk.id == source_body) {
             if (body) throw FormatError("ambiguous TemplatePerson STR# 200");
             body = &chunk;
         }
@@ -168,14 +180,17 @@ std::vector<std::uint8_t> clone_template_person(const std::vector<std::uint8_t>&
     const auto version=le32(person->payload,0);
     if(version!=136&&version!=138)
         throw FormatError("TemplatePerson OBJD metadata version is unsupported");
-    if (le32(person->payload, static_cast<std::size_t>(kGuidOffset)) != kPersonGuid)
+    if (le32(person->payload, static_cast<std::size_t>(kGuidOffset)) != source_guid)
         throw FormatError("TemplatePerson OBJD 128 has an unexpected source GUID");
-    if (!body) throw FormatError("TemplatePerson STR# 200 is missing");
+    if (!body) throw FormatError("source person BodySTR table is missing");
+    if(request.source&&(person->payload.size()<40||
+       static_cast<std::uint16_t>(person->payload[38]|(static_cast<unsigned>(person->payload[39])<<8))!=source_body))
+        throw FormatError("source person BodyStringID differs from authenticated template table");
 
     put_le32(person->payload, static_cast<std::size_t>(kGuidOffset), request.guid);
     put_le16(person->payload, static_cast<std::size_t>(kCatalogStringsOffset), kCatalogStrings);
     person->label = request.object_label;
-    body->payload = patch_body_strings(*body, request.body_strings);
+    body->payload = patch_body_strings(*body, request.body_strings,request.source.has_value());
     const auto catalog_payload = make_catalog_strings(request.name, request.biography, request.language);
     if (catalog) catalog->payload = catalog_payload;
     else chunks.push_back({"CTSS", kCatalogStrings, 0x10, "", catalog_payload});

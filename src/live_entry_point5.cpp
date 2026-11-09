@@ -110,7 +110,8 @@ bool live_object_creation_active_dispatch_matches(const LiveObjectCreationPlacem
             if(!lease.valid()||lease.origin()!=&vm||!active.protected_frame||
                !lease.matches(*active.protected_frame,active.instruction,active.dispatch)||
                !vm_frame_equal(active.frame,*active.protected_frame)||
-               (active.instruction.opcode!=42&&active.instruction.opcode!=9))return false;
+               (active.instruction.opcode!=42&&active.instruction.opcode!=9&&
+                !(active.instruction.opcode==1&&active.instruction.operands[0]==32&&active.instruction.operands[1]==0)))return false;
             return vm.run_generation()==source.source_run_generation||
                 (lease.detached()&&vm.run_generation()>source.source_run_generation);
         }

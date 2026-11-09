@@ -5,7 +5,7 @@ parcial. Ainda não há uma versão completa jogável publicada.
 
 | Área | Resultado observado em percursos delimitados | O que falta para aceitar o conjunto |
 | --- | --- | --- |
-| Motor e dados | Leitura de dados, execução de ações, movimento e estado salvo ligados ao aplicativo. | Completar caminhos ausentes e entrada comum sem opções experimentais obrigatórias. |
+| Motor e dados | Leitura de dados, execução de ações, movimento e estado salvo ligados ao aplicativo. Uma casa da instalação original Complete Collection abriu, salvou e reabriu com o relógio parado, preservando o arquivo salvo inteiro. | Completar caminhos ausentes e entrada comum sem opções experimentais obrigatórias. |
 | Casa | Alimentação, sono, conversa, banheiro, banho e serviços em cenários registrados. Uma continuação doméstica avançou cerca de quatro horas dentro do jogo e salvou o progresso. Em outro percurso, o fogo foi criado e o Sim reagiu em pânico; a partida salvou, reabriu em outro processo e continuou. | Sessão residencial completa e estável com o mesmo conjunto de código. Completar propagação, combate ao fogo, bombeiros e consequências do incêndio, incluindo cinzas e mortes. |
 | Escola e carreira | Retorno de escola/trabalho, promoção, salário e bônus observados. | Ampliar carreiras, horários e progressão. |
 | Salvamento | Partidas delimitadas salvam e reabrem preservando o estado. Uma visita ao Centro também reabriu com o cadastro de personagens e o salvamento inteiro idênticos. A continuação residencial com fogo reabriu preservando os três familiares e retomou a simulação. | Continuidade também após viagens, edição e gestão de famílias. |

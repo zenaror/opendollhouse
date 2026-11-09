@@ -14,18 +14,20 @@ public:
   }
   const auto skins=root/"GameData/Skins";std::error_code error;
   const auto selected_skins=std::filesystem::is_directory(skins,error)&&!error?skins.string():std::string{};
-  catalog_=SavedAppearanceResources::wardrobe_catalog(root,(root/"GameData/Animation/Animation.far").string(),
+  catalog_=SavedAppearanceResources::resource_catalog(root,(root/"GameData/Animation/Animation.far").string(),
       (root/"GameData/Textures/Textures.far").string(),selected_skins,sources,loose);
  }
- const std::vector<odh::WardrobeCatalogAsset>& catalog() const noexcept{return catalog_;}
+ const std::vector<odh::WardrobeCatalogAsset>& catalog() const noexcept{return catalog_.assets;}
+ const std::vector<std::uint32_t>& appearance_order() const noexcept{return catalog_.appearance_order;}
+ const std::vector<std::uint32_t>& texture_order() const noexcept{return catalog_.texture_order;}
  std::optional<odh::WardrobeCatalogAsset> resolve(const odh::WardrobeCatalogAsset& receipt) const {
   std::optional<odh::WardrobeCatalogAsset> found;
-  for(const auto& asset:catalog_)if(asset.kind==receipt.kind&&asset.name==receipt.name&&asset.source==receipt.source&&asset.asset==receipt.asset){
+  for(const auto& asset:catalog_.assets)if(asset.kind==receipt.kind&&asset.name==receipt.name&&asset.source==receipt.source&&asset.asset==receipt.asset){
    if(found)throw odh::FormatError("wardrobe selected asset is ambiguous in admitted provider");found=asset;
   }
   return found; // Core checks content, ignores current ordinal and retains the accepted one.
  }
 private:
- std::vector<odh::WardrobeCatalogAsset> catalog_;
+ SavedAppearanceResourceCatalog catalog_;
 };
 } // namespace odh_host

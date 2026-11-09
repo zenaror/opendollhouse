@@ -34,6 +34,8 @@ odh::SessionBundle make_travel_session_envelope(const std::vector<std::uint8_t>&
  if(home.type_attributes&&!active.type_attributes)throw odh::FormatError("visited session dropped neighborhood type attributes");
  if(home.personal_state&&!active.personal_state)throw odh::FormatError("visited session dropped neighborhood personal state");
  if(home.family_vacation&&!active.family_vacation)throw odh::FormatError("visited session dropped shared family vacation state");
+ if(home.character_family&&!active.character_family)throw odh::FormatError("visited session dropped character/family state");
+ if(active.character_family)odh::project_session_character_family(home,*active.character_family);
  home.family_vacation=active.family_vacation;
  home.personal_state=active.personal_state;
  home.travel=active.travel;home.neighbor_inventory=active.neighbor_inventory;home.host.family_budget=active.host.family_budget;home.family_spells=active.family_spells;home.type_attributes=active.type_attributes;
