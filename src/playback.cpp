@@ -207,10 +207,41 @@ bool Playback::valid_slot_context(const VmFrame& frame,const Vm& vm,std::uint64_
     return true;
 }
 bool Playback::attach_default_carry(const VmFrame& frame,const Vm& vm,std::uint64_t actor_generation,
-    std::uint64_t vm_generation,std::int16_t object,std::uint64_t object_generation,std::string* error) {
+    std::uint64_t vm_generation,std::int16_t object,std::uint64_t object_generation,std::string* error,
+    const VmFrame* creation_frame,const Instruction* creation_instruction,const VmDispatch* creation_dispatch) {
     const auto reject=[&](const char* why){if(error)*error=why;return false;};
     if(executing_)return reject("avatar slot carry hook cannot reenter playback");
-    if(!valid_slot_context(frame,vm,actor_generation,vm_generation,error))return false;
+    const bool creation=creation_frame||creation_instruction||creation_dispatch;
+    if(creation&&(!creation_frame||!creation_instruction||!creation_dispatch||
+       !creation_dispatch->origin||creation_instruction->opcode!=42))
+        return reject("default carry active authority requires the exact CreateObjectInstance primitive");
+    // Keep a value frame: a resolver may invalidate the live execution graph.
+    const auto source_frame=creation?*creation_frame:VmFrame{};
+    const auto creation_current=[&]{
+        if(!creation)return true;
+        const auto* source=world_.frame_entity(source_frame,VmEntityRole::caller,true);
+        return source&&!source->ui_ghost&&creation_dispatch->origin->matches_active_primitive(
+            source_frame,*creation_instruction,*creation_dispatch);
+    };
+    if(!creation_current())return reject("default carry CreateObjectInstance source authority is stale");
+    const bool self_creation=creation&&creation_dispatch->origin==&vm;
+    const auto* active_instruction=self_creation?creation_instruction:nullptr;
+    const auto* active_dispatch=self_creation?creation_dispatch:nullptr;
+    if(!valid_slot_context(frame,vm,actor_generation,vm_generation,error,active_instruction,active_dispatch))return false;
+    // Capture the carrier's complete continuation separately from creator
+    // authority. Another VM may legally be waiting while its resolver runs;
+    // same PC/context alone cannot detect update_pending argument writes.
+    if(!same_frame(frame,vm.stack().back()))
+        return reject("default carry captured carrier frame is stale");
+    const auto carrier_frame=vm.stack().back();const auto carrier_depth=vm.stack().size();
+    const auto carrier_steps=vm.steps();const auto carrier_status=vm.status();
+    const auto carrier_pending=vm.pending();
+    const auto carrier_current=[&]{
+        return vm.steps()==carrier_steps&&vm.status()==carrier_status&&vm.stack().size()==carrier_depth&&
+            !vm.stack().empty()&&same_frame(carrier_frame,vm.stack().back())&&
+            bool(carrier_pending)==bool(vm.pending())&&
+            (!carrier_pending||same_pending(*carrier_pending,*vm.pending()));
+    };
     const auto attached=[&]{
         const auto* actor=world_.frame_entity(frame,VmEntityRole::caller);const auto* carried=world_.find(object);
         return actor&&actor->generation==actor_generation&&!actor->slots.empty()&&actor->slots[0]==object&&
@@ -226,7 +257,9 @@ bool Playback::attach_default_carry(const VmFrame& frame,const Vm& vm,std::uint6
     catch(const std::exception& exception){if(error)*error=exception.what();return false;}
     catch(...){return reject("default carry animation resolver raised a non-standard exception");}
     if(!clip)return reject("default carry animation resource did not resolve");
-    if(!valid_slot_context(frame,vm,actor_generation,vm_generation,error))return false;
+    if(!creation_current())return reject("default carry CreateObjectInstance source changed during resource resolution");
+    if(!carrier_current())return reject("default carry carrier continuation changed during resource resolution");
+    if(!valid_slot_context(frame,vm,actor_generation,vm_generation,error,active_instruction,active_dispatch))return false;
     if(!attached()||world_.frame_entity(frame,VmEntityRole::caller)->person_data[58]!=key.actor_age)
         return reject("avatar slot carry identity or attachment changed during resource resolution");
     carry_clip_=std::move(clip);carry_resource_=key;

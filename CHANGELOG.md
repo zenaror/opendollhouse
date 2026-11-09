@@ -33,6 +33,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Criação de objetos carregados na mão durante uma ação, preservando a ação
+  do personagem e recusando mudanças inesperadas durante a preparação da animação.
 - Reabertura de partidas com personagens sem registro de roupas, preservando
   os registros existentes sem gerar novos durante a leitura.
 - Alturas de apoios em arquivos antigos, evitando interromper a colocação de

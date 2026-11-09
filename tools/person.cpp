@@ -18454,8 +18454,18 @@ struct PlacementCandidateProbe {
                            !created_still_matches()||!pending.source_still_matches())
                             throw odh::FormatError("created avatar slot0 carry has no actual container continuation");
                         const auto carrier_frame=carrier_vm->stack().back();const auto carrier_run=carrier_vm->run_generation();
+                        // Create42 is synchronous: its own carrier VM may still
+                        // be dispatching this exact primitive. A different
+                        // carrier must remain at its independently checked safe
+                        // point; the creator cannot authorize its active VM.
+                        const auto* active=pending.ordinary_dispatch?&*pending.ordinary_dispatch:nullptr;
+                        const bool self_dispatch=carrier_vm==pending.vm&&carrier_vm->dispatch_active();
+                        if(self_dispatch&&(!active||active->dispatch.origin!=carrier_vm||active->instruction.opcode!=42||
+                           !leased_source_current()||!pending.source_still_matches()))
+                            throw odh::FormatError("created slot0 carry lacks its exact active CreateObjectInstance authority");
                         if(!carrier_playback->attach_default_carry(carrier_frame,*carrier_vm,binding.generation,
-                            carrier_run,object_id,created_generation,&why)||
+                            carrier_run,object_id,created_generation,&why,
+                            active?&active->frame:nullptr,active?&active->instruction:nullptr,active?&active->dispatch:nullptr)||
                            !created_still_matches()||!pending.source_still_matches()||actor_vm_for(binding.id)!=carrier_vm||
                            carrier_vm->run_generation()!=carrier_run){
                             host_failed=true;host_diagnostic="new held object carry presentation could not bind: "+why;

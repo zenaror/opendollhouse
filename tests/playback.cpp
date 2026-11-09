@@ -135,6 +135,96 @@ void default_slot_carry_tests(){
     require(rejected.world.detach(1,0)&&!rejected.player.attach_default_carry(source_frame,rejected.vm,generation,vm_generation,2,held_generation,&why),
         "detached object cannot install default carry without reciprocal attachment");
 }
+// Create42 executes synchronously. The carry hook must authenticate that
+// active dispatch rather than requiring the creator to have already returned.
+void synchronous_created_carry_tests(){
+    for(const bool other_carrier:{false,true})for(unsigned mutation=0;mutation<5;++mutation){
+        if(mutation==4&&!other_carrier)continue; // update_pending is legal only on another idle VM.
+        odh::World world;
+        require(world.create(1,odh::EntityKind::avatar,{0,88,1})&&
+            world.create(2,odh::EntityKind::avatar,{0,88,1})&&world.create(3,odh::EntityKind::object),
+            "Create carry fixture has two independent avatar identities and a real object");
+        require(world.declare_object_word(1,17,0)&&world.declare_object_word(2,17,0),
+            "carrier animation speed has explicit source fields");
+        const auto carrier=static_cast<std::int16_t>(other_carrier?2:1);
+        const auto actor_generation=world.find(carrier)->generation,held_generation=world.find(3)->generation;
+        auto carry=clip(),primary=clip(30);unsigned resolves=0;bool nested_rejected=false;
+        primary->motions[0].time_properties={{{0,{{"xevt","7"},{"lefthand","2"},{"righthand","1"}}}}};
+        odh::Playback* playback=nullptr;odh::Vm* carrier_vm=nullptr;
+        odh::VmFrame active_frame;odh::Instruction active_instruction{};odh::VmDispatch active_dispatch{};
+        odh::Playback player(world,[&](const auto&,auto,auto){return primary;},{},
+            [&](const auto&,auto posture){
+                ++resolves;require(posture==-1,"creation uses default carry posture only");
+                std::string nested;
+                nested_rejected=!playback->attach_default_carry(carrier_vm->stack().back(),*carrier_vm,
+                    actor_generation,carrier_vm->run_generation(),3,held_generation,&nested,
+                    &active_frame,&active_instruction,&active_dispatch);
+                if(mutation==1)require(world.detach(carrier,0),"resolver mutation detaches exact held object");
+                if(mutation==2)require(world.set_person_data(carrier,58,1),"resolver mutation changes carrier age");
+                if(mutation==3)require(world.remove(1),"resolver mutation retires the actual creation source");
+                if(mutation==4)require(carrier_vm->pending()&&carrier_vm->update_pending(carrier_vm->pending()->ticket,
+                    {odh::VmFrameBank::arguments,0,73}),"real resolver updates another carrier's pending argument");
+                return carry;
+            });
+        playback=&player;
+        odh::Vm idle({{odh::routine_key(4096),routine()}},world.vm_memory(),{},player.primitive());
+        const odh::Instruction create{42,254,255,{}};
+        bool accepted=false;std::string why;
+        odh::Vm creator({{odh::routine_key(4096),{0x8002,{create},{},odh::Bhav::Metadata{0,0,0,0}}}},
+            world.vm_memory(),{},[&](const auto& frame,const auto& instruction,const auto&,const auto& dispatch){
+                active_frame=frame;active_instruction=instruction;active_dispatch=dispatch;
+                require(world.attach(carrier,0,3),"source slot transfer precedes creation carry presentation");
+                const auto captured=carrier_vm->stack().back();const auto run=carrier_vm->run_generation();
+                const auto steps=carrier_vm->steps(),depth=carrier_vm->stack().size();
+                const auto before=player.carry_clip();
+                odh::PlaybackSnapshot primary_before,primary_after;
+                if(other_carrier&&!mutation)require(player.capture_snapshot(primary_before,&why)&&primary_before.state&&
+                    primary_before.state->wait&&!primary_before.state->queue.empty()&&primary_before.hands,
+                    "other carrier starts with an actual animation wait, queued events and gestures");
+                // Creator authority cannot be substituted for another carrier's
+                // VM, and no active dispatch is accepted by the legacy hook.
+                if(!other_carrier)require(!player.attach_default_carry(captured,*carrier_vm,actor_generation,run,
+                    3,held_generation,&why)&&resolves==0,"active self creation still rejects unauthenticated safe-point hook");
+                auto forged=dispatch;++forged.ticket;
+                require(!player.attach_default_carry(captured,*carrier_vm,actor_generation,run,3,held_generation,&why,
+                    &frame,&instruction,&forged)&&resolves==0,"forged or foreign Create dispatch cannot grant carry authority");
+                auto wrong=instruction;wrong.opcode=43;
+                require(!player.attach_default_carry(captured,*carrier_vm,actor_generation,run,3,held_generation,&why,
+                    &frame,&wrong,&dispatch)&&resolves==0,"an unrelated active slot primitive cannot impersonate Create42");
+                require(!player.attach_default_carry(captured,*carrier_vm,actor_generation,run+1,3,held_generation,&why,
+                    &frame,&instruction,&dispatch)&&resolves==0,
+                    "stale carrier run refuses carry before resolving resources");
+                accepted=player.attach_default_carry(captured,*carrier_vm,actor_generation,run,3,held_generation,&why,
+                    &frame,&instruction,&dispatch);
+                require(carrier_vm->run_generation()==run&&carrier_vm->steps()==steps&&carrier_vm->stack().size()==depth&&
+                    (mutation==4?carrier_vm->stack().back().arguments.at(0)==73:
+                        odh::vm_frame_equal(captured,carrier_vm->stack().back())),
+                    "carry neither resets nor advances frames and never rolls back an external pending write");
+                require(nested_rejected&&resolves==1,"resource lookup cannot reenter carry publication");
+                if(mutation)require(!accepted&&player.carry_clip()==before,"resolver identity mutation refuses publication without replacing carry");
+                else require(accepted&&player.carry_clip()==carry,"exact self-active or other-idle carrier binds original default carry");
+                if(other_carrier&&!mutation)require(player.capture_snapshot(primary_after,&why)&&
+                    same_primary(primary_before,primary_after)&&primary_after.carry,
+                    "successful creation preserves carrier wait, queued events, cursors and gestures exactly");
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            });
+        carrier_vm=other_carrier?&idle:&creator;
+        require(player.bind(*carrier_vm),"playback is bound to actual carrier VM");
+        if(other_carrier){
+            require(idle.start(odh::routine_key(4096),{2,2,2,0})==odh::VmStatus::running,"start independent carrier continuation");
+            idle.run(1);require(idle.status()==odh::VmStatus::waiting&&player.tick(1),
+                "other carrier retains original animation wait with real queued animation events");
+        }
+        require(creator.start(odh::routine_key(4096),{1,1,1,0})==odh::VmStatus::running,"start actual Create42 dispatch");
+        creator.run(1);
+        require(creator.status()==odh::VmStatus::returned_true,"Create fixture executes authenticated carry callback once");
+        if(other_carrier)require(idle.status()==odh::VmStatus::waiting&&idle.pending(),"other carrier pending wait survives creation");
+        if(!other_carrier&&!mutation){
+            require(!player.attach_default_carry(active_frame,creator,actor_generation,creator.run_generation(),
+                3,held_generation,&why,&active_frame,&active_instruction,&active_dispatch),"expired Create dispatch cannot be replayed after primitive return");
+        }
+    }
+}
 void prepared_carry_transfer_tests(){
     struct Transfer {
         odh::World world;
@@ -566,7 +656,7 @@ int main(){try{
     prepared_carry_transfer_tests();
     route_animation_tests();
     immediate_preemption_tests();
-    default_slot_carry_tests();
+    default_slot_carry_tests();synchronous_created_carry_tests();
     {Fixture source(1);source.a->motions[0].frames=1;source.xevt(0,"7");source.start();source.player.tick(1);
      odh::PlaybackSnapshot saved;std::string why;require(source.player.capture_snapshot(saved,&why)&&saved.state&&saved.state->resource.id==1&&
         saved.state->resource.caller==1&&saved.state->resource.callee==2&&saved.state->resource.stack_object==2&&saved.last_tick==1,

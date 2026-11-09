@@ -120,12 +120,18 @@ public:
     // Host safe-point hooks for the pinned VMAvatar slot contract. Call attach
     // only after a NEW successful slot0 attachment, never an already-in-slot
     // no-op: it always replaces custom carry with reset_resolver(frame,-1).
+    // Synchronous Create42 supplies its exact source frame/instruction/dispatch.
+    // Source authority is rechecked across resource resolution. A different
+    // carrier still needs its own safe point; the creator cannot authorize
+    // another VM's active dispatch.
     // These hooks preserve the primary clip, wait, gestures and event cursors;
     // they neither dispatch the VM nor advance animation. Expected identities
     // belong to the captured source frame and its still-bound execution graph.
     bool attach_default_carry(const VmFrame& source_frame,const Vm& source_vm,
         std::uint64_t actor_generation,std::uint64_t vm_generation,
-        std::int16_t carried_object,std::uint64_t carried_generation,std::string* error=nullptr);
+        std::int16_t carried_object,std::uint64_t carried_generation,std::string* error=nullptr,
+        const VmFrame* creation_frame=nullptr,const Instruction* creation_instruction=nullptr,
+        const VmDispatch* creation_dispatch=nullptr);
     // Source ClearSlot clears carry after ANY avatar slot is cleared, including
     // head/pelvis slots while slot0 remains occupied. Call after World detaches.
     bool clear_slot_carry(const VmFrame& source_frame,const Vm& source_vm,

@@ -9,7 +9,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Scripts, objetos e interações | Parcial | Ciclo completo de criação, execução, cancelamento e retirada em mais perfis. |
 | Movimento e animação | Parcial | Escadas, obstáculos, personagens e ações nos percursos integrados. |
 | Necessidades e autonomia | Parcial | Dia residencial completo, sem ações falhando silenciosamente. |
-| Incêndios | Parcial | Fogo criado e reação de pânico observados, com salvamento e continuação após reabrir. Completar propagação, morte de Sims, objetos queimados e cinzas, combate manual, bombeiros por telefone ou alarme e apresentação. |
+| Incêndios | Parcial | Fogo, pânico e combate manual de um foco observados; a ação continuou após reabrir a partida, terminou com sucesso e o foco selecionado desapareceu. Ainda havia outros focos. Completar a cobertura de propagação, consequências, bombeiros por telefone ou alarme e apresentação. |
 | Roubo, polícia e alarme contra roubo | Em aberto | Chegada do ladrão, detecção, roubo, chamada manual ou por alarme, intervenção policial e consequências sobre os bens ao continuar a partida. |
 | Bebês | Em aberto | Nascimento ou adoção conforme as regras originais, cuidados, crescimento para criança, intervenções e continuidade da família após salvar. |
 | Morte e tentativa de recuperar o Sim | Parcial | Morte de uma moradora, urna e continuação após salvar/reabrir observadas em um percurso. Validar as demais causas, a chegada e interação com a Morte, a tentativa de recuperar o Sim e os demais resultados persistentes. |
