@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
+#include "odh/slot_height.hpp"
 #include "odh/ts1_placement_slots.hpp"
 #include "odh/avatar_position_valid.hpp"
 #include "odh/object_position_change.hpp"
@@ -280,7 +281,10 @@ public:
                 if(lookup.status!=Ts1SlotLookupStatus::available||!lookup.table)throw std::runtime_error("Reach SLOT resource unknown");
                 const auto* record=slot_of_type(*lookup.table,0,slot);
                 if(!record)throw std::runtime_error("Reach authored storage SLOT index is outside actual resource");
-                const auto height=ts1_storage_slot_height(*record);if(!height)throw std::runtime_error("Reach SLOT height invalid");
+                const auto effective=source_slot_height(*lookup.table,*record);
+                if(!effective)throw std::runtime_error("Reach SLOT height unknown");
+                auto runtime_record=*record;runtime_record.height=*effective;
+                const auto height=ts1_storage_slot_height(runtime_record);if(!height)throw std::runtime_error("Reach SLOT height invalid");
                 return height;};
             struct Guard{std::function<std::optional<float>(std::int16_t,std::size_t)>& fn;~Guard(){fn={};}} guard{reach_slot_height_};
             return handler(frame,instruction,temps,dispatch);};

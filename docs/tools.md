@@ -156,6 +156,31 @@ texto e listas de escolha permanecem abertos. Cada confirmação aparece em
 atravessar os avisos iniciais na mesma execução. Ela exige uso separado das
 outras opções de resposta de diálogo.
 
+## Gravar pontos de retorno em testes sem janela
+
+`--headless-checkpoint-interval N` grava a partida a cada `N` passos da execução.
+É uma opção de teste para casas residenciais, desativada por padrão. Parta de
+uma partida nativa já gravada e de uma cópia integral do seu perfil. Um arquivo
+`.odhs` isolado não basta: o perfil precisa guardar a ligação da família com a casa.
+
+```sh
+build/native/odh-person --game-root "/caminho/do/jogo" \
+  --load-session "/perfil-copiado/partida-atual.odhs" --mode 1 \
+  --headless-ticks 4096 --save-session-on-exit \
+  --headless-checkpoint-interval 512 --no-audio
+```
+
+Nesse exemplo, o comando grava sete pontos intermediários e o estado final.
+O limite é de 32 gravações desse comando, incluindo a saída. O intervalo conta
+a partir do ponto retomado. Se for maior que a duração pedida, só há a gravação
+final. Cada ponto aceito aparece no JSON e imediatamente no log, com o instante
+e o caminho; uma falha posterior preserva os pontos já aceitos.
+
+A opção exige uma execução com duração positiva e gravação na saída. Ela não
+aceita viagens, janelas, edição direta de dados, comandos de teste adicionais
+ou opções que encerram a execução antecipadamente. Os avisos podem ser tratados
+com a opção informativa descrita acima; perguntas continuam aguardando resposta.
+
 ## Registrar os arquivos de uma compilação
 
 Depois de terminar um build CMake com o gerador **Unix Makefiles**, registre os

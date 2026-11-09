@@ -129,6 +129,7 @@ FamilySessionJournal FamilySessionJournal::adopt_original_session(std::vector<od
         throw odh::FormatError("original adoption cannot omit the current shared neighborhood type attributes");
     if(expected&&expected->personal_state&&!capture.personal_state)
         throw odh::FormatError("original adoption cannot omit shared personal state");
+    if(capture.character_family)adopted=odh::plan_neighborhood_character_family_overlay(source,identity,&adopted,capture.character_family->shared);
     if(capture.personal_state)adopted=odh::plan_neighborhood_personal_overlay(identity,&adopted,*capture.personal_state);
     if(capture.type_attributes)
         adopted=odh::plan_neighborhood_type_attributes_overlay(identity,&adopted,*capture.type_attributes);

@@ -909,6 +909,36 @@ void lifecycle_and_journal(const std::filesystem::path& root){
     // Original-import placement uses real saved bodies, registry events and
     // controller Thread authority. EP9 below is an explicit live Word write;
     // this fixture tests lifecycle transport, not native BHAV argument parity.
+    // Exact decoded resource + physical bank parity through canonical provider.
+    for(unsigned mode=0;mode<8;++mode){
+        const auto version=mode==0?4U:mode==1?7U:10U;
+        const auto span=version<6?34U:54U+(version-6U)*4U;
+        std::string slot(16+span,'\0');at(slot,4,version,4);slot.replace(8,4,"TOLS");at(slot,12,1,4);
+        at(slot,16,mode==5?3:0,2);
+        const std::int32_t expected=mode==3?8:mode==4||mode==5||mode==6?-1:mode==7?1:5;
+        if(version>=8)at(slot,74,mode==6?0xffffffffU:mode==7?1:mode==3?8:0,4);
+        auto bound=objd;at(bound,40,1,2);
+        const auto file=game/("slot-height-"+std::to_string(mode)+".iff");
+        if(mode==4)write(file,iff({chunk("OBJD",128,bound),chunk("OBJf",128,objf)}));
+        else write(file,iff({chunk("OBJD",128,bound),chunk("OBJf",128,objf),chunk("SLOT",1,slot)}));
+        std::istringstream stream(bound,std::ios::binary);const auto def=read_object_definition(View(stream,bound.size()));
+        DefinitionIndex defs({{file.string(),"",128,def}});ObjectTradeResourceLibrary lib(game,defs,global_file,"global.iff");
+        const auto& loaded=lib.load(0x1234);const auto extent=loaded.code.runtime.construction.layout.containment_slots;
+        World w;require(w.create(1,EntityKind::object,{0,0,extent})&&w.define_type(1,0x1234),"decoded height exact object bank");
+        require(w.create(2,EntityKind::avatar,{0,88,0})&&w.create(3,EntityKind::object,{0,0,extent+1})&&w.define_type(3,0x1234)&&
+            w.create(4,EntityKind::object)&&w.define_type(4,0x9999),"avatar, inconsistent-bank and unadmitted-resource controls");
+        bool authorized=true;SessionObjectPositionContext ctx;ctx.world=&w;ctx.resources=&lib;ctx.prepared=&prepared;
+        ctx.architecture=&raw;ctx.rooms=&rooms;ctx.source_still_matches=[&]{return authorized;};
+        const auto services=make_session_object_position_services(ctx);
+        const auto ref=[&](int id){return ObjectPositionIdentity{static_cast<std::int16_t>(id),w.find(id)->generation};};
+        const auto source=ref(1);
+        require(services.placement.slot0_height(source)==expected,"canonical source runtime height includes legacy/zero/known absence/signed values");
+        require(services.placement.slot0_height(ref(2))==5,"avatar GetSlotHeight override does not require object resource admission");
+        require(!services.placement.slot0_height(ref(3))&&!services.placement.slot0_height(ref(4)),"bank mismatch and unknown resource remain unsupported");
+        authorized=false;require(!services.placement.slot0_height(source),"expired source cannot reuse decoded height");authorized=true;
+        require(w.remove(1)&&w.create(1,EntityKind::object,{0,0,extent})&&w.define_type(1,0x1234),"height identity reuse control");
+        require(!services.placement.slot0_height(source),"old height identity cannot bind replacement generation");
+    }
     for(unsigned scenario=0;scenario<7;++scenario){
         World w;require(w.set_room_resolver([&](const auto& p){return geometric_room_at_runtime(rooms,p.x,p.y,p.level);}),
             "original avatar real geometric room resolver");

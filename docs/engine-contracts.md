@@ -38,6 +38,19 @@ catálogo e não é promovido a v2 apenas por ser reaberto. O contrato interno
 experimental está em [native_personal_catalog.hpp](../include/odh/native_personal_catalog.hpp);
 a existência desse contrato não declara uma API pública ou paridade completa.
 
+## Roupas e leitura de uma partida
+
+Um registro de roupas salvo precisa corresponder ao personagem e aos arquivos
+que o originaram. A ausência desse registro também faz parte do estado: abrir
+a casa ou recriar um visitante não deve gerar roupas, escolher outras peças
+nem alterar o catálogo. Criar ou atualizar o registro exige uma operação
+explícita, com as mesmas verificações de identidade e recursos.
+
+A consulta [verify_wardrobe_source](../include/odh/native_personal_state.hpp)
+confere um registro existente ou informa sua ausência. Ela não muda o estado.
+O registro retornado pertence ao dono dos dados pessoais; depois de uma
+alteração nesse dono, consulte novamente antes de usar a referência.
+
 ## Animações ausentes
 
 Um pedido comum de animação pode continuar no próximo passo da simulação quando
@@ -72,6 +85,13 @@ não deve colocar um móvel na mão de um Sim nem copiar coordenadas ou andares.
 Retirar um objeto com conteúdo precisa conservar sua identidade durante as
 consultas e posicionar os filhos pelos serviços reais. Criação, inicialização,
 movimento e retirada precisam atualizar os mesmos donos e registros.
+
+A altura de um apoio tem um valor gravado e um valor usado pela simulação.
+Os arquivos SLOT antigos não gravam esse campo; nesses casos, e quando o campo
+original vale zero, a referência usa a classe padrão 5. O leitor conserva os
+dados originais e [source_slot_height](../include/odh/slot_height.hpp) faz essa
+conversão separadamente. Dados desconhecidos continuam sendo recusados. Os pontos
+de apoio dos Sims seguem a regra própria dos personagens.
 
 Na criação comum por um script, o objeto precisa existir e terminar sua
 inicialização e seu posicionamento antes de o script continuar. Apenas a próxima
@@ -153,6 +173,23 @@ e suas ações salvas; depois crie os novos moradores. O preço da compra deve v
 da avaliação da casa após a retirada, com a cobrança publicada uma única vez.
 Os [serviços de propriedade residencial](../tools/residential_property_scene.hpp)
 conferem a origem desses dados antes de admitir o novo estado.
+
+## Continuidade após a saída de personagens
+
+A casa pode continuar com visitantes e objetos, mesmo sem um morador ativo.
+O salvamento deve distinguir os familiares cadastrados, os personagens ainda
+presentes no lote e aquele que o jogador pode controlar. Não criar um morador
+substituto para conseguir gravar ou reabrir a partida.
+
+Retirar o corpo de um personagem também deve encerrar sua execução de ações.
+Se outra ação ainda faz referência a ele, essa referência precisa continuar
+identificando o mesmo corpo, sem autorizar novas ações nem confundi-lo com um
+personagem criado depois. Essa retenção temporária não pode crescer a cada saída.
+
+Por exemplo: depois que o último morador sai, o relógio e os objetos podem seguir
+funcionando. Reabrir a casa não deve trazer esse morador de volta. Alterar o
+cadastro da família é uma operação própria dos scripts do jogo; retirar um corpo
+do lote não equivale a excluir sua família ou declarar sua morte.
 
 ## Viagem temporária
 

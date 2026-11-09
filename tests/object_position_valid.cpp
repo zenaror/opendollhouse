@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "odh/object_position_valid.hpp"
+#include "odh/live_entry_point5.hpp"
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -204,6 +205,34 @@ void support_rules(){
     require(live.run().status==Status::success&&live.world.find(1)->object_words.at(27)==100,
         "GetObjPlace caches target weight before checks but preserves check mutations");
 }
+void logical_support_height_rules(){
+    Fixture f;f.hits({2});f.word(1,4,16);f.height=5;
+    require(f.world.remove(2),"replace fixture support with imported compact avatar");
+    std::array<std::int16_t,68> words{};words[23]=1;words[28]=6;
+    require(f.world.create_saved_entity(2,odh::EntityKind::avatar,0x1002,{},std::vector<std::int16_t>(88),{},words,{},0),"import real zero-backed avatar layout");
+    std::vector<odh::EntryPoint> entries(27);entries[5].action=500;
+    require(f.world.define_entry_points(2,entries),"source avatar EP5 proof");
+    require(f.run().status==Status::success&&f.world.find(2)->slots.empty(),"source logical avatar slot0 permits hand-height support without resizing saved physical storage");
+    require(f.run(0).placement_error==10,"logical support still obeys AcceptSlots");
+    Fixture ordinary;ordinary.hits({2});ordinary.word(1,4,16);
+    require(ordinary.world.remove(2)&&ordinary.world.create(2,odh::EntityKind::object,{0,0,0})&&
+        ordinary.world.define_type(2,0x1002)&&ordinary.world.define_entry_points(2,entries),"ordinary zero-slot support source");
+    unsigned heights=0;ordinary.services.slot0_height=[&](auto)->std::optional<std::int32_t>{++heights;return 5;};
+    require(ordinary.run().placement_error==10&&heights==0,"known absent physical storage keeps source overlap error without asking provider");
+    require(ordinary.world.declare_object_word(4,14,0)&&ordinary.world.declare_object_word(4,26,2)&&
+        ordinary.world.publish_native_slot0({2,ordinary.world.find(2)->generation},{4,ordinary.world.find(4)->generation}),"typed native backing link is independently known");
+    require(ordinary.run().placement_error==10&&heights==0,"native backing hierarchy does not manufacture a physical storage slot");
+    Fixture unknown;unknown.hits({2});unknown.word(1,4,16);
+    unknown.services.slot0_height=[](auto)->std::optional<std::int32_t>{return {};};
+    require(unknown.run().status==Status::unsupported,"unknown support height is never an authored blocked outcome");
+    Fixture replaced;replaced.hits({2});replaced.word(1,4,16);
+    replaced.services.slot0_height=[&](auto)->std::optional<std::int32_t>{
+        require(replaced.world.remove(2)&&replaced.world.create(2,odh::EntityKind::object),"height callback reuses participant ID");return 5;};
+    require(replaced.run().status==Status::unsupported,"height callback cannot validate a replacement participant generation");
+    Fixture expired;expired.hits({2});expired.word(1,4,16);
+    expired.services.slot0_height=[&](auto)->std::optional<std::int32_t>{expired.authorized=false;return 5;};
+    require(expired.run().status==Status::unsupported,"height callback cannot outlive its placement authority");
+}
 void unknown_and_effects(){
     Fixture missing;missing.hits({2});missing.services.entry_point5={};
     require(missing.run().status==Status::unsupported,"unavailable EP5 is not false or empty placement");
@@ -229,7 +258,78 @@ void unknown_and_effects(){
         require(callbacks.world.remove(2)&&callbacks.world.create(2,odh::EntityKind::object),"recycle group candidate");return true;};
     require(callbacks.run().status==Status::unsupported,"same-group callback cannot skip generation revalidation");
 }
+void diagnostic_context_and_nested_failures(){
+    const std::vector<std::string> phases{"architecture","intersections","room_info","same_group",
+        "ignore_intersection","ghost_image","target_ep5","obstacle_ep5","support"};
+    for(std::size_t mode=0;mode<phases.size();++mode){
+        Fixture f;f.hits({2});
+        if(mode==0)f.services.architecture={};
+        if(mode==1)f.services.intersections={};
+        if(mode==2){f.overlaps.query.status=odh::RoomInfoObstacleIndexStatus::unsupported;
+            f.overlaps.query.reason=odh::RoomInfoObstacleIndexReason::geometry_invalid;}
+        if(mode==3)f.services.same_group={};
+        if(mode==4)f.services.ignore_intersection={};
+        if(mode==5)f.services.ghost_image={};
+        if(mode==6)f.services.entry_point5={};
+        if(mode==7)f.answer=[](const Check& q)->std::optional<bool>{return q.tested.id==1?std::optional<bool>{false}:std::nullopt;};
+        if(mode==8){f.word(1,4,2);f.services.slot0_height={};}
+        const auto generation=f.world.find(1)->generation;const auto answer=f.run(3,0);
+        require(answer.status==Status::unsupported&&answer.placement_error==-1&&!answer.object.id&&!answer.support_slot,
+            "diagnostics preserve unsupported payload rather than invent a blocking result");
+        require(answer.diagnostic.find("phase="+phases[mode])!=std::string::npos&&
+            answer.diagnostic.find("target=1/"+std::to_string(generation))!=std::string::npos&&
+            answer.diagnostic.find("candidate=24,24,1,0")!=std::string::npos&&
+            answer.diagnostic.find("direction=0 flags=3")!=std::string::npos,
+            "unsupported diagnostics retain actual request identity/candidate/phase/flags");
+        if(mode>=3)require(answer.diagnostic.find("participant=2/")!=std::string::npos,
+            "participant is recorded only after an actual intersection identity exists");
+        if(mode==2)require(answer.diagnostic.find("reason=geometry_invalid")!=std::string::npos,
+            "RoomInfo reason survives without changing inventory status");
+    }
+    for(bool standard:{false,true}){
+        Fixture f;f.hits({2});f.answer=[&](const Check&)->std::optional<bool>{
+            f.word(1,27,42);if(standard)throw std::runtime_error("generic callback detail");throw 42;
+        };
+        const auto answer=f.run();require(answer.status==Status::unsupported&&f.world.find(1)->object_words.at(27)==42&&
+            answer.diagnostic.find("phase=target_ep5")!=std::string::npos,
+            "exception diagnostics preserve failed-check effects and original unsupported disposition");
+        require((answer.diagnostic.find("generic callback detail")!=std::string::npos)==standard,
+            "standard exception retains what while nonstandard exception keeps generic fallback");
+    }
+    {
+        Fixture typed;typed.hits({2});typed.answer=[&](const Check&)->std::optional<bool>{
+            typed.word(1,27,43);throw odh::SourceCheckResetRetirement(nullptr);
+        };
+        const auto answer=typed.run();require(answer.status==Status::unsupported&&answer.placement_error==-1&&
+            typed.world.find(1)->object_words.at(27)==43&&typed.world.find(1)->object_words.at(1)==3&&
+            answer.diagnostic.find("authenticated source-check Reset retired route execution")!=std::string::npos,
+            "synthetic typed reset signal keeps baseline unsupported policy, effects and heading restoration; no new authority or control-flow change");
+    }
+    Fixture f;f.hits({2});odh::ObjectPositionValid evaluator(f.world,f.services);Result inner;
+    const auto first=f.world.find(1)->generation,other=f.world.find(4)->generation;
+    f.answer=[&](const Check&)->std::optional<bool>{
+        inner=evaluator.evaluate({{4,other},{8,56,1,0},0,1,[]{return true;}});
+        return std::nullopt;
+    };
+    const auto outer=evaluator.evaluate({{1,first},{24,24,1,0},0,1,[]{return true;}});
+    require(inner.status==Status::unsupported&&outer.status==Status::unsupported&&
+        inner.diagnostic.find("phase=request target=4/")!=std::string::npos&&
+        inner.diagnostic.find("candidate=8,56,1,0")!=std::string::npos&&
+        outer.diagnostic.find("phase=target_ep5 target=1/")!=std::string::npos&&
+        outer.diagnostic.find("target=4/")==std::string::npos,
+        "reentrant unsupported has independent local context and cannot overwrite the outer reason");
+    Fixture separate;separate.hits({2});odh::ObjectPositionValid nested(separate.world,{});
+    separate.answer=[&](const Check&)->std::optional<bool>{
+        const auto detail=nested.evaluate({{4,separate.world.find(4)->generation},{8,56,1,0},0,1,[]{return true;}});
+        throw std::runtime_error("nested callback: "+detail.diagnostic);
+    };
+    const auto propagated=separate.run();require(propagated.status==Status::unsupported&&
+        propagated.diagnostic.find("phase=target_ep5 target=1/")!=std::string::npos&&
+        propagated.diagnostic.find("nested callback: object PositionValid phase=architecture target=4/")!=std::string::npos,
+        "explicitly thrown nested unsupported detail retains both real scopes without a shared lastreason");
 }
-int main(){try{already_published_native_heading();temporary_heading_publication();architecture_rules();ordered_ep5_and_ignored_rules();support_rules();unknown_and_effects();
+
+}
+int main(){try{diagnostic_context_and_nested_failures();already_published_native_heading();temporary_heading_publication();architecture_rules();ordered_ep5_and_ignored_rules();support_rules();logical_support_height_rules();unknown_and_effects();
     std::cout<<"object PositionValid checks: "<<checks<<'\n';return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

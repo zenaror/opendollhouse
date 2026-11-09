@@ -285,23 +285,30 @@ const NativeWardrobeRecord* NativePersonalState::wardrobe_by_id(std::int16_t nid
      [](const auto& r,auto key){return r.identity.neighbor_id<key;});
  return found!=state_.wardrobes.end()&&found->identity.neighbor_id==nid?&*found:nullptr;
 }
+const NativeWardrobeRecord* NativePersonalState::verify_wardrobe_source(const NativeWardrobeSource& item) const {
+ identity(item.identity);
+ const auto seed=seeds_.find(item.identity.neighbor_id);
+ if(seed==seeds_.end()||retired_.count(item.identity.neighbor_id)||seed->second.guid!=item.identity.guid)
+  throw FormatError("wardrobe admission lacks exact active NBRS identity");
+ const auto* accepted=wardrobe_by_id(item.identity.neighbor_id);
+ if(accepted){
+  if(!same_native_personal_identity(accepted->identity,item.identity))throw FormatError("wardrobe admission resource changed");
+  validate_original_wardrobe_source(accepted->wardrobe,item.source);
+ }
+ return accepted;
+}
 PreparedNativeWardrobeCommit NativePersonalState::prepare_wardrobes(const std::vector<NativeWardrobeSource>& input,
  const std::vector<WardrobeCatalogAsset>& catalog) const {
  if(input.empty()||input.size()>4096||epoch_==std::numeric_limits<std::uint64_t>::max())
   throw FormatError("wardrobe admission requires bounded explicit sources and live epoch");
  PreparedNativeWardrobeCommit out;out.owner_=this;out.epoch_=epoch_;out.candidate_=state_;
  std::set<std::int16_t> unique;
- for(const auto& item:input){identity(item.identity);
+ for(const auto& item:input){
   if(!unique.insert(item.identity.neighbor_id).second)throw FormatError("wardrobe admission repeats neighbor");
-  const auto seed=seeds_.find(item.identity.neighbor_id);
-  if(seed==seeds_.end()||retired_.count(item.identity.neighbor_id)||seed->second.guid!=item.identity.guid)
-   throw FormatError("wardrobe admission lacks exact active NBRS identity");
+  const auto* accepted=verify_wardrobe_source(item);
   auto found=std::lower_bound(out.candidate_.wardrobes.begin(),out.candidate_.wardrobes.end(),item.identity.neighbor_id,
       [](const auto& r,auto nid){return r.identity.neighbor_id<nid;});
-  if(found!=out.candidate_.wardrobes.end()&&found->identity.neighbor_id==item.identity.neighbor_id){
-   if(!same_native_personal_identity(found->identity,item.identity))throw FormatError("wardrobe admission resource changed");
-   validate_original_wardrobe_source(found->wardrobe,item.source);
-  }else{
+  if(!accepted){
    NativeWardrobeRecord fresh;fresh.identity=item.identity;
    fresh.wardrobe=prepare_original_wardrobe_upgrade(item.source,catalog);
    out.candidate_.wardrobes.insert(found,std::move(fresh));

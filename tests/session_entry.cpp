@@ -1,6 +1,7 @@
 #include "odh/session_entry.hpp"
 #include "odh/family_overlay.hpp"
 #include "odh/sha256.hpp"
+#include "odh/session_bundle.hpp"
 #ifdef __linux__
 #include "linux_family_overlay_store.hpp"
 #endif
@@ -190,8 +191,59 @@ void test_created_family_disk_reload() {
 }
 }
 
+// This tests the metadata-only resolver seam. Full UFLT codec/World/VM and
+// launcher/native gates belong to the composed retirement cohort.
+void unanchored_metadata_entry_tests(){
+    constexpr std::uint32_t old_guid=0x12345678,aux_guid=0x87654321;
+    const odh::DefinitionIndex definitions({character(old_guid,"Old.iff"),character(aux_guid,"Aux.iff")});
+    const odh::NeighborContext neighbors({0,62,{neighbor(12,aux_guid)},0});
+    odh::SessionEntry current{1,7,"House07.iff",201,900,{}};
+    odh::SessionBundle saved;saved.generic_execution=true;
+    saved.host.neighborhood_mode=1;saved.host.house_number=7;saved.host.family_chunk_id=201;saved.host.family_number=900;saved.host.tick=20;
+    saved.character_family.emplace();saved.object_history.emplace();saved.object_history->complete=true;
+    saved.unanchored_family_lot=odh::SessionUnanchoredFamilyLot{{9,17},19};
+    odh::SessionRetiredHouseholdAvatar retired;
+    retired.member={9,17,old_guid,11,128,"UserData/Characters/Old.iff",{}};retired.member.character_fingerprint[0]=42;
+    saved.object_history->retired_household_avatars.push_back(retired);
+    auto resolved=odh::resolve_session_execution_entry(current,saved,neighbors,definitions);
+    require(resolved.members.empty()&&!resolved.npc_primary&&resolved.metadata_bootstrap&&
+        resolved.metadata_bootstrap->reference==saved.unanchored_family_lot->retired_avatar&&
+        resolved.metadata_bootstrap->fingerprint==retired.member.character_fingerprint,
+        "retired metadata resolves without NBRS membership, live body, Thread or primary promotion");
+    odh::SessionHouseholdMember auxiliary{10,18,aux_guid,12,128,"UserData/Characters/Aux.iff",{}};
+    saved.household_roster.push_back(auxiliary);
+    resolved=odh::resolve_session_execution_entry(current,saved,neighbors,definitions);
+    require(resolved.members.size()==1&&resolved.members[0].guid==aux_guid&&resolved.metadata_bootstrap&&!resolved.npc_primary,
+        "actual auxiliary HHRD remains a carrier without becoming primary");
+    auto bad=saved;bad.host.runtime_avatar_id=10;
+    rejects([&]{odh::resolve_session_execution_entry(current,bad,neighbors,definitions);},"metadata cannot authorize nonzero primary HOST");
+    bad=saved;bad.unanchored_family_lot->retired_avatar.generation++;
+    rejects([&]{odh::resolve_session_execution_entry(current,bad,neighbors,definitions);},"wrong retired generation rejected");
+    bad=saved;bad.unanchored_family_lot->retirement_tick=21;
+    rejects([&]{odh::resolve_session_execution_entry(current,bad,neighbors,definitions);},"future retirement rejected");
+    bad=saved;bad.object_history->retired_household_avatars.push_back(retired);
+    rejects([&]{odh::resolve_session_execution_entry(current,bad,neighbors,definitions);},"ambiguous historical resource rejected");
+    bad=saved;decltype(saved.world.entities)::value_type reused{};reused.id=9;reused.generation=18;
+    bad.world.entities.push_back(reused);
+    require(odh::resolve_session_execution_entry(current,bad,neighbors,definitions).metadata_bootstrap.has_value(),
+        "numeric ID reuse with a different generation cannot replace historical metadata identity");
+    bad.world.entities.front().generation=17;
+    rejects([&]{odh::resolve_session_execution_entry(current,bad,neighbors,definitions);},"live exact retired identity cannot bootstrap metadata-only profile");
+    bad=saved;bad.character_family.reset();
+    rejects([&]{odh::resolve_session_execution_entry(current,bad,neighbors,definitions);},"missing owned family provenance rejected");
+    bad=saved;bad.unanchored_family_lot.reset();
+    rejects([&]{odh::resolve_session_execution_entry(current,bad,neighbors,definitions);},"ordinary profile does not infer an unanchored primary");
+    bad=saved;bad.object_history->retired_household_avatars.clear();
+    odh::SessionNpcAvatarOrigin npc{9,17,old_guid,11,"GameData/Objects/Objects.far","NPC.iff",128,{}};
+    npc.character_fingerprint[0]=43;bad.object_history->retired_npc_avatars.push_back(npc);
+    resolved=odh::resolve_session_execution_entry(current,bad,neighbors,definitions);
+    require(resolved.metadata_bootstrap&&resolved.metadata_bootstrap->resource.character_asset=="NPC.iff"&&
+        !resolved.npc_primary&&resolved.members.size()==1,"retired NPCA supplies metadata only and never enters HHRD");
+}
+
 int main() {
     try {
+        unanchored_metadata_entry_tests();
         constexpr std::uint32_t a=0x12345678, b=0x87654321;
         odh::Family family{}; family.house_number=7; family.family_number=900;
         family.member_guids={a,b};

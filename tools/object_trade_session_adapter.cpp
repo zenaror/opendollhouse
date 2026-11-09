@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+#include "odh/slot_height.hpp"
 #include "object_trade_session_adapter.hpp"
 #include "lot_position_load.hpp"
 #include "odh/dynamic_object_groups.hpp"
@@ -8,6 +9,7 @@
 #include "session_generic_resource_path.hpp"
 #include "linux_session_archive_store.hpp"
 #include "odh/world_room_info.hpp"
+#include "odh/avatar_containment.hpp"
 #include "odh/installed_lot_limits.hpp"
 #include "odh/room_score.hpp"
 #include "odh/route_geometry.hpp"
@@ -472,9 +474,23 @@ SessionObjectPositionServices make_session_object_position_services(SessionObjec
         return {};};
     valid.ignore_intersection=[state](auto a,auto b)->std::optional<bool>{return state->entity(a)&&state->entity(b)?std::optional<bool>{false}:std::nullopt;};
     valid.ghost_image=[state](auto id)->std::optional<bool>{return state->entity(id)?std::optional<bool>{false}:std::nullopt;};
-    valid.slot0_height=[state](auto id)->std::optional<std::int32_t>{const auto* e=state->entity(id);if(!e||!e->definition)return {};
-        const auto* r=state->ctx.resources->find(e->definition->guid);if(!r||!r->code.runtime.slots)return {};
-        const auto* slot=slot_of_type(*r->code.runtime.slots,0,0);return slot?slot->height:std::nullopt;};
+    valid.slot0_height=[state](auto id)->std::optional<std::int32_t>{
+        const auto* e=state->entity(id);if(!e)return {};
+        // VMAvatar overrides this query independently of object SLOT resources.
+        if(e->kind==EntityKind::avatar)return 5;
+        if(e->kind!=EntityKind::object||!e->definition)return {};
+        const auto* r=state->ctx.resources->find(e->definition->guid);if(!r)return {};
+        const auto extent=logical_containment_slots(*e);
+        if(!r->code.runtime.slots)return extent?std::nullopt:std::optional<std::int32_t>{-1};
+        const auto& table=*r->code.runtime.slots;
+        if(table.version<4||table.version>10)return {};
+        const auto count=static_cast<std::size_t>(std::count_if(table.records.begin(),table.records.end(),
+            [](const auto& slot){return slot.type==0;}));
+        if(count!=extent)return {}; // Contained and its source storage bank must agree.
+        if(!extent)return -1;
+        const auto* slot=slot_of_type(table,0,0);
+        return slot?source_slot_height(table,*slot):std::nullopt;
+    };
     valid.entry_point5=[state](const auto& q)->std::optional<bool>{if(!q.source_still_matches||!q.source_still_matches())return {};
         const auto* e=state->entity(q.tested);if(!e||!e->entry_points||e->entry_points->size()<=5||e->entry_points->at(5).action!=q.action)return {};
         return state->execute(q.tested,5,q.other.id,std::vector<std::int16_t>(q.arguments.begin(),q.arguments.end()));};

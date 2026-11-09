@@ -147,6 +147,45 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
         rejected = subprocess.run(command + extra, capture_output=True, text=True, env=env)
         check(rejected.returncode != 0, "invalid, duplicate or headless lot viewport accepted")
     dialog_base = [binary, "--game-root", str(root), "--mode", "1", "--house", "7", "--language", "15"]
+    checkpoint_base = dialog_base + ["--load-session", str(root / "missing.odhs"),
+                                     "--headless-ticks", "33", "--save-session-on-exit"]
+    for option in ([], ["0"], ["-1"], ["bad"], ["65536"], ["1", "--headless-checkpoint-interval", "1"]):
+        rejected = subprocess.run(checkpoint_base + ["--headless-checkpoint-interval"] + option,
+                                  capture_output=True, text=True, env=env)
+        check(rejected.returncode == 2 and not rejected.stdout,
+              "invalid, absent or duplicate checkpoint interval accepted")
+    for extra in ([], ["--headless-ticks", "0", "--save-session-on-exit"],
+                  ["--headless-ticks", "2"],
+                  ["--headless-ticks", "2", "--save-session-on-exit", "--plan-only"],
+                  ["--headless-ticks", "2", "--save-session-on-exit", "--instruction-budget", "100"],
+                  ["--headless-ticks", "2", "--save-session-on-exit", "--lot-window-size", "800", "600"]):
+        rejected = subprocess.run(dialog_base + ["--load-session", str(root / "missing.odhs")] +
+                                  extra + ["--headless-checkpoint-interval", "1"],
+                                  capture_output=True, text=True, env=env)
+        check(rejected.returncode == 2 and "--headless-checkpoint-interval requires" in rejected.stderr,
+              "checkpoint mode conflict must reject before archive/resource access")
+    for forbidden in (["--headless-move-entity", "1", "20", "24", "1", "2", "1"],
+                      ["--headless-resident-go-here", "1", "20", "24", "1", "1"],
+                      ["--headless-single-resident-go-here", "20", "24", "1", "1"],
+                      ["--headless-stop-route-depth", "1"],
+                      ["--headless-resident-interaction", "1", "2", "1"],
+                      ["--audio"], ["--headless-dialog-ok"], ["--original-companion-protocol"]):
+        ordinary = dialog_base + ["--load-session", str(root / "missing.odhs"),
+                                  "--headless-ticks", "2", "--save-session-on-exit"]
+        for ordered in (["--headless-checkpoint-interval", "1"] + forbidden,
+                        forbidden + ["--headless-checkpoint-interval", "1"]):
+            rejected = subprocess.run(ordinary + ordered, capture_output=True, text=True, env=env)
+            check(rejected.returncode == 2 and "requires only ordinary managed HOME options" in rejected.stderr,
+                  "checkpoint allowlist rejects every probe/input option in either argument order before archive access")
+    for forbidden in (["--headless-portal", "1", "1"], ["--person-arg", "--headless-move-entity"]):
+        rejected = subprocess.run(checkpoint_base + forbidden + ["--headless-checkpoint-interval", "1"],
+                                  capture_output=True, text=True, env=env)
+        check(rejected.returncode == 2 and not rejected.stdout,
+              "unknown raw passthrough/portal argument must not escape the launcher parser")
+    rejected = subprocess.run(checkpoint_base + ["--headless-checkpoint-interval", "1"],
+                              capture_output=True, text=True, env=env)
+    check(rejected.returncode == 2 and "exceeds 32 saves" in rejected.stderr,
+          "33 total checkpoint captures must reject before loading the session")
     move = ["--headless-move-entity", "1", "20", "24", "1", "2", "3"]
     for extra in [[], ["--headless-ticks", "2"], ["--headless-ticks", "4"] + move]:
         rejected_move = subprocess.run(dialog_base + extra + move,

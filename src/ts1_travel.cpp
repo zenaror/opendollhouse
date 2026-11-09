@@ -150,6 +150,23 @@ void validate_ts1_travel_state(const Ts1TravelState& s){
  }
 }
 void seal_ts1_travel_request(Ts1TravelState& s,const SessionBundle& b){validate_ts1_travel_state(s);if(!s.pending)throw FormatError("no deferred travel request to seal");const auto* vm=owner_vm(b,s.pending->thread_owner);request_matches(*s.pending,*vm);s.pending->continuation=*vm;}
+namespace {
+bool retired_travel_member(const SessionBundle& bundle,const Ts1TravelMember& member){
+ // A source lot switch keeps its original traveling identity list. Delete
+ // removes a physical instance, not its neighbor/character resource. Complete
+ // history authenticates that absence; it never supplies a departure Caller.
+ if(!bundle.object_history||!bundle.object_history->complete||!bundle.object_history->reusable_entity_ids)return false;
+ const auto& history=*bundle.object_history;
+ const auto h=std::any_of(history.retired_household_avatars.begin(),history.retired_household_avatars.end(),[&](const auto& old){const auto& m=old.member;return
+     m.guid==member.guid&&m.neighbor_id==member.neighbor_id&&m.object_definition_id==member.definition_chunk_id&&
+     m.character_asset==member.character_asset&&m.character_fingerprint==member.character_fingerprint;});
+ const auto n=std::any_of(history.retired_npc_avatars.begin(),history.retired_npc_avatars.end(),[&](const auto& m){return
+     m.guid==member.guid&&m.neighbor_id==member.neighbor_id&&m.object_definition_id==member.definition_chunk_id&&
+     native_personal_resource_key(m.source,m.asset)==member.character_asset&&m.character_fingerprint==member.character_fingerprint;});
+ return (h||n)&&std::none_of(bundle.world.entities.begin(),bundle.world.entities.end(),[&](const auto& e){return
+     e.kind==EntityKind::avatar&&e.definition&&e.definition->guid==member.guid;});
+}
+}
 void validate_ts1_travel_bundle(const SessionBundle& b){validate_ts1_travel_bundle(b,SessionBundleLimits{});}
 void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits& limits){
  if(!b.travel){if(b.travel_visited_session||b.travel_home_session)throw FormatError("travel envelope lacks TRIP");return;}
@@ -171,11 +188,15 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
        m.object_definition_id==traveler.definition_chunk_id&&m.character_asset==traveler.character_asset&&m.character_fingerprint==traveler.character_fingerprint)++carriers;
    for(const auto& n:b.npc_avatars){const auto& o=n.origin;if(o.guid==traveler.guid&&o.neighbor_id==traveler.neighbor_id&&
        o.object_definition_id==traveler.definition_chunk_id&&native_personal_resource_key(o.source,o.asset)==traveler.character_asset&&o.character_fingerprint==traveler.character_fingerprint)++carriers;}
-   if(carriers!=1)throw FormatError("TRIP4 traveler lacks its exact HHRD or NPCA execution origin");
+   if(carriers!=1&&!(carriers==0&&retired_travel_member(b,traveler)))throw FormatError("TRIP4 traveler lacks its exact live or retired HHRD/NPCA origin");
   }
  }else{
  const auto& roster=(envelope||s.current_house==s.home_house)?s.permanent_roster:s.travelers;
- if(b.household_roster.size()!=roster.size()){
+ const auto npc_match=[&](const SessionNpcAvatarOrigin& n,const Ts1TravelMember& m){return n.guid==m.guid&&n.neighbor_id==m.neighbor_id&&n.object_definition_id==m.definition_chunk_id&&
+     native_personal_resource_key(n.source,n.asset)==m.character_asset&&n.character_fingerprint==m.character_fingerprint;};
+ const auto npc_carriers=static_cast<std::size_t>(std::count_if(b.npc_avatars.begin(),b.npc_avatars.end(),[&](const auto& n){return std::any_of(roster.begin(),roster.end(),[&](const auto& m){return npc_match(n.origin,m);});}));
+ const auto retired_count=static_cast<std::size_t>(std::count_if(roster.begin(),roster.end(),[&](const auto& member){return retired_travel_member(b,member);}));
+ if(b.household_roster.size()+npc_carriers+retired_count!=roster.size()){
   std::string actual,expected;
   for(const auto& m:b.household_roster)actual+=(actual.empty()?"":",")+std::to_string(m.guid)+"/"+std::to_string(m.neighbor_id);
   for(const auto& m:roster)expected+=(expected.empty()?"":",")+std::to_string(m.guid)+"/"+std::to_string(m.neighbor_id);
@@ -186,6 +207,12 @@ void validate_ts1_travel_bundle(const SessionBundle& b,const SessionBundleLimits
    ", pending="+(s.pending?std::to_string(s.pending->destination):"none")+")");
  }
  for(const auto& m:b.household_roster)if(std::none_of(roster.begin(),roster.end(),[&](const auto& p){return p.guid==m.guid&&p.neighbor_id==m.neighbor_id&&p.definition_chunk_id==m.object_definition_id&&p.character_asset==m.character_asset&&p.character_fingerprint==m.character_fingerprint;}))throw FormatError("travel runtime roster resource mismatch");
+ for(const auto& m:roster){
+  const auto residents=std::count_if(b.household_roster.begin(),b.household_roster.end(),[&](const auto& h){return h.guid==m.guid&&h.neighbor_id==m.neighbor_id&&h.object_definition_id==m.definition_chunk_id&&h.character_asset==m.character_asset&&h.character_fingerprint==m.character_fingerprint;});
+  const auto visitors=std::count_if(b.npc_avatars.begin(),b.npc_avatars.end(),[&](const auto& n){return npc_match(n.origin,m);});
+  if(residents+visitors!=1&&!(residents+visitors==0&&retired_travel_member(b,m)))throw FormatError("travel member lacks one exact live or retired character origin");
+ }
+
  }
  if(envelope){
   const auto reject_nested=[&](const std::vector<std::uint8_t>& bytes){const auto archive=decode_session_archive(bytes,limits.archive);for(const auto& sec:archive.sections)if(sec.id==std::array<char,4>{{'T','V','I','S'}}||sec.id==std::array<char,4>{{'T','H','O','M'}})throw FormatError("nested travel envelope");};

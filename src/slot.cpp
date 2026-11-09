@@ -1,3 +1,4 @@
+#include "odh/slot_height.hpp"
 #include "odh/formats.hpp"
 
 namespace odh {
@@ -46,5 +47,12 @@ const SlotRecord* slot_of_type(const SlotTable& table,std::uint16_t type,std::si
         --index;
     }
     return nullptr;
+}
+std::optional<std::int32_t> source_slot_height(const SlotTable& table,const SlotRecord& record) noexcept {
+    if(table.version<4||table.version>10)return {};
+    bool belongs=false;for(const auto& candidate:table.records)if(&candidate==&record){belongs=true;break;}
+    if(!belongs||record.height.has_value()!=(table.version>=8))return {};
+    if(!record.height||*record.height==0)return 5;
+    return *record.height;
 }
 } // namespace odh

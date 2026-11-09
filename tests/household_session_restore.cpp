@@ -1268,6 +1268,58 @@ void offworld_resident_restore_tests(){
             "offworld presence never bypasses exact household/resource roster authentication");
     }
 }
+void unanchored_household_execution_tests(){
+    for(const unsigned retired:{1u,3u}){
+        Fixture f(16);
+        for(const auto& member:f.roster)require(f.world.set_person_data(member.id,31,member.neighbor_id)&&
+            f.world.set_person_data(member.id,61,21),"exact source HHRD personal identities before retirement");
+        f.baseline=f.world.snapshot();f.start();f.step();auto saved=f.snapshot();saved.generic_execution=true;
+        odh::SessionFamilyLease lease;lease.neighborhood_identity.fill(0x61);lease.family_identity.fill(0x62);lease.occupancy_epoch=4;lease.family_chunk_id=21;saved.family_lease=lease;
+        saved.object_history=odh::SessionObjectHistory{};saved.object_history->complete=true;saved.object_history->reusable_entity_ids=true;
+        for(const auto& member:f.roster)if(retired&(1u<<(member.id-1))){
+            require(f.scheduler.remove(member.id)&&f.world.mark_dead({member.id,member.generation})&&
+                f.relationships.remove_inbound_object_references(f.world,member.id,member.generation)&&
+                f.world.remove_retaining_body({member.id,member.generation}),"actual stopped-scheduler resident/body retirement order");
+            odh::SessionRetiredHouseholdAvatar origin;origin.member=member;origin.source_lease=lease;
+            origin.source=odh::SessionHouseholdRetirementSource::resource_constructor;saved.object_history->retired_household_avatars.push_back(origin);
+        }
+        std::vector<odh::WorldEntityReference> roots;
+        if(!(retired&2u))roots=f.second->vm.strong_entity_references();
+        require(f.world.collect_retained_bodies(roots),"release unreferenced retired body without retaining its dead Thread");
+        for(const auto& member:f.roster)if(retired&(1u<<(member.id-1)))require(f.relationships.forget_object_source(member.id,member.generation),"collected resident object relationship source is retired");
+        saved.world=f.world.snapshot();saved.relationships=f.relationships.snapshot();saved.scheduler=f.scheduler.snapshot();
+        saved.household_roster.erase(std::remove_if(saved.household_roster.begin(),saved.household_roster.end(),[&](const auto& m){return retired&(1u<<(m.id-1));}),saved.household_roster.end());
+        saved.runtime_entities.erase(std::remove_if(saved.runtime_entities.begin(),saved.runtime_entities.end(),[&](const auto& e){return retired&(1u<<(e.id-1));}),saved.runtime_entities.end());
+        saved.host.resident_guid=0;saved.host.resident_neighbor_id=0;saved.host.runtime_avatar_id=0;saved.host.global_values.clear();
+        saved.unanchored_family_lot=odh::SessionUnanchoredFamilyLot{{f.roster.front().id,f.roster.front().generation},f.tick};
+        odh::SessionCharacterFamily family;family.shared.neighborhood_identity=lease.neighborhood_identity;
+        for(const auto& member:f.roster)family.runtime_subset.push_back(member.guid);saved.character_family=family;
+        saved.ui_state=odh::SessionUiState{0,0,0,true};odh::RuntimeGlobalsSnapshot globals;globals.words.resize(38);globals.words[3]=1;globals.selected_sim_is_runtime_id=true;saved.runtime_globals=globals;
+        odh::Ts1Clock clock;require(clock.tick(true),"actual source clock advances before capture");
+        odh::SessionSimulationState sim;sim.clock=clock.snapshot();for(const auto& e:saved.runtime_entities)sim.avatars.push_back({e.id,{}});saved.simulation=sim;
+        const auto bytes=odh::encode_session_bundle(saved);unsigned resolutions=0;
+        const odh::SessionRetiredHouseholdAvatarResolver metadata=[&](const auto& origin){++resolutions;
+            require(origin.source==odh::SessionHouseholdRetirementSource::resource_constructor&&origin.source_checkpoint_sha256==std::array<std::uint8_t,32>{},"resource retirement never invents an older saved head");
+            const auto body=std::find_if(f.baseline.entities.begin(),f.baseline.entities.end(),[&](const auto& e){return e.id==origin.member.id&&e.generation==origin.member.generation;});
+            if(body==f.baseline.entities.end())throw odh::FormatError("unknown constructor identity");return *body;
+        };
+        const auto prepare_unanchored=[&](auto resolver){return odh::HouseholdSessionRestore::prepare(bytes,saved.resources,saved.host,saved.household_roster,
+            f.baseline,f.lot,f.bootstrap,21,{}, {},{},std::nullopt,{},resolver);};
+        rejects([&]{prepare_unanchored(odh::SessionRetiredHouseholdAvatarResolver{});},"unanchored restore cannot skip independent historical resource reconstruction");
+        auto candidate=prepare_unanchored(metadata);
+        odh::RandomState rng(999);std::uint64_t tick=999;odh::EntityVmScheduler scheduler(4);
+        std::unique_ptr<Execution> remaining;std::vector<odh::SessionExecutionBinding> bindings;
+        if(retired==1){remaining=std::make_unique<Execution>(candidate->world(),2,rng);remaining->schedule(scheduler,2);bindings.push_back({2,&remaining->vm,&remaining->controllers,&remaining->playback,{}});}
+        candidate->restore_execution(bindings,{},scheduler,rng,tick);
+        auto cold=saved;cold.world=candidate->world().snapshot();cold.scheduler=scheduler.snapshot();cold.host.tick=tick;cold.host.random_seed=rng.seed();
+        cold.runtime_entities.clear();if(remaining)cold.runtime_entities.push_back(remaining->snapshot(2));
+        require(resolutions==saved.object_history->retired_household_avatars.size()&&tick==1&&
+            !candidate->world().find(1)&&candidate->world().snapshot().retained_entities.empty()&&
+            odh::encode_session_bundle(cold)==bytes,"full unanchored World/VM/controllers/scheduler restore is byte-exact with one or zero actual resident Threads");
+        require(scheduler.tick(tick+1,16,8)&&clock.tick(true),"family lot scheduler and clock continue after the last resident body without a dummy VM");
+        require(!candidate->world().find(1)&&scheduler.size()==(retired==1?1u:0u),"next tick cannot recreate or execute a retired primary");
+    }
+}
 void retired_household_source_tests(){
     Fixture f;for(const auto& member:f.roster)require(f.world.set_person_data(member.id,31,member.neighbor_id)&&
         f.world.set_person_data(member.id,61,21),"source household actual personal identity");
@@ -1319,6 +1371,7 @@ void retired_household_source_tests(){
     require(reopened->world().snapshot().retained_entities.empty(),"historical original retirement remains proven after actual body collection");
 }
 void tests(){
+    unanchored_household_execution_tests();
     retired_household_source_tests();
     offworld_resident_restore_tests();
     npc_primary_execution_tests();

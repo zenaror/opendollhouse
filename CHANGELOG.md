@@ -8,6 +8,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Pontos de retorno opcionais em testes sem janela, usando o salvamento nativo
+  para preservar progresso aceito antes de uma falha.
 - Serviços C++ de cadastro de personagens e mudança de família, com preservação
   de identidades e ações. A integração dos percursos originais segue em desenvolvimento.
 - Motor experimental C/C++ com leitores de recursos, execução parcial de scripts,
@@ -31,6 +33,11 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Reabertura de partidas com personagens sem registro de roupas, preservando
+  os registros existentes sem gerar novos durante a leitura.
+- Alturas de apoios em arquivos antigos, evitando interromper a colocação de
+  objetos por um campo que o formato não grava.
+- Diagnósticos de posicionamento preservam a etapa e o motivo informado pelo motor.
 - Preparação de portas e janelas para compra, mantendo as verificações dos
   objetos já instalados.
 - Posicionamento e preservação de objetos de parede ao salvar e reabrir.

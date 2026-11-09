@@ -64,14 +64,14 @@ SessionEntry resolve_session_entry(unsigned mode, std::uint16_t house,
 SessionEntry resolve_session_execution_entry(const SessionEntry& current,
     const SessionBundle& saved, const NeighborContext& neighbors,
     const DefinitionIndex& characters) {
-    if (!saved.generic_execution || (saved.household_roster.empty()&&!saved.npc_primary) ||
+    if (!saved.generic_execution || (saved.household_roster.empty()&&!saved.npc_primary&&!saved.unanchored_family_lot) ||
         saved.host.house_number != current.house_number ||
         saved.host.neighborhood_mode != current.neighborhood_mode ||
         saved.host.family_chunk_id != current.family_chunk_id ||
         saved.host.family_number != current.family_number)
         throw FormatError("accepted execution checkpoint differs from the selected residence");
     if(saved.npc_primary){
-        if(!saved.character_family||!saved.travel||
+        if(!saved.character_family||
            !saved.household_roster.empty()||!saved.runtime_entities.empty())
             throw FormatError("NPC execution entry lacks exact checkpoint provenance");
         const auto ref=*saved.npc_primary;
@@ -83,8 +83,9 @@ SessionEntry resolve_session_execution_entry(const SessionEntry& current,
             e.kind==EntityKind::avatar&&!e.dead&&!e.ui_ghost&&e.definition&&e.definition->guid==npc->origin.guid&&
             e.person_data.size()>31&&e.person_data[31]==npc->origin.neighbor_id;})!=1)
             throw FormatError("NPC execution primary differs from the exact saved World identity");
-        const auto& o=npc->origin;const auto* neighbor=neighbors.by_id(o.neighbor_id);
-        if(!neighbor||neighbor->guid!=o.guid)throw FormatError("NPC execution primary differs from replayed neighbor catalog");
+        const auto& o=npc->origin;const auto* neighbor=o.neighbor_id>0?neighbors.by_id(o.neighbor_id):nullptr;
+        if(o.neighbor_id<0||(o.neighbor_id>0&&(!neighbor||neighbor->guid!=o.guid)))
+            throw FormatError("NPC execution primary differs from replayed neighbor catalog");
         if(saved.personal_state&&saved.personal_state->catalog){
         const auto& definitions=saved.personal_state->catalog->definitions;
         const bool catalogued=std::count_if(definitions.begin(),definitions.end(),[&](const auto& d){return d.guid==o.guid&&d.source==o.source&&d.asset==o.asset&&d.definition_chunk_id==o.object_definition_id&&d.fingerprint==o.character_fingerprint;})==1;
@@ -92,6 +93,33 @@ SessionEntry resolve_session_execution_entry(const SessionEntry& current,
         if(!catalogued&&!created)throw FormatError("NPC execution primary differs from exact catalog/creation resource");
         }
         SessionEntry out=current;out.members.clear();out.npc_primary=SessionNpcExecutionAnchor{{o.guid,o.neighbor_id,o.source,o.asset,o.object_definition_id},ref,o.character_fingerprint};return out;
+    }
+    std::optional<SessionNpcExecutionAnchor> metadata;
+    if(saved.unanchored_family_lot){
+        if(saved.npc_primary||!saved.character_family||!saved.object_history||!saved.object_history->complete||
+           saved.host.resident_guid||saved.host.resident_neighbor_id||saved.host.runtime_avatar_id)
+            throw FormatError("unanchored family lot requires exact family history and zero resident identity");
+        const auto ref=saved.unanchored_family_lot->retired_avatar;
+        if(ref.id<=0||!ref.generation||saved.unanchored_family_lot->retirement_tick>saved.host.tick||
+           std::any_of(saved.world.entities.begin(),saved.world.entities.end(),[&](const auto& e){return e.id==ref.id&&e.generation==ref.generation;}))
+            throw FormatError("unanchored metadata reference is not an exact retired body");
+        unsigned matches=0;
+        for(const auto& retired:saved.object_history->retired_household_avatars){
+            const auto& m=retired.member;if(m.id!=ref.id||m.generation!=ref.generation)continue;
+            const DefinitionCandidate* exact=nullptr;
+            if(const auto* choices=characters.candidates(m.guid))for(const auto& d:*choices)
+                if(d.definition.version==138&&d.definition.object_type==2&&d.chunk_id==m.object_definition_id&&
+                   d.source+"/"+d.asset==m.character_asset){
+                    if(exact)throw FormatError("retired metadata character is ambiguous");exact=&d;
+                }
+            if(!exact)throw FormatError("retired metadata character resource differs from OHST");
+            metadata=SessionNpcExecutionAnchor{{m.guid,m.neighbor_id,exact->source,exact->asset,exact->chunk_id},ref,m.character_fingerprint};++matches;
+        }
+        for(const auto& o:saved.object_history->retired_npc_avatars){
+            if(o.id!=ref.id||o.generation!=ref.generation)continue;
+            metadata=SessionNpcExecutionAnchor{{o.guid,o.neighbor_id,o.source,o.asset,o.object_definition_id},ref,o.character_fingerprint};++matches;
+        }
+        if(matches!=1)throw FormatError("unanchored metadata lacks one exact retired HHRD/NPCA resource");
     }
     // A legacy archive has no changed-roster receipt. Its strict equality
     // contract remains intact; CFAM is required for a different current FAMI.
@@ -103,7 +131,7 @@ SessionEntry resolve_session_execution_entry(const SessionEntry& current,
                 return m.guid==member.guid && m.neighbor_id==member.neighbor_id;
             })) throw FormatError("legacy execution member is outside current family");
     }
-    SessionEntry out=current; out.members.clear();
+    SessionEntry out=current; out.members.clear();out.npc_primary.reset();out.metadata_bootstrap=metadata;
     std::set<std::uint32_t> guids; std::set<std::int16_t> ids;
     for (const auto& member : saved.household_roster) {
         const auto* neighbor=neighbors.by_id(member.neighbor_id);
@@ -125,7 +153,7 @@ SessionEntry resolve_session_execution_entry(const SessionEntry& current,
         return member.id==saved.host.runtime_avatar_id && member.guid==saved.host.resident_guid &&
             member.neighbor_id==saved.host.resident_neighbor_id;
     });
-    if (primary==saved.household_roster.end()) throw FormatError("accepted execution primary lacks its exact HHRD origin");
+    if (!saved.unanchored_family_lot&&primary==saved.household_roster.end()) throw FormatError("accepted execution primary lacks its exact HHRD origin");
     return out;
 }
 

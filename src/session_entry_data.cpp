@@ -95,7 +95,7 @@ SessionEntry load_visit_session_entry(const std::filesystem::path& user_data,
         });
     });
     if (!simi) throw FormatError("temporary visit destination has no valid SIMI1");
-    if(resource_selection&&home.npc_primary){
+    if(resource_selection&&(home.npc_primary||home.metadata_bootstrap)){
         if(house==home_house||std::count_if(locations->lots.begin(),locations->lots.end(),[&](const auto& lot){return lot.house==house;})!=1)
             throw FormatError("NPC visit destination differs from selected lot");
         auto visit=home;visit.neighborhood_mode=mode;visit.house_number=house;visit.house_file=file.string();return visit;

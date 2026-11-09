@@ -149,6 +149,7 @@ struct Options {
     std::optional<std::filesystem::path> load_session;
     bool load_session_advisory = false;
     std::optional<unsigned> headless_ticks;
+    std::optional<unsigned> headless_checkpoint_interval;
     std::optional<std::array<unsigned,2>> lot_window_size;
     std::optional<unsigned> stop_route_depth;
     std::optional<EntityMove> headless_entity_move;
@@ -274,8 +275,16 @@ std::optional<std::int16_t> saved_resident_stand_target(const odh::SessionBundle
 Options parse_options(int argc, char** argv) {
     Options result;
     bool have_root = false, have_mode = false, have_language = false, have_neighborhood = false;
+    bool checkpoint_option_conflict=false;
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
+        // Experimental checkpoint runs accept only the ordinary loaded-HOME
+        // launch surface. Remember every parsed option, independent of order;
+        // the ordinary CLI remains unchanged when checkpoints are disabled.
+        if(!(key=="--game-root"||key=="--mode"||key=="--neighborhood"||
+            key=="--language"||key=="--house"||key=="--load-session"||
+            key=="--headless-ticks"||key=="--save-session-on-exit"||key=="--headless-checkpoint-interval"||
+            key=="--no-audio"||key=="--headless-info-dialog-ok-limit"))checkpoint_option_conflict=true;
         if(key=="--original-companion-protocol"){
             if(result.original_companion_protocol)throw odh::FormatError("duplicate original companion profile option");
             result.original_companion_protocol=true;continue;
@@ -530,6 +539,9 @@ Options parse_options(int argc, char** argv) {
             result.load_session = value;
         } else if (key == "--headless-ticks" && !result.headless_ticks) {
             result.headless_ticks = parse_number(value, odh_host::PersonSessionPolicy::max_headless_ticks, "headless tick count");
+        } else if (key == "--headless-checkpoint-interval" && !result.headless_checkpoint_interval) {
+            result.headless_checkpoint_interval=parse_number(value,odh_host::PersonSessionPolicy::max_headless_ticks,"headless checkpoint interval");
+            if(!*result.headless_checkpoint_interval)throw odh::FormatError("headless checkpoint interval must be positive");
         } else if (key == "--headless-stop-route-depth" && !result.stop_route_depth) {
             result.stop_route_depth=parse_number(value,16,"routing checkpoint depth");
         } else if (key == "--headless-move-out-family" && !result.headless_move_out_family) {
@@ -552,6 +564,16 @@ Options parse_options(int argc, char** argv) {
             throw odh::FormatError("unknown or duplicate integrated game option");
         }
     }
+    if(result.headless_checkpoint_interval&&checkpoint_option_conflict)
+        throw odh::FormatError("--headless-checkpoint-interval requires only ordinary managed HOME options; probes, inputs, visual options and raw arguments are excluded");
+    if(result.headless_checkpoint_interval&&(!result.load_session||!result.headless_ticks||!*result.headless_ticks||
+       !result.save_on_exit||result.plan_only||result.single_resident_session||result.instruction_budget||
+       result.status_frame||result.lot_window_size||result.stop_route_depth||result.recover_saved_code||
+       result.check_recovery_position||result.place_recovery_position||result.object_command||result.architecture_command||
+       !result.headless_travel_houses.empty()||result.headless_move_in_family||result.headless_move_out_family))
+        throw odh::FormatError("--headless-checkpoint-interval requires a loaded managed headless session, positive ticks and save-on-exit, without window, probes or commands");
+    if(result.headless_checkpoint_interval&&1+(*result.headless_ticks-1)/ *result.headless_checkpoint_interval>32)
+        throw odh::FormatError("headless checkpoint schedule exceeds 32 saves including final exit");
     if(result.lot_window_size&&result.headless_ticks)
         throw odh::FormatError("--lot-window-size requires a windowed lot");
     if (result.load_session) {
@@ -564,16 +586,17 @@ Options parse_options(int argc, char** argv) {
             (result.house && *result.house != bundle.host.house_number) ||
             (result.resident_id && *result.resident_id != static_cast<unsigned>(bundle.host.resident_neighbor_id)))
             throw odh::FormatError("explicit launch options conflict with the saved session");
-        if (bundle.household_roster.empty() && !bundle.npc_primary && !result.single_resident_session)
+        if (bundle.household_roster.empty() && !bundle.npc_primary && !bundle.unanchored_family_lot && !result.single_resident_session)
             throw odh::FormatError("legacy single-resident session requires explicit --single-resident-session");
-        if ((!bundle.household_roster.empty()||bundle.npc_primary) && result.single_resident_session)
+        if ((!bundle.household_roster.empty()||bundle.npc_primary||bundle.unanchored_family_lot) && result.single_resident_session)
             throw odh::FormatError("household session cannot use --single-resident-session");
-        if (bundle.runtime_entities.size() != (bundle.npc_primary?0u:bundle.household_roster.empty()?1u:bundle.household_roster.size()))
+        if (bundle.runtime_entities.size() != ((bundle.npc_primary||bundle.unanchored_family_lot)?bundle.household_roster.size():bundle.household_roster.empty()?1u:bundle.household_roster.size()))
             throw odh::FormatError("session VM roster does not match its household profile");
         result.mode = bundle.host.neighborhood_mode;
         result.language = bundle.resources.language_code;
         result.house = bundle.host.house_number;
-        result.resident_id = static_cast<unsigned>(bundle.host.resident_neighbor_id);
+        if(bundle.unanchored_family_lot)result.resident_id.reset();
+        else result.resident_id = static_cast<unsigned>(bundle.host.resident_neighbor_id);
         have_mode = have_language = true;
 #else
         throw odh::FormatError("session loading is currently available only on Linux");
@@ -729,6 +752,7 @@ Options parse_options(int argc, char** argv) {
             "Usage: odh-person [--game-root DIR] --mode 1..5,7 [--language 1..20] "
             "[--house 1..98] [--resident-id 1..32767] [--single-resident-session] "
             "[--edit-floor MATERIAL X Y LEVEL (one tile; exclusive with object commands)] "
+            "[--headless-checkpoint-interval N (loaded managed HOME, positive headless ticks and save-on-exit; at most32 saves including exit)] "
             "[--headless-sit-object ID --headless-stand-tick N] "
             "[--headless-single-resident-go-here X Y LEVEL TICK] "
             "[--headless-resident-go-here ACTOR X Y LEVEL RELATIVE_TICK] "
@@ -777,10 +801,11 @@ void load_travel_session(Options& options) {
         bundle.resources.language_code != options.language ||
         !options.house || bundle.host.house_number != *options.house)
         throw odh::FormatError("travel session does not match the selected neighborhood, language or lot");
-    if ((bundle.household_roster.empty()&&!bundle.npc_primary) != options.single_resident_session ||
-        bundle.runtime_entities.size() != (bundle.npc_primary?0u:bundle.household_roster.empty()?1u:bundle.household_roster.size()))
+    if ((bundle.household_roster.empty()&&!bundle.npc_primary&&!bundle.unanchored_family_lot) != options.single_resident_session ||
+        bundle.runtime_entities.size() != ((bundle.npc_primary||bundle.unanchored_family_lot)?bundle.household_roster.size():bundle.household_roster.empty()?1u:bundle.household_roster.size()))
         throw odh::FormatError("travel session does not match the household runtime profile");
-    options.resident_id = static_cast<unsigned>(bundle.host.resident_neighbor_id);
+    if(bundle.unanchored_family_lot)options.resident_id.reset();
+    else options.resident_id = static_cast<unsigned>(bundle.host.resident_neighbor_id);
 #else
     (void)options;
     throw odh::FormatError("session loading is currently available only on Linux");
@@ -1215,11 +1240,13 @@ RuntimePlan build_runtime_arguments(const Options& options,
     }
     std::filesystem::path selected_character;
     std::string selected_semiglobal="PersonGlobals.iff";
-    if(session.npc_primary){
-        const auto& anchor=*session.npc_primary;
+    std::optional<std::string> selected_archive_entry;
+    if(session.npc_primary||session.metadata_bootstrap){
+        const auto& anchor=session.metadata_bootstrap?*session.metadata_bootstrap:*session.npc_primary;
         if(anchor.resource.guid!=resident.guid||anchor.resource.neighbor_id!=resident.neighbor_id)
             throw odh::FormatError("selected NPC differs from the authenticated execution anchor");
         const auto locator=odh::native_personal_resource_locator(odh::native_personal_resource_key(resident.character_source,resident.character_asset));
+        if(!locator.asset.empty())selected_archive_entry=locator.asset;
         if(locator.character_catalog){
             const std::filesystem::path logical(locator.source);const auto parent=logical.parent_path().generic_string();
             const auto root=parent=="UserData/Characters"?characters:parent=="PlayerData/Characters"?player_character_directory:std::filesystem::path{};
@@ -1258,6 +1285,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
         if(std::find(character_files.begin(),character_files.end(),selected_character)==character_files.end())
             throw odh::FormatError("selected resident character resource is absent from the resolved family");
     }
+    // Historical bootstrap bytes remain part of the exact immutable manifest.
+    // No extra --object-definition-file or body is introduced for this anchor.
     // Expansion/Downloads FARs contain external floors and walls too. Index
     // their material entries before loose files, as in the TS1 providers.
     // These archives already belong to the resource manifest; do not change
@@ -1309,8 +1338,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
         "--lot", house_file.string(), std::to_string(house), "--zoning", zoning.string(),
         "--neighborhood", neighborhood.string(), "--activate-family", "--language",
         std::to_string(options.language), "--object-definitions", objects_far.string()};
-    if(session.npc_primary&&!resident.character_asset.empty()){
-        args[1]="--avatar";args.insert(args.begin()+3,resident.character_asset);
+    if(selected_archive_entry){
+        args[1]="--avatar";args.insert(args.begin()+3,*selected_archive_entry);
     }
     for (const auto& archive : shared)
         append(args, {"--object-definitions", archive.string()});
@@ -1346,6 +1375,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
     if(options.check_recovery_position)append(args,{"--headless-check-recovery-position"});
     if(options.place_recovery_position)append(args,{"--headless-place-recovery-position"});
     if(options.recover_saved_code)append(args,{"--recover-saved-code"});
+    if(options.headless_checkpoint_interval)
+        append(args,{"--headless-checkpoint-interval",std::to_string(*options.headless_checkpoint_interval)});
     if(options.headless_dialog_ok)append(args,{"--headless-dialog-ok"});
     if(options.headless_info_dialog_limit)append(args,{"--headless-info-dialog-ok-limit",std::to_string(options.headless_info_dialog_limit)});
     for(const auto& response:options.headless_dialog_responses)
@@ -1434,8 +1465,9 @@ void print_plan(const Options& options, unsigned house,
                 const std::filesystem::path& game_root) {
     std::cout << "{\"status\":\"ready\",\"neighborhood_number\":" << options.neighborhood << ",\"mode\":" << options.mode
         << ",\"house\":" << house << ",\"family_chunk_id\":" << session.family_chunk_id
-        << ",\"resident_guid\":" << resident.guid << ",\"resident_neighbor_id\":"
-        << resident.neighbor_id << ",\"resident_asset\":" << json_bytes(resident.character_asset)
+        << ",\"resident_guid\":" << (session.metadata_bootstrap?0:resident.guid) << ",\"resident_neighbor_id\":"
+        << (session.metadata_bootstrap?0:resident.neighbor_id) << ",\"resident_asset\":" << json_bytes(resident.character_asset)
+        << ",\"metadata_bootstrap\":" << (session.metadata_bootstrap?"true":"false")
         << ",\"resident_count\":" << session.members.size()
         << ",\"resident_execution\":" << json_bytes(options.single_resident_session ? "single_resident_session" : "whole_household")
         << ",\"resource_identity\":{\"language\":" << static_cast<unsigned>(identity.language_code)
@@ -2471,13 +2503,27 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             if(outer.character_family)odh::project_session_character_family(home_resources,*outer.character_family);
             const auto home_entry=odh::load_session_entry(userdata,trip.origin.home_mode,trip.origin.home_house,static_cast<std::uint8_t>(options.language),overlay?&*overlay:nullptr,player_character_directory,&home_resources);
             if(trip.origin.family_roster_revision){
-                trip.origin.travelers.clear();for(const auto& member:home_bundle.household_roster)
-                    trip.origin.travelers.push_back({member.guid,member.neighbor_id,member.object_definition_id,member.character_asset,member.character_fingerprint});
-                trip.origin.caller_guid=home_bundle.host.resident_guid;trip.origin.caller_neighbor_id=home_bundle.host.resident_neighbor_id;
+                if(home_bundle.unanchored_family_lot||home_bundle.npc_primary){
+                    // The accepted source TRIP claim owns its caller/party. A
+                    // suspended HOME's lexical metadata resource or HOST0 does
+                    // not select a caller, revive a retired body or clear party.
+                    if(!checkpoint.active.travel||
+                       odh::encode_ts1_travel_state(*checkpoint.active.travel)!=odh::encode_ts1_travel_state(*outer.travel))
+                        throw odh::FormatError("metadata HOME source TRIP claim differs from authenticated envelope");
+                }else{
+                    // Preserve legacy HHRD HOME reconstruction. Only that
+                    // profile has a genuine HOST resident and permanent graph.
+                    trip.origin.travelers.clear();for(const auto& member:home_bundle.household_roster)
+                        trip.origin.travelers.push_back({member.guid,member.neighbor_id,member.object_definition_id,member.character_asset,member.character_fingerprint});
+                    trip.origin.caller_guid=home_bundle.host.resident_guid;trip.origin.caller_neighbor_id=home_bundle.host.resident_neighbor_id;
+                }
                 odh::validate_ts1_travel_state(trip.origin);
             }
-            const auto selected=std::find_if(home_entry.members.begin(),home_entry.members.end(),[&](const auto& m){return m.guid==home_bundle.host.resident_guid&&m.neighbor_id==home_bundle.host.resident_neighbor_id;});
-            if(selected==home_entry.members.end())throw odh::FormatError("suspended home selection no longer identifies its originating resident");
+            const auto selected_member=std::find_if(home_entry.members.begin(),home_entry.members.end(),[&](const auto& m){return m.guid==home_bundle.host.resident_guid&&m.neighbor_id==home_bundle.host.resident_neighbor_id;});
+            const odh::SessionEntryMember* selected=home_entry.metadata_bootstrap?&home_entry.metadata_bootstrap->resource:
+                home_entry.npc_primary?&home_entry.npc_primary->resource:
+                selected_member!=home_entry.members.end()?&*selected_member:nullptr;
+            if(!selected)throw odh::FormatError("suspended home has no exact resident or historical metadata resource");
             auto home_options=travel_options;home_options.mode=trip.origin.home_mode;home_options.house=trip.origin.home_house;
             const auto home_plan=build_runtime_arguments(home_options,game,trip.origin.home_house,home_entry,*selected,graphics_resource,player_character_directory,userdata,overlay?&*overlay:nullptr);
             const auto identity=odh_host::identify_session_resources(game,home_plan.resources,static_cast<std::uint8_t>(options.language),home_plan.expansion_mask);
@@ -2491,7 +2537,8 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 const auto source_entry=odh::load_visit_session_entry(userdata,trip.origin.home_mode,trip.origin.home_house,
                     trip.state.current_mode,trip.state.current_house,travelers,static_cast<std::uint8_t>(options.language),overlay?&*overlay:nullptr,player_character_directory,&active);
                 const auto source_member=std::find_if(source_entry.members.begin(),source_entry.members.end(),[&](const auto& member){return member.guid==active.host.resident_guid&&member.neighbor_id==active.host.resident_neighbor_id;});
-                const auto* source_resident=source_entry.npc_primary?&source_entry.npc_primary->resource:source_member!=source_entry.members.end()?&*source_member:nullptr;
+                const auto* source_resident=source_entry.metadata_bootstrap?&source_entry.metadata_bootstrap->resource:
+                    source_entry.npc_primary?&source_entry.npc_primary->resource:source_member!=source_entry.members.end()?&*source_member:nullptr;
                 if(!source_resident||active.household_roster.size()!=source_entry.members.size()||active.resources.language_code!=options.language||active.host.neighborhood_mode!=trip.state.current_mode||active.host.house_number!=trip.state.current_house||active.host.family_chunk_id!=source_entry.family_chunk_id||active.host.family_number!=source_entry.family_number)
                     throw odh::FormatError("source visited checkpoint no longer matches its originating family, selected traveler, language or lot");
                 // This helper resolves and fingerprints resources only; no
@@ -2644,7 +2691,8 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     const auto outer=odh::decode_session_bundle(temporary_trip->checkpoint);
                     options.restore_archive=*outer.travel_visited_session;options.restore_bundle=odh::decode_session_bundle(options.restore_archive);
                     options.mode=temporary_trip->state.current_mode;options.house=temporary_trip->state.current_house;house=*options.house;
-                    options.resident_id=static_cast<unsigned>(options.restore_bundle->host.resident_neighbor_id);
+                    if(options.restore_bundle->unanchored_family_lot)options.resident_id.reset();
+                    else options.resident_id=static_cast<unsigned>(options.restore_bundle->host.resident_neighbor_id);
                 }
                 if(temporary_trip){
                     (void)fresh_origin(temporary_trip->origin,temporary_trip->journal);
@@ -2755,7 +2803,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                             throw odh::FormatError("explicit save differs from the current permanent home checkpoint");
                         if(saved.family_lease||saved.host.house_number!=house||saved.host.neighborhood_mode!=options.mode||
                            saved.host.family_chunk_id!=session.family_chunk_id||saved.host.family_number!=session.family_number||
-                           saved.resources.language_code!=options.language||saved.household_roster.empty())
+                           saved.resources.language_code!=options.language||(saved.household_roster.empty()&&!saved.npc_primary&&!saved.unanchored_family_lot))
                             throw odh::FormatError("permanent home checkpoint differs from the selected residence or language");
                         if(options.resident_id&&!options.load_session_advisory&&
                            *options.resident_id!=static_cast<unsigned>(saved.host.resident_neighbor_id))
@@ -2763,7 +2811,8 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         private_home_head=odh::sha256(current.data(),current.size());
                         options.load_session=candidate;
                         options.load_session_advisory=false;
-                        options.resident_id=static_cast<unsigned>(saved.host.resident_neighbor_id);
+                        if(saved.unanchored_family_lot)options.resident_id.reset();
+                        else options.resident_id=static_cast<unsigned>(saved.host.resident_neighbor_id);
                         options.restore_archive=std::move(current);
                         options.restore_bundle=std::move(accepted);
                         if(options.restore_bundle->travel)continue;
@@ -2794,7 +2843,10 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 #endif
                 if (!options.single_resident_session && session.members.size() > 8)
                     throw odh::FormatError("integrated household exceeds the eight-resident TS1 runtime profile");
-                const odh::SessionEntryMember* resident = session.npc_primary?&session.npc_primary->resource:nullptr;
+                const odh::SessionEntryMember* resident = session.metadata_bootstrap?&session.metadata_bootstrap->resource:
+                    session.npc_primary?&session.npc_primary->resource:nullptr;
+                if(session.metadata_bootstrap&&options.resident_id)
+                    throw odh::FormatError("unanchored family lot cannot select a primary resident");
                 if(resident&&options.resident_id&&resident->neighbor_id!=*options.resident_id)
                     throw odh::FormatError("explicit resident differs from the NPC execution anchor");
                 if (!resident&&options.resident_id) {
@@ -2858,7 +2910,8 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         odh::encode_session_resource_identity(*verified_identity))
                         throw odh::FormatError("saved session game resources do not match the selected installation");
                     if (bundle.host.family_chunk_id != session.family_chunk_id ||
-                        bundle.host.family_number != session.family_number || bundle.host.resident_guid != resident->guid)
+                        bundle.host.family_number != session.family_number ||
+                        (session.metadata_bootstrap?(!bundle.unanchored_family_lot||bundle.host.resident_guid||bundle.host.resident_neighbor_id||bundle.host.runtime_avatar_id):bundle.host.resident_guid != resident->guid))
                         throw odh::FormatError("saved session family or resident no longer matches the selected lot");
                     if (!bundle.household_roster.empty()) {
                         if (bundle.household_roster.size() != session.members.size())
@@ -2962,6 +3015,8 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 options.paused_before_build_mode=false;
                 session_context.single_resident_session = options.single_resident_session;
                 session_context.npc_execution_primary=session.npc_primary.has_value();
+                session_context.unanchored_family_lot=session.metadata_bootstrap.has_value();
+                if(session.metadata_bootstrap)session_context.metadata_bootstrap_reference=session.metadata_bootstrap->reference;
                 if (!options.single_resident_session) {
                     const auto characters = require_directory(game, userdata / "Characters");
                     for (const auto& member : session.members) {
@@ -2993,8 +3048,8 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 session_context.house_number = static_cast<std::uint16_t>(house);
                 session_context.family_chunk_id = session.family_chunk_id;
                 session_context.family_number = session.family_number;
-                session_context.resident_guid = resident->guid;
-                session_context.resident_neighbor_id = resident->neighbor_id;
+                session_context.resident_guid = session.metadata_bootstrap?0:resident->guid;
+                session_context.resident_neighbor_id = session.metadata_bootstrap?0:resident->neighbor_id;
 #ifdef __linux__
                 session_context.temporary_travel_enabled=temporary_travel_host_ready&&!session_context.single_resident_session;
                 session_context.original_companion_protocol_fresh=options.original_companion_protocol;

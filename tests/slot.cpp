@@ -1,3 +1,4 @@
+#include "odh/slot_height.hpp"
 #include "odh/formats.hpp"
 #include <iostream>
 #include <sstream>
@@ -46,11 +47,22 @@ int main() {
                     r.resolution.has_value()==(v>=10),"version extensions retain absence");
             if (v>=6) require((*r.proximity)[0]==(-2147483647-1) && (*r.proximity)[1]==32 &&
                              r.max_size==100 && r.unknown_i10==-5,"proximity raw; unknown field preserved");
+            require(odh::source_slot_height(t,r)==5,"legacy omission and explicit zero have source runtime height5");
             if (v>=8) require(r.height==0,"height zero is not replaced by runtime default");
             if (v>=9) require(r.facing==-2,"signed facing");
             if (v>=10) require(r.resolution==8,"resolution");
             for (std::size_t n=0;n<b.size();++n) rejects(b.substr(0,n));
         }
+        for(const auto value:std::vector<std::int32_t>{-1,1,5,9,32,2147483647}) {
+            auto t=parse(fixture(10));t.records[0].height=value;
+            require(odh::source_slot_height(t,t.records[0])==value,"nonzero signed source height remains exact");
+        }
+        {auto t=parse(fixture(10));auto copy=t.records[0];
+            require(!odh::source_slot_height(t,copy),"foreign record is not authenticated by table");
+            t.records[0].height.reset();require(!odh::source_slot_height(t,t.records[0]),"modern missing extension stays unknown");
+            t.version=11;require(!odh::source_slot_height(t,t.records[0]),"unknown version stays unknown");
+            t=parse(fixture(4));t.records[0].height=0;
+            require(!odh::source_slot_height(t,t.records[0]),"legacy inconsistent height field stays unknown");}
         auto b=fixture(10);b+="tail";
         require(parse(b).remaining_bytes==4,"unknown tail reported");
         b=fixture(4);put(b,12,0);

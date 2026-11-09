@@ -42,6 +42,24 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   env.pop('DISPLAY',None);env.pop('WAYLAND_DISPLAY',None)
   return subprocess.run((args if command is None else command)+list(extra),capture_output=True,text=True,env=env)
  setup()
+ for interval in ['0','-1','65536','bad','1']:
+  r=run(['--headless-main','--ticks','2','--headless-checkpoint-interval',interval])
+  assert r.returncode==2 and not r.stdout, (interval,r.stdout,r.stderr)
+ for forbidden in [['--headless-move-entity','1','20','24','1','2','1'],
+                   ['--headless-portal','1','1'], ['--headless-go-here','20','24','1','1'],
+                   ['--headless-stack-object','1'], ['--flags','63'], ['--routine','4096'],
+                   ['--placement-candidate','20','24','1','2'], ['--seed','123'],
+                   ['--render-hide-lot-objects'], ['--headless-dialog-ok']]:
+  for ordered in [['--headless-checkpoint-interval','1']+forbidden,
+                  forbidden+['--headless-checkpoint-interval','1']]:
+   r=run(['--headless-main','--ticks','2']+ordered)
+   assert r.returncode==2 and not r.stdout and 'requires only ordinary managed HOME options' in r.stderr, (ordered,r.stdout,r.stderr)
+ for ordered in [['--person-arg','--headless-move-entity','--headless-checkpoint-interval','1'],
+                 ['--headless-checkpoint-interval','1','--person-arg','--headless-move-entity']]:
+  r=run(['--headless-main','--ticks','2']+ordered);assert r.returncode==2 and not r.stdout
+ r=run(['--headless-checkpoint-interval']);assert r.returncode==2 and not r.stdout
+ r=run(['--headless-main','--ticks','2','--headless-checkpoint-interval','1','--headless-checkpoint-interval','1'])
+ assert r.returncode==2 and not r.stdout
  for response in [['--headless-dialog-response','3',''],['--headless-dialog-response','0','x'*4097],['--headless-dialog-response','0','']*33]:
   r=run(response);assert r.returncode==2 and not r.stdout and 'dialog response' in r.stderr
  r=run(['--headless-dialog-response','0','']);assert r.returncode==2 and not r.stdout and '--headless-dialog-response' in r.stderr

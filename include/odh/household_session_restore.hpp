@@ -88,6 +88,7 @@ public:
     const std::optional<NeighborInventorySnapshot>& neighbor_inventory() const { return bundle_.neighbor_inventory; }
     const std::vector<SessionObjectThread>& object_threads() const { return bundle_.object_threads; }
     const std::vector<SessionNpcAvatar>& npc_avatars() const { return bundle_.npc_avatars; }
+    const std::optional<SessionUnanchoredFamilyLot>& unanchored_family_lot() const {return bundle_.unanchored_family_lot;}
     bool generic_execution() const {return bundle_.generic_execution;}
     CodeOwner next_code_owner() const {return bundle_.next_code_owner;}
     bool code_owner_ids_exhausted() const {return bundle_.code_owner_ids_exhausted;}

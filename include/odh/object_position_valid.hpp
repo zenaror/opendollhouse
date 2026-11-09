@@ -63,6 +63,9 @@ struct ObjectPositionValidServices {
     std::function<std::optional<bool>(ObjectPositionIdentity,ObjectPositionIdentity)> ignore_intersection;
     // Source GhostImage, distinct from the host's UI-only Destination marker.
     std::function<std::optional<bool>(ObjectPositionIdentity)> ghost_image;
+    // Actual source GetSlotHeight(0): effective SLOT runtime height for objects,
+    //5 for avatars, and-1 for a known zero physical extent. Unknown resource or
+    // inconsistent bank/format is nullopt, never an assumed height0.
     std::function<std::optional<std::int32_t>(ObjectPositionIdentity)> slot0_height;
     // Real tested-entity register bank, Caller=Callee=tested, SO=other. Preserve
     // RNG/Temp/World side effects even on false/unsupported; no diagnostic clone.

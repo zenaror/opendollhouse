@@ -115,6 +115,8 @@ public:
     const NativePersonalSnapshot& snapshot() const {return state_;}
     bool changed() const {return state_.version==4||!state_.records.empty()||state_.catalog.has_value()||!state_.wardrobes.empty();}
     const NativeWardrobeRecord* wardrobe_by_id(std::int16_t) const;
+    // Authenticate without producing a wardrobe or changing epochs; absence stays absent.
+    const NativeWardrobeRecord* verify_wardrobe_source(const NativeWardrobeSource&) const;
     PreparedNativeWardrobeCommit prepare_wardrobes(const std::vector<NativeWardrobeSource>&,
         const std::vector<WardrobeCatalogAsset>&) const;
     bool source_current(const PreparedNativeWardrobeCommit&) const;

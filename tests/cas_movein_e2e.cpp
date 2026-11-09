@@ -228,6 +228,15 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
         <<R"(,"family_chunk_id":)"<<bundle.host.family_chunk_id<<R"(,"family_number":)"<<bundle.host.family_number<<R"(,"budget":)";
     if(bundle.host.family_budget)std::cout<<*bundle.host.family_budget;else std::cout<<"null";
     std::cout<<R"(,"occupancy_epoch":)";if(bundle.family_lease)std::cout<<bundle.family_lease->occupancy_epoch;else std::cout<<"null";
+    std::cout<<R"(,"execution_primary":{"id":)"<<bundle.host.runtime_avatar_id<<R"(,"guid":)"<<bundle.host.resident_guid
+        <<R"(,"neighbor_id":)"<<bundle.host.resident_neighbor_id<<'}';
+    std::cout<<R"(,"unanchored_family_lot":)";
+    if(bundle.unanchored_family_lot){const auto& profile=*bundle.unanchored_family_lot;
+        std::cout<<R"({"retired_id":)"<<profile.retired_avatar.id<<R"(,"retired_generation":)"<<profile.retired_avatar.generation
+            <<R"(,"retirement_tick":)"<<profile.retirement_tick<<'}';}else std::cout<<"null";
+    std::cout<<R"(,"npc_primary":)";if(bundle.npc_primary)std::cout<<R"({"id":)"<<bundle.npc_primary->id<<R"(,"generation":)"<<bundle.npc_primary->generation<<'}';else std::cout<<"null";
+    std::cout<<R"(,"ui_selection":)";if(bundle.ui_state){const auto& ui=*bundle.ui_state;
+        std::cout<<R"({"cleared":)"<<(ui.cleared?"true":"false")<<R"(,"id":)"<<ui.active_actor<<R"(,"generation":)"<<ui.generation<<R"(,"guid":)"<<ui.guid<<'}';}else std::cout<<"null";
     std::cout<<R"(,"members":[)";bool comma=false;
     for(const auto& member:bundle.household_roster){
         if(comma)std::cout<<',';comma=true;const odh::Entity* body=nullptr;
@@ -279,7 +288,9 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
         if(comma)std::cout<<',';comma=true;const auto& m=origin.member;
         std::cout<<R"({"id":)"<<m.id<<R"(,"generation":)"<<m.generation<<R"(,"guid":)"<<m.guid
             <<R"(,"family_chunk_id":)"<<origin.source_lease.family_chunk_id<<R"(,"occupancy_epoch":)"<<origin.source_lease.occupancy_epoch
-            <<R"(,"source_checkpoint_sha256":)"<<json_string(hex_digest(origin.source_checkpoint_sha256))<<'}';}
+            <<R"(,"source_checkpoint_sha256":)"<<json_string(hex_digest(origin.source_checkpoint_sha256))
+            <<R"(,"retirement_source":)"<<json_string(origin.source==odh::SessionHouseholdRetirementSource::resource_constructor?"resource_constructor":"accepted_checkpoint")
+            <<R"(,"original_native":)"<<(origin.original_native?"true":"false")<<'}';}
     std::cout<<R"(],"retained_entities":[)";comma=false;
     for(const auto& body:bundle.world.retained_entities){if(comma)std::cout<<',';comma=true;
         std::cout<<R"({"id":)"<<body.id<<R"(,"generation":)"<<body.generation<<R"(,"guid":)"<<(body.definition?body.definition->guid:0)<<'}';}

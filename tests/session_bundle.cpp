@@ -1,4 +1,5 @@
 #include "odh/session_bundle.hpp"
+#include "headless_checkpoint_guard.hpp"
 #include "odh/session_entry.hpp"
 #include "odh/family_overlay.hpp"
 #include "odh/neighbor_context.hpp"
@@ -1571,6 +1572,111 @@ odh::SessionBundle npc_avatar_fixture(bool reuse_original=false) {
         vm.snapshot().status,false,false,false});
     return bundle;
 }
+void character_body_retirement_cases() {
+    // Physical removal is independent of FAMI, CurrentFamily.RuntimeSubset and
+    // the original HHRD/NPCA roles. No replacement VM is created for HOST.
+    for(const unsigned mask:{1u,3u,7u}){
+        auto bundle=npc_avatar_fixture();const auto original=bundle;
+        odh::SessionFamilyLease lease;lease.neighborhood_identity.fill(0x71);
+        lease.family_identity.fill(0x72);lease.family_chunk_id=bundle.host.family_chunk_id;lease.occupancy_epoch=3;
+        bundle.family_lease=lease;
+        odh::SessionCharacterFamily family;family.shared.neighborhood_identity=lease.neighborhood_identity;
+        for(const auto& m:bundle.household_roster)family.runtime_subset.push_back(m.guid);
+        family.runtime_subset.push_back(bundle.npc_avatars.front().origin.guid);bundle.character_family=family;
+        bundle.object_history=odh::SessionObjectHistory{};
+        bundle.object_history->complete=true;bundle.object_history->reusable_entity_ids=true;
+        odh::World world;require(world.restore_snapshot(bundle.world),"retirement source World restores");
+        for(const auto& member:original.household_roster)if(mask&(1u<<(member.id-1))){
+            odh::SessionRetiredHouseholdAvatar old;old.member=member;old.source_lease=lease;
+            old.source=odh::SessionHouseholdRetirementSource::resource_constructor;
+            bundle.object_history->retired_household_avatars.push_back(old);
+            require(world.remove_retaining_body({member.id,member.generation}),"retire exact owned resident body");
+            bundle.household_roster.erase(std::remove_if(bundle.household_roster.begin(),bundle.household_roster.end(),[&](const auto& m){return m.id==member.id;}),bundle.household_roster.end());
+            bundle.runtime_entities.erase(std::remove_if(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),[&](const auto& e){return e.id==member.id;}),bundle.runtime_entities.end());
+        }
+        if(mask&4u){const auto origin=bundle.npc_avatars.front().origin;
+            require(world.remove_retaining_body({origin.id,origin.generation}),"retire exact NPC independently of family membership");
+            bundle.object_history->retired_npc_avatars.push_back(origin);bundle.npc_avatars.clear();
+        }
+        require(world.collect_retained_bodies({}),"unreferenced retired bodies collect without deleting their origin records");
+        bundle.world=world.snapshot();
+        bundle.scheduler.entities.erase(std::remove_if(bundle.scheduler.entities.begin(),bundle.scheduler.entities.end(),[&](const auto& e){return mask&(1u<<(e.id-1));}),bundle.scheduler.entities.end());
+        const auto& retired=bundle.object_history->retired_household_avatars.front().member;
+        bundle.unanchored_family_lot=odh::SessionUnanchoredFamilyLot{{retired.id,retired.generation},0};
+        bundle.host.runtime_avatar_id=0;bundle.host.resident_guid=0;bundle.host.resident_neighbor_id=0;
+        bundle.host.global_values.clear();
+        odh::RuntimeGlobalsSnapshot globals;globals.words.resize(38);globals.words[3]=retired.id;
+        globals.selected_sim_is_runtime_id=true;bundle.runtime_globals=globals;
+        bundle.ui_state=odh::SessionUiState{0,0,0,true};
+        odh::SessionSimulationState simulation;
+        for(const auto& e:bundle.runtime_entities)simulation.avatars.push_back({e.id,{}});
+        bundle.simulation=simulation;
+        const auto bytes=odh::encode_session_bundle(bundle);const auto cold=odh::decode_session_bundle(bytes);
+        require(cold.unanchored_family_lot&&cold.household_roster.size()==(mask==1?1u:0u)&&
+            cold.runtime_entities.size()==cold.household_roster.size()&&cold.npc_avatars.size()==(mask==7?0u:1u)&&
+            cold.host.runtime_avatar_id==0&&cold.host.resident_guid==0&&cold.host.resident_neighbor_id==0,
+            "last anchor, NPC-only HOME and empty family lot preserve real carriers without a fake primary Thread");
+        require(cold.character_family->runtime_subset==family.runtime_subset&&cold.ui_state->cleared&&
+            cold.runtime_globals->words[3]==retired.id&&cold.world.retained_entities.empty()&&
+            odh::encode_session_bundle(cold)==bytes,
+            "cold retirement keeps RuntimeSubset/raw Global3/known empty UI and canonical origin history");
+        if(mask!=7)require(odh::encode_vm_snapshot(cold.npc_avatars.front().runtime.vm)==
+            odh::encode_vm_snapshot(original.npc_avatars.front().runtime.vm),"visitor Thread is not promoted, reset or duplicated at HOME");
+        if(mask==3){
+            auto npc_home=cold;const auto& npc=npc_home.npc_avatars.front().origin;
+            npc_home.unanchored_family_lot.reset();npc_home.npc_primary=odh::WorldEntityReference{npc.id,npc.generation};
+            npc_home.host.runtime_avatar_id=npc.id;npc_home.host.resident_guid=npc.guid;npc_home.host.resident_neighbor_id=npc.neighbor_id;
+            const auto npc_bytes=odh::encode_session_bundle(npc_home);const auto reopened=odh::decode_session_bundle(npc_bytes);
+            require(!reopened.travel&&reopened.npc_primary&&reopened.runtime_entities.empty()&&reopened.household_roster.empty()&&
+                odh::encode_vm_snapshot(reopened.npc_avatars.front().runtime.vm)==odh::encode_vm_snapshot(original.npc_avatars.front().runtime.vm)&&
+                reopened.ui_state->cleared,"NPC-only HOME keeps the actual existing NPCA Thread and never acquires player control from NPRM");
+        }
+        // Visiting-lot identity is historical resource identity. A retired
+        // traveler can remain in that list; it can never mint a new Caller.
+        auto visited=cold;visited.host.neighborhood_mode=3;visited.host.house_number=24;
+        auto& shared=visited.character_family->shared;shared.revision=1;
+        odh::Ts1FamilyRoster row{lease.family_chunk_id,lease.family_identity,1,{}};
+        odh::Ts1TravelState trip;trip.home_mode=1;trip.current_mode=3;trip.home_house=7;trip.current_house=24;
+        trip.family_chunk_id=lease.family_chunk_id;trip.family_number=visited.host.family_number;
+        trip.occupancy_epoch=lease.occupancy_epoch;trip.neighborhood_identity=lease.neighborhood_identity;trip.family_identity=lease.family_identity;
+        for(const auto& m:original.household_roster){row.members.push_back(m.guid);trip.permanent_roster.push_back({m.guid,m.neighbor_id,m.object_definition_id,m.character_asset,m.character_fingerprint});}
+        const auto& guest=original.npc_avatars.front().origin;row.members.push_back(guest.guid);
+        trip.permanent_roster.push_back({guest.guid,guest.neighbor_id,guest.object_definition_id,odh::native_personal_resource_key(guest.source,guest.asset),guest.character_fingerprint});
+        shared.rosters={row};trip.family_roster_revision=1;trip.travelers=trip.permanent_roster;
+        trip.caller_guid=trip.travelers.front().guid;trip.caller_neighbor_id=trip.travelers.front().neighbor_id;trip.family_activated=true;
+        visited.neighbor_inventory=odh::NeighborInventorySnapshot{1,{}};visited.travel=trip;
+        const auto visiting_bytes=odh::encode_session_bundle(visited);
+        require(odh::encode_session_bundle(odh::decode_session_bundle(visiting_bytes))==visiting_bytes,
+            "visited lot preserves exact retired traveler identities and real remaining carriers");
+        auto legacy_visit=visited;legacy_visit.travel->family_roster_revision.reset();
+        legacy_visit.character_family->shared.rosters.clear();legacy_visit.character_family->shared.revision=0;
+        const auto legacy_bytes=odh::encode_session_bundle(legacy_visit);
+        require(odh::encode_session_bundle(odh::decode_session_bundle(legacy_bytes))==legacy_bytes,
+            "unchanged original FAMI travel also preserves an exact NPCA carrier without a fabricated roster revision");
+        auto missing_history=visited;missing_history.object_history->retired_household_avatars.front().member.character_fingerprint[0]^=1;
+        rejects([&]{odh::encode_session_bundle(missing_history);},"retired traveler cannot borrow a different resource fingerprint");
+        auto bad=cold;bad.unanchored_family_lot->retired_avatar.generation++;
+
+        rejects([&]{odh::encode_session_bundle(bad);},"unanchored metadata cannot redirect a retired identity generation");
+        bad=cold;bad.object_history->complete=false;
+        rejects([&]{odh::encode_session_bundle(bad);},"unanchored family needs complete exact lifecycle history");
+        bad=cold;bad.host.runtime_avatar_id=retired.id;
+        rejects([&]{odh::encode_session_bundle(bad);},"retired header cannot regain execution authority");
+        bad=cold;bad.object_history->retired_household_avatars.front().source_checkpoint_sha256[0]=1;
+        rejects([&]{odh::encode_session_bundle(bad);},"resource constructor cannot impersonate an accepted source archive");
+        bad=cold;bad.ui_state=odh::SessionUiState{retired.id,retired.generation,retired.guid};
+        rejects([&]{odh::encode_session_bundle(bad);},"retired UI reference cannot select a missing body");
+        auto wire=odh::decode_session_archive(bytes);
+        const auto find=[&](auto id)->typename decltype(wire.sections)::value_type&{return *std::find_if(wire.sections.begin(),wire.sections.end(),[&](const auto& section){return section.id==id;});};
+        const std::array<char,4> unanchored{{'U','F','L','T'}},history{{'O','H','S','T'}};
+        require(find(history).data.front()==6,"ordinary household retirement has explicit OHST6 constructor provenance");
+        find(unanchored).required=false;
+        rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(wire));},"unanchored execution cannot be an optional ignored section");
+        wire=odh::decode_session_archive(bytes);find(unanchored).data.pop_back();
+        rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(wire));},"unanchored reference truncation is rejected");
+    }
+}
+
 void character_family_execution_cases() {
     // Behavior matrix: actual Generic dispatch -> changed owners -> complete
     // archive -> cold selected entry. The independent NPC Sleep Thread remains
@@ -3341,7 +3447,52 @@ void blocking_dialog_archive_cases() {
     }
 }
 
+void headless_frozen_object_fault_cases() {
+    using Reason=odh_host::HeadlessObjectCheckpointReason;
+    auto source=object_thread_fixture().object_threads.front();
+    source.primary_owner=source.guid;
+    source.vm.status=odh::VmStatus::fault;source.vm.pending.reset();
+    source.vm.diagnostic="synthetic imported fault";odh::resolve_object_thread_action_tree(source);
+    const auto decide=[&](const auto& current,const auto* baseline,bool active=false){
+        return odh_host::headless_object_checkpoint_decision(current,baseline,active);
+    };
+    auto frozen=decide(source,&source);
+    require(frozen.admitted()&&frozen.reason==Reason::inherited_frozen_fault&&
+        frozen.source_fingerprint==frozen.current_fingerprint,"only exact inactive source fault is inherited");
+    auto normalized=source;normalized.vm.action_tree_known=false;
+    require(decide(normalized,&source).reason==Reason::inherited_frozen_fault,
+        "object capture uses the same ancestry-known normalization as save_live_session");
+    require(decide(source,static_cast<const odh::SessionObjectThread*>(nullptr)).reason==Reason::missing_source_fault,
+        "new fault without an authenticated source thread is refused");
+    auto before=source;before.vm.status=odh::VmStatus::running;
+    require(decide(source,&before).reason==Reason::source_was_not_faulted,"new fault from previously healthy thread is refused");
+    require(decide(source,&source,true).reason==Reason::active_dispatch,"exact inherited fault is never admitted during dispatch");
+    auto changed=source;changed.generation++;
+    require(decide(changed,&source).reason==Reason::identity_changed,"recycled numeric ID cannot inherit another generation fault");
+    changed=source;changed.id++;
+    require(decide(changed,&source).reason==Reason::identity_changed,"another ID cannot inherit an identical snapshot");
+    changed=source;changed.guid++;
+    require(decide(changed,&source).reason==Reason::resource_changed,"another object resource cannot inherit source fault");
+    changed=source;changed.primary_owner++;
+    require(decide(changed,&source).reason==Reason::resource_changed,"another primary owner cannot inherit source fault");
+    for(unsigned field=0;field<8;++field){changed=source;
+        switch(field){case 0:++changed.vm.steps;break;case 1:++changed.vm.run_generation;break;
+        case 2:++changed.vm.temps[0];break;case 3:++changed.vm.temp_xl[0];break;
+        case 4:changed.vm.diagnostic+=" changed";break;case 5:++changed.vm.ticket_sequence;break;
+        case 6:++changed.vm.stack.back().pc;break;case 7:++changed.vm.stack.back().locals[0];break;}
+        const auto result=decide(changed,&source);
+        require(!result.admitted()&&result.reason==Reason::source_fault_changed&&
+            result.current_fingerprint!=result.source_fingerprint,"any encoded fault execution-state mutation is refused");
+    }
+    changed=source;changed.vm.status=odh::VmStatus::budget_exhausted;
+    require(decide(changed,&source).reason==Reason::budget_exhausted,"budget exhaustion never inherits frozen fault permission");
+    changed.vm.status=odh::VmStatus::running;
+    require(decide(changed,&source).reason==Reason::healthy,"ordinary healthy VM policy remains unchanged");
+}
+
 int main() {
+    headless_frozen_object_fault_cases();
+    character_body_retirement_cases();
     character_family_execution_cases();
     created_character_continuation_cases();
     {

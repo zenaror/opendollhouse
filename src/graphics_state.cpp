@@ -1,3 +1,4 @@
+#include "odh/slot_height.hpp"
 #include "odh/graphics_state.hpp"
 
 #include <cmath>
@@ -79,8 +80,10 @@ GraphicsEntity graphics_entity(const World& world,std::int16_t id,GraphicsSlotRe
     const float avatar_offset=child->kind==EntityKind::avatar?0.5f:0.0f;
     result.tile_position[0]+=avatar_offset+x;result.tile_position[1]+=avatar_offset+y;
     if(child->kind==EntityKind::object) {
-        const auto height=slot->height.value_or(0);
-        if(height<0 || height>9)throw FormatError("graphics SLOT height unsupported");
+        const auto effective=source_slot_height(*table,*slot);
+        if(!effective)throw FormatError("graphics SLOT height unknown");
+        const auto height=*effective;
+        if(height<1 || height>9)throw FormatError("graphics SLOT height unsupported");
         constexpr std::array<float,9> heights{0,2.5f,4,4,0,0,7,4,0};
         const float z=(height==0 || height==5)?coordinate(slot->offset_bits[2])*16.0f/5.0f:
             heights[static_cast<std::size_t>(height-1)]/5.0f;

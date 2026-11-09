@@ -7,6 +7,7 @@ unchanged throughout; each profile and archive belongs to TemporaryDirectory.
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import struct
 import subprocess
@@ -114,6 +115,7 @@ def main():
         fresh = ['--mode', '1', '--house', '7', '--resident-id', '11', '--language', '1']
         first = run(fresh + ['--headless-ticks', '2', '--save-session-on-exit'], env)[0][0]
         assert first['session_loaded'] and first['resumed_tick'] == 0 and first['ticks'] == 2, first
+        assert 'headless_checkpoints' not in first and 'headless_checkpoint_interval' not in first, first
         first_path = Path(first['saved_session_path'])
         first_bytes = first_path.read_bytes()
         digest = hashlib.sha256(first_bytes).digest()
@@ -137,6 +139,76 @@ def main():
         current_bytes = current_path.read_bytes()
         current_overlay = overlay.read_bytes()
         assert checkpoint_digest(current_overlay) == hashlib.sha256(current_bytes).digest()
+
+        def checkpoint_profile(name):
+            copied = profile(name)
+            for variable in ('XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_DATA_HOME', 'ODH_STATE_DIR'):
+                source = Path(env[variable])
+                if source.exists():
+                    shutil.copytree(source, Path(copied[variable]), dirs_exist_ok=True)
+            copied_input = Path(copied['XDG_CONFIG_HOME']) / current_path.relative_to(Path(env['XDG_CONFIG_HOME']))
+            return copied, copied_input
+
+        run(['--load-session', str(current_path), '--headless-ticks', '2',
+             '--save-session-on-exit', '--headless-checkpoint-interval', '1'], profile('checkpoint-no-authority'), False)
+        run(['--load-session', str(first_path), '--headless-ticks', '2',
+             '--save-session-on-exit', '--headless-checkpoint-interval', '1'], env, False)
+        assert overlay.read_bytes() == current_overlay and current_path.read_bytes() == current_bytes
+
+        checkpoint_env, checkpoint_input = checkpoint_profile('periodic')
+        periodic = run(['--load-session', str(checkpoint_input), '--headless-ticks', '3',
+                        '--save-session-on-exit', '--headless-checkpoint-interval', '1'], checkpoint_env)[0][0]
+        receipts = periodic['headless_checkpoints']
+        assert periodic['headless_checkpoint_interval'] == 1 and periodic['resumed_tick'] == 4 and periodic['ticks'] == 7
+        assert [item['tick'] for item in receipts] == [5, 6, 7], receipts
+        assert [item['elapsed_ticks'] for item in receipts] == [1, 2, 3], receipts
+        for item in receipts:
+            saved = Path(item['path'])
+            assert saved.name == item['sha256'] + '.odhs' and hashlib.sha256(saved.read_bytes()).hexdigest() == item['sha256']
+            assert item['family_chunk_id'] == 201 and item['occupancy_epoch'] == 1
+            assert item['neighborhood_identity'] == identity.hex() and item['family_identity'] == family.hex()
+        latest = Path(receipts[-1]['path'])
+        assert latest == Path(periodic['saved_session_path'])
+        # A new process rotates the shared log path. Inspect the producer's
+        # receipts before the cold reopen creates its own session log.
+        log = Path(periodic['session_log']).read_text()
+        assert log.count('headless checkpoint accepted tick=') == 3, log
+        assert all('tick=' + str(item['tick']) in log and item['sha256'] in log for item in receipts)
+        cold = run(['--load-session', str(latest), '--headless-ticks', '0'], checkpoint_env)[0][0]
+        assert cold['resumed_tick'] == 7 and cold['ticks'] == 7 and not cold['host_failed']
+
+        cap_env, cap_input = checkpoint_profile('periodic-cap')
+        capped = run(['--headless-checkpoint-interval', '1', '--load-session', str(cap_input),
+                      '--headless-info-dialog-ok-limit', '1', '--no-audio',
+                      '--headless-ticks', '32', '--save-session-on-exit'], cap_env)[0][0]
+        assert len(capped['headless_checkpoints']) == 32 and capped['ticks'] == 36
+        assert capped['headless_checkpoints'][-1]['elapsed_ticks'] == 32
+
+        sparse_env, sparse_input = checkpoint_profile('periodic-sparse')
+        sparse = run(['--load-session', str(sparse_input), '--headless-ticks', '2',
+                      '--save-session-on-exit', '--headless-checkpoint-interval', '8'], sparse_env)[0][0]
+        assert len(sparse['headless_checkpoints']) == 1 and sparse['headless_checkpoints'][0]['tick'] == 6
+        assert sparse['headless_checkpoints'][0]['elapsed_ticks'] == 2
+
+        # Preserve valid input/authority while making ONLY the copied archive
+        # publication directory unusable. Capture must propagate its I/O error,
+        # create no accepted receipt, and retain the exact previous overlay.
+        failure_env, failure_input = checkpoint_profile('periodic-failure')
+        external_input = base / 'periodic-failure-input.odhs'
+        external_input.write_bytes(failure_input.read_bytes())
+        failure_overlay = Path(failure_env['XDG_CONFIG_HOME']) / overlay.relative_to(Path(env['XDG_CONFIG_HOME']))
+        failure_before = failure_overlay.read_bytes()
+        blocked_sessions = failure_input.parent
+        shutil.rmtree(blocked_sessions)
+        blocked_sessions.write_bytes(b'preserve this non-directory')
+        failed = run(['--load-session', str(external_input), '--headless-ticks', '3',
+                      '--save-session-on-exit', '--headless-checkpoint-interval', '1'], failure_env, False)[1]
+        assert not failed.stdout and failure_overlay.read_bytes() == failure_before
+        assert blocked_sessions.read_bytes() == b'preserve this non-directory'
+        assert external_input.read_bytes() == current_bytes
+        failure_logs = list(Path(failure_env['ODH_STATE_DIR']).rglob('odh-person.log'))
+        assert failure_logs and all('headless checkpoint accepted tick=' not in item.read_text() for item in failure_logs)
+        assert overlay.read_bytes() == current_overlay and current_path.read_bytes() == current_bytes
 
         run(['--load-session', str(first_path), '--headless-ticks', '0', '--save-session-on-exit'], env, False)
         assert overlay.read_bytes() == current_overlay and current_path.read_bytes() == current_bytes

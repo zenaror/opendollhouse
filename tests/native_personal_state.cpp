@@ -179,13 +179,38 @@ void matrix_wardrobe_owner(){
  raw.strings[33]="w100mafit_original,BODY=w100mafitlgt_original";
  raw.strings[34]="h533mafit_zoot,BODY=h533mafitlgt_zoot";
  const std::vector<odh::NativeWardrobeSource> sources{{identity(),raw},{identity(42),raw}};
+ // A uniform-only source is valid for read/load but its explicit upgrade still needs catalog authority.
+ auto uniform=raw;uniform.strings[1]="NewsieFChd_01,BODY=NewsieFChd_01";
+ uniform.strings[12]="female";uniform.strings[13]="10";uniform.strings[14]="white";
+ for(std::size_t i=30;i<35;++i)uniform.strings[i]="";
+ const odh::NativeWardrobeSource absent{identity(43),uniform};
+ require(!owner.verify_wardrobe_source(absent)&&odh::encode_native_personal_snapshot(owner.snapshot())==legacy,
+     "fresh read preserves absent wardrobe and exact legacy bytes without catalog production");
+ rejects([&]{owner.prepare_wardrobes({absent},{});});
+ odh::NativePersonalState retired_owner(n,digest(),{43});
+ rejects([&]{retired_owner.verify_wardrobe_source(absent);});
+ auto wrong=absent;wrong.identity.guid^=1;rejects([&]{owner.verify_wardrobe_source(wrong);});
+ auto missing=absent;missing.identity=identity(44);rejects([&]{owner.verify_wardrobe_source(missing);});
  auto p=owner.prepare_wardrobes(sources,{});require(owner.snapshot().version==1&&owner.snapshot().records.empty()&&owner.snapshot().wardrobes.empty(),"wardrobe preview never fabricates schema0 numeric data or mutates owner");
  require(owner.commit(std::move(p))&&!owner.commit(std::move(p)),"wardrobe admission commits once at same-owner safe point");
  require(owner.changed()&&owner.snapshot().version==3&&owner.snapshot().records.empty()&&owner.snapshot().wardrobes.size()==2,"wardrobe-only v3 bank retains independent numeric absence");
  const auto wire=odh::encode_native_personal_snapshot(owner.snapshot());const auto decoded=odh::decode_native_personal_snapshot(wire);
  require(odh::encode_native_personal_snapshot(decoded)==wire,"v3 wardrobe exact codec roundtrip");
  odh::NativePersonalState restored(n,digest());restored.restore(decoded);require(restored.wardrobe_by_id(41)&&!restored.wardrobe_by_id(43),"cold owner restores wardrobe without invented numeric records");
+ require(!restored.verify_wardrobe_source(absent)&&odh::encode_native_personal_snapshot(restored.snapshot())==wire,
+     "cold read preserves missing uniform wardrobe and every accepted record byte");
+ require(restored.verify_wardrobe_source(sources.front())==restored.wardrobe_by_id(41),
+     "accepted read returns the existing exact record without resampling");
+ auto rebound=sources.front();rebound.identity.character_fingerprint[0]^=1;
+ rejects([&]{restored.verify_wardrobe_source(rebound);});
+ auto tampered=sources.front();tampered.source.strings[14]="med";
+ rejects([&]{restored.verify_wardrobe_source(tampered);});
  auto idempotent=restored.prepare_wardrobes(sources,{});require(odh::encode_native_personal_snapshot(idempotent.preview_snapshot())==wire,"existing accepted wardrobe is not resampled or revision-bumped");
+ require(!restored.verify_wardrobe_source(absent)&&restored.source_current(idempotent),
+     "read-only absence does not invalidate a prepared producer epoch");
+ auto mixed=sources;mixed.push_back(absent);rejects([&]{restored.prepare_wardrobes(mixed,{});});
+ require(odh::encode_native_personal_snapshot(restored.snapshot())==wire&&restored.source_current(idempotent),
+     "failed explicit uniform upgrade preserves accepted records and pending epochs");
  odh::World world;person(world);auto numeric=restored.prepare(world,{source(world)},odh::NativePersonalWriteSource::generic25);
  require(restored.commit(std::move(numeric),world)&&!restored.commit(std::move(idempotent)),"actual numeric commit invalidates pending wardrobe through same epoch");
  require(restored.snapshot().wardrobes.size()==2&&restored.snapshot().records.size()==1,"numeric writer retains all independent wardrobe records");

@@ -27,6 +27,24 @@ struct TemporaryDirectory {
     }
     ~TemporaryDirectory() { std::error_code error; std::filesystem::remove_all(path, error); }
 };
+// Each first-profile scenario owns its entire configuration root: different
+// neighborhood identities still share the player-state parent directory.
+struct PrivateConfigHome {
+    TemporaryDirectory directory;
+    std::string previous;
+    bool had_previous = false;
+    PrivateConfigHome() {
+        if (const auto* value = std::getenv("XDG_CONFIG_HOME")) {
+            previous = value; had_previous = true;
+        }
+        require(::setenv("XDG_CONFIG_HOME", directory.path.c_str(), 1) == 0,
+            "set isolated first-profile config");
+    }
+    ~PrivateConfigHome() {
+        if (had_previous) ::setenv("XDG_CONFIG_HOME", previous.c_str(), 1);
+        else ::unsetenv("XDG_CONFIG_HOME");
+    }
+};
 // Synthetic native bundle, constructed with the actual world/controller and
 // scheduler snapshot APIs so publication exercises the complete bundle codec.
 odh::SessionBundle bundle_fixture() {
@@ -75,6 +93,42 @@ odh::SessionBundle bundle_fixture() {
     simulation.avatars.push_back({1, decay});
     bundle.simulation = simulation;
     return bundle;
+}
+void first_save_after_last_body_retirement(){
+    std::array<std::uint8_t,32> identity{};identity[0]=0x6d;
+    odh::Family original;original.house_number=7;original.family_number=12;original.budget=9000;original.member_guids={123456};
+    const std::vector<odh::FamilyEntry> source{{21,original}};
+    auto capture=bundle_fixture();const auto member=capture.household_roster.front();
+    const odh::SessionFamilyLease lease{identity,odh::family_overlay_identity(source.front()),1,21};
+    odh::World world;require(world.restore_snapshot(capture.world)&&world.remove_retaining_body({member.id,member.generation})&&world.collect_retained_bodies({}),
+        "actual last resident removal releases its body while preserving source neighborhood");
+    capture.world=world.snapshot();capture.household_roster.clear();capture.runtime_entities.clear();capture.scheduler.entities.clear();capture.simulation->avatars.clear();
+    capture.host.resident_guid=0;capture.host.resident_neighbor_id=0;capture.host.runtime_avatar_id=0;
+    capture.object_history=odh::SessionObjectHistory{};capture.object_history->complete=true;capture.object_history->reusable_entity_ids=true;
+    odh::SessionRetiredHouseholdAvatar origin;origin.member=member;origin.source_lease=lease;
+    origin.source=odh::SessionHouseholdRetirementSource::resource_constructor;capture.object_history->retired_household_avatars={origin};
+    capture.unanchored_family_lot=odh::SessionUnanchoredFamilyLot{{member.id,member.generation},0};
+    capture.ui_state=odh::SessionUiState{0,0,0,true};
+    odh::RuntimeGlobalsSnapshot globals;globals.words.resize(38);globals.words[3]=member.id;globals.selected_sim_is_runtime_id=true;
+    capture.runtime_globals=globals;capture.host.global_values.clear();
+    odh::SessionCharacterFamily family;family.shared.neighborhood_identity=identity;family.shared.revision=1;
+    family.shared.rosters={{21,lease.family_identity,1,{}}};family.runtime_subset={member.guid};capture.character_family=family;
+    unsigned validated=0;
+    const auto validate=[&](const auto& candidate,const auto& bytes){++validated;const auto cold=odh::decode_session_bundle(bytes);
+        require(cold.unanchored_family_lot&&cold.world.entities.empty()&&cold.runtime_entities.empty()&&cold.family_lease&&
+            cold.character_family->shared.rosters.front().members.empty()&&candidate.host.family_budget==7000,
+            "native first-save validation sees real empty lot and current retained FAMI provider");};
+    auto journal=odh_host::FamilySessionJournal::adopt_original_session(source,identity,std::nullopt,7,21,capture,validate);
+    const auto overlay=odh_host::read_linux_family_overlay(odh_host::linux_family_overlay_path(identity));
+    require(validated==1&&overlay&&overlay->character_family&&overlay->character_family->rosters.front().members.empty(),
+        "first adoption publishes current CFAM and native head together, including last Generic6 membership removal");
+    const auto effective=odh::replay_family_overlay(source,identity,*overlay);
+    require(effective.families.size()==1&&effective.families.front().family.member_guids.empty()&&original.member_guids==std::vector<std::uint32_t>{123456},
+        "empty current FAMI remains present and original catalog is unchanged");
+    const auto bytes=odh::encode_session_archive(odh_host::read_session_archive(*journal.checkpoint_path()));
+    odh_host::FamilySessionJournal cold(source,identity,overlay,7,21);cold.validate_restore(bytes);
+    require(cold.lease().occupancy_epoch==1&&odh::encode_session_bundle(odh::decode_session_bundle(bytes))==bytes,
+        "cold journal reopens exact last-body state without creating member, Thread or occupancy epoch");
 }
 void quoted_original_adoption_cases(){
     std::array<std::uint8_t,32> identity{};identity[0]=0xaa;
@@ -155,6 +209,7 @@ void property_checkpoint_cases(){
         "quoted cache persists to actual move-out planning and is added exactly once");
 }
 void original_adoption_cases(){
+    PrivateConfigHome profile;
     std::array<std::uint8_t,32> identity{};identity[0]=0x79;
     odh::Family original;original.house_number=7;original.family_number=12;original.budget=9000;original.value_in_arch=4321;original.member_guids={123456};
     const std::vector<odh::FamilyEntry> source{{21,original}};
@@ -171,8 +226,16 @@ void original_adoption_cases(){
             odh::encode_world_snapshot(candidate.world)==source_world&&odh::encode_session_bundle(odh::decode_session_bundle(bytes))==bytes,
             "native adoption validator receives actual complete source state and source epoch");
         if(reject_restore)throw odh::FormatError("injected real native restore refusal");};
-    rejects([&]{(void)odh_host::FamilySessionJournal::adopt_original_session(source,identity,std::nullopt,7,21,capture,validator);},
-        "failed native restore preparation cannot adopt original family");
+    require(!std::filesystem::exists(overlay_path.parent_path()),
+        "restore refusal starts from an actual first-profile directory state");
+    bool restore_refused = false;
+    try {
+        (void)odh_host::FamilySessionJournal::adopt_original_session(source,identity,std::nullopt,7,21,capture,validator);
+    } catch (const odh::FormatError& error) {
+        if (std::string(error.what()) != "injected real native restore refusal") throw;
+        restore_refused = true;
+    }
+    require(restore_refused,"failed native restore preparation cannot adopt original family");
     require(validations==1&&!odh_host::read_linux_family_overlay(overlay_path)&&!std::filesystem::exists(overlay_path.parent_path()),"restore rejection creates neither authority nor first-profile directories");
     reject_restore=false;
     auto wrong=capture;wrong.host.house_number=8;
@@ -330,6 +393,7 @@ int main() {
     try {
         TemporaryDirectory temporary;
         require(::setenv("XDG_CONFIG_HOME", temporary.path.c_str(), 1) == 0, "set private test config");
+        first_save_after_last_body_retirement();
         original_adoption_cases();
         property_checkpoint_cases();
         quoted_original_adoption_cases();

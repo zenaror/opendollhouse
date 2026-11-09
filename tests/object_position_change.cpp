@@ -694,6 +694,69 @@ void shared_native_stages(){
     require(blocked.status==Status::blocked&&blocked.placement.placement_error==18&&!blocked.effects_started&&missing.events.empty(),
         "absolute story refusal remains blocked18 before effects after extraction");
 }
+void placement_diagnostic_propagation(){
+    {
+        Fixture f;f.valid_services.architecture=[](auto,const auto&)->std::optional<odh::ObjectPositionArchitecture>{
+            throw std::runtime_error("generic provider detail");};
+        const auto generation=f.world.find(1)->generation;const auto result=f.run();
+        require(result.status==Status::unsupported&&result.effects_started&&!result.position_published&&
+            result.placement.status==odh::ObjectPositionValidStatus::unsupported&&result.placement.placement_error==-1&&
+            !f.world.find(1)->position&&result.diagnostic.find(result.placement.diagnostic)!=std::string::npos&&
+            result.diagnostic.find("phase=single_check target=1/"+std::to_string(generation))!=std::string::npos&&
+            result.diagnostic.find("phase=architecture target=1/")!=std::string::npos&&
+            result.diagnostic.find("generic provider detail")!=std::string::npos,
+            "single lifecycle preserves exact unsupported diagnostic and original Pre/effect/publication result");
+    }
+    {
+        Fixture f;f.valid_services.architecture=[&](auto,const auto&)->std::optional<odh::ObjectPositionArchitecture>{
+            f.authorized=false;return std::nullopt;
+        };
+        const auto result=f.run();require(result.status==Status::unsupported&&result.effects_started&&!result.position_published&&
+            result.diagnostic.find("placement check changed its source authority phase=single_check")!=std::string::npos&&
+            result.diagnostic.find("phase=restore_heading")!=std::string::npos&&
+            result.diagnostic.find("phase=architecture")!=std::string::npos,
+            "source invalidation keeps both the outer authority refusal and underlying unavailable provider context");
+    }
+    {
+        GroupFixture f;f.old_positions();const auto generation=f.world.find(5)->generation;
+        const auto original=f.world.find(5)->position;
+        f.checks.architecture=[&](auto id,const auto&)->std::optional<odh::ObjectPositionArchitecture>{
+            f.word(id.id,0,73);throw std::runtime_error("group provider detail");};
+        const auto result=f.run(true);
+        require(result.status==Status::unsupported&&result.effects_started&&!result.position_published&&
+            result.placement.status==odh::ObjectPositionValidStatus::unsupported&&result.placement.placement_error==-1&&
+            f.world.find(5)->position==original&&f.world.find(5)->object_words.at(0)==73&&
+            result.diagnostic.find("phase=group_check target=5/"+std::to_string(generation))!=std::string::npos&&
+            result.diagnostic.find("phase=architecture target=5/")!=std::string::npos&&
+            result.diagnostic.find("group provider detail")!=std::string::npos,
+            "group failure identifies actual member and retains Pre/failed-check effects without position publication");
+    }
+    for(bool before_pre:{false,true}){
+        GroupFixture f;f.old_positions();prepare_readonly_native_group(f);
+        const auto generation=f.world.find(5)->generation;const auto original=f.world.find(5)->position;
+        f.checks.architecture=[&](auto id,const auto&)->std::optional<odh::ObjectPositionArchitecture>{
+            f.word(id.id,0,74);throw std::runtime_error("stage provider detail");};
+        odh::ObjectPositionValid validator(f.world,f.checks);odh::ObjectPositionChange service(f.world,validator,f.services);
+        std::string check_detail;
+        const auto result=service.with_native_position_stages(f.request(0),false,false,[&](auto& stages){
+            if(!before_pre)require(stages.pre(),"native diagnostic fixture executes actual Pre once");
+            const auto denied=stages.check54();check_detail=denied.diagnostic;
+            require(denied.status==odh::ObjectPositionValidStatus::unsupported&&denied.placement_error==-1&&
+                !denied.object.id&&!denied.support_slot&&!stages.publish58(),
+                "diagnostic-bearing native rejection retains default payload and revokes publication certificate");
+            return Status::unsupported;
+        });
+        require(result.status==Status::unsupported&&result.effects_started==!before_pre&&!result.position_published&&
+            f.world.find(5)->position==original&&!check_detail.empty()&&
+            result.diagnostic.find(check_detail)!=std::string::npos&&check_detail.find("phase=native_check54")!=std::string::npos,
+            "native check result and final stage owner carry one scoped reason without status or effect changes");
+        if(!before_pre)require(check_detail.find("target=5/"+std::to_string(generation))!=std::string::npos&&
+            check_detail.find("stage provider detail")!=std::string::npos&&f.world.find(5)->object_words.at(0)==74,
+            "native member unsupported preserves nested callback message and real check mutation");
+        else require(f.events.empty(),"precondition diagnostic adds no callbacks or source effects");
+    }
+}
+
 void shared_native_rotation_invalidates_checks(){
     for(bool partial_failure:{false,true}){
     GroupFixture f;f.old_positions();odh::SessionObjectTradeLedger ledger;ledger.version=2;ledger.revision=1;
@@ -796,4 +859,4 @@ void architectural_phase_order(){
     absent.services.admit_single_ordinary=[](auto)->std::optional<bool>{return true;};
     require(absent.run().status==odh::ObjectPositionChangeStatus::unsupported,"admission cannot invent missing architectural style consumer");
 }
-int main(){try{architectural_phase_order();constructor_capture_receipts();shared_native_rotation_invalidates_checks();shared_native_stages();native_rotation_requires_actual_owner();dynamic_split_invocation_authority();imported_group_position();physical_group_position();dynamic_group_support_footprint();retained_parent_source_pre();lifecycle_phase_boundaries();source_order();support_branch();existing_move_and_held_tree();clean_old_transfer_lifecycle();loaded_position_lifecycle();capability_and_effects();scalar_publication_hook();lifecycle_failure_diagnostics();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{placement_diagnostic_propagation();architectural_phase_order();constructor_capture_receipts();shared_native_rotation_invalidates_checks();shared_native_stages();native_rotation_requires_actual_owner();dynamic_split_invocation_authority();imported_group_position();physical_group_position();dynamic_group_support_footprint();retained_parent_source_pre();lifecycle_phase_boundaries();source_order();support_branch();existing_move_and_held_tree();clean_old_transfer_lifecycle();loaded_position_lifecycle();capability_and_effects();scalar_publication_hook();lifecycle_failure_diagnostics();std::cout<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

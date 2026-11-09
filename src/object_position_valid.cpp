@@ -3,16 +3,27 @@
 // revision7e76c1960252ddd033d8937d5edb47d326f5b69c. MPL-2.0.
 // https://www.mozilla.org/MPL/2.0/
 #include "odh/object_position_valid.hpp"
+#include "odh/avatar_containment.hpp"
 #include <algorithm>
 #include <cmath>
 #include <memory>
 #include <set>
+#include <exception>
 
 namespace odh {
 namespace {
 using Result=ObjectPositionValidResult;
 using Status=ObjectPositionValidStatus;
-Result unknown(const char* why){Result value;value.diagnostic=why;return value;}
+Result unavailable(const ObjectPositionValidRequest& request,const char* phase,
+    ObjectPositionIdentity participant,std::string why){
+    Result value;value.diagnostic="object PositionValid phase="+std::string(phase)+
+        " target="+std::to_string(request.target.id)+"/"+std::to_string(request.target.generation)+
+        " candidate="+std::to_string(request.candidate.x)+","+std::to_string(request.candidate.y)+","+
+        std::to_string(request.candidate.level)+","+std::to_string(request.candidate.direction)+
+        " direction="+std::to_string(request.direction)+" flags="+std::to_string(request.flags);
+    if(participant.id)value.diagnostic+=" participant="+std::to_string(participant.id)+"/"+std::to_string(participant.generation);
+    value.diagnostic+=": "+why;return value;
+}
 Result result(std::int16_t error,ObjectPositionIdentity other={},bool support=false){
     Result value;value.status=error==-1?Status::success:Status::blocked;value.placement_error=error;
     value.object=other;value.support_slot=support&&error==-1;return value;
@@ -35,6 +46,8 @@ bool set_direction(World& world,ObjectPositionIdentity identity,std::int16_t dir
 }
 }
 Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
+    const char* phase="request";ObjectPositionIdentity participant;
+    const auto unknown=[&](std::string why){return unavailable(request,phase,participant,std::move(why));};
     if(executing_||!request.source_still_matches||request.target.id<=0||!request.target.generation||request.direction>7||
        request.flags>15||request.candidate.x<INT16_MIN||request.candidate.x>INT16_MAX||
        request.candidate.y<INT16_MIN||request.candidate.y>INT16_MAX||request.candidate.level<INT8_MIN||request.candidate.level>INT8_MAX)
@@ -48,6 +61,7 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
             const auto* target=world->find(identity.id);
             return target&&target->generation==identity.generation&&target->kind==EntityKind::object&&!target->ui_ghost;
         };
+        phase="authority";
         if(!valid())return unknown("object placement source or target identity is unavailable");
         if(request.heading_already_published){
             const auto* object=world_.find(request.target.id);
@@ -81,10 +95,12 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
             const auto id=request.target.id;
             const auto& pos=request.candidate;
             if(pos.x==-32768&&pos.y==-32768&&pos.level==1)return result(-1);
+            phase="architecture";
             if(!services_.architecture)return unknown("object placement architecture capability is unavailable");
             const auto architecture=services_.architecture(request.target,pos);
             if(!architecture||!valid())return unknown("object placement architecture is unknown or changed its source");
             if(architecture->out_of_bounds||((request.flags&2U)&&architecture->user_out_of_bounds))return result(0);
+            phase="wall";
             const auto wall=word(*world_.find(id),13),exclusive=word(*world_.find(id),63);
             if(!wall||!exclusive)return unknown("object wall placement words are unknown");
             const auto wall_flags=static_cast<std::uint16_t>(*wall);
@@ -98,6 +114,7 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
             if((wall_flags&walls)!=(wall_flags&15U))return result(5);
             if((static_cast<std::uint16_t>(*exclusive)&2U)&&(wall_flags&used))return result(21);
             if(wall_flags&(walls<<8U))return result(6);
+            phase="floor";
             const auto placement_word=word(*world_.find(id),42);
             if(!placement_word)return unknown("object floor placement flags are unknown");
             const auto placement=static_cast<std::uint16_t>(*placement_word),floor=architecture->precise_floor;
@@ -119,8 +136,10 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
                     }
                 }
             }
+            phase="slope";
             if(!architecture->user_out_of_bounds&&architecture->sloped&&(placement&1U)&&!(placement&(1U<<8)))return result(16);
             if(request.flags&4U)return result(-1);
+            phase="temporary_heading";
             const auto original_direction=word(*world_.find(id),1);
             if(!original_direction||*original_direction<0||*original_direction>7)return unknown("source object Direction is unknown");
             struct Heading {
@@ -130,20 +149,24 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
                     restored=publish(direction);}
             } heading{world_,request.target,*original_direction,restored_heading,publish_heading,!request.heading_already_published};
             if((!request.heading_already_published&&!publish_heading(request.direction))||!valid())return unknown("temporary object heading could not be set");
+            phase="footprint_inputs";
             const auto heights=word(*world_.find(id),4),weight=word(*world_.find(id),27),flags=word(*world_.find(id),8);
             if(!heights||!weight||!flags)return unknown("GetObjPlace target height/weight/flags are unknown");
             const bool no_floor=(*heights&1)==0;
             const bool allow_avatars=(*flags&16)&&!(*flags&2); // AllAvatarsSolid is ignored in GetObjPlace.
             Result answer=result(no_floor?23:-1);
+            phase="intersections";
             if(!services_.intersections)return unknown("object candidate footprint/RoomInfo capability is unavailable");
             auto intersections=services_.intersections(request.target,pos,request.direction);
             if(!intersections||!valid())return unknown("object candidate footprint or source is unknown");
             if(!intersections->footprint_present||pos.level<1)return answer;
+            phase="room_info";
             auto& query=intersections->query;
             if(query.status!=RoomInfoObstacleIndexStatus::complete||query.intersections.size()>4096)
-                return unknown("object candidate RoomInfo inventory is incomplete or over budget");
+                return unknown(std::string("object candidate RoomInfo inventory is incomplete or over budget; reason=")+room_info_obstacle_index_reason_name(query.reason));
             struct Hit {ObjectPositionIdentity identity;};std::vector<Hit> hits;hits.reserve(query.intersections.size());
             std::set<std::int16_t> owners;
+            phase="obstacle_inventory";
             for(const auto& hit:query.intersections){
                 if(hit.owner_id<=0||hit.owner_id>32767)return unknown("RoomInfo obstacle owner exceeds source identity domain");
                 const auto* other=world_.find(static_cast<std::int16_t>(hit.owner_id));
@@ -152,7 +175,7 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
             }
             std::stable_sort(hits.begin(),hits.end(),[](const auto& a,const auto& b){return a.identity.id<b.identity.id;});
             for(const auto& hit:hits){
-                const auto other=hit.identity;const auto current=[&](){const auto* value=world_.find(other.id);
+                const auto other=hit.identity;participant=other;phase="same_group";const auto current=[&](){const auto* value=world_.find(other.id);
                     return value&&value->generation==other.generation?value:nullptr;};
                 if(!valid()||!current())return unknown("object placement participant was replaced");
                 if(other.id==id)continue;
@@ -160,15 +183,18 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
                 const auto group=services_.same_group(request.target,other);
                 if(!group||!valid()||!current())return unknown("object group identity or participant changed");
                 if(*group||(current()->kind==EntityKind::avatar&&allow_avatars))continue;
+                phase="ignore_intersection";
                 if(!services_.ignore_intersection)return unknown("object IgnoreIntersection membership is unknown");
                 const auto ignored=services_.ignore_intersection(request.target,other);
                 if(!ignored||!valid()||!current())return unknown("object IgnoreIntersection membership or participant changed");
                 if(*ignored)continue;
+                phase="ghost_image";
                 if(!services_.ghost_image)return unknown("source GhostImage state is unknown");
                 const auto mine=services_.ghost_image(request.target),theirs=services_.ghost_image(other);
                 if(!mine||!theirs||!valid()||!current())return unknown("source GhostImage state or participant changed");
                 const auto ghost=static_cast<std::int16_t>(*mine||*theirs?1:0);
                 const auto ep5=[&](ObjectPositionIdentity tested,ObjectPositionIdentity paired)->std::optional<bool>{
+                    phase=tested.id==request.target.id?"target_ep5":"obstacle_ep5";
                     const auto* entity=world_.find(tested.id);
                     if(!entity||entity->generation!=tested.generation||!entity->entry_points||entity->entry_points->size()<=5)return {};
                     const auto action=(*entity->entry_points)[5].action;
@@ -183,9 +209,11 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
                 };
                 const auto first=ep5(request.target,other);if(!first)return unknown("target EP5 live result is unknown");if(*first)continue;
                 const auto second=ep5(other,request.target);if(!second)return unknown("obstacle EP5 live result is unknown");if(*second)continue;
+                phase="support";
                 answer=result(10,other);
                 const auto* support=current();if(!support)return unknown("support was replaced by EP5");
-                if(*heights>1&&!support->slots.empty()&&(support->slots[0]==0||support->slots[0]==id)){
+                const auto slot0=logical_containment_slots(*support)?containment_slot_value(*support,0):std::nullopt;
+                if(*heights>1&&slot0&&(*slot0==0||*slot0==id)){
                     if(!services_.slot0_height)return unknown("source support slot height is unknown");
                     const auto height=services_.slot0_height(other);
                     if(!height||!valid()||!current())return unknown("source support slot height or participant changed");
@@ -207,8 +235,11 @@ Result ObjectPositionValid::evaluate(const ObjectPositionValidRequest& request){
             return answer;
         };
         const auto answer=run();
-        if(!restored_heading||!valid())return unknown("object placement source changed after restoring temporary heading");
+        phase="restore_heading";
+        if(!restored_heading||!valid())return unknown(std::string("object placement source changed after restoring temporary heading")+
+            (answer.diagnostic.empty()?"":": "+answer.diagnostic));
         return answer;
-    }catch(...){return unknown("object placement callback or bounded allocation failed");}
+    }catch(const std::exception& error){return unknown(std::string("object placement callback or bounded allocation failed: ")+error.what());}
+    catch(...){return unknown("object placement callback or bounded allocation failed");}
 }
 } // namespace odh

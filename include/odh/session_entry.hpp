@@ -40,6 +40,8 @@ struct SessionEntry {
     std::int32_t family_number;
     std::vector<SessionEntryMember> members;
     std::optional<SessionNpcExecutionAnchor> npc_primary;
+    // Historical immutable resource only. Never a primary/body/Thread/control.
+    std::optional<SessionNpcExecutionAnchor> metadata_bootstrap;
 };
 
 enum class HouseholdMemberPresence {

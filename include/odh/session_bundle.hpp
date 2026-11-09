@@ -211,10 +211,19 @@ struct SessionFamilyLease {
 // Historical family-avatar provenance. It grants no current household,
 // scheduler, player control or NPC role. The exact source archive must remain
 // authenticated through its neighborhood release/lease before a host resolves it.
+// Resource-constructor origins instead pin the actual HHRD resource+occupancy.
+enum class SessionHouseholdRetirementSource : std::uint8_t {
+    accepted_checkpoint = 0,
+    // Same immutable HHRD resource-constructor binding used by active restore.
+    // No earlier checkpoint is invented for a body created/removed before save.
+    resource_constructor = 1
+};
 struct SessionRetiredHouseholdAvatar {
     SessionHouseholdMember member;
     SessionFamilyLease source_lease;
     std::array<std::uint8_t,32> source_checkpoint_sha256{};
+    SessionHouseholdRetirementSource source = SessionHouseholdRetirementSource::accepted_checkpoint;
+    bool original_native = false; // OHST6 constructor profile, never a personal-data seed.
 };
 using SessionRetiredHouseholdAvatarResolver=std::function<Entity(const SessionRetiredHouseholdAvatar&)>;
 bool same_session_retired_household_avatar(const SessionRetiredHouseholdAvatar&,const SessionRetiredHouseholdAvatar&);
@@ -226,6 +235,7 @@ void validate_retired_household_avatar_source(const SessionRetiredHouseholdAvata
 // visitors; V4 adds exact retired construction masters and an explicit reuse
 // policy. Incomplete coverage is never promoted merely by loading/saving it.
 // V5 adds separately authenticated historical household-avatar provenance.
+// V6 distinguishes exact resource construction from an earlier accepted head.
 struct SessionObjectHistory {
     bool complete = false;
     std::vector<SessionCreatedObject> retired_created_objects; // Lexicographic (id,generation).
@@ -300,6 +310,7 @@ struct SessionUiState {
     std::int16_t active_actor = 0;
     std::uint64_t generation = 0;
     std::uint32_t guid = 0;
+    bool cleared = false; // UIST2: explicit null ActiveEntity, independent of Global3.
 };
 
 // Values only. The host must rebuild matching resources, programs, callbacks,
@@ -309,6 +320,15 @@ struct SessionUiState {
 struct SessionCharacterFamily {
     Ts1CharacterFamilySnapshot shared;
     std::vector<std::uint32_t> runtime_subset;
+};
+// Removing the host's resident anchor does not remove the lot or choose a new
+// controlled Sim. All remaining HHRD/NPCA Threads keep their original carriers.
+// This is separate from frozen actorless Build/Buy: clock, family, inventory,
+// objects and their real simulation continue. The exact OHST reference supplies
+// resource reconstruction only, never a Thread or player-control owner.
+struct SessionUnanchoredFamilyLot {
+    WorldEntityReference retired_avatar;
+    std::uint64_t retirement_tick = 0;
 };
 struct SessionBundle {
     // Required NINV/TRIP profiles. Legacy nontravel archives omit both unchanged.
@@ -328,6 +348,7 @@ struct SessionBundle {
     // NPRM1 selects an existing NPCA Thread as the execution anchor. It never
     // duplicates that Thread in the legacy resident roster or changes origin.
     std::optional<WorldEntityReference> npc_primary;
+    std::optional<SessionUnanchoredFamilyLot> unanchored_family_lot; // Required UFLT1 + HOST7, no primary resident Thread.
     std::optional<SessionCharacterFamily> character_family; // Required CFAM1 when present; shared state+actual RuntimeSubset.
     WorldSnapshot world;
     RelationshipSnapshot relationships;

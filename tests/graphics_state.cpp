@@ -85,6 +85,12 @@ int main() {
          require(same(odh::graphics_entity(f.world,3,f.resolver()).tile_position,{11.5f,18.5f,2.95f}),"saved avatar resolves SLOT despite unpositioned raw attachment");}
         {Fixture f;f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{8,8,1,0});f.world.place_in_slot(2,0,3);
          require(same(odh::graphics_entity(f.world,3,f.resolver()).tile_position,{11,18,4.35f}),"contained object uses parent origin without avatar half tile and height7 class");}
+        for(const unsigned version:{4U,7U,10U}){Fixture f;
+         require(f.world.create(3,odh::EntityKind::object)&&f.world.set_position(3,{8,8,1,0})&&f.world.attach(2,0,3),"legacy graphics source attachment");
+         f.table.version=version;auto& slot=f.table.records[1];slot.offset_bits[2]=bits(10);
+         if(version<8)slot.height.reset();else slot.height=0;
+         require(same(odh::graphics_entity(f.world,3,f.resolver()).tile_position,{11,18,4.95f}),"legacy and rawzero graphics share effective height5 raw Z");
+         f.table.version=10;slot.height.reset();rejects([&]{odh::graphics_entity(f.world,3,f.resolver());},"modern unknown graphics height remains unsupported");}
         for(int height=0;height<=9;++height){Fixture f;f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{8,8,1,0});
          f.world.attach(2,0,3);auto& slot=f.table.records[1];slot.height=height;slot.offset_bits[2]=bits(10);
          const std::array<float,10> z{2,0,.5f,.8f,.8f,2,0,1.4f,.8f,0};

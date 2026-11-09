@@ -7,8 +7,17 @@
 #include <algorithm>
 #include <memory>
 #include <map>
+#include <exception>
 namespace odh {
 namespace {
+std::string placement_diagnostic(const char* phase,ObjectPositionIdentity target,const EntityPosition& candidate,
+        std::uint8_t direction,std::uint8_t flags,const std::string& detail){
+    return std::string(phase)+" target="+std::to_string(target.id)+"/"+std::to_string(target.generation)+
+        " candidate="+std::to_string(candidate.x)+","+std::to_string(candidate.y)+","+
+        std::to_string(candidate.level)+","+std::to_string(candidate.direction)+
+        " direction="+std::to_string(direction)+" flags="+std::to_string(flags)+
+        (detail.empty()?": no nested diagnostic supplied":": "+detail);
+}
 struct PositionLifecycle {
     World& world;const ObjectPositionChangeServices& services;
     ObjectPositionIdentity root;const std::function<bool()>& authority;
@@ -254,7 +263,7 @@ ObjectPositionChangeResult ObjectPositionChange::apply_existing(const ObjectPosi
 ObjectPositionChangeResult ObjectPositionChange::apply_existing_group(const ObjectPositionValidRequest& request){return services_.group?apply_group(request,false):apply_single(request,false);}
 ObjectPositionChangeResult ObjectPositionChange::apply_group(const ObjectPositionValidRequest& request,bool require_new){
     ObjectPositionChangeResult result;
-    const auto fail=[&](const char* reason){result.diagnostic=reason;return result;};
+    const auto fail=[&](const std::string& reason){result.diagnostic=reason;return result;};
     if(executing_||!request.source_still_matches||request.direction>7||request.flags>15||
        request.candidate.x<INT16_MIN||request.candidate.x>INT16_MAX||request.candidate.y<INT16_MIN||request.candidate.y>INT16_MAX||
        request.candidate.level<INT8_MIN||request.candidate.level>INT8_MAX)
@@ -379,8 +388,12 @@ ObjectPositionChangeResult ObjectPositionChange::apply_group(const ObjectPositio
             if(!valid()||!all_unchanged())return fail("group Pre changed a captured member pose");
             if(oow){state.placement.status=ObjectPositionValidStatus::success;state.placement.placement_error=-1;}
             else state.placement=placement_.evaluate({state.identity,state.candidate,request.direction,request.flags,authority});
-            if(!valid()||!all_unchanged())return fail("group check changed membership, identity or captured pose");
-            if(state.placement.status==ObjectPositionValidStatus::unsupported)return fail("group member PositionValid is incomplete");
+            if(!valid()||!all_unchanged())return fail(placement_diagnostic(
+                "group check changed membership, identity or captured pose phase=group_check",state.identity,state.candidate,
+                request.direction,request.flags,state.placement.diagnostic));
+            if(state.placement.status==ObjectPositionValidStatus::unsupported)return fail(placement_diagnostic(
+                "group member PositionValid is incomplete phase=group_check",state.identity,state.candidate,
+                request.direction,request.flags,state.placement.diagnostic));
             if(!state.lifecycle->admit(state.identity)||!state.lifecycle->matches()||!valid()||!all_unchanged())return fail("group check changed admitted member profile");
             if(state.placement.status==ObjectPositionValidStatus::blocked){
                 result.placement=state.placement;
@@ -441,7 +454,9 @@ ObjectPositionChangeResult ObjectPositionChange::apply_group(const ObjectPositio
             return fail("group recursive PositionChange is incomplete");
         result.placement.status=ObjectPositionValidStatus::success;result.placement.placement_error=-1;
         result.status=ObjectPositionChangeStatus::success;return result;
-    }catch(...){return fail("group position callback failed; completed source effects retained");}
+    }catch(const std::exception& error){return fail(placement_diagnostic(
+        "group position callback failed; completed source effects retained phase=group_lifecycle",request.target,request.candidate,request.direction,request.flags,error.what()));}
+    catch(...){return fail("group position callback failed; completed source effects retained");}
 }
 ObjectPositionChangeResult ObjectPositionChange::apply_native_group(const ObjectPositionValidRequest& request,bool require_new){
     return run_native_stages(request,require_new,false,false,[&](NativeObjectPositionStages& stages){
@@ -469,7 +484,7 @@ ObjectPositionChangeResult ObjectPositionChange::with_native_position_stages(con
 ObjectPositionChangeResult ObjectPositionChange::run_native_stages(const ObjectPositionValidRequest& request,bool require_new,
         bool original_class,bool captured_outside,const std::function<ObjectPositionChangeStatus(NativeObjectPositionStages&)>& driver){
     ObjectPositionChangeResult result;
-    const auto fail=[&](const char* why){result.diagnostic=why;return result;};
+    const auto fail=[&](const std::string& why){result.diagnostic=why;return result;};
     const WorldEntityReference selected{request.target.id,request.target.generation};
     if(!services_.begin_native_rotation||!services_.rollback_native_rotation||!services_.native_current_offset||
        !services_.native_group_head||!services_.native_group_next)return fail("native placement requires its actual group rotation owner");
@@ -547,6 +562,7 @@ ObjectPositionChangeResult ObjectPositionChange::run_native_stages(const ObjectP
         if(original_class&&(!services_.native_remove_entry10||!services_.native_group_removed||!services_.native_group_added||!services_.entry_point9))
             return fail("original native class entry/World notification authority unavailable");
         bool pre_done=false,finished=false,publish_done=false,restore_done=false,had_refusal=false;unsigned checks=0;ObjectPositionValidStatus latest=ObjectPositionValidStatus::unsupported;
+        std::string check_diagnostic;
         const auto publish_member=[&](WorldEntityReference ref){auto* state=state_for(ref);const auto pose=candidate(ref);if(!state||!pose||!state->checked||!same_xyz(*state))return false;
             const auto destination=oow?std::optional<EntityPosition>{}:std::optional<EntityPosition>{*pose};
             bool published=false;if(services_.publish_position)published=services_.publish_position(state->id,destination,pose->direction);
@@ -576,33 +592,51 @@ ObjectPositionChangeResult ObjectPositionChange::run_native_stages(const ObjectP
             pre_done=true;return valid();
         };
         stages.rotate_=[&](std::uint8_t heading)->std::optional<NativeObjectGroupRotation>{
-            latest=ObjectPositionValidStatus::unsupported;for(auto& item:states)item.second.checked=false;
+            latest=ObjectPositionValidStatus::unsupported;check_diagnostic.clear();for(auto& item:states)item.second.checked=false;
             if(!pre_done||finished||heading>7||!valid())return {};
             result.effects_started=true;const auto token=services_.begin_native_rotation(request.target,heading);
             if(!token||token->selected!=selected||!valid())return {};
-            latest=ObjectPositionValidStatus::unsupported;for(auto& item:states)item.second.checked=false;
+            latest=ObjectPositionValidStatus::unsupported;check_diagnostic.clear();for(auto& item:states)item.second.checked=false;
             return token;
         };
         stages.rollback_=[&](const NativeObjectGroupRotation& token){
-            latest=ObjectPositionValidStatus::unsupported;for(auto& item:states)item.second.checked=false;
+            latest=ObjectPositionValidStatus::unsupported;check_diagnostic.clear();for(auto& item:states)item.second.checked=false;
             if(!pre_done||finished||token.selected!=selected||!services_.rollback_native_rotation(token)||!valid())return false;
-            latest=ObjectPositionValidStatus::unsupported;for(auto& item:states)item.second.checked=false;
+            latest=ObjectPositionValidStatus::unsupported;check_diagnostic.clear();for(auto& item:states)item.second.checked=false;
             return true;
         };
         stages.check_=[&]{
-            latest=ObjectPositionValidStatus::unsupported;for(auto& item:states)item.second.checked=false;
-            if(!pre_done||finished||++checks>2||!valid())return ObjectPositionValidResult{};
+            latest=ObjectPositionValidStatus::unsupported;check_diagnostic.clear();for(auto& item:states)item.second.checked=false;
+            const auto unavailable_check=[&](const std::string& why){
+                ObjectPositionValidResult unavailable;
+                unavailable.diagnostic=why.empty()?placement_diagnostic("phase=native_check54",request.target,
+                    request.candidate,request.direction,request.flags,"group traversal/source is unavailable"):why;
+                check_diagnostic=unavailable.diagnostic;return unavailable;
+            };
+            if(!pre_done||finished||++checks>2||!valid())return unavailable_check(placement_diagnostic(
+                "phase=native_check54",request.target,request.candidate,request.direction,request.flags,
+                "Pre/finished/check budget/source authorization is invalid"));
             bool blocked=false;
-        if(!each([&](auto ref){auto* state=state_for(ref);const auto pose=candidate(ref);if(!state||!pose||!same_xyz(*state))return false;
+        if(!each([&](auto ref){auto* state=state_for(ref);const auto pose=candidate(ref);if(!state||!pose||!same_xyz(*state)){
+                check_diagnostic=placement_diagnostic("phase=native_check54",{ref.id,ref.generation},
+                    pose?*pose:request.candidate,request.direction,request.flags,pose?"member state/source pose is unavailable":
+                    "member candidate is unavailable; candidate fields show requested group anchor");return false;}
             ObjectPositionValidRequest check{state->id,*pose,pose->direction,request.flags,authority};check.heading_already_published=true;
             if(oow){state->placement.status=ObjectPositionValidStatus::success;state->placement.placement_error=-1;}
             else state->placement=placement_.evaluate(check);
-            if(!valid()||!same_xyz(*state)||state->placement.status==ObjectPositionValidStatus::unsupported)return false;
+            if(!valid()||!same_xyz(*state)||state->placement.status==ObjectPositionValidStatus::unsupported){
+                check_diagnostic=placement_diagnostic("phase=native_check54",state->id,*pose,pose->direction,request.flags,
+                    state->placement.diagnostic.empty()?"member placement/source authority or pose is unavailable":state->placement.diagnostic);
+                return false;
+            }
             const auto* checked=world_.resolve_reference(ref);
             if(state->placement.support_slot&&checked&&!checked->static_footprint&&!state->room_change&&
-               (!services_.unregister_support_footprint||!services_.unregister_support_footprint(state->id)))return false;
+               (!services_.unregister_support_footprint||!services_.unregister_support_footprint(state->id))){
+                check_diagnostic=placement_diagnostic("phase=native_check54",state->id,*pose,pose->direction,
+                    request.flags,"support footprint unregister is unavailable");return false;
+            }
             state->checked=true;if(state->placement.status==ObjectPositionValidStatus::blocked){blocked=true;result.placement=state->placement;}
-            return true;}))return ObjectPositionValidResult{};
+            return true;}))return unavailable_check(check_diagnostic);
             latest=blocked?ObjectPositionValidStatus::blocked:ObjectPositionValidStatus::success;had_refusal|=blocked;
             if(!blocked){result.placement={};result.placement.status=ObjectPositionValidStatus::success;result.placement.placement_error=-1;}
             return result.placement;
@@ -641,9 +675,14 @@ ObjectPositionChangeResult ObjectPositionChange::run_native_stages(const ObjectP
         // source Rotate does not use this absolute destination gate.
         if(!original_class&&!result.effects_started&&!pre_done&&result.placement.status==ObjectPositionValidStatus::blocked)
             result.status=ObjectPositionChangeStatus::blocked;
-        if(result.status==ObjectPositionChangeStatus::unsupported&&result.diagnostic.empty())result.diagnostic="native staged operation incomplete; completed source effects retained";
+        if(result.status==ObjectPositionChangeStatus::unsupported){
+            if(result.diagnostic.empty())result.diagnostic="native staged operation incomplete; completed source effects retained";
+            if(!check_diagnostic.empty())result.diagnostic+=": "+check_diagnostic;
+        }
         return result;
-    }catch(...){return fail("native group lifecycle callback failed; completed source effects retained");}
+    }catch(const std::exception& error){return fail(placement_diagnostic(
+        "native group lifecycle callback failed; completed source effects retained phase=native_lifecycle",request.target,request.candidate,request.direction,request.flags,error.what()));}
+    catch(...){return fail("native group lifecycle callback failed; completed source effects retained");}
 }
 
 ObjectPositionChangeResult ObjectPositionChange::apply_single(const ObjectPositionValidRequest& request,bool require_new){
@@ -714,8 +753,11 @@ ObjectPositionChangeResult ObjectPositionChange::apply_single(const ObjectPositi
         if(!pose_unchanged())return fail("source PrePositionChange changed original pose");
         if(out_of_world){result.placement.status=ObjectPositionValidStatus::success;result.placement.placement_error=-1;}
         else result.placement=placement_.evaluate(request);
-        if(!valid())return fail("placement check changed its source authority");
-        if(result.placement.status==ObjectPositionValidStatus::unsupported)return fail("source PositionValid is incomplete");
+        if(!valid())return fail(placement_diagnostic("placement check changed its source authority phase=single_check",
+            request.target,request.candidate,request.direction,request.flags,result.placement.diagnostic));
+        if(result.placement.status==ObjectPositionValidStatus::unsupported)return fail(placement_diagnostic(
+            "source PositionValid is incomplete phase=single_check",request.target,request.candidate,
+            request.direction,request.flags,result.placement.diagnostic));
         // Real EP5 may change group membership, architectural flags or slot
         // contents. The initial ordinary-profile proof cannot authorize the
         // later PositionChange branches after those effects. Keep the effects
@@ -761,6 +803,8 @@ ObjectPositionChangeResult ObjectPositionChange::apply_single(const ObjectPositi
         }
         if(!phase(ObjectPositionChangePhase::post,[&]{return lifecycle.post(request.target,room_change);}))return fail("source recursive PositionChange is incomplete");
         result.status=accepted?ObjectPositionChangeStatus::success:ObjectPositionChangeStatus::blocked;return result;
-    }catch(...){return fail("source object position lifecycle callback threw; completed effects retained");}
+    }catch(const std::exception& error){return fail(placement_diagnostic(
+        "source object position lifecycle callback threw; completed effects retained phase=single_lifecycle",request.target,request.candidate,request.direction,request.flags,error.what()));}
+    catch(...){return fail("source object position lifecycle callback threw; completed effects retained");}
 }
 } // namespace odh

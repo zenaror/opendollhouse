@@ -110,6 +110,9 @@ struct IntegratedSessionContext {
     bool temporary_travel_enabled = false;
     // Launcher resource selection only; runtime must bind NPRM/departure NPCA.
     bool npc_execution_primary = false;
+    // Metadata bootstrap never authorizes a primary body/VM/player identity.
+    bool unanchored_family_lot = false;
+    std::optional<odh::WorldEntityReference> metadata_bootstrap_reference;
     // Explicit fresh-import opt-in; existing NINV1/absent archives cannot migrate.
     bool original_companion_protocol_fresh = false;
     odh::Ts1TravelProtocol travel_protocol = odh::Ts1TravelProtocol::legacy_pin;
@@ -130,7 +133,7 @@ struct IntegratedSessionContext {
     std::shared_ptr<PrivateVacationSession> private_vacation_session;
     std::shared_ptr<const odh::PreparedHouseholdTransfer> family_transfer;
     std::shared_ptr<const odh::InstalledOccupancyRetirement> occupancy_retirement;
-    // Empty only for the explicit single-resident save/restore test profile.
+    // Actual HHRD execution cohort, possibly empty for a typed unanchored lot.
     std::vector<IntegratedHouseholdMember> household_members;
     bool single_resident_session = false;
     std::optional<odh::SessionResourceIdentity> resources;

@@ -21,6 +21,15 @@ parcial. Ainda não há uma versão completa jogável publicada.
 Os resultados acima vêm de cenários e revisões diferentes. Não são uma prova de
 que todos os recursos já funcionam juntos na revisão atual.
 
+Um percurso com os dados originais mostrou a morte de uma moradora, a criação
+da urna e a retirada da personagem, preservando os outros dois moradores. A casa
+continuou e gravou o estado depois desse evento; a gravação passou pela inspeção
+de integridade. Após corrigir a leitura dos registros de roupas, a partida
+reabriu em outro processo e continuou, preservando os moradores, as roupas e o
+registro da falecida.
+Esse percurso não aceita todas as causas de morte, a tentativa de
+ressurreição nem o conjunto dos eventos residenciais.
+
 A continuação com fogo foi conferida pelos registros disponíveis e pelo estado
 salvo, sem validação visual do incêndio. Parte dos registros do percurso mais
 longo ficou incompleta, e alguns objetos já tinham falhas registradas no estado

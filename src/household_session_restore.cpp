@@ -98,7 +98,9 @@ WorldSnapshot session_restore_baseline(const SessionBundle& bundle,const WorldSn
                !metadata.definition||metadata.definition->guid!=member.guid||metadata.ui_ghost||metadata.dead||
                metadata.attachment||metadata.position||metadata.person_data.size()<=61||
                metadata.person_data[31]!=member.neighbor_id||
-               static_cast<std::uint16_t>(metadata.person_data[61])!=origin.source_lease.family_chunk_id)
+               (origin.source==SessionHouseholdRetirementSource::accepted_checkpoint&&
+                static_cast<std::uint16_t>(metadata.person_data[61])!=origin.source_lease.family_chunk_id)||
+               (origin.original_native&&metadata.person_data.size()!=256))
                 throw FormatError("retired household resource constructor returned incompatible metadata");
             const auto old=std::find_if(expected.entities.begin(),expected.entities.end(),[&](const auto& value){
                 return value.id==member.id&&value.generation==member.generation;});
@@ -270,10 +272,10 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
     }
     const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
         [&](const auto& entity){return entity.id==bundle.host.runtime_avatar_id;});
-    if(actor==bundle.world.entities.end()||!actor->definition||
+    if(!bundle.unanchored_family_lot&&(actor==bundle.world.entities.end()||!actor->definition||
        actor->definition->guid!=bundle.host.resident_guid||
        (!bundle.generic_execution&&!find_seated_session_continuation(bundle,bundle.host.runtime_avatar_id)&&(actor->attachment||
-       (!actor->person_data.empty()&&actor->person_data[0]!=0))))
+       (!actor->person_data.empty()&&actor->person_data[0]!=0)))))
         throw FormatError("session resident identity or seated-action binding is unsupported");
 }
 void validate_owner(const VmContext& context,const SessionRuntimeEntity& state) {
@@ -287,7 +289,7 @@ void validate_owner(const VmContext& context,const SessionRuntimeEntity& state) 
 }
 void validate_runtime(const SessionBundle& bundle) {
     validate_seated_session_continuations(bundle);
-    if((bundle.household_roster.empty()&&!bundle.npc_primary)||bundle.scheduler.faulted)
+    if((bundle.household_roster.empty()&&!bundle.npc_primary&&!bundle.unanchored_family_lot)||bundle.scheduler.faulted)
         throw FormatError("household restore requires a complete nonfaulted version-2 roster");
     for(const auto* state_ptr:avatar_runtime_states(bundle)) {
     const auto& state=*state_ptr;
@@ -437,7 +439,7 @@ std::unique_ptr<HouseholdSessionRestore> HouseholdSessionRestore::prepare(
     if(bundle.travel.has_value()!=expected_travel.has_value()||
        (bundle.travel&&encode_ts1_travel_state(*bundle.travel)!=encode_ts1_travel_state(*expected_travel)))
         throw FormatError("TRIP restore requires explicitly authenticated matching travel state");
-    if((expected_roster.empty()&&!bundle.npc_primary)||!same_session_household_roster(bundle.household_roster,expected_roster))
+    if((expected_roster.empty()&&!bundle.npc_primary&&!bundle.unanchored_family_lot)||!same_session_household_roster(bundle.household_roster,expected_roster))
         throw FormatError("saved household roster differs from family, World or character resources");
     const auto& host=bundle.host;
     if(host.neighborhood_mode!=selection.neighborhood_mode||host.house_number!=selection.house_number||
