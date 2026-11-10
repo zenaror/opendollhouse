@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-from linux_household_session_resume_cli import GUIDS, archive_sections, make_household
+from linux_household_session_resume_cli import GUIDS, archive_sections, make_household, household_object_records
 from linux_session_resume_cli import iff, strings
 
 
@@ -40,16 +40,23 @@ def rebase_character(source, destination, guid):
     destination.write_bytes(data)
 
 
-def rebase_house(source, destination, guids):
-    data = bytearray(source.read_bytes())
-    objt = [item for item in chunks(data) if item[0] == b"objt"]
-    assert len(objt) == 1
-    payload, size = objt[0][2:]
-    # The objt header is 12 bytes and its two person entries are 24 bytes each.
-    assert size >= 60
-    struct.pack_into("<I", data, payload + 12, guids[0])
-    struct.pack_into("<I", data, payload + 36, guids[1])
-    destination.write_bytes(data)
+def rebase_house(source, destination, guids, neighbor_ids, family_id):
+    # GUID-only OBJT rebasing leaves the source avatars' PD31/61 behind.
+    # Reuse the same authoring helper, not a compressed-bit patch or runtime override.
+    replacements = dict(zip((b'ObjM', b'objt'), household_object_records(guids, neighbor_ids, family_id)))
+    data = source.read_bytes()
+    out = bytearray(data[:64]); seen = set()
+    for kind, ident, payload, size in chunks(data):
+        if kind in replacements:
+            assert kind not in seen and ident == (1 if kind == b'ObjM' else 0)
+            seen.add(kind); body = replacements[kind]
+            header = bytearray(data[payload - 76:payload])
+            struct.pack_into('>I', header, 4, 76 + len(body))
+            out += header + body
+        else:
+            out += data[payload - 76:payload + size]
+    assert seen == set(replacements)
+    destination.write_bytes(out)
 
 
 def make_two_occupied_lots(root):
@@ -82,7 +89,7 @@ def make_two_occupied_lots(root):
     first_records = bytearray()
     for index, guid in enumerate(GUIDS):
         bank = [0] * 80
-        bank[61] = 201
+        bank[31], bank[58], bank[61] = 11 + index, 27, 201
         first_records += struct.pack("<II", 1, 4) + f"Sim{index}".encode() + b"\0\0"
         first_records += struct.pack("<ii", index, 1) + struct.pack("<80h", *bank)
         first_records += struct.pack("<hIii", 11 + index, guid, -1, 0)
@@ -90,7 +97,7 @@ def make_two_occupied_lots(root):
     second_records = bytearray()
     for index, guid in enumerate(SECOND_GUIDS, start=2):
         bank = [0] * 80
-        bank[61] = 201
+        bank[31], bank[58], bank[61] = 11 + index, 27, 202
         name = f"Travel{index - 2}".encode()
         second_records += struct.pack("<II", 1, 4) + name + b"\0"
         if len(name) % 2 == 0:
@@ -106,7 +113,7 @@ def make_two_occupied_lots(root):
     (user / "Neighborhood.iff").write_bytes(neighborhood)
 
     house07 = user / "Houses" / "House07.iff"
-    rebase_house(house07, user / "Houses" / "House08.iff", SECOND_GUIDS)
+    rebase_house(house07, user / "Houses" / "House08.iff", SECOND_GUIDS, (13, 14), 202)
     rebase_character(user / "Characters/User00000.iff", user / "Characters/User00002.iff", SECOND_GUIDS[0])
     rebase_character(user / "Characters/User00001.iff", user / "Characters/User00003.iff", SECOND_GUIDS[1])
 

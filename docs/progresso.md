@@ -1,6 +1,6 @@
 # Situação do primeiro marco
 
-Situação em 9 de novembro de 2026: motor nativo experimental, com cobertura
+Situação em 10 de novembro de 2026: motor nativo experimental, com cobertura
 parcial. Ainda não há uma versão completa jogável publicada.
 
 | Área | Resultado observado em percursos delimitados | O que falta para aceitar o conjunto |
@@ -14,12 +14,17 @@ parcial. Ainda não há uma versão completa jogável publicada.
 | Férias | Em percurso sem janela, os três familiares viajaram com reserva e roupas de frio apropriadas. O aluguel de uma vara de pesca cobrou §45 e foi salvo e reaberto. A família voltou à casa de origem com os três moradores e o dinheiro preservados; a chegada foi salva, reaberta em outro processo e continuou sem falha. | A caminhada até o píer falhou e a pesca não produziu efeito nas necessidades. Validar outras atividades, hospedagem, estadia completa, apresentação e controles. |
 | Demais expansões | Serviços compartilhados de dados, objetos, scripts e viagens parcialmente implementados. | Completar os percursos da Cidade Velha, Cidade Estúdio e Cidade Mágica, além dos recursos próprios de todas as expansões. Nenhuma expansão foi aceita como completa. |
 | Personagens e animais | Gambá original criado durante a rotina da casa, salvo e reaberto em outro processo; seu aviso foi confirmado e houve uma continuação curta. Estrutura, malhas e texturas também desenhadas em verificação delimitada. O progresso de uma entregadora de jornais vinda de um pacote original foi gravado quando ela saiu do lote e reaberto com o salvamento inteiro idêntico. | Completar comportamento dos animais, adoção, controle, salvamento nos demais estados, NPCs, bebês e ciclos completos. A reabertura curta e o desenho isolado não aceitam esses fluxos. |
-| Interface e áudio | Implementação nativa e reconstrução parcial da interface original. | Todas as telas, acabamento, animação, iluminação e áudio. |
+| Interface e áudio | Implementação nativa e reconstrução parcial da interface original. | Todas as telas, acabamento, animação, iluminação e áudio. Trocas repetidas de casa com áudio ainda acusam memória não liberada na saída de som simulada. |
 | Idiomas e conteúdo personalizado | Leitura de textos e partes do suporte a conteúdo clássico. Uma interação com um banheiro de conteúdo personalizado terminou e melhorou a necessidade Banheiro; o salvamento reabriu inteiro idêntico. | Conferência representativa dentro dos percursos completos e uso/salvamento de conteúdo personalizado. |
 | Outras plataformas | Preparação de ferramentas e separação de serviços. | Compilar e executar o jogo em cada alvo, medir recursos e adaptar entrada/apresentação. |
 
 Os resultados acima vêm de cenários e revisões diferentes. Não são uma prova de
 que todos os recursos já funcionam juntos na revisão atual.
+
+Testes com dados sintéticos também conferem a entrada nativa, a gestão de
+famílias e a continuação sem reiniciar a rotina dos moradores. Eles verificam
+a recusa de arquivos de personagem alterados e a preservação do estado salvo;
+não substituem os percursos completos com os dados originais e pelas telas.
 
 Uma cadeia de importação clássica, em verificação sem janela, respondeu uma
 única vez a cada diálogo observado e alcançou 64 passos de simulação. A

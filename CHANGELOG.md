@@ -36,6 +36,14 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Restauração da aparência sem janela passa a localizar os recursos na instalação
+  do jogo, sem depender de opções de captura de tela.
+- Importação do personagem principal consulta seus dados de origem pelo mesmo
+  serviço de identificação usado pelos demais moradores.
+- Continuação do modo de diagnóstico com um morador usa seu restaurador próprio,
+  preservando as verificações de casa, personagem e arquivos de origem.
+- Preparação de objetos reutiliza os serviços de olhar e necessidades no estado
+  isolado, preservando as restrições de caminhada e a ordem da simulação.
 - Preparação de compra, movimentação e venda ligada aos serviços nativos de
   relacionamentos, distância e direção, usando o estado isolado da transação.
 - Consulta do menu preserva a origem dos estados visuais e dos níveis dos objetos,

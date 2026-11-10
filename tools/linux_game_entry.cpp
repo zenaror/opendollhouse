@@ -2851,7 +2851,12 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 if(!temporary_trip || temporary_trip->returning)
                     session=odh::load_session_entry(userdata,options.mode,static_cast<std::uint16_t>(house),
                         static_cast<std::uint8_t>(options.language),family_overlay?&*family_overlay:nullptr,
-                        player_character_directory,options.restore_bundle?&*options.restore_bundle:nullptr);
+                        // Only the household profile selects execution members
+                        // through GENX/HHRD. The explicitly requested legacy
+                        // single-resident profile keeps installed selection and
+                        // is authenticated by SingleResidentSessionRestore.
+                        player_character_directory,options.restore_bundle&&!options.single_resident_session?
+                            &*options.restore_bundle:nullptr);
                 if (family_journal&&!property_lot&&(!temporary_trip||temporary_trip->returning)) {
                     const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
                     auto plan = odh::prepare_installed_occupancy_retirement(source, *family_overlay,

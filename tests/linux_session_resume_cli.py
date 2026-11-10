@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from synthetic_avatar_visuals import adult_body_strings, write_avatar_visuals
 
 
 def iff(chunks):
@@ -57,7 +58,8 @@ class Bits:
 
 
 def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0, empty_hand_slot=False,
-                 fresh_motives=False):
+                 fresh_motives=False, floor_parent=0, floor_child=0, *,
+                 neighbor_id, family_id):
     table = Bits()
     for value in (object_id, type_id, 0):
         table.word(value)
@@ -70,14 +72,21 @@ def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0, em
     for _ in range(8):
         block.word()
     for index in range(68):
-        block.word(object_id if index == 11 else -1 if index == 3 else 0)
+        # Native floor hierarchy is authored in the original record, not
+        # reconstructed from coincident coordinates in the runtime.
+        block.word(object_id if index == 11 else -1 if index == 3 else
+                   (0 if floor_parent else -1) if index == 14 else
+                   floor_parent if index == 26 else 0)
     for _ in range(5):
         block.word()
     for value in (0, 0, -1, 0):  # stack, flags, relationship flag/count
         block.integer(value)
-    block.word(2 if empty_hand_slot else 0)  # linked slot plus explicit empty hand slot
+    # The first serialized slot is the native virtual zero link; physical
+    # slots begin AFTER it. An absent count is unknown, not known empty.
+    block.word(2 if empty_hand_slot else 1)
+    block.word(); block.word(floor_child)
     if empty_hand_slot:
-        for _ in range(4): block.word()
+        block.word(); block.word()  # One separate, empty physical hand slot.
     block.word()  # dynamic sprite flags
     block.integer()  # animation events
     block.integer()  # engaged
@@ -93,7 +102,10 @@ def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0, em
         # VMAvatar.Init/apply_avatar_body baseline, opt-in for relocation fixtures.
         block.integer(0x42C80000 if fresh_motives and index != 11 else 0)
     for index in range(80):
-        block.word(person_posture if index == 0 else 0)
+        # ConvertAvatar preserves live PersonData. Match this idle adult's
+        # BodySTR age27; zero would select child walk/swim in LoadCrossRef.
+        block.word(person_posture if index == 0 else neighbor_id if index == 31 else
+                   27 if index == 58 else family_id if index == 61 else 0)
     block.integer()  # routing frames
     for _ in range(2):  # absent active and last interactions (OBJMInteraction.IsValid)
         block.integer(); block.integer()
@@ -119,6 +131,16 @@ def grid(stride):
     return result
 
 
+def saved_simi():
+    """SIMI62 with a supported synthetic calendar and unchanged zero time."""
+    globals_ = [0] * 32
+    # Ts1Clock.initialize_simi: hour/day/minute/seconds/month/year at0/1/5/6/7/8.
+    # Match the valid source calendar already used by linux_family_rehome_cli.
+    globals_[1], globals_[7], globals_[8] = 1, 6, 1997
+    return (struct.pack('<II4s', 0, 0x3e, b'IMIS') +
+            struct.pack('<32h', *globals_) + bytes(34 + 24))
+
+
 def make_game(root):
     user, game = root / 'UserData', root / 'GameData'
     (user / 'Houses').mkdir(parents=True)
@@ -130,13 +152,13 @@ def make_game(root):
     # Complete original FAMI9 tail: retained DWORD plus six family spell words.
     family += struct.pack('<I6h', 0, 0, 0, 0, 0, 0, 0)
     bank = [0] * 80
-    bank[61] = 201
+    bank[31], bank[58], bank[61] = 11, 27, 201  # NID, age and FAMI chunk ID.
     neighbor = struct.pack('<II', 1, 4) + b'Sim0\0\0' + struct.pack('<ii', 0, 1)
     neighbor += struct.pack('<80h', *bank) + struct.pack('<hIii', 11, 0x12345678, -1, 0)
     neighbors = struct.pack('<II4sI', 0, 62, b'SRBN', 1) + neighbor
     (user / 'Neighborhood.iff').write_bytes(iff([('FAMI', 201, family), ('NBRS', 1, neighbors)]))
-    simi = struct.pack('<II4s', 0, 0x3e, b'IMIS') + bytes(64 + 34 + 24)
-    objm, objt = saved_person()
+    simi = saved_simi()
+    objm, objt = saved_person(neighbor_id=11, family_id=201)
     chunks = [('SIMI', 1, simi), ('ObjM', 1, objm), ('objt', 0, objt)]
     chunks += [('Arry', ident, grid(stride)) for ident, stride in
                [(1, 1), (101, 1), (2, 8), (102, 8), (8, 1), (9, 1), (10, 1), (0, 4)]]
@@ -146,8 +168,7 @@ def make_game(root):
     for offset, value in [(10, 4096), (18, 2), (22, 65535), (38, 200)]:
         struct.pack_into('<H', objd, offset, value)
     struct.pack_into('<I', objd, 28, 0x12345678)
-    body = [''] * 27
-    body[0], body[12], body[13] = 'adult', 'male', '27'
+    body = adult_body_strings()
     # Increment person-data[1] once, set local0=4, Sleep(local0), loop Sleep.
     rows = [(2, 1, 255, struct.pack('<hhBBBB', 1, 1, 0, 3, 18, 7)),
             (2, 2, 255, struct.pack('<hhBBBB', 0, 4, 0, 5, 9, 7)),
@@ -163,12 +184,23 @@ def make_game(root):
     far(game / 'Global/Global.far', [('PersonGlobals.iff', iff([])), ('Global.iff', iff([
         ('STR#', 150, strings(['walk'])), ('STR#', 158, strings(['swim'])),
         ('BHAV', 255, main)]))])
-    for path in ['Objects/Objects.far', 'Animation/Animation.far', 'Textures/Textures.far']:
-        far(game / path)
+    far(game / 'Objects/Objects.far')
+    write_avatar_visuals(root, far)
     far(root / 'ExpansionShared/ExpansionShared.far')
     far(root / 'UIGraphics/UIGraphics.far')
     for path in ['floors.iff', 'walls.iff']:
         (game / path).write_bytes(iff([]))
+    # Explicit synthetic financial metadata, not zero prices for missing data.
+    # Shapes follow property_architecture_value_cli and architecture_edit_resources.
+    # Floor initialization excludes its final triple: this empty lot declares
+    # no usable floor IDs or missing SPR2s. Water metadata needs both entries.
+    (game / 'Build.iff').write_bytes(iff([
+        ('STR#', 0x81, strings(['20', 'Fixture wall', 'Synthetic wall price'] * 5)),
+        ('STR#', 0x82, strings(['12', 'LastExcluded', 'Unused final floor triple'])),
+        ('STR#', 0x83, strings(['2', 'Fixture paper', 'Synthetic wallpaper price'])),
+        ('STR#', 0x85, strings(['100', 'Fixture pool', 'Synthetic pool price',
+                              '15', 'Fixture water', 'Synthetic water price'])),
+    ]))
 
 
 def main():

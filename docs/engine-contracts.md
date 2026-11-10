@@ -188,6 +188,12 @@ um móvel quando a caminhada começar.
 
 ## Scripts e tempo
 
+Ao iniciar um personagem, a fila de ações precisa reconhecer a mesma execução
+do script antes de importar a continuação original. Essa admissão aceita somente
+um início ainda não executado, com o personagem correto e os controles sem uso.
+Ela não avança o relógio, executa instruções ou apaga ações. Uma ligação incorreta
+é recusada antes de publicar a continuação.
+
 Ações, consultas e filas têm estados próprios. Uma consulta descartável não
 pode modificar a fila real por conveniência. Cancelar precisa respeitar a fase
 da ação e liberar seus recursos. Um efeito de necessidade não equivale ao saldo
@@ -222,6 +228,14 @@ Mudanças de propriedade, compra e construção trabalham sobre um estado candid
 Conferir identidade, custo, recursos e restrições antes de publicá-lo. A operação
 não pode sobrescrever uma gravação mais recente ou deixar uma alteração parcial
 como sucesso. Perfil completo inclui o registro de ocupação, além do save.
+
+Os scripts dessa preparação usam os serviços da cópia candidata, incluindo
+relações, distância, direção, alvo da cabeça e alterações nas necessidades.
+Alterações contínuas preservam a ordem normal do personagem; preparar uma compra
+não avança a simulação para forçar um efeito. Virar o corpo exige o serviço de
+caminhada e não recebe uma conclusão artificial nessa preparação síncrona.
+O perfil finito de compatibilidade do Simitone continua explícito: uma operação
+sem efeito na referência não comprova o recurso correspondente do jogo original.
 
 Ao conferir uma casa desocupada, mantenha uma cópia independente da importação
 original, incluindo os dados dos objetos e seus grupos. Comparar a casa editada
@@ -362,6 +376,11 @@ controle ou participação do animal na família. Cada um desses fluxos precisa
 de implementação e validação próprias.
 
 ### Aparência ao carregar e consultar
+
+A restauração de um personagem confere seus recursos de aparência mesmo sem
+abrir uma janela. Nesse caso, os arquivos vêm da instalação selecionada. Opções
+de captura ou de desenho não são necessárias para localizar esses dados; um
+recurso ausente continua causando uma falha de preparação.
 
 Na carga TS1, a roupa atual passa pelo serviço de seleção de roupas e a cabeça
 vem da tabela corporal da definição (BodySTR). Esses valores reaplicados durante

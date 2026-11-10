@@ -15,71 +15,216 @@ import struct
 import subprocess
 import sys
 import tempfile
+import zlib
 
 from linux_household_session_resume_cli import GUIDS, archive_sections, make_household
 from linux_managed_family_session_cli import seed_managed_profile
 from linux_lot_travel_cli import chunks
 from linux_session_resume_cli import iff, strings
 
-def overlay_state(path):
-    data = path.read_bytes()
-    assert data[:8] == b'ODHF\x06\0\0\0'
-    count = struct.unpack_from('<I', data, 40)[0]
-    state = dict(house=7, epoch=1, budget=100, arch=0, head=None)
-    position = 44
+class FixtureReader:
+    def __init__(self, data):
+        self.data, self.position = data, 0
+
+    def take(self, size):
+        assert 0 <= size <= len(self.data) - self.position, 'truncated fixture record'
+        value = self.data[self.position:self.position + size]
+        self.position += size
+        return value
+
+    def read(self, fmt):
+        return struct.unpack('<' + fmt, self.take(struct.calcsize('<' + fmt)))
+
+    def done(self):
+        assert self.position == len(self.data), 'unclaimed fixture record bytes'
+
+
+def session_sections(data):
+    # Full framing/CRC, unlike the intentionally lightweight mutation helper.
+    r = FixtureReader(data)
+    assert r.take(8) == b'ODHSES\r\n'
+    version, flags, count, size, checksum = r.read('HHIQI')
+    assert version == 1 and flags == 0 and size == len(data) - 28
+    assert zlib.crc32(data[:24]) == checksum and count <= size // 20
+    result = {}
     for _ in range(count):
-        tag, size = struct.unpack_from('<HI', data, position)
-        position += 6
-        body = data[position:position + size]
-        position += size
-        assert tag == 5 and size == 104 and len(body) == size
-        assert struct.unpack_from('<H', body, 0)[0] == 201
-        house, price, budget, action = struct.unpack_from('<HiiI', body, 34)
-        before_house, flags, epoch, before_budget, before_arch, after_arch = struct.unpack_from('<HHQiii', body, 48)
-        assert (before_house, epoch, before_budget, before_arch) == (state['house'], state['epoch'], state['budget'], state['arch'])
-        if action == 0:
-            assert before_house == 0 and budget == before_budget - price
-            state['epoch'] += 1
-        elif action == 1:
-            assert house == 0 and budget == before_budget + before_arch
+        name = r.take(4)
+        assert all(65 <= c <= 90 or 48 <= c <= 57 or c == 32 for c in name) and name not in result
+        flags, size, checksum = r.read('IQI')
+        assert flags <= 1
+        body = r.take(size)
+        assert zlib.crc32(body) == checksum
+        result[name] = body
+    r.done()
+    return result
+
+
+def overlay_state(path, identity, family):
+    r = FixtureReader(path.read_bytes())
+    assert r.take(4) == b'ODHF'
+    version, flags = r.read('HH')
+    # This fixture owns managed operations and their property-release extension.
+    # Other overlay record families are not silently skipped.
+    assert version in (6, 10) and flags == 0
+    assert r.take(32) == identity
+    count, = r.read('I')
+    assert count <= 4096 and count <= (len(r.data) - r.position) // 6
+    operations, releases = [], {}
+    for _ in range(count):
+        tag, size = r.read('HI')
+        record = FixtureReader(r.take(size))
+        if tag == 5:
+            assert not releases, 'managed operations must precede property records'
+            assert size == 104
+            family_id, = record.read('H')
+            assert family_id == 201 and record.take(32) == family
+            house, price, budget, action = record.read('HiiI')
+            before_house, present, epoch, before_budget, before_arch, after_arch = record.read('HHQiii')
+            head = record.take(32)
+            assert action <= 2 and present <= 1 and (present or head == bytes(32))
+            operations.append(dict(house=house, price=price, budget=budget, action=action,
+                before_house=before_house, flags=present, epoch=epoch, before_budget=before_budget,
+                before_arch=before_arch, after_arch=after_arch, head=head if present else None))
         else:
-            assert action == 2 and house == before_house and flags == 1
-            state['head'] = body[72:104]
-        state.update(house=house, budget=budget, arch=after_arch)
-    assert position == len(data)
+            assert tag == 10 and version == 10 and size == 200, ('unsupported fixture overlay record', tag)
+            index, house, neighborhood, mode, policy, present, family_id, reserved = record.read('IHBBHHHH')
+            epoch, revision = record.read('QQ')
+            family_hash, source, installed, expected, head = [record.take(32) for _ in range(5)]
+            value, cash = record.read('ii')
+            assert index not in releases and (not releases or index > max(releases))
+            assert family_id == 201 and reserved == 0
+            assert 1 <= house <= 98 and neighborhood == 1 and mode == 1 and policy in (1, 2)
+            assert present <= 1 and revision < (1 << 64) - 1
+            assert (present == 0 and expected == bytes(32) and revision == 0) or (present == 1 and expected != bytes(32) and revision > 0)
+            assert family_hash == family and source != bytes(32) and installed != bytes(32) and head != bytes(32)
+            assert value >= 0 and cash >= 0 and epoch > 0
+            releases[index] = dict(house=house, epoch=epoch, source=source, cash=cash, head=head,
+                revision=revision, expected=expected if present else None, installed=installed, neighborhood=neighborhood)
+        record.done()
+    r.done()
+    assert version != 10 or releases, 'property-release overlay must contain its record'
+    assert all(index < len(operations) for index in releases)
+    state = dict(house=7, epoch=1, budget=100, arch=0, head=None)
+    property_heads = {}
+    for index, op in enumerate(operations):
+        assert (op['before_house'], op['epoch'], op['before_budget'], op['before_arch']) == (
+            state['house'], state['epoch'], state['budget'], state['arch'])
+        release = releases.get(index)
+        if op['action'] == 0:
+            assert release is None and op['before_house'] == 0 and 1 <= op['house'] <= 98
+            assert op['price'] >= 0 and op['budget'] == op['before_budget'] - op['price']
+            assert op['after_arch'] == op['before_arch'] and op['flags'] == 0
+            state['epoch'] += 1
+        elif op['action'] == 1:
+            assert op['before_house'] and op['house'] == 0 and op['price'] == 0
+            assert op['flags'] == 0 and op['after_arch'] == 0
+            cash = op['before_budget']
+            if release:
+                assert (release['house'], release['epoch'], release['source']) == (
+                    op['before_house'], op['epoch'], state['head'])
+                previous = property_heads.get(release['house'])
+                if previous is None:
+                    assert release['revision'] == 0 and release['expected'] is None
+                else:
+                    assert (release['revision'], release['expected'], release['installed'], release['neighborhood']) == previous
+                property_heads[release['house']] = (release['revision'] + 1, release['head'], release['installed'], release['neighborhood'])
+                cash = release['cash']
+            assert op['budget'] == cash + op['before_arch']
+        else:
+            assert release is None and op['house'] == op['before_house'] and op['house']
+            assert op['price'] == 0 and op['flags'] == 1 and op['head'] != bytes(32)
+            state['head'] = op['head']
+        state.update(house=op['house'], budget=op['budget'], arch=op['after_arch'])
     return state
+
+
+def read_host(data):
+    r = FixtureReader(data)
+    assert r.take(8) == b'ODHHST\r\n'
+    version, = r.read('H')
+    assert 1 <= version <= 7
+    flags = r.read('B')[0] if version >= 5 else 0
+    assert flags <= (15 if version == 7 else 7 if version >= 6 else 3)
+    assert version != 7 or flags & 8
+    household = bool(flags & 1) if version >= 5 else version in (2, 4)
+    has_budget = bool(flags & 2) if version >= 5 else version in (3, 4)
+    mode, house, family_id, family_number, guid, neighbor, runtime_id, tick, seed, count = r.read('BHH i I h h Q Q H'.replace(' ', ''))
+    assert mode in (1, 2, 3, 4, 5, 7) and house > 0
+    assert count <= (len(r.data) - r.position) // 4
+    globals_ = [r.read('Hh') for _ in range(count)]
+    assert all(index <= 32767 for index, _ in globals_)
+    assert [index for index, _ in globals_] == sorted(set(index for index, _ in globals_))
+    budget = r.read('i')[0] if has_budget else None
+    r.done()
+    return dict(version=version, household=household, mode=mode, house=house,
+        family_id=family_id, family_number=family_number, guid=guid, neighbor=neighbor,
+        runtime_id=runtime_id, tick=tick, seed=seed, budget=budget)
+
+
+def read_roster(data):
+    r = FixtureReader(data)
+    version, count = r.read('HH')
+    assert version == 1 and 1 <= count <= 8
+    result, guids, neighbors, paths = {}, set(), set(), set()
+    for _ in range(count):
+        runtime_id, generation, guid, neighbor, objd, length = r.read('hQIhHH')
+        assert 0 < length <= 4096
+        asset = r.take(length).decode('utf-8')
+        fingerprint = r.take(32)
+        assert runtime_id > 0 and generation > 0 and guid and neighbor > 0 and objd
+        assert runtime_id not in result and guid not in guids and neighbor not in neighbors and asset not in paths
+        assert asset and not asset.startswith('/') and not any(c in asset for c in ('\\', ':', '\0'))
+        assert all(part not in ('', '.', '..') for part in asset.split('/')) and fingerprint != bytes(32)
+        result[runtime_id] = dict(guid=guid, neighbor=neighbor, generation=generation, asset=asset)
+        guids.add(guid); neighbors.add(neighbor); paths.add(asset)
+    r.done()
+    return result
+
+
+def read_simulation(data, roster):
+    r = FixtureReader(data)
+    version, = r.read('H')
+    assert version in (1, 2)
+    tick, fraction, minute, hour, day, month, year = r.read('QHBBBBi')
+    fire = r.read('i')[0] if version == 2 else 20000  # Native SIMS1 compatibility value.
+    assert (fraction < 30 or (tick == 0 and fraction <= 59 * 30 and fraction % 30 == 0))
+    assert minute < 60 and hour < 24 and 1 <= day <= 30 and 1 <= month <= 12 and year >= 1
+    assert 0 <= fire <= 20000
+    count, = r.read('H')
+    assert count == len(roster)
+    fractions, seen = {}, set()
+    for _ in range(count):
+        runtime_id, bucket, *values = r.read('hB7h')
+        assert runtime_id in roster and runtime_id not in seen and bucket < 30
+        seen.add(runtime_id); fractions[roster[runtime_id]['guid']] = tuple(values)
+    r.done()
+    assert seen == set(roster)
+    return tick, fractions
 
 
 def archive_state(path, overlay, identity, family, house, epoch):
     data = path.read_bytes()
     digest = hashlib.sha256(data).digest()
     assert path.name == digest.hex() + '.odhs'
-    assert overlay_state(overlay)['head'] == digest
-    sections = {name: body for name, _, body in archive_sections(data)}
-    assert sections[b'FAML'] == struct.pack('<HHQ', 1, 201, epoch) + identity + family
-    assert struct.unpack_from('<H', sections[b'HOST'], 11)[0] == house
-    roster = sections[b'HHRD']
-    count = struct.unpack_from('<H', roster, 2)[0]
-    position = 4
-    runtime_to_guid = {}
-    for _ in range(count):
-        runtime_id, generation, guid, neighbor_id, objd = struct.unpack_from('<hQIhH', roster, position)
-        position += 18
-        length = struct.unpack_from('<H', roster, position)[0]
-        position += 2 + length + 32
-        assert generation and objd and neighbor_id in (11,12)
-        runtime_to_guid[runtime_id] = guid
-    assert position == len(roster) and set(runtime_to_guid.values()) == set(GUIDS)
-    sim = sections[b'SIMS']
-    count = struct.unpack_from('<H', sim, 20)[0]
-    position = 22
-    fractions = {}
-    for _ in range(count):
-        runtime_id, bucket, *values = struct.unpack_from('<hB7h', sim, position)
-        position += 17
-        assert 0 <= bucket < 30
-        fractions[runtime_to_guid[runtime_id]] = tuple(values)
-    assert position == len(sim) and set(fractions) == set(GUIDS)
+    state = overlay_state(overlay, identity, family)
+    assert state['head'] == digest
+    sections = session_sections(data)
+    lease = FixtureReader(sections[b'FAML'])
+    version, family_id, saved_epoch = lease.read('HHQ')
+    assert (version, family_id, saved_epoch) == (1, 201, epoch)
+    assert lease.take(32) == identity and lease.take(32) == family
+    lease.done()
+    host = read_host(sections[b'HOST'])
+    assert host['household'] and (host['mode'], host['house'], host['family_id'], host['family_number']) == (1, house, 201, 900)
+    assert host['budget'] == state['budget']
+    roster = read_roster(sections[b'HHRD'])
+    runtime_to_guid = {runtime: row['guid'] for runtime, row in roster.items()}
+    assert set(runtime_to_guid.values()) == set(GUIDS)
+    assert {(row['guid'], row['neighbor']) for row in roster.values()} == set(zip(GUIDS, (11, 12)))
+    assert host['runtime_id'] in roster
+    assert (host['guid'], host['neighbor']) == (roster[host['runtime_id']]['guid'], roster[host['runtime_id']]['neighbor'])
+    sim_tick, fractions = read_simulation(sections[b'SIMS'], roster)
+    assert sim_tick == host['tick'] and set(fractions) == set(GUIDS)
     return data, fractions, runtime_to_guid
 
 
@@ -139,14 +284,14 @@ def main():
         first_path = Path(first['saved_session_path'])
         first_bytes, first_fractions, first_mapping = archive_state(first_path,overlay,identity,family,7,1)
         assert set(first_mapping.values()) == set(GUIDS) and set(first_fractions) == set(GUIDS)
-        live_budget = overlay_state(overlay)['budget']
+        live_budget = overlay_state(overlay, identity, family)['budget']
         before_zero = overlay.read_bytes()
         zero = run(['--house','7','--resident-id','11','--headless-ticks','0','--save-session-on-exit'],env)[0]
         assert zero['session_loaded'] and zero['resumed_tick'] == 2
         assert Path(zero['saved_session_path']).read_bytes() == first_bytes and overlay.read_bytes() == before_zero
         moved_out = run(['--house','7','--headless-move-out-family','201','--headless-ticks','0'],env,runtime=False)
         assert len(moved_out) == 1 and moved_out[0]['status'] == 'moved_out', moved_out
-        state = overlay_state(overlay)
+        state = overlay_state(overlay, identity, family)
         assert state['house'] == 0 and state['budget'] == live_budget and state['head'] == hashlib.sha256(first_bytes).digest()
         assert first_path.read_bytes() == first_bytes
 
@@ -158,7 +303,7 @@ def main():
         bad_overlay = Path(bad_env['XDG_CONFIG_HOME']) / overlay.relative_to(Path(env['XDG_CONFIG_HOME']))
         before = bad_overlay.read_bytes()
         run(['--house','98','--headless-move-in-family','201','--headless-ticks','0','--save-session-on-exit'],bad_env,False)
-        assert bad_overlay.read_bytes() == before and overlay_state(bad_overlay)['budget'] == live_budget
+        assert bad_overlay.read_bytes() == before and overlay_state(bad_overlay, identity, family)['budget'] == live_budget
         bad_root = base / 'bad-game'
         shutil.copytree(root,bad_root)
         changed = bad_root / 'UserData/Characters/User00001.iff'
@@ -167,7 +312,7 @@ def main():
         bad_overlay = Path(bad_env['XDG_CONFIG_HOME']) / overlay.relative_to(Path(env['XDG_CONFIG_HOME']))
         before = bad_overlay.read_bytes()
         run(['--house','8','--headless-move-in-family','201','--headless-ticks','0','--save-session-on-exit'],bad_env,False,game=bad_root)
-        assert bad_overlay.read_bytes() == before and overlay_state(bad_overlay)['budget'] == live_budget
+        assert bad_overlay.read_bytes() == before and overlay_state(bad_overlay, identity, family)['budget'] == live_budget
 
         # House8 has copied actors without original-occupancy retirement authority.
         # House7 can retire its original actors, but this fixture has no mailbox/
@@ -177,7 +322,7 @@ def main():
             run(['--house',str(house),'--resident-id','11','--headless-move-in-family','201',
                  '--headless-ticks','0','--save-session-on-exit'],env,False)
             assert overlay.read_bytes() == before, 'unsupported existing actor committed deferred purchase'
-            state = overlay_state(overlay)
+            state = overlay_state(overlay, identity, family)
             assert state['house'] == 0 and state['budget'] == live_budget
             assert state['head'] == hashlib.sha256(first_bytes).digest()
             assert first_path.read_bytes() == first_bytes, 'rejected rehome changed retained original archive'

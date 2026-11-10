@@ -8191,17 +8191,26 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         primary_vm().start(odh::routine_key(root),{runtime_avatar_id,runtime_avatar_id,
             headless_stack_object.value_or(static_cast<std::int16_t>(initialize||saved_world_main?0:1)),
             static_cast<odh::CodeOwner>(runtime_avatar_id)},root_arguments,true);
+        // Original-load controllers were bound before Main.start. Admit that
+        // exact fresh execution epoch before source import; no tick or reset.
+        if(saved_world_main&&!initialize&&!primary_controllers().admit_undispatched_start())
+            throw odh::FormatError("original primary Main controller admission failed");
         if(second_main_vm){
             std::vector<std::int16_t> arguments(4);
             if(headless_second_main_arg0)arguments[0]=static_cast<std::int16_t>(*headless_second_main_arg0);
             const auto id=static_cast<std::int16_t>(headless_second_main->avatar.id);
             second_main_vm->start(odh::routine_key(headless_second_main->routine),
                 {id,id,0,static_cast<odh::CodeOwner>(id)},arguments,true);
+            if(saved_world_main&&!initialize&&!second_main_thread->admit_undispatched_start())
+                throw odh::FormatError("original second Main controller admission failed");
         }
         for(auto& member:household_runtime)
-            if(!materialized_main_states.count(member->id))
+            if(!materialized_main_states.count(member->id)){
                 member->vm->start(odh::routine_key(member->main),
                     {member->id,member->id,0,static_cast<odh::CodeOwner>(member->id)},std::vector<std::int16_t>(4),true);
+                if(saved_world_main&&!initialize&&!member->controllers->admit_undispatched_start())
+                    throw odh::FormatError("original household Main controller admission failed");
+            }
         if(initialize&&primary_status()!=odh::VmStatus::fault){
             try{body_seed_before=random.seed();primary_body()=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
@@ -11930,9 +11939,17 @@ struct PlacementCandidateProbe {
     // the same body and skeleton used to draw that actor without opening the window.
     const auto ensure_appearance_resources=[&]{
         if(render_appearances)return;
+        if((!session_context||session_context->game_root.empty())&&!render_animation_far)
+            throw odh::FormatError("avatar appearance resources require a game root or animation archive");
         auto game_root=session_context&&!session_context->game_root.empty()
             ?std::filesystem::path(session_context->game_root)
             :std::filesystem::path(*render_animation_far).parent_path().parent_path().parent_path();
+        // Original saved-person restoration validates appearance even without
+        // a window/frame. Resource data must not depend on rendering options.
+        const auto animation_far=render_animation_far.value_or((game_root/"GameData"/"Animation"/"Animation.far").string());
+        const auto textures_far=render_textures_far.value_or((game_root/"GameData"/"Textures"/"Textures.far").string());
+        const auto skeleton_entry=render_skeleton_entry.value_or("adult-skeleton.cmx.bcf");
+        const auto skeleton_name=render_skeleton_name.value_or("adult");
         auto skins_directory=game_root/"GameData"/"Skins";
         std::error_code skin_path_error;
         const auto loose_skins=std::filesystem::is_directory(skins_directory,skin_path_error)&&!skin_path_error
@@ -11942,10 +11959,10 @@ struct PlacementCandidateProbe {
             const auto path=game_root/relative;std::error_code error;
             if(std::filesystem::is_directory(path,error)&&!error)additional_skins.push_back(path.string());
         }
-        render_appearances=std::make_unique<SavedAppearanceResources>(*render_animation_far,*render_textures_far,
-            *render_skeleton_entry,*render_skeleton_name,loose_skins,animation_sources,additional_skins);
+        render_appearances=std::make_unique<SavedAppearanceResources>(animation_far,textures_far,
+            skeleton_entry,skeleton_name,loose_skins,animation_sources,additional_skins);
         if(session_context)try{
-            selected_sim_crystal=std::make_unique<odh_host::SelectedSimCrystal>(*render_animation_far,*render_textures_far);
+            selected_sim_crystal=std::make_unique<odh_host::SelectedSimCrystal>(animation_far,textures_far);
         }catch(const std::exception& error){
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
             session_log.event(std::string("selected Sim crystal unavailable: ")+error.what());
@@ -12010,7 +12027,7 @@ struct PlacementCandidateProbe {
                 " guid="+std::to_string(entity->definition?entity->definition->guid:0)+
                 " owner="+std::to_string(actor.primary_owner)+" species="+authored.avatar_type.substr(0,32)+
                 " source="+actor.resource.archive.substr(0,256)+" ["+actor.resource.entry.substr(0,128)+"]"+
-                " body_str="+std::to_string(actor.data.startup?actor.data.startup->body_strings:0)+
+                " body_str="+std::to_string(actor_resource_metadata(actor).startup?actor_resource_metadata(actor).startup->body_strings:0)+
                 " body_source="+(override?std::string("runtime_outfit"):std::string("authored"))+
                 " accessories="+std::to_string(entity->avatar_appearance&&entity->avatar_appearance->accessory_assets
                     ?entity->avatar_appearance->accessory_assets->size():entity->bound_appearances.size())+
@@ -21056,7 +21073,7 @@ struct PlacementCandidateProbe {
             const auto live_body_descriptor=[&](odh::WorldEntityReference ref){
                 const auto* service=actor_services_for(ref.id);auto* actor=service?service->actor:nullptr;
                 const auto* body=world.resolve_reference(ref);
-                if(!actor||!actor->body_state||!actor->body_state->body||!actor->data.startup||!body||body->person_data.size()<=58)
+                if(!actor||!actor->body_state||!actor->body_state->body||!actor_resource_metadata(*actor).startup||!body||body->person_data.size()<=58)
                     throw odh::FormatError("original LoadCrossRef live body owner unavailable");
                 const bool child=body->person_data[58]<18;
                 const std::uint16_t walk=child?151:150,swim=child?160:158;

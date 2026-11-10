@@ -11,9 +11,32 @@ import subprocess
 import sys
 import tempfile
 import zlib
-from linux_session_resume_cli import Bits, iff, strings, grid, make_game, saved_person
+from linux_session_resume_cli import Bits, iff, strings, grid, make_game, saved_person, saved_simi
 
 GUIDS = (0x12345678, 0x12345679)
+
+def household_object_records(guids, neighbor_ids, family_id, secondary_posture=0,
+                             empty_hand_slot=False, fresh_motives=False):
+    """Author the same two-person original graph for explicit NBRS/FAMI identities."""
+    assert len(guids) == len(neighbor_ids) == 2
+    assert len(set(guids)) == len(set(neighbor_ids)) == 2
+    assert all(0 < guid <= 0xffffffff for guid in guids)
+    assert all(0 < nid <= 32767 for nid in neighbor_ids) and 0 < family_id <= 32767
+    table = Bits()
+    for value in (1,1,2,2,0): table.word(value)
+    objm = struct.pack('<II4sB',0,62,b'MjbO',1) + table.data()
+    objt = struct.pack('<II4s',0,2,b'tjbo')
+    for i,guid in enumerate(guids):
+        # Keep IDs, source pose, source actions and the native floor chain.
+        single,_ = saved_person(i+1,i+1,len(objm)+4,secondary_posture if i else 0,
+                                empty_hand_slot,fresh_motives,
+                                floor_parent=1 if i else 0,floor_child=0 if i else 2,
+                                neighbor_id=neighbor_ids[i],family_id=family_id)
+        payload = single[22:]
+        objm += struct.pack('<I',len(objm)+4+len(payload)-12) + payload
+        objt += struct.pack('<I6H',guid,0,0,0,0,i+1,2) + b'person\0\0'
+    return objm, objt
+
 
 def make_household(root, secondary_posture=0, empty_hand_slot=False, fresh_motives=False, continuous_main=False):
     make_game(root)
@@ -23,22 +46,14 @@ def make_household(root, secondary_posture=0, empty_hand_slot=False, fresh_motiv
     family += struct.pack('<I6h', 0, 0, 0, 0, 0, 0, 0)
     records = b''
     for i, guid in enumerate(GUIDS):
-        bank = [0] * 80; bank[61] = 201
+        bank = [0] * 80; bank[31], bank[58], bank[61] = 11+i, 27, 201
         records += struct.pack('<II', 1, 4) + f'Sim{i}'.encode() + b'\0\0' + struct.pack('<ii', i, 1)
         records += struct.pack('<80h', *bank) + struct.pack('<hIii', 11+i, guid, -1, 0)
     neighbors = struct.pack('<II4sI', 0, 62, b'SRBN', 2) + records
     (user/'Neighborhood.iff').write_bytes(iff([('FAMI',201,family),('NBRS',1,neighbors)]))
-    # Reuse identical bounded person layouts while rebasing aligned block offsets.
-    table = Bits()
-    for value in (1,1,2,2,0): table.word(value)
-    objm = struct.pack('<II4sB',0,62,b'MjbO',1) + table.data()
-    objt = struct.pack('<II4s',0,2,b'tjbo')
-    for i,guid in enumerate(GUIDS):
-        single,_ = saved_person(i+1,i+1,len(objm)+4,secondary_posture if i else 0,empty_hand_slot,fresh_motives)
-        payload = single[22:]
-        objm += struct.pack('<I',len(objm)+4+len(payload)-12) + payload
-        objt += struct.pack('<I6H',guid,0,0,0,0,i+1,2) + b'person\0\0'
-    simi = struct.pack('<II4s',0,0x3e,b'IMIS') + bytes(64+34+24)
+    objm, objt = household_object_records(GUIDS, (11, 12), 201,
+        secondary_posture, empty_hand_slot, fresh_motives)
+    simi = saved_simi()
     chunks=[('SIMI',1,simi),('ObjM',1,objm),('objt',0,objt)]
     chunks += [('Arry',ident,grid(stride)) for ident,stride in [(1,1),(101,1),(2,8),(102,8),(8,1),(9,1),(10,1),(0,4)]]
     (user/'Houses/House07.iff').write_bytes(iff(chunks))
@@ -226,7 +241,7 @@ def main():
         unchanged_bytes=changed_character.read_bytes()
         changed_character.write_bytes(unchanged_bytes+iff([('JUNK',99,b'changed')])[64:])
         changed_restore=run(['--load-session',str(path),'--headless-ticks','1'],False)
-        assert 'saved household roster differs from family, World or character resources' in changed_restore.stderr,changed_restore.stderr
+        assert 'accepted HHRD character bytes changed' in changed_restore.stderr,changed_restore.stderr
         assert path.read_bytes()==previous,'changed private character replaced the previous save'
         changed_character.write_bytes(unchanged_bytes)
         # Full execution can retain a posture without inventing a seat attachment.

@@ -1636,7 +1636,8 @@ if(TARGET odh_linux_session_archive_store)
   target_include_directories(odh_object_trade_session_adapter PUBLIC tools)
   target_link_libraries(odh_object_trade_session_adapter PUBLIC odh_object_trade_transaction
     odh_linux_family_session_journal odh_world_room_info odh_room_score odh_route_geometry
-    odh_entity_next odh_object_type odh_tuning odh_room_map odh_definition_index odh_distance_to)
+    odh_entity_next odh_object_type odh_tuning odh_room_map odh_definition_index odh_distance_to
+    odh_look_towards odh_motive_change odh_generic_ts1_compatibility)
   target_compile_features(odh_object_trade_session_adapter PUBLIC cxx_std_17)
   set_target_properties(odh_object_trade_session_adapter PROPERTIES CXX_EXTENSIONS OFF)
   target_link_libraries(odh_object_trade_session_adapter PUBLIC odh_architecture_object_support odh_lot_position_load)
@@ -2770,7 +2771,7 @@ if(BUILD_TESTING)
   target_link_libraries(odh-saved-recovery-person-tests PRIVATE odh_saved_recovery_person odh_saved_recovery_execution)
   add_test(NAME saved_recovery_person COMMAND odh-saved-recovery-person-tests)
   add_executable(odh-saved-recovery-avatar-import-tests tests/saved_recovery_avatar_import.cpp)
-  target_link_libraries(odh-saved-recovery-avatar-import-tests PRIVATE odh_saved_recovery_avatar_import odh_vm_snapshot_codec)
+  target_link_libraries(odh-saved-recovery-avatar-import-tests PRIVATE odh_saved_recovery_avatar_import odh_vm_snapshot_codec odh_random)
   add_test(NAME saved_recovery_avatar_import COMMAND odh-saved-recovery-avatar-import-tests)
   add_executable(odh-dynamic-object-groups-tests tests/dynamic_object_groups.cpp)
   target_link_libraries(odh-dynamic-object-groups-tests PRIVATE odh_dynamic_object_groups odh_object_position_change)

@@ -77,7 +77,7 @@ def objm_and_objt(entities):
         ids.word(object_id); ids.word(type_id)
     ids.word()
     payload = struct.pack("<II4sB", 0, 62, b"MjbO", 1) + ids.data()
-    person_single, _ = saved_person(1, 1)
+    person_single, _ = saved_person(1, 1, neighbor_id=0, family_id=0)
     person = person_single[22:]  # helper's generated Person record after its offset word
     blocks = [person if row[1] == 1 else object_block(row[0], row[2], row[3], row[4], row[5])
               for row in entities]

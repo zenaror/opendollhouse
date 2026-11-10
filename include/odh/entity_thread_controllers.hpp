@@ -87,6 +87,48 @@ public:
         if(sleep_.actor_)sleep_.actor_->run_generation=sleep_.vm_->run_generation();
         return true;
     }
+    // The host proves its selected Main; admit exactly one ordinary start
+    // after the first controller bind. Unlike
+    // join_at/restore_snapshot, this is still an undispatched fresh owner and
+    // does not consume Sleep/queue restoration freshness or alter any clock.
+    bool admit_undispatched_start() {
+        if(!fresh_||!sleep_.fresh_||!interactions_.fresh_||!sleep_.vm_||
+           sleep_.vm_!=interactions_.vm_||sleep_.executing_||interactions_.executing_||
+           sleep_.vm_->dispatch_active()||sleep_.vm_->source_reset_lifecycle_active()||sleep_.source_recovery_run_||
+           staged_tick_||staged_dispatch_||staged_dispatched_||staged_unknown_wait_||
+           thread_interrupt_||schedule_idle_start_||sleep_.actor_||sleep_.job_||
+           sleep_.clock_||sleep_.last_tick_||sleep_.interrupted_||sleep_.notify_resume_||
+           sleep_.evaluated_this_tick_||!sleep_.diagnostic_.empty()||
+           interactions_.eligibility_check_active_||interactions_.immediate_parking_||
+           interactions_.immediate_resuming_||interactions_.clock_||interactions_.last_tick_||interactions_.idle_start_||
+           interactions_.resume_tick_||interactions_.sequence_||interactions_.next_queue_uid_||
+           !interactions_.queue_.empty()||interactions_.active_||interactions_.wait_||
+           interactions_.completion_||interactions_.interrupted_||
+           !interactions_.suspended_active_.empty()||!interactions_.diagnostic_.empty()||
+           interactions_.run_generation_==UINT64_MAX)return false;
+        const auto* actor=interactions_.world_.resolve_reference(
+            {interactions_.actor_id_,interactions_.actor_generation_});
+        if(!actor||!interactions_.world_.is_live_reference(
+                {interactions_.actor_id_,interactions_.actor_generation_})||
+           actor->kind!=EntityKind::avatar||actor->ui_ghost)return false;
+        const auto vm=sleep_.vm_->snapshot();
+        if(vm.run_generation!=interactions_.run_generation_+1||vm.status!=VmStatus::running||
+           vm.steps||vm.ticket_sequence||vm.pending||!vm.suspended_pending.empty()||
+           vm.interaction_return||vm.external_frame_return||!vm.immediate_continuations.empty()||
+           vm.immediate_return||vm.advertisement_changes||!vm.diagnostic.empty()||
+           vm.stack.size()!=1)return false;
+        const auto& frame=vm.stack.front();
+        if(frame.pc||frame.return_mode!=VmCallReturnMode::ordinary||frame.invocation_ticket||
+           frame.original_import||frame.action_tree||!frame.context.entity_references_bound||
+           frame.context.caller!=actor->id||frame.context.callee!=actor->id||
+           !frame.context.caller_generation||!frame.context.callee_generation||
+           frame.context.caller_generation!=actor->generation||
+           frame.context.callee_generation!=actor->generation)return false;
+        // All proofs precede this scalar publication. No VM, World, callback,
+        // RNG, ticket, wait, queue contents, freshness flag or clock is changed.
+        interactions_.run_generation_=vm.run_generation;
+        return true;
+    }
     // Original Person recovery detaches asynchronous owners before popping
     // frames. Queued/active action headers remain available for ordered EP4
     // and for the later Main/EP3 phases; ordinary cancellation is separate.
@@ -151,7 +193,8 @@ public:
            interactions_.active_||!interactions_.suspended_active_.empty()||!interactions_.queue_.empty()||
            interactions_.sequence_||interactions_.completion_||thread_interrupt_)return false;
         const auto before=sleep_.vm_->snapshot();
-        if(before.steps||before.ticket_sequence||before.pending||!before.suspended_pending.empty()||
+        if(interactions_.run_generation_!=before.run_generation||
+           before.steps||before.ticket_sequence||before.pending||!before.suspended_pending.empty()||
            before.interaction_return||before.external_frame_return||!before.immediate_continuations.empty()||
            before.immediate_return||before.run_generation==UINT64_MAX||execution.run_generation!=before.run_generation+1||
            execution.steps||execution.pending||!execution.suspended_pending.empty()||

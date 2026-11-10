@@ -23,7 +23,7 @@ def make_missing(root, failure=None, clock=CLOCK):
     records = b''
     for index, guid in enumerate(GUIDS):
         bank = [0] * 80
-        bank[7], bank[10], bank[58], bank[61] = 17, 23, 44, 201
+        bank[7], bank[10], bank[31], bank[58], bank[61] = 17, 23, 11 + index, 44, 201
         if index == 1 and failure == 'ghost': bank[68] = 1
         records += struct.pack('<II', 1, 4) + f'Sim{index}'.encode() + b'\0\0' + struct.pack('<ii', index, 1)
         records += struct.pack('<80h', *bank) + struct.pack('<hIii', 11 + index, guid, -1, 0)
@@ -34,7 +34,7 @@ def make_missing(root, failure=None, clock=CLOCK):
     table = Bits()
     for value in (1, 1, 2, 2, 0): table.word(value)
     objm = struct.pack('<II4sB', 0, 62, b'MjbO', 1) + table.data()
-    single, _ = saved_person(1, 1, len(objm) + 4)
+    single, _ = saved_person(1, 1, len(objm) + 4, neighbor_id=11, family_id=201)
     payload = single[22:]
     objm += struct.pack('<I', len(objm) + 4 + len(payload) - 12) + payload
     block = Bits()

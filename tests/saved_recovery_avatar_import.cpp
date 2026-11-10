@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "saved_recovery_avatar_import.hpp"
 #include "odh/vm_snapshot_codec.hpp"
+#include "odh/random.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -12,14 +13,15 @@ RoutineSet code(){return {{routine_key(4096),Bhav{0x8002,{{98,254,255,{}}},{},Bh
     {routine_key(4097),Bhav{0x8002,{{99,254,255,{}}},{},Bhav::Metadata{0,4,0,0}}}};}
 struct Fixture {
     World world;
-    EntityThreadControllers controls{world,1};
+    RandomState random{12345};unsigned random_reads=0;
+    EntityThreadControllers controls{world,1,[this]{++random_reads;random.next(1);}};
     unsigned dispatched=0;
     Vm vm;
     SavedWorldEntity source{};
     Objt types{};
     WorldEntityReference actor{},target{};
     bool lease=true,recover=true;std::optional<std::uint64_t> service_run;unsigned service_commits=0;
-    explicit Fixture(RoutineSet resources=code()):vm({},world.vm_memory(),{},[this](const auto&,const auto&,const auto&,const auto&){
+    explicit Fixture(RoutineSet resources=code(),bool bind_before_start=false):vm({},world.vm_memory(),{},[this](const auto&,const auto&,const auto&,const auto&){
         ++dispatched;return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};},{{77,resources},{88,resources}}){
         std::array<std::int16_t,68> words{};words[1]=2;words[3]=-1;
         require(world.create_saved_entity(1,EntityKind::avatar,1001,{},std::vector<std::int16_t>(88),
@@ -27,8 +29,9 @@ struct Fixture {
         require(world.create_runtime_object(2,1002,{},{}),"create original action target");
         actor={1,world.find(1)->generation};target={2,world.find(2)->generation};
         VmContext context{1,1,0,77};require(world.bind_context_live(context),"bind constructor Main context");
+        if(bind_before_start)require(controls.bind(vm),"bind controllers before actual Main.start");
         require(vm.start(routine_key(4096),context)==VmStatus::running,"undispatched constructor Main");
-        require(controls.bind(vm),"bind actual avatar controllers");
+        if(!bind_before_start)require(controls.bind(vm),"bind actual avatar controllers");
         vm.temps().fill(45);vm.temp_xl().fill(123456);
         source.saved.object_id=1;source.saved.guid=1001;source.serialized_object_type=2;
         source.imported_generation=actor.generation;source.saved.prefix.temps={1,2,3,4,5,6,7,8};
@@ -108,6 +111,84 @@ void compatible_frames_and_queue(){
         "compatible source keeps raw frame/register/action metadata in the same actual graph without Reset");
     require(!controls.sleep.job&&(!controls.sleep.actor||controls.sleep.actor->run_generation==f.vm.run_generation()),
         "actual Sleep owner follows the imported Thread epoch without an invented job or actor");
+}
+void bind_before_start_admission(){
+    const auto compatible=[](Fixture& f){
+        f.recover=false;f.source.common.stack.front().node_id=0;
+        f.source.tail.person->object_uses.clear();f.source.tail.person->active_interaction.tta_index=-1;
+    };
+    {
+        Fixture f(code(),true);compatible(f);const auto before=encode_vm_snapshot(f.vm.snapshot());
+        require(f.controls.snapshot().interactions.run_generation+1==f.vm.run_generation(),
+            "reproduce host order: first bind precedes Main.start by one epoch");
+        SavedRecoveryAvatarImport importer(f.context());std::string error;
+        require(!importer.prepare({f.binding()},error),"missing start admission rejects before publication");
+        require(encode_vm_snapshot(f.vm.snapshot())==before&&f.vm.steps()==0&&!f.dispatched&&
+            f.controls.snapshot().interactions.run_generation+1==f.vm.run_generation()&&!f.service_commits,
+            "missing admission cannot partly publish VM or controllers");
+    }
+    {
+        Fixture f(code(),true);compatible(f);const auto before=encode_vm_snapshot(f.vm.snapshot());
+        const auto seed=f.random.seed(),run=f.vm.run_generation();const auto motives=f.world.find(1)->motives;
+        require(f.controls.admit_undispatched_start(),"admit one actual undispatched Main.start");
+        const auto admitted=f.controls.snapshot();
+        require(admitted.interactions.run_generation==run&&encode_vm_snapshot(f.vm.snapshot())==before&&
+            !admitted.sleep.actor&&!admitted.sleep.job&&!admitted.sleep.last_tick&&!admitted.sleep.clock&&
+            !admitted.interactions.last_tick&&!admitted.interactions.clock&&!admitted.interactions.sequence&&
+            admitted.interactions.actions.empty()&&!admitted.interactions.active&&!admitted.interactions.wait&&
+            !admitted.thread_interrupt&&!admitted.schedule_idle_start&&f.random.seed()==seed&&!f.random_reads&&!f.dispatched,
+            "admission publishes only queue epoch, not clocks/steps/RNG/waits or World motives");
+        require(!f.controls.admit_undispatched_start(),"start admission is not replayable");
+        SavedRecoveryAvatarImport importer(f.context());std::string error;
+        require(importer.prepare({f.binding()},error),error.c_str());
+        const auto result=importer.commit();require(result.completed&&!result.discard_candidate,result.diagnostic.c_str());
+        const auto final=f.controls.snapshot();
+        require(f.vm.run_generation()==run+1&&final.interactions.run_generation==run+1&&f.vm.steps()==0&&
+            f.vm.stack().front().original_import&&f.vm.stack().front().original_import->primitive_state==777&&
+            final.interactions.actions.size()==1&&final.interactions.actions.front().queue_uid==0&&
+            !final.interactions.active&&!final.sleep.job&&!final.sleep.clock&&!final.interactions.clock&&
+            f.world.find(1)->motives==motives&&f.random.seed()==seed&&!f.random_reads&&!f.dispatched&&f.service_commits==1,
+            "real compatible import retains fresh Sleep and publishes exact source frames/queue without Reset");
+    }
+    {
+        Fixture f(code(),true);const auto context=f.vm.stack().front().context;
+        require(f.vm.start(routine_key(4096),context)==VmStatus::running,"second real start without dispatch");
+        const auto before=encode_vm_snapshot(f.vm.snapshot());
+        require(!f.controls.admit_undispatched_start()&&encode_vm_snapshot(f.vm.snapshot())==before,
+            "cannot rebase over more than the single bound Main.start");
+    }
+    {
+        Fixture f(code(),true);require(f.controls.observe(),"observe the actual controller owner");
+        require(!f.controls.admit_undispatched_start(),"observed controllers cannot regain freshness");
+    }
+    {
+        Fixture f;require(!f.controls.admit_undispatched_start(),"already current first-bind epoch needs no start admission");
+    }
+    {
+        Fixture f(code(),true);const auto before=encode_vm_snapshot(f.vm.snapshot());
+        const auto epoch=f.controls.snapshot().interactions.run_generation;auto stale=f.vm.snapshot();
+        ++stale.stack.front().context.caller_generation;
+        require(!f.vm.restore_snapshot(stale),"ordinary restore rejects a stale caller generation before admission");
+        require(encode_vm_snapshot(f.vm.snapshot())==before&&
+            f.controls.snapshot().interactions.run_generation==epoch&&!f.random_reads&&!f.dispatched,
+            "stale caller rejection preserves the actual Main and bound controller epoch");
+    }
+    {
+        Fixture f(code(),true);const auto before=encode_vm_snapshot(f.vm.snapshot());
+        const auto epoch=f.controls.snapshot().interactions.run_generation;auto stale=f.vm.snapshot();
+        ++stale.stack.front().context.callee_generation;
+        require(!f.vm.restore_snapshot(stale),"ordinary restore rejects a stale callee generation before admission");
+        require(encode_vm_snapshot(f.vm.snapshot())==before&&
+            f.controls.snapshot().interactions.run_generation==epoch&&!f.random_reads&&!f.dispatched,
+            "stale callee rejection preserves the actual Main and bound controller epoch");
+    }
+    {
+        Fixture f(code(),true);compatible(f);
+        require(f.controls.join_at(0),"existing birth snapshot consumes restoration freshness");
+        require(!f.controls.admit_undispatched_start(),"join_at cannot manufacture an untouched import owner");
+        SavedRecoveryAvatarImport importer(f.context());std::string error;
+        require(!importer.prepare({f.binding()},error),"birth snapshot is not a replacement for typed start admission");
+    }
 }
 void compatible_source_returns(){
     for(const bool interaction:{false,true}){
@@ -268,5 +349,5 @@ void controller_preimage(){
         after.interactions.actions.empty(),"stale controller preimage rejects publication without rolling back clocks or mutating execution");
 }
 }
-int main(){try{hydration();compatible_frames_and_queue();compatible_source_returns();ordinary_restore_cannot_import_annotations();missing_matching_consumers_reject_before_publication();original_import_cannot_recover_a_fault();matching_service_publication_guards();repeated_source_use_maps_one_boundary();rejected_profiles();stale_and_empty();original_identity_and_cohort();split_controller_ownership();controller_preimage();std::cout<<"saved avatar execution hydration passed\n";return 0;}
+int main(){try{hydration();compatible_frames_and_queue();bind_before_start_admission();compatible_source_returns();ordinary_restore_cannot_import_annotations();missing_matching_consumers_reject_before_publication();original_import_cannot_recover_a_fault();matching_service_publication_guards();repeated_source_use_maps_one_boundary();rejected_profiles();stale_and_empty();original_identity_and_cohort();split_controller_ownership();controller_preimage();std::cout<<"saved avatar execution hydration passed\n";return 0;}
 catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

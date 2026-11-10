@@ -56,7 +56,8 @@ def snap_world(root):
     objm = struct.pack('<II4sB', 0, 62, b'MjbO', 1) + table.data()
     objt = struct.pack('<II4s', 0, 2, b'tjbo')
     for index, guid in enumerate(GUIDS):
-        single, _ = saved_person(index + 1, index + 1, len(objm) + 4)
+        single, _ = saved_person(index + 1, index + 1, len(objm) + 4,
+                                 neighbor_id=11 + index, family_id=201)
         payload = single[22:]
         objm += struct.pack('<I', len(objm) + 4 + len(payload) - 12) + payload
         objt += struct.pack('<I6H', guid, 0, 0, 0, 0, index + 1, 2) + b'person\0\0'

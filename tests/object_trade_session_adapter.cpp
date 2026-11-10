@@ -13,6 +13,7 @@
 #include "linux_family_overlay_store.hpp"
 #include "linux_session_archive_store.hpp"
 #include "odh/sha256.hpp"
+#include "odh/generic_ts1_compatibility.hpp"
 #include "odh/relationship_snapshot_codec.hpp"
 #include "odh/seated_session_continuation.hpp"
 #include "odh/room_lighting_codec.hpp"
@@ -977,6 +978,77 @@ void candidate_relationship_matrix(const std::filesystem::path& root){
         require(primitive(frame,operation(opcode,mode,1,flags),temps,{nullptr,20}).disposition==PrimitiveDisposition::unsupported&&
             encode_relationship_snapshot(isolated.snapshot())==before&&extra_calls==0,"expired candidate authority rejects before relationship or extension dispatch");
     }
+    // Synchronous services share the candidate World and VM output memory.
+    // No route controller, renderer, live callback or artificial tick is lent.
+    {
+        World world;require(world.create(101,EntityKind::avatar,{0,80,0,16})&&
+            world.create(303,EntityKind::object,{2,0,0})&&world.define_type(303,0x2345),"synchronous candidate participants");
+        // Seed a normal pre-command avatar tick. SetMotiveChange must retain
+        // its source ordering gate; the transaction itself never advances it.
+        require(world.tick_motive_changes(),"existing session tick opens motive ordering gate before candidate creation");
+        SessionBundle components;components.world=world.snapshot();
+        const auto source_bytes=encode_world_snapshot(components.world);
+        RelationshipState relations;SessionHostState host;host.global_values.push_back({31,4});
+        RandomState random(17);bool authority=true;unsigned extra_calls=0;
+        ObjectTradeSessionHooks hooks;
+        hooks.extra_primitive_factory=[&](const ObjectTradeCandidateContext&,const VmMemory&){return VmPrimitive{
+            [&](const auto&,const auto&,const auto&,const auto&){++extra_calls;return PrimitiveOutcome{PrimitiveDisposition::unsupported,"unowned service"};}};};
+        auto factory=make_object_trade_candidate_factory(resources,components,prepared,raw,rooms,hooks,{},303,0x2345,0x2345,[&]{return authority;},nullptr,nullptr);
+        auto binding=factory(world,relations,host,random,nullptr,nullptr,resource);
+        auto primitive=binding.primitive_factory(binding.memory);
+        VmFrame frame;frame.context={101,101,303,0};Ts1Temps temps{};temps[0]=19;
+        Instruction look{22,254,255,{0,0,0,0,0,0,0,0}};
+        require(primitive(frame,look,temps,{}).disposition==PrimitiveDisposition::goto_true&&
+            world.find(101)->person_data[41]==303&&world.find(101)->person_data[42]==1&&
+            world.find(101)->person_data[43]==0&&world.find(101)->person_data[44]==1&&world.find(101)->person_data[45]==0,
+            "candidate head target publishes all five fields to its own avatar");
+        const auto after_head=encode_world_snapshot(world.snapshot());look.operands[0]=1;
+        require(primitive(frame,look,temps,{}).disposition==PrimitiveDisposition::goto_true&&
+            encode_world_snapshot(world.snapshot())==after_head,"camera compatibility does not change head/body state");
+        for(unsigned mode=2;mode<8;++mode){look.operands[0]=static_cast<std::uint8_t>(mode);
+            require(primitive(frame,look,temps,{}).disposition==PrimitiveDisposition::unsupported&&
+                primitive(frame,look,temps,{nullptr,0,true}).disposition==PrimitiveDisposition::unsupported&&
+                encode_world_snapshot(world.snapshot())==after_head,"body modes never create a route or invent a synchronous check result");}
+        const auto object_frame=[&]{auto f=frame;f.context.caller=303;return f;}();look.operands[0]=0;
+        require(primitive(object_frame,look,temps,{}).disposition==PrimitiveDisposition::unsupported,
+            "object caller cannot acquire avatar head state");
+        Instruction motive{29,254,255,{7,7,0,2,5,0,40,0}};
+        require(primitive(frame,motive,temps,{}).disposition==PrimitiveDisposition::goto_true&&world.find(101)->motives[0]==5,
+            "one-shot motive update reaches candidate avatar");
+        motive.operands[3]=0;motive.operands[4]=60;
+        require(primitive(frame,motive,temps,{}).disposition==PrimitiveDisposition::goto_true&&
+            world.find(101)->motives[0]==5&&world.find(101)->motive_changes[0].per_hour_change==60&&
+            world.find(101)->motive_changes[0].maximum==40,"continuous motive installs a controller without ticking simulation");
+        auto cold=decode_world_snapshot(encode_world_snapshot(world.snapshot()));World reopened;
+        require(reopened.restore_snapshot(cold)&&reopened.find(101)->person_data[41]==303&&
+            reopened.find(101)->motives[0]==5&&reopened.find(101)->motive_changes[0].per_hour_change==60,
+            "cold codec preserves candidate head, motive and continuous rate state");
+        const auto before_invalid=encode_world_snapshot(world.snapshot());
+        auto invalid=motive;invalid.operands[2]=16;
+        require(primitive(frame,invalid,temps,{}).disposition==PrimitiveDisposition::unsupported&&
+            primitive(object_frame,motive,temps,{}).disposition==PrimitiveDisposition::unsupported&&
+            encode_world_snapshot(world.snapshot())==before_invalid,"missing avatar/invalid motive refuses without effects");
+        motive.operands[3]=1;
+        require(primitive(frame,motive,temps,{}).disposition==PrimitiveDisposition::goto_true&&
+            world.find(101)->motive_changes[0].per_hour_change==0,"clear resets the candidate continuous controller");
+        for(unsigned mode=0;mode<256;++mode){Instruction generic{1,254,255,{static_cast<std::uint8_t>(mode),255,255,255,255,255,255,255}};
+            const auto result=primitive(frame,generic,temps,{});
+            if(generic_ts1_compatibility_mode(static_cast<std::uint8_t>(mode))){
+                require(result.disposition==PrimitiveDisposition::goto_true,"finite compatibility profile is shared by candidate dispatch");
+                if(mode==14){require(result.variable_write&&result.variable_write->scope==6&&result.variable_write->index==31&&
+                    result.variable_write->value==19&&host.global_values[0].value==4,"radio mode stages a VM write without touching live globals");
+                    require(binding.memory.write(frame,6,31,result.variable_write->value)&&host.global_values[0].value==19,
+                        "effective candidate memory accepts the staged shared global write");host.global_values[0].value=4;}
+            }else require(result.disposition==PrimitiveDisposition::unsupported,"unowned generic features are not blanket success");
+        }
+        const auto final=encode_world_snapshot(world.snapshot());authority=false;
+        for(const auto ins:{look,motive,Instruction{1,254,255,{14,0,0,0,0,0,0,0}}})
+            require(primitive(frame,ins,temps,{}).disposition==PrimitiveDisposition::unsupported,
+                "expired candidate authority blocks every synchronous service before effects");
+        require(encode_world_snapshot(world.snapshot())==final&&encode_world_snapshot(components.world)==source_bytes&&
+            random.seed()==17&&host.global_values[0].value==4&&extra_calls>0,
+            "services preserve source snapshots/RNG and reject services without an owner");
+    }
     // A full native transaction, not merely the primitive table: effects from
     // Init0/EP8/EP11 survive publication and cold decoding; subsequent move/sell
     // and a failed later primitive use the same candidate service/abort owner.
@@ -988,14 +1060,16 @@ void candidate_relationship_matrix(const std::filesystem::path& root){
             at(entries,16+e.first*4+2,e.second,2);
         const auto relation_code=[&](unsigned set,unsigned value,bool fail){
             auto b=assignments({{4,1},{13,128},{42,1},{23,2},{43,10}});
-            b[5]=4;at(b,6,4,2);at(b,2,static_cast<std::uint32_t>(fail?10:9),2);b[12+4*12+2]=5;
+            b[5]=4;at(b,6,4,2);at(b,2,static_cast<std::uint32_t>(fail?12:11),2);b[12+4*12+2]=5;
             const auto add=[&](unsigned op,unsigned yes,std::array<std::uint8_t,8> args){put(b,op,2);b.push_back(static_cast<char>(yes));b.push_back(static_cast<char>(253));for(auto x:args)b.push_back(static_cast<char>(x));};
             add(2,6,{0,0,11,0,0,5,10,3}); // Actual own ID -> StackObject.
             add(2,7,{1,0,static_cast<std::uint8_t>(value),0,0,5,9,7});
             auto rel=operation(opcode,0,set,0);add(opcode,8,rel.operands);
             // Reading through the same opcode must return the value to Param1.
-            auto read=operation(opcode,0,0,0);add(opcode,fail?9:254,read.operands);
-            if(fail)add(655,254,{}); // Missing shared routine, AFTER real matrix effects.
+            auto read=operation(opcode,0,0,0);add(opcode,9,read.operands);
+            add(2,10,{0,0,static_cast<std::uint8_t>(value),0,0,5,8,7}); // Literal -> actual VM Temp0.
+            add(1,fail?11:254,{14,0,0,0,0,0,0,0}); // Shared global31 via VM variable_write.
+            if(fail)add(655,254,{}); // Missing shared routine, AFTER matrix/global effects.
             return b;
         };
         const auto populate=[&](bool fail){write(file,iff({chunk("OBJD",128,def),chunk("OBJf",128,entries),
@@ -1019,6 +1093,8 @@ void candidate_relationship_matrix(const std::filesystem::path& root){
         auto reopened=decode_actorless_object_trade_state(bought.archive,&identity);
         require(encode_actorless_object_trade_state(reopened)==bought.archive&&reopened.relationships.pair_count==1&&
             reopened.relationships.value_count==3,"published candidate relationship pair/growth survives exact cold codec");
+        require(reopened.globals.words[31]==7,
+            "actual Init/placement VM stages, applies and captures Generic14 to candidate globals through cold codec");
         // VMEntity.Init runs EP0 then EP8. The constructor OOW post skips
         // dynamic update, but the actual in-world PostPositionChange runs EP8
         // again before the explicit user EP11: 11 + 7 + 7 + 7 = 32.
