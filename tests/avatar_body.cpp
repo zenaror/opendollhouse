@@ -35,6 +35,11 @@ void species_descriptors(){
             !descriptor.child&&descriptor.global_walk_id==150&&descriptor.global_swim_id==158&&
             descriptor.walk[0]=="global-walk"&&descriptor.walk[1]=="authored-turn"&&descriptor.walk[2]=="authored-run"&&
             descriptor.swim[0]=="global-swim"&&random.seed()==seed);
+        check(world.set_person_data(1,58,7));
+        const auto live=odh::derive_avatar_body_descriptor(world,1,random,body,
+            table({"child-live-walk"}),table({"child-live-swim"}),{},true);
+        check(live.child&&live.global_walk_id==151&&live.global_swim_id==160&&live.walk[0]=="child-live-walk"&&
+            live.swim[0]=="child-live-swim"&&live.body->age==27&&world.find(1)->person_data[58]==7&&random.seed()==seed);
         const auto applied=odh::apply_avatar_body(world,1,random,body,table({"global-walk"}),table({"global-swim"}));
         check(applied.body_type==profile.second&&world.find(1)->person_data[58]==27&&
             world.find(1)->person_data[65]==(profile.first=="dog"?8:profile.second==odh::AvatarBodyType::cat?17:1));

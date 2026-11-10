@@ -66,6 +66,22 @@ WorldEntityReference vm_context_reference(const VmContext&,VmEntityRole) noexcep
 // False leaves the destination unchanged; bind all legacy roles atomically first.
 bool vm_context_set_reference(VmContext&,VmEntityRole,WorldEntityReference) noexcept;
 bool vm_context_copy_reference(VmContext&,VmEntityRole,const VmContext&,VmEntityRole) noexcept;
+// Exact pinned7e76 original-import return annotation. These values describe
+// a converted original stack, not an ODHS pending-service reconstruction.
+enum class VmOriginalReturn : std::uint8_t { normal, retry, interaction };
+struct VmOriginalUse {
+    WorldEntityReference target{};
+    std::uint8_t flags=0;
+    bool operator==(const VmOriginalUse& other) const noexcept {return target==other.target&&flags==other.flags;}
+};
+struct VmOriginalFrameState {
+    std::int32_t primitive_state=0; // Preserved; ConvertThread7e76 ignores this field.
+    VmOriginalReturn result=VmOriginalReturn::normal;
+    std::vector<VmOriginalUse> uses; // Exact ordered ObjectUses at this source depth.
+    bool operator==(const VmOriginalFrameState& other) const noexcept {
+        return primitive_state==other.primitive_state&&result==other.result&&uses==other.uses;
+    }
+};
 struct VmFrame {
     RoutineKey key;
     std::uint16_t pc = 0;
@@ -76,6 +92,7 @@ struct VmFrame {
     std::uint64_t invocation_ticket = 0;
     bool exact_arguments = false; // Source service frame extent; ordinary BHAV calls retain padding.
     bool action_tree=false;
+    std::optional<VmOriginalFrameState> original_import={};
 };
 bool vm_frame_equal(const VmFrame&,const VmFrame&) noexcept;
 struct VmTrace {
@@ -306,6 +323,19 @@ struct VmSnapshot {
     AdvertisementChanges advertisement_changes;
 };
 
+// Single-use source-authorized admission into this actual undispatched Thread.
+// Tickets are reserved from its native counter, never alleged saved TS1 tickets.
+class VmOriginalImportPlan {
+public:
+    const VmSnapshot& snapshot() const noexcept {return prepared_;}
+private:
+    friend class Vm;
+    const Vm* origin_=nullptr;
+    VmSnapshot before_,prepared_;
+    std::function<bool()> source_current_;
+    bool consumed_=false;
+};
+
 // Result of running a short BHAV on an existing entity thread's temporary
 // stack. The entity's Main frames/status are restored; the thread's Temps and
 // TempXL remain shared with the called tree. A non-return status is not success
@@ -376,6 +406,15 @@ public:
     // rules, used to preflight a queue against its prospective native stack.
     std::vector<VmFrame> prepare_dormant_frames(std::vector<VmFrame>,
         VmSavedRoutinePolicy = VmSavedRoutinePolicy::require_present) const;
+    // Original OBJM/7e76 ConvertThread only. Frames carry their authenticated
+    // return mapping and raw primitive_state. Requires current complete banks,
+    // bound references and an undispatched actual Main/controller preimage.
+    // No scripts run, no synthetic steps, no native pending service is invented.
+    std::optional<VmOriginalImportPlan> prepare_original_import(
+        std::vector<VmFrame>,const Ts1Temps&,std::function<bool()> source_current,
+        std::string& diagnostic) const;
+    bool original_import_current(const VmOriginalImportPlan&) const;
+    bool commit_original_import(VmOriginalImportPlan&);
     // A host must explicitly opt in after restoring the surrounding world state.
     bool activate_dormant_state();
     VmStatus run(std::uint64_t instruction_budget,

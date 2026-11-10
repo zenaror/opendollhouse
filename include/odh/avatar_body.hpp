@@ -54,7 +54,7 @@ struct AvatarBodyDescriptor {
 AvatarBodyDescriptor derive_avatar_body_descriptor(const World&,std::int16_t actor,
     const RandomState&,const std::optional<AvatarBodyStrings>& body,
     const StringTable& global_walk,const StringTable& global_swim,
-    const std::optional<StringTable>& object_walk={});
+    const std::optional<StringTable>& object_walk={},bool use_live_age=false);
 AvatarBodyDescriptor apply_avatar_body(World&,std::int16_t actor,RandomState&,
     const std::optional<AvatarBodyStrings>& body,const StringTable& global_walk,
     const StringTable& global_swim,const std::optional<StringTable>& object_walk={});

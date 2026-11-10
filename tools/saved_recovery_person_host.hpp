@@ -28,8 +28,8 @@ public:
     bool supports(const odh::SavedRecoveryCall&,std::string&) const;
     bool execute(const odh::SavedRecoveryCall&,std::string&);
     bool ready() const;
-    // Hydrated opaque continuations remain forbidden to dispatch/save until
-    // every plan-required self reset reaches person_actions, or is deleted.
+    // Compatible imported continuations are runnable after full cohort load;
+    // opaque changed continuations must reach person_actions or be deleted.
     bool dispatch_ready() const;
 private:
     struct State;std::unique_ptr<State> state_;

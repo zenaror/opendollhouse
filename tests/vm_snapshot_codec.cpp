@@ -36,7 +36,8 @@ void same(const odh::VmSnapshot& left, const odh::VmSnapshot& right) {
             left.stack[i].return_mode==right.stack[i].return_mode&&
             left.stack[i].invocation_ticket==right.stack[i].invocation_ticket&&
             left.stack[i].arguments==right.stack[i].arguments&&left.stack[i].locals==right.stack[i].locals&&
-            left.stack[i].exact_arguments==right.stack[i].exact_arguments,
+            left.stack[i].exact_arguments==right.stack[i].exact_arguments&&
+            left.stack[i].original_import==right.stack[i].original_import,
             "stack frame round-trips");
     if(left.pending)require(left.pending->ticket==right.pending->ticket&&
         left.pending->instruction.step==right.pending->instruction.step&&
@@ -63,6 +64,30 @@ void same(const odh::VmSnapshot& left, const odh::VmSnapshot& right) {
         left.immediate_return->code_owner==right.immediate_return->code_owner&&
         left.immediate_return->run_generation==right.immediate_return->run_generation,
         "immediate return round-trips");
+}
+
+// Routing values include suspended replay instructions; the ordinary helper
+// deliberately requires none. Compare that additional value bank exhaustively
+// before applying the unchanged ordinary comparison to the remaining fields.
+void same_route_values(const odh::VmSnapshot& left,const odh::VmSnapshot& right){
+    const auto pending_equal=[](const odh::VmPending& a,const odh::VmPending& b){
+        const auto& x=a.instruction;const auto& y=b.instruction;
+        return a.ticket==b.ticket&&odh::vm_context_equal(a.context,b.context)&&
+            x.step==y.step&&x.depth==y.depth&&x.key.scope==y.key.scope&&x.key.id==y.key.id&&
+            x.pc==y.pc&&x.code_owner==y.code_owner&&x.instruction.opcode==y.instruction.opcode&&
+            x.instruction.on_true==y.instruction.on_true&&x.instruction.on_false==y.instruction.on_false&&
+            x.instruction.operands==y.instruction.operands;
+    };
+    require(left.suspended_pending.size()==right.suspended_pending.size()&&
+        left.action_tree_known==right.action_tree_known,"routing value bank shape round-trips");
+    for(std::size_t i=0;i<left.suspended_pending.size();++i)
+        require(pending_equal(left.suspended_pending[i],right.suspended_pending[i]),"complete suspended routing replay round-trips");
+    require(left.pending.has_value()==right.pending.has_value()&&
+        (!left.pending||pending_equal(*left.pending,*right.pending)),"complete routing pending round-trips");
+    require(left.stack.size()==right.stack.size(),"routing value frame count round-trips");
+    for(std::size_t i=0;i<left.stack.size();++i)
+        require(odh::vm_frame_equal(left.stack[i],right.stack[i]),"complete routing frame and original metadata round-trip");
+    auto a=left,b=right;a.suspended_pending.clear();b.suspended_pending.clear();same(a,b);
 }
 
 odh::VmPending parent_wait() {
@@ -448,6 +473,25 @@ int main() {
             require(legacy[0]==2,"ordinary frames retain previous codec2 layout");
             require(!odh::decode_vm_snapshot(legacy).stack.front().exact_arguments,
                 "legacy frames decode with ordinary padded argument profile");
+        }
+        {
+            odh::VmSnapshot original;original.run_generation=1;original.status=odh::VmStatus::running;original.action_tree_known=true;
+            odh::VmFrame frame{};frame.key=odh::routine_key(4096);frame.arguments.resize(4);
+            frame.original_import=odh::VmOriginalFrameState{-2147483647,odh::VmOriginalReturn::normal};original.stack.push_back(frame);
+            const auto encoded=odh::encode_vm_snapshot(original);require(encoded[0]==9,"raw original primitive metadata selects VM codec9 only when needed");
+            same(original,odh::decode_vm_snapshot(encoded));
+            auto malformed=original;malformed.stack.front().original_import->result=odh::VmOriginalReturn::retry;
+            rejects([&]{odh::encode_vm_snapshot(malformed);},"root frame cannot have an original Retry caller");
+            auto values=malformed;values.status=odh::VmStatus::ready;values.run_generation=0;
+            values.pending=parent_wait();values.stack.push_back(values.stack.front());
+            values.suspended_pending.push_back(*values.pending);
+            const auto value_bytes=odh::encode_vm_snapshot(values);
+            same_route_values(values,odh::decode_vm_snapshot(value_bytes));
+            odh::Vm cold({{odh::routine_key(4096),odh::Bhav{0x8002,{{27,254,255,{}}},{},odh::Bhav::Metadata{0,4,0,0}}}});
+            require(!cold.restore_snapshot(odh::decode_vm_snapshot(value_bytes)),
+                "routing value envelope preserves flattened original/replay metadata but never authorizes executable root Retry");
+            original.stack.front().original_import.reset();const auto legacy=odh::encode_vm_snapshot(original);
+            require(legacy[0]!=9,"ordinary snapshots retain their established codec selection");
         }
         std::cout << checks << " VM snapshot codec checks passed (synthetic values only)\n";
     } catch (const std::exception& error) {

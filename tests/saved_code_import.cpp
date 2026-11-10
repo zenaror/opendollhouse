@@ -28,5 +28,16 @@ int main(){try{
     if(no_resources.comparison.state!=odh::SavedCodePreflightState::complete||
        no_resources.comparison.types[0].state!=odh::SavedCodeTypeState::sentinel||!no_resources.resources.empty()||loads)
         throw std::runtime_error("serialized sentinel must not retain or require code resources");
+    odh_host::OriginalImportRecoveryBoundary boundary{true,true,true,false,false,false,true,true,false};
+    const auto select=[&](auto value){return odh_host::select_original_import_recovery(value,no_resources.comparison);};
+    if(select(boundary)!=odh_host::OriginalImportRecoverySelection::home)throw std::runtime_error("normal original HOME recovery must not require a debug flag");
+    boundary.actorless_destination=true;
+    if(select(boundary)!=odh_host::OriginalImportRecoverySelection::destination)throw std::runtime_error("actorless original destination inherits source recovery without a fake person");
+    for(unsigned mode=0;mode<5;++mode){auto cold=boundary;
+        if(mode==0)cold.native_lifetime=true;if(mode==1)cold.fresh_original=false;
+        if(mode==2)cold.position_diagnostic=true;if(mode==3)cold.occupancy_invalidated=true;if(mode==4)cold.whole_household=false;
+        if(select(cold)!=odh_host::OriginalImportRecoverySelection::none)throw std::runtime_error("native/property/diagnostic/partial imports cannot auto-recover");}
+    boundary.authenticated_resources=false;
+    if(select(boundary)!=odh_host::OriginalImportRecoverySelection::unsupported)throw std::runtime_error("missing original resource proof must reject before effects");
     std::cout<<"saved code import budgets passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

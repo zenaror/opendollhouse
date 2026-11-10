@@ -142,6 +142,34 @@ public:
         thread_interrupt_=candidate.thread_interrupt;schedule_idle_start_=candidate.schedule_idle_start;fresh_=false;
         return true;
     }
+    // Source ConvertThread7e76: no serialized native service wait exists.
+    // Import preserves clocks and callbacks, rebinds their actual Thread epoch,
+    // and publishes the source queue only after its VM has been committed.
+    bool can_import_original(const VmSnapshot& execution,const InteractionQueueSnapshot& queue) const {
+        if(!sleep_.vm_||sleep_.vm_!=interactions_.vm_||sleep_.executing_||interactions_.executing_||
+           sleep_.vm_->dispatch_active()||sleep_.job_||interactions_.wait_||interactions_.resume_tick_||
+           interactions_.active_||!interactions_.suspended_active_.empty()||!interactions_.queue_.empty()||
+           interactions_.sequence_||interactions_.completion_||thread_interrupt_)return false;
+        const auto before=sleep_.vm_->snapshot();
+        if(before.steps||before.ticket_sequence||before.pending||!before.suspended_pending.empty()||
+           before.interaction_return||before.external_frame_return||!before.immediate_continuations.empty()||
+           before.immediate_return||before.run_generation==UINT64_MAX||execution.run_generation!=before.run_generation+1||
+           execution.steps||execution.pending||!execution.suspended_pending.empty()||
+           queue.run_generation!=execution.run_generation||queue.clock!=sleep_.clock_)return false;
+        return interactions_.can_restore_snapshot(queue,execution);
+    }
+    bool commit_original_import(InteractionQueueSnapshot queue,std::uint64_t previous_run) {
+        if(!sleep_.vm_||sleep_.vm_->dispatch_active()||sleep_.executing_||interactions_.executing_||
+           sleep_.job_||interactions_.wait_||interactions_.active_||!interactions_.queue_.empty()||
+           !interactions_.suspended_active_.empty()||interactions_.sequence_||interactions_.completion_||
+           sleep_.vm_->run_generation()!=previous_run+1||interactions_.run_generation_!=previous_run)return false;
+        auto state=snapshot();state.interactions=std::move(queue);
+        if(state.sleep.actor)state.sleep.actor->run_generation=sleep_.vm_->run_generation();
+        state.thread_interrupt=false; // Explicit ConvertThread7e76 policy.
+        if(!sleep_.valid_snapshot(state.sleep)||!interactions_.valid_snapshot(state.interactions))return false;
+        sleep_.publish_snapshot(std::move(state.sleep));interactions_.publish_snapshot(std::move(state.interactions));
+        thread_interrupt_=false;fresh_=false;return true;
+    }
     // Freshly born avatar with Main prepared but never dispatched. Establish
     // both service clocks atomically at the host's current simulation tick;
     // this does not tick either service or consume VM/RNG work.

@@ -144,36 +144,38 @@ private:
     std::size_t offset_=0;
 };
 
-void encode_key(Writer& w,const PlaybackResourceKey& k) {
+void encode_key(Writer& w,const PlaybackResourceKey& k,std::uint16_t version) {
     w.u8(static_cast<std::uint8_t>(k.kind));w.u32(k.source);w.u16(k.id);w.i16(k.posture);
-    w.i16(k.caller);w.i16(k.callee);w.i16(k.stack_object);w.i16(k.actor_age);w.u32(k.code_owner);
+    w.i16(k.caller);w.i16(k.callee);w.i16(k.stack_object);w.i16(k.actor_age);w.u32(k.code_owner);if(version>=3)w.string(k.original_name);
 }
-PlaybackResourceKey decode_key(Reader& r) {
+PlaybackResourceKey decode_key(Reader& r,std::uint16_t version) {
     PlaybackResourceKey k{};const auto kind=r.u8();
-    if(kind>static_cast<std::uint8_t>(PlaybackResourceKey::Kind::reach))
+    if(kind>static_cast<std::uint8_t>(version>=3?PlaybackResourceKey::Kind::original_animation:PlaybackResourceKey::Kind::reach))
         throw FormatError("invalid playback resource kind");
     k.kind=static_cast<PlaybackResourceKey::Kind>(kind);k.source=r.u32();k.id=r.u16();k.posture=r.i16();
-    k.caller=r.i16();k.callee=r.i16();k.stack_object=r.i16();k.actor_age=r.i16();k.code_owner=r.u32();return k;
+    k.caller=r.i16();k.callee=r.i16();k.stack_object=r.i16();k.actor_age=r.i16();k.code_owner=r.u32();if(version>=3)k.original_name=r.string();return k;
 }
-void encode_playback_value(Writer& w,const PlaybackSnapshot& p,const SessionBundleLimits& limits) {
+void encode_playback_value(Writer& w,const PlaybackSnapshot& p,const SessionBundleLimits& limits,std::uint16_t version=1) {
     const auto optional=[&](bool value){w.u8(value?1:0);};
-    optional(bool(p.state));if(p.state){const auto& s=*p.state;encode_key(w,s.resource);w.i16(s.actor);
+    optional(bool(p.state));if(p.state){const auto& s=*p.state;encode_key(w,s.resource,version);w.i16(s.actor);
         w.u64(s.actor_generation);w.u64(s.vm_generation);std::uint32_t frame=0,speed=0;
         std::memcpy(&frame,&s.frame,sizeof(frame));std::memcpy(&speed,&s.speed,sizeof(speed));w.u32(frame);w.u32(speed);w.u32(s.frames);
         w.u8(s.backwards);w.u8(s.end);w.u8(s.loop);w.u64(s.low);w.u64(s.high);w.u16(s.events_run);w.u64(s.ticks);
         if(s.queue.size()>limits.max_playback_queue||s.queue.size()>UINT16_MAX)throw FormatError("playback queue exceeds limits");
         w.u16(static_cast<std::uint16_t>(s.queue.size()));for(auto item:s.queue)w.i16(item);
         optional(bool(s.wait));if(s.wait){w.u64(s.wait->ticket);w.u8(static_cast<std::uint8_t>(s.wait->bank));
-            w.u64(s.wait->index);w.u8(s.wait->expected);}}
-    optional(bool(p.carry));if(p.carry)encode_key(w,*p.carry);
+            w.u64(s.wait->index);w.u8(s.wait->expected);}
+        if(version>=3){std::uint32_t bits=0;std::memcpy(&bits,&s.weight,sizeof(bits));w.u32(bits);w.u8(s.original_import);}}
+    optional(bool(p.carry));if(p.carry)encode_key(w,*p.carry,version);
     optional(bool(p.hands));if(p.hands){w.u8(static_cast<std::uint8_t>(p.hands->value.left));
         w.u8(static_cast<std::uint8_t>(p.hands->value.right));w.i16(p.hands->actor);
         w.u64(p.hands->actor_generation);w.u64(p.hands->vm_generation);}
     optional(bool(p.last_tick));if(p.last_tick)w.u64(*p.last_tick);
+    if(version>=3)optional(bool(p.source_walk));
     if(p.source_walk){
         for(const auto& secondary:p.source_walk->secondary){
             PlaybackSnapshot lane;lane.state=secondary;Writer payload(limits.archive.max_section_bytes);
-            encode_playback_value(payload,lane,limits);const auto bytes=payload.take();
+            encode_playback_value(payload,lane,limits,version);const auto bytes=payload.take();
             if(bytes.size()>UINT32_MAX)throw FormatError("locomotion lane exceeds section bounds");
             w.u32(static_cast<std::uint32_t>(bytes.size()));w.append(bytes);
         }
@@ -181,10 +183,22 @@ void encode_playback_value(Writer& w,const PlaybackSnapshot& p,const SessionBund
             std::memcpy(&bits,&weight,sizeof(bits));w.u32(bits);}
     }
 
+    if(version>=3){optional(bool(p.original_carry));if(p.original_carry){
+        PlaybackSnapshot lane;lane.state=p.original_carry;Writer payload(limits.archive.max_section_bytes);
+        encode_playback_value(payload,lane,limits,version);const auto bytes=payload.take();
+        if(bytes.size()>UINT32_MAX)throw FormatError("original carry exceeds section bounds");
+        w.u32(static_cast<std::uint32_t>(bytes.size()));w.append(bytes);}}
+    if(version>=4){optional(bool(p.head_seek));if(p.head_seek){const auto& h=*p.head_seek;
+        w.i16(h.actor);w.u64(h.actor_generation);w.u64(h.vm_generation);
+        const auto real=[&](float v){std::uint32_t bits;std::memcpy(&bits,&v,4);w.u32(bits);};
+        real(h.weight);real(h.last_fraction);for(float v:h.current)real(v);for(float v:h.target)real(v);
+        optional(bool(h.last_tick));if(h.last_tick)w.u64(*h.last_tick);}}
+
 }
-PlaybackSnapshot decode_playback_value(Reader& r,const SessionBundleLimits& limits,bool source_walk=false) {
+PlaybackSnapshot decode_playback_value(Reader& r,const SessionBundleLimits& limits,bool source_walk=false,std::uint16_t version=1,unsigned depth=0) {
     const auto flag=[&](){const auto v=r.u8();if(v>1)throw FormatError("invalid playback boolean");return v!=0;};
-    PlaybackSnapshot p{};if(flag()){PlaybackClipSnapshot s{};s.resource=decode_key(r);s.actor=r.i16();
+    if(depth>1)throw FormatError("nested playback lane exceeds source profile");
+    PlaybackSnapshot p{};if(flag()){PlaybackClipSnapshot s{};s.resource=decode_key(r,version);s.actor=r.i16();
         s.actor_generation=r.u64();s.vm_generation=r.u64();const auto f=r.u32(),speed=r.u32();
         std::memcpy(&s.frame,&f,sizeof(f));std::memcpy(&s.speed,&speed,sizeof(speed));s.frames=r.u32();s.backwards=flag();s.end=flag();s.loop=flag();
         const auto low=r.u64(),high=r.u64();if(low>SIZE_MAX||high>SIZE_MAX)throw FormatError("playback event cursor exceeds platform bounds");
@@ -194,36 +208,55 @@ PlaybackSnapshot decode_playback_value(Reader& r,const SessionBundleLimits& limi
         if(flag()){PlaybackWaitSnapshot wait{};wait.ticket=r.u64();const auto bank=r.u8();
             if(bank>static_cast<std::uint8_t>(VmFrameBank::locals))throw FormatError("invalid playback wait bank");
             wait.bank=static_cast<VmFrameBank>(bank);const auto index=r.u64();if(index>SIZE_MAX)throw FormatError("playback wait index exceeds platform bounds");
-            wait.index=static_cast<std::size_t>(index);wait.expected=r.u8();s.wait=wait;}p.state=std::move(s);}
-    if(flag())p.carry=decode_key(r);
+            wait.index=static_cast<std::size_t>(index);wait.expected=r.u8();s.wait=wait;}
+        if(version>=3){const auto bits=r.u32();std::memcpy(&s.weight,&bits,sizeof(bits));s.original_import=flag();}
+        p.state=std::move(s);}
+    if(flag())p.carry=decode_key(r,version);
     if(flag()){PlaybackHandsSnapshot h{};const auto left=r.u8(),right=r.u8();
         if(left>3||right>3)throw FormatError("invalid playback hand gesture");
         h.value={static_cast<HandGesture>(left),static_cast<HandGesture>(right)};h.actor=r.i16();
         h.actor_generation=r.u64();h.vm_generation=r.u64();p.hands=h;}
     if(flag())p.last_tick=r.u64();
+    if(version>=3)source_walk=flag();
     if(source_walk){
         PlaybackSourceWalkSnapshot walking;
         for(auto& secondary:walking.secondary){
             const auto size=r.u32();if(size>limits.archive.max_section_bytes||size>r.remaining())
                 throw FormatError("locomotion lane exceeds section bounds");
             const auto bytes=r.bytes(size);Reader lane_reader(bytes);
-            auto lane=decode_playback_value(lane_reader,limits,false);
-            if(!lane.state||lane.carry||lane.hands||lane.last_tick||lane.source_walk)
+            auto lane=decode_playback_value(lane_reader,limits,false,version,depth+1);
+            if(!lane.state||lane.carry||lane.hands||lane.last_tick||lane.source_walk||lane.original_carry)
                 throw FormatError("locomotion lane has non-clip payload");
             secondary=std::move(*lane.state);
         }
         for(auto& weight:walking.weights){const auto bits=r.u32();std::memcpy(&weight,&bits,sizeof(weight));}
         p.source_walk=std::move(walking);
     }
+    if(version>=3&&flag()){
+        const auto size=r.u32();if(size>limits.archive.max_section_bytes||size>r.remaining())throw FormatError("original carry exceeds bounds");
+        const auto bytes=r.bytes(size);Reader child(bytes);auto lane=decode_playback_value(child,limits,false,version,depth+1);
+        if(!lane.state||lane.carry||lane.hands||lane.last_tick||lane.source_walk||lane.original_carry||lane.head_seek)throw FormatError("original carry has non-clip payload");
+        p.original_carry=std::move(lane.state);
+    }
+    if(version>=4&&flag()){
+        if(depth)throw FormatError("head seek cannot appear in playback clip lanes");
+        AvatarHeadSeekSnapshot h;h.actor=r.i16();h.actor_generation=r.u64();h.vm_generation=r.u64();
+        const auto real=[&](){const auto bits=r.u32();float v;std::memcpy(&v,&bits,4);return v;};
+        h.weight=real();h.last_fraction=real();for(auto& v:h.current)v=real();for(auto& v:h.target)v=real();
+        if(flag())h.last_tick=r.u64();if(!head_seek_valid(h))throw FormatError("invalid head seek snapshot");p.head_seek=h;
+    }
     if(!r.done())throw FormatError("playback state has trailing data");
     return p;
 }
 std::vector<std::uint8_t> encode_playback(const PlaybackSnapshot& p,const SessionBundleLimits& limits) {
-    Writer w(limits.archive.max_section_bytes);w.u16(p.source_walk?std::uint16_t{2}:payload_version);encode_playback_value(w,p,limits);return w.take();
+    const bool original=p.original_carry||(p.state&&(p.state->original_import||p.state->weight!=1||!p.state->resource.original_name.empty()))||
+        (p.carry&&!p.carry->original_name.empty());
+    const std::uint16_t version=p.head_seek?4:original?3:p.source_walk?2:1;
+    Writer w(limits.archive.max_section_bytes);w.u16(version);encode_playback_value(w,p,limits,version);return w.take();
 }
 PlaybackSnapshot decode_playback(const std::vector<std::uint8_t>& bytes,const SessionBundleLimits& limits) {
-    Reader r(bytes);const auto version=r.u16();if(version!=1&&version!=2)throw FormatError("unsupported playback snapshot version");
-    return decode_playback_value(r,limits,version==2);
+    Reader r(bytes);const auto version=r.u16();if(version!=1&&version!=2&&version!=3&&version!=4)throw FormatError("unsupported playback snapshot version");
+    return decode_playback_value(r,limits,version==2,version);
 }
 
 void validate_runtime_globals(const SessionBundle& bundle) {
@@ -2045,6 +2078,9 @@ void validate_route_links(const SessionRuntimeEntity& entity,const Entity& actor
         throw FormatError("route job and host portal context roster differ");
 }
 bool valid_playback_key(const PlaybackResourceKey& key) {
+    if(key.kind==PlaybackResourceKey::Kind::original_animation)return !key.source&&!key.id&&!key.posture&&
+        !key.original_name.empty()&&key.original_name.size()<=4096&&key.original_name.find_first_of(";\0",0,2)==std::string::npos;
+    if(!key.original_name.empty())return false;
     return (key.kind==PlaybackResourceKey::Kind::reach&&key.source==0&&key.id<=3&&key.posture==0)||
            (key.kind==PlaybackResourceKey::Kind::animation&&((key.source||key.id)&&key.posture==0))||
            (key.kind==PlaybackResourceKey::Kind::posture_reset&&!key.source&&!key.id&&
@@ -2059,6 +2095,8 @@ bool nonzero_digest(const std::array<std::uint8_t,32>& digest) {
     return std::any_of(digest.begin(),digest.end(),[](auto value){return value!=0;});
 }
 bool valid_carry_key(const PlaybackResourceKey& key) {
+    if(key.kind==PlaybackResourceKey::Kind::original_animation)return valid_playback_key(key);
+    if(!key.original_name.empty())return false;
     return (key.kind==PlaybackResourceKey::Kind::animation&&((key.source||key.id)&&key.posture==0))||
            (key.kind==PlaybackResourceKey::Kind::posture_reset&&!key.source&&!key.id&&key.posture==-1);
 }
@@ -2114,15 +2152,15 @@ void validate_playback_links(const SessionRuntimeEntity& entity,const Entity& ac
              (s.speed!=1.0f&&s.speed!=2.0f)||(s.resource.id==3&&s.speed!=1.0f));
         const bool invalid_reach_clip=s.resource.kind==PlaybackResourceKey::Kind::reach&&
             (s.wait||s.backwards||s.loop||s.speed!=1.0f);
-        if(!valid_playback_key(s.resource)||invalid_route_clip||invalid_reach_clip||!key_actor_matches(s.resource)||
+        if((s.resource.kind==PlaybackResourceKey::Kind::original_animation&&!s.original_import)||!valid_playback_key(s.resource)||invalid_route_clip||invalid_reach_clip||!key_actor_matches(s.resource)||
            s.actor!=entity.id||s.actor_generation!=actor.generation||
            s.vm_generation!=vm.run_generation||!std::isfinite(s.frame)||!std::isfinite(s.speed)||
-           s.speed<=0||!s.frames||s.frames>limits.max_playback_frames||s.ticks>limits.max_playback_ticks||
+           (s.original_import?s.speed<0:s.speed<=0)||!std::isfinite(s.weight)||!s.frames||s.frames>limits.max_playback_frames||s.ticks>limits.max_playback_ticks||
            s.events_run>255||s.low>s.high||s.high>limits.max_playback_events||
            s.low>limits.max_playback_events||s.queue.size()>limits.max_playback_queue||
            s.frame<static_cast<float>(std::numeric_limits<std::int32_t>::min())||
            s.frame>static_cast<float>(std::numeric_limits<std::int32_t>::max())||
-           invalid_frame_state||
+           (!s.original_import&&invalid_frame_state)||
            (s.backwards?s.low!=0:s.high>limits.max_playback_events)||!p.hands||
            (s.wait&&(!s.wait->ticket||s.wait->ticket>vm.ticket_sequence)))
             throw FormatError("session playback state identity or limits are invalid");
@@ -2167,6 +2205,20 @@ void validate_playback_links(const SessionRuntimeEntity& entity,const Entity& ac
         throw FormatError("started LookTowards turn has no current shared primary animation state");
     if(p.carry&&(!valid_carry_key(*p.carry)||!key_actor_matches(*p.carry)))
         throw FormatError("session playback carry identity is invalid");
+    if(p.head_seek){const auto& h=*p.head_seek;
+        if(!head_seek_valid(h)||h.actor!=entity.id||h.actor_generation!=actor.generation||h.vm_generation!=vm.run_generation||
+           (h.last_tick&&*h.last_tick>host.tick))throw FormatError("session head seek identity or epoch is invalid");
+    }
+    if(p.carry&&p.carry->kind==PlaybackResourceKey::Kind::original_animation&&!p.original_carry)
+        throw FormatError("named original carry lacks its full static state");
+    if(p.original_carry){const auto& c=*p.original_carry;
+        if(!p.carry||!(c.resource==*p.carry)||c.resource.kind!=PlaybackResourceKey::Kind::original_animation||!c.original_import||
+           !key_actor_matches(c.resource)||c.actor!=entity.id||c.actor_generation!=actor.generation||c.vm_generation!=vm.run_generation||
+           c.wait||!c.queue.empty()||c.events_run||!std::isfinite(c.frame)||!std::isfinite(c.speed)||c.speed<0||!std::isfinite(c.weight)||
+           !c.frames||c.frames>limits.max_playback_frames||c.low>c.high||c.high>limits.max_playback_events||c.ticks||
+           static_cast<double>(c.frame)<INT32_MIN||static_cast<double>(c.frame)>INT32_MAX)
+            throw FormatError("original carry state identity or limits are invalid");
+    }
     if(p.hands){const auto& h=*p.hands;
         if(h.actor!=entity.id||h.actor_generation!=actor.generation||h.vm_generation!=vm.run_generation||
            !valid_hand_gesture(h.value.left)||!valid_hand_gesture(h.value.right))
@@ -3610,7 +3662,7 @@ VmCall route_call(Reader& r,const SessionBundleLimits& limits,bool modern) {
        state.interaction_return||!state.immediate_continuations.empty()||state.immediate_return||state.advertisement_changes)
         throw FormatError("invalid route call value envelope");
     const auto& frame=state.stack.front();
-    if(frame.pc||!frame.locals.empty()||frame.invocation_ticket)
+    if(frame.pc||!frame.locals.empty()||frame.invocation_ticket||frame.original_import)
         throw FormatError("route call envelope contains frame-only state");
     auto call=route_frame_call(frame);
     if(modern&&route_flag(r))call.action_tree_override=route_flag(r);

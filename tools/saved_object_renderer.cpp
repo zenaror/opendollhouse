@@ -6,6 +6,8 @@
 #include <set>
 #include <tuple>
 #include <cmath>
+#include <algorithm>
+#include <climits>
 
 namespace {
 constexpr std::uint64_t pixel_budget=2*1048576, chunk_budget=65536;
@@ -160,6 +162,30 @@ SavedObjectRenderer::~SavedObjectRenderer()=default;
 SavedObjectRenderer::SavedObjectRenderer(SavedObjectRenderer&&) noexcept=default;
 SavedObjectRenderer& SavedObjectRenderer::operator=(SavedObjectRenderer&&) noexcept=default;
 
+float SavedObjectRenderer::look_target_height(std::uint32_t guid,std::int16_t graphic){
+    if(!impl_)throw odh::FormatError("moved object look target renderer");
+    const auto* candidate=impl_->index.unique(guid);if(!candidate)throw odh::FormatError("look target definition is ambiguous");
+    auto& resource=impl_->asset(*candidate);const auto& raw=resource.require("OBJD",candidate->chunk_id);
+    const auto identity=odh::read_object_definition(raw);
+    if(identity.guid!=guid||identity.version!=candidate->definition.version||identity.master_id!=candidate->definition.master_id||
+       identity.sub_index!=candidate->definition.sub_index||identity.object_type!=candidate->definition.object_type)
+        throw odh::FormatError("look target resource identity changed");
+    const auto graphics=odh::read_objd_graphics(raw);
+    const auto id=static_cast<std::uint16_t>(std::int32_t{graphics.base_graphic}+graphic);
+    // Same authored-null DrawGroup profile as render(); source has explicit 0.9 maxY.
+    if((!graphics.base_graphic&&!graphic)||(!graphics.num_graphics&&!resource.find("DGRP",id)))return 0.9f-0.5f;
+    const auto& group=impl_->group(*candidate,resource,id);const auto* image=odh::dgrp_image(group,1,3,1);
+    if(!image)throw odh::FormatError("look target DGRP source view is unavailable");
+    if(image->sprites.empty())return 0.9f-0.5f;
+    std::int32_t top=INT32_MAX;
+    for(const auto& sprite:image->sprites){
+        if(sprite.sprite_id>UINT16_MAX)throw odh::FormatError("look target sprite ID outside native resource width");
+        auto& info=impl_->inspect(resource,static_cast<std::uint16_t>(sprite.sprite_id),sprite.frame);
+        impl_->validate_culled(info,sprite.frame);
+        top=std::min(top,sprite.y);
+    }
+    return std::clamp((100.f-float(top))/95.f,0.f,2.95f)-0.5f;
+}
 SavedObjectRenderResult SavedObjectRenderer::render(const std::vector<SavedObjectVisual>& objects,
     const odh::WorldProjection& projection,const odh::RasterFrame& base,bool record_picks,bool record_sprite_rgba) {
     if(!impl_)throw odh::FormatError("moved saved object renderer");
@@ -228,6 +254,7 @@ SavedObjectRenderResult SavedObjectRenderer::render(const std::vector<SavedObjec
         for(const auto& sprite:image->sprites){
             if(sprite.sprite_id>=dynamic_base&&sprite.sprite_id<std::uint32_t{dynamic_base}+dynamic_count){
                 const auto flag=sprite.sprite_id-dynamic_base;
+                if(flag>=128)throw odh::FormatError("dynamic sprite flag exceeds supported original128 profile"+draw_context);
                 if(flag>=object.dynamic_sprite_flags.size()||object.dynamic_sprite_flags[flag]==0){++record.omitted_dynamic_layers;continue;}
             }
             if(layers.size()>=4096||sprite.sprite_id>65535)

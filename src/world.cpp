@@ -1252,6 +1252,24 @@ bool World::set_motive_change(std::int16_t id,std::int16_t motive,
     }
     return true;
 }
+bool World::publish_original_motive_changes(WorldEntityReference ref,
+        const std::vector<MotiveChangeState>& expected,const std::array<MotiveChangeState,16>& values) {
+    if(reject_room_reentry())return false;
+    const auto found=entities_.find(ref.id);
+    if(found==entities_.end()||found->second.generation!=ref.generation||found->second.dead||
+       found->second.kind!=EntityKind::avatar||found->second.motives.size()!=16)return false;
+    const auto& actual=found->second.motive_changes;
+    if(actual.size()!=expected.size()||(!actual.empty()&&actual.size()!=16))return false;
+    for(std::size_t i=0;i<actual.size();++i)
+        if(actual[i].per_hour_change!=expected[i].per_hour_change||actual[i].maximum!=expected[i].maximum||
+           actual[i].fractional!=expected[i].fractional||
+           std::signbit(actual[i].fractional)!=std::signbit(expected[i].fractional)||actual[i].ticked!=expected[i].ticked)return false;
+    for(const auto& change:values)if(change.fractional!=0.0||std::signbit(change.fractional)||change.ticked)return false;
+    // Allocate the entire replacement before publishing; no providers or
+    // primitive ordering callbacks run between preimage check and swap.
+    std::vector<MotiveChangeState> next(values.begin(),values.end());
+    found->second.motive_changes.swap(next);return true;
+}
 bool World::clear_motive_changes(std::int16_t id) {
     if(reject_room_reentry())return false;
     const auto found=entities_.find(id);
@@ -1416,20 +1434,30 @@ bool World::set_ui_ghost(std::int16_t id,bool is_ghost) {
     }
     return true;
 }
+std::vector<std::int16_t> dynamic_sprite_flag_values(const Entity& entity) {
+    unsigned extent=0;
+    if(entity.dynamic_sprite_flags_high){extent=64;for(auto bits=entity.dynamic_sprite_flags_high;bits;bits>>=1)++extent;}
+    else for(auto bits=entity.dynamic_sprite_flags;bits;bits>>=1)++extent;
+    std::vector<std::int16_t> result(extent,0);
+    for(unsigned bit=0;bit<extent;++bit){
+        const auto bank=bit<64?entity.dynamic_sprite_flags:entity.dynamic_sprite_flags_high;
+        result[bit]=(bank&(std::uint64_t{1}<<(bit&63U)))?1:0;
+    }
+    return result;
+}
 std::optional<bool> World::dynamic_sprite_flag(std::int16_t id,std::uint16_t flag) const {
     const auto found=entities_.find(id);
-    if(found==entities_.end())return std::nullopt;
-    const auto bit=static_cast<unsigned>(flag&63U);
-    return (found->second.dynamic_sprite_flags&(std::uint64_t{1}<<bit))!=0;
+    if(found==entities_.end()||flag>=128)return std::nullopt;
+    const auto bank=flag<64?found->second.dynamic_sprite_flags:found->second.dynamic_sprite_flags_high;
+    return (bank&(std::uint64_t{1}<<(flag&63U)))!=0;
 }
 bool World::set_dynamic_sprite_flag(std::int16_t id,std::uint16_t flag,bool enabled) {
     if(reject_room_reentry())return false;
     const auto found=entities_.find(id);
-    if(found==entities_.end())return false;
-    const auto bit=static_cast<unsigned>(flag&63U);
-    const auto mask=std::uint64_t{1}<<bit;
-    if(enabled)found->second.dynamic_sprite_flags|=mask;
-    else found->second.dynamic_sprite_flags&=~mask;
+    if(found==entities_.end()||flag>=128)return false;
+    const auto mask=std::uint64_t{1}<<(flag&63U);
+    auto& bank=flag<64?found->second.dynamic_sprite_flags:found->second.dynamic_sprite_flags_high;
+    if(enabled)bank|=mask;else bank&=~mask;
     return true;
 }
 bool World::set_avatar_kill_timeout(std::int16_t id, std::int32_t value) {
@@ -2296,12 +2324,14 @@ VmMemory World::vm_memory() {
             static_cast<std::uint16_t>(offset->second)};
     };
     memory.dynamic_sprite_flag=[this](const VmFrame& frame,std::uint16_t flag) {
-        const auto* entity=frame_entity(frame,VmEntityRole::stack_object);if(!entity)return std::optional<bool>{};
-        return std::optional<bool>{(entity->dynamic_sprite_flags&(std::uint64_t{1}<<(flag&63U)))!=0};
+        const auto* entity=frame_entity(frame,VmEntityRole::stack_object);if(!entity||flag>=128)return std::optional<bool>{};
+        const auto bank=flag<64?entity->dynamic_sprite_flags:entity->dynamic_sprite_flags_high;
+        return std::optional<bool>{(bank&(std::uint64_t{1}<<(flag&63U)))!=0};
     };
     memory.set_dynamic_sprite_flag=[this](const VmFrame& frame,std::uint16_t flag,bool enabled) {
-        auto* entity=frame_entity_mutable(frame,VmEntityRole::stack_object);if(!entity)return false;
-        const auto mask=std::uint64_t{1}<<(flag&63U);if(enabled)entity->dynamic_sprite_flags|=mask;else entity->dynamic_sprite_flags&=~mask;return true;
+        auto* entity=frame_entity_mutable(frame,VmEntityRole::stack_object);if(!entity||flag>=128)return false;
+        const auto mask=std::uint64_t{1}<<(flag&63U);auto& bank=flag<64?entity->dynamic_sprite_flags:entity->dynamic_sprite_flags_high;
+        if(enabled)bank|=mask;else bank&=~mask;return true;
     };
     return memory;
 }

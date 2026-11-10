@@ -11,4 +11,5 @@ float terrain_corner_altitude(const SavedArchitecture& architecture,
     std::uint32_t x, std::uint32_t y, std::int32_t base_alt=0);
 float terrain_interp_altitude(const SavedArchitecture& architecture,
     float x, float y, std::int32_t base_alt=0);
+std::array<float,3> terrain_interp_normal(const SavedArchitecture&,float x,float y);
 }

@@ -21,6 +21,8 @@ struct WorldSnapshotCodecLimits {
 // Version9 preserves known/unknown referenced-reset policy for live and retained
 // bodies. Earlier versions decode this policy as unknown; all-unknown states
 // retain their previous minimal wire version and byte representation.
+// Version13 preserves runtime dynamic sprite flags64..127; high0 keeps prior
+// versions/bytes. Older archives restore high0 without reimporting OBJM.
 // Version12 retains proven native sentinel level independently from an absent
 // gameplay position. Earlier archives leave it unknown, never infer floor1.
 std::vector<std::uint8_t> encode_world_snapshot(

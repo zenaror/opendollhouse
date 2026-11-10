@@ -308,13 +308,26 @@ int main(int argc,char** argv){try{
         if(vertices>65536||triangles>odh::RasterLimits{}.triangles||textures>4ULL*odh::RasterLimits{}.texture_pixels)
             throw odh::FormatError("saved scene cumulative avatar resources exceed budget");
         SceneState state;state.avatar_tile=a.graphics.tile_position;state.avatar_direction=a.graphics.direction;
+        const auto* body=world->world->find(a.graphics.id);
+        if(!body||body->generation!=a.graphics.generation||body->kind!=odh::EntityKind::avatar)
+            throw odh::FormatError("saved scene avatar display identity is stale");
+        state.avatar_radians=body->radian_direction;apply_avatar_display(state,*body);
+        if((state.display_flags&4096)&&architecture)state.ground_normal=odh::terrain_interp_normal(
+            architecture->architecture,state.avatar_tile[0],state.avatar_tile[1]);
+        // Original snapshot before a simulation tick: source head weight is0.
+
         if(a.appearance.current){state.animation=&a.appearance.current->header;state.frame=a.appearance.current->frame;}
-        auto layer=renderer.render(state,camera,options);image=odh::merge_raster(image,layer.image);
+        if(a.appearance.current)state.animation_layers.push_back({&a.appearance.current->header,a.appearance.current->frame,
+            a.appearance.current->weight_milli==0?0.0f:1.0f});
+        if(a.appearance.carry){state.carry_animation=&a.appearance.carry->header;state.carry_frame=a.appearance.carry->frame;}
+        auto layer=renderer.render(state,camera,options);const auto color=odh::avatar_display_color(state.display_flags,state.is_ghost);
+        image=odh::merge_raster(image,layer.image,{},color[3]);
         samples+=renderer.cache_samples();if(samples>odh::AnimationLimits{}.samples)throw odh::FormatError("saved scene cumulative CFP budget exceeded");
         if(n)report<<',';
         report<<"{\"id\":"<<a.graphics.id<<",\"generation\":"<<a.graphics.generation<<",\"guid\":"<<a.saved->saved.guid
            <<",\"tile\":";odh_tools::saved_bank(report,a.graphics.tile_position);
         report<<",\"direction\":"<<unsigned(a.graphics.direction)<<",\"current\":";animation_json(report,a.appearance.current);
+        report<<",\"carry\":";animation_json(report,a.appearance.carry);
         report<<",\"base\":";animation_json(report,a.appearance.base);report<<",\"base_executed\":false,\"parts\":[";
         for(std::size_t p=0;p<a.appearance.scene.parts.size();++p){if(p)report<<',';const auto& part=a.appearance.scene.parts[p];
             report<<"{\"appearance_entry\":"<<json_bytes(part.appearance_entry)<<",\"appearance\":"<<json_bytes(part.appearance_name)
@@ -356,7 +369,7 @@ int main(int argc,char** argv){try{
                 throw odh::FormatError("HideForCutaway needs runtime wall occupancy reconstruction");
             auto g=odh::graphics_entity(*world->world,id,slots);
             g.tile_position[2]+=elevation(id);
-            objects.push_back({id,raw.saved.guid,*graphic,g.direction,g.tile_position,raw.common.dynamic_sprite_flags});
+            objects.push_back({id,raw.saved.guid,*graphic,g.direction,g.tile_position,odh::dynamic_sprite_flag_values(*entity)});
         }
         SavedObjectRenderer object_renderer(*index);auto result=object_renderer.render(objects,camera,image);
         for(std::size_t n=0;n<result.records.size();++n){if(n)report<<',';const auto& r=result.records[n];

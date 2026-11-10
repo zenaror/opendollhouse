@@ -149,6 +149,8 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
         check(c.slot_count>=0 && static_cast<std::uint64_t>(c.slot_count)==c.slots.size()+(c.linked_slot?1:0) &&
             c.linked_slot.has_value()==(c.slot_count!=0),"saved world slot count mismatch");
         count_matches(c.dynamic_sprite_flag_count,c.dynamic_sprite_flags);
+        check(c.dynamic_sprite_flags.size()<=128||std::none_of(c.dynamic_sprite_flags.begin()+128,c.dynamic_sprite_flags.end(),
+            [](auto value){return value!=0;}),"saved world nonzero dynamic sprite flag beyond supported original128 profile");
         for(const auto& f:c.stack) {
             count_matches(f.parameter_count,f.parameters); count_matches(f.local_count,f.locals);
         }
@@ -245,6 +247,10 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
             p.attributes,r.tail.person?imported_ts1_person_data(r.tail.person->person_data):empty,r.tail.person?motives.at(id):empty,
             p.object_data,p.extras,r.tail.person?imported_ts1_avatar_slots(r.common.slots.size()):r.common.slots.size(),masters.at(id)),"saved world runtime bank budget/validation rejected");
         r.imported_generation=result->world->find(id)->generation;
+        for(std::size_t flag=0;flag<std::min(std::size_t{128},r.common.dynamic_sprite_flags.size());++flag)
+            if(r.common.dynamic_sprite_flags[flag]!=0)
+                check(result->world->set_dynamic_sprite_flag(id,static_cast<std::uint16_t>(flag),true),
+                    "saved world original dynamic sprite flag publication rejected");
         // Scope 21 is the StackObject's OBJD fields. Keep its Type field (word 9)
         // available to BHAVs such as the Legacy UrnStone EP5 check.
         check(result->world->declare_definition_word(id,9,r.definition.object_type),

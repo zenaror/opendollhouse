@@ -487,11 +487,67 @@ void failures_and_person() {
     {
         Fixture f;f.add(1,SavedRecoveryClass::special_cursor,false);
         require(recover_original_saved_objects(f.world,f.cohort,f.host(),false).completed,"exact special GUID recovers even with global control off");
-        bool special=false,init=false;for(const auto& event:f.events){special|=event.first==Phase::special_cursor;init|=event.first==Phase::init;}
-        require(special && !init,"special reset with global off has no final Init");
+        unsigned init=0;bool shared=false,special=false;
+        for(const auto& event:f.events){special|=event.first==Phase::special_cursor;init+=event.first==Phase::init;shared|=event.first==Phase::capture_placement;}
+        require(!special&&shared&&init==1,"always-reset ordinary class runs its own Init but no changed-code final Init with control off");
         f.cohort[0].kind=SavedRecoveryClass::object;f.events.clear();
-        require(!recover_original_saved_objects(f.world,f.cohort,f.host()).completed && f.events.empty(),"special GUID cannot enter ordinary reset");
+        require(!recover_original_saved_objects(f.world,f.cohort,f.host()).completed && f.events.empty(),"exact always-reset GUID cannot lose its independent selector marker");
     }
 }
+void always_reset_class_matrix(){
+    for(const bool selected:{false,true})for(const bool cleanup:{false,true})
+    for(const bool changed:{false,true})for(const bool enabled:{false,true}){
+        Fixture f;f.add(1,selected?SavedRecoveryClass::special_cursor:SavedRecoveryClass::object,changed);
+        f.cohort.front().has_cleanup=cleanup;f.add(2,SavedRecoveryClass::person,false);
+        const auto ref=f.cohort.front().reference;const auto before=*f.world.find(1);
+        const auto result=recover_original_saved_objects(f.world,f.cohort,f.host(),enabled);
+        require(result.completed,"ordinary/always-reset, cleanup, changed and control matrix completes");
+        const bool resets=selected||(changed&&enabled);
+        unsigned loads=0,notifies=0,inits=0,restarts=0,captures=0,cleanups=0;bool obsolete=false;
+        std::size_t notify_index=f.events.size(),reset_index=f.events.size();
+        for(std::size_t i=0;i<f.events.size();++i){const auto& e=f.events[i];
+            if(e.first==Phase::notify_person){++notifies;notify_index=i;}
+            if(e.second!=1)continue;
+            loads+=e.first==Phase::load;inits+=e.first==Phase::init;restarts+=e.first==Phase::restart_main;
+            captures+=e.first==Phase::capture_placement;cleanups+=e.first==Phase::cleanup;obsolete|=e.first==Phase::special_cursor;
+            if(e.first==Phase::capture_placement||e.first==Phase::cleanup)reset_index=std::min(reset_index,i);
+        }
+        require(loads==1&&!obsolete&&notifies==unsigned(resets)&&restarts==unsigned(resets)&&
+            captures==unsigned(resets&&!cleanup)&&cleanups==unsigned(resets&&cleanup)&&
+            inits==unsigned(resets&&!cleanup)+unsigned(changed&&enabled),
+            "exact selector changes reset selection, never native class callbacks or extra final Init");
+        require(!resets||notify_index<reset_index,"compatible person notification precedes actual ordinary reset callbacks");
+        require(f.world.is_live_reference(ref)&&f.world.find(1)->position==before.position,
+            "always-reset service keeps the actual original identity and placement");
+        if(resets&&!cleanup)require(f.world.find(1)->object_words.at(41)==901&&f.world.find(1)->attributes[0]==0&&
+            f.threads.front()->temps()[0]==0,"real ordinary reset clears banks after detach callbacks and retains their write");
+        else require(f.threads.front()->temps()[0]==44,"cleanup or compatible paths never invent temporary clearing");
+    }
+    {
+        Fixture f;f.add(1,SavedRecoveryClass::special_cursor,false);f.unsupported=Phase::restore_placement;
+        const auto result=recover_original_saved_objects(f.world,f.cohort,f.host(),false);
+        require(!result.prepared&&!result.completed&&!result.discard_candidate&&f.events.empty(),
+            "missing shared always-reset placement capability rejects entire cohort before Load");
+    }
+    {
+        Fixture f;f.add(1,SavedRecoveryClass::special_cursor,false);const auto original=f.cohort.front().reference;
+        auto host=f.host();const auto execute=host.execute;bool replaced=false;
+        host.execute=[&](const SavedRecoveryCall& call,std::string& error){
+            if(!execute(call,error))return false;
+            if(call.phase==Phase::detach&&!replaced){
+                replaced=true;require(f.world.remove_retaining_body(original)&&f.world.create(1,EntityKind::object,{1,0,0})&&
+                    f.world.define_type(1,77),"callback retains exact original and reuses numeric ID for independent object");
+                VmFrame write{};write.context={1,1,1,0};require(f.world.bind_context_live(write.context)&&
+                    f.world.write(write,0,0,99),"replacement has independent observable state");
+            }
+            return true;
+        };
+        const auto result=recover_original_saved_objects(f.world,f.cohort,host,false);
+        require(result.completed&&replaced&&f.world.find(1)->generation!=original.generation&&
+            f.world.find(1)->attributes[0]==99&&f.world.find(1)->definition->guid==77,
+            "always-reset callbacks never clear, reinit or reposition an ID-reused replacement");
+    }
 }
-int main(){try{object_order_and_state();cleanup_and_identity();native_removal_entry_ownership();groups_and_portals();portal_finally_failure();live_group_mutation();live_world_mutation();retained_compatible_postload();live_person_notifications();compact_group_admission();failures_and_person();std::cout<<"saved recovery coordinator passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+
+}
+int main(){try{object_order_and_state();cleanup_and_identity();native_removal_entry_ownership();groups_and_portals();portal_finally_failure();live_group_mutation();live_world_mutation();retained_compatible_postload();live_person_notifications();compact_group_admission();failures_and_person();always_reset_class_matrix();std::cout<<"saved recovery coordinator passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

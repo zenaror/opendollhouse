@@ -6,7 +6,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 8;
+constexpr std::uint16_t codec_version = 9;
 constexpr std::uint16_t next_tick_codec_version = 3;
 constexpr std::uint16_t legacy_codec_version = 1;
 constexpr std::size_t header_size = 90;
@@ -212,6 +212,10 @@ void write_frame(Writer& writer, const VmFrame& frame, std::uint16_t version) {
     writer.u64(frame.invocation_ticket);
     if(version>=5)writer.boolean(frame.exact_arguments);
     if(version>=6)writer.boolean(frame.action_tree);
+    if(version>=9){writer.boolean(frame.original_import.has_value());if(frame.original_import){
+        writer.i32(frame.original_import->primitive_state);writer.u8(static_cast<std::uint8_t>(frame.original_import->result));
+        writer.count(frame.original_import->uses.size());for(const auto& use:frame.original_import->uses){writer.i16(use.target.id);writer.u64(use.target.generation);writer.u8(use.flags);}}}
+
 }
 VmFrame read_frame(Reader& reader, const VmSnapshotCodecLimits& limits, std::uint16_t version) {
     VmFrame frame{};
@@ -231,6 +235,14 @@ VmFrame read_frame(Reader& reader, const VmSnapshotCodecLimits& limits, std::uin
     frame.invocation_ticket = reader.u64();
     if(version>=5)frame.exact_arguments=reader.boolean();
     if(version>=6)frame.action_tree=reader.boolean();
+    if(version>=9&&reader.boolean()){
+        const auto primitive=reader.i32();const auto kind=reader.u8();
+        if(kind>static_cast<std::uint8_t>(VmOriginalReturn::interaction))throw FormatError("invalid original frame return annotation");
+        frame.original_import=VmOriginalFrameState{primitive,static_cast<VmOriginalReturn>(kind)};
+        const auto uses=reader.count(limits.vm.frame_variables,11);frame.original_import->uses.reserve(uses);
+        for(std::uint32_t i=0;i<uses;++i){const auto id=reader.i16();const auto generation=reader.u64();const auto flags=reader.u8();
+            frame.original_import->uses.push_back({{id,generation},flags});}
+    }
     return frame;
 }
 void write_return(Writer& writer, const VmInteractionReturn& value) {
@@ -368,6 +380,25 @@ void validate_shape(const VmSnapshot& snapshot, const VmSnapshotCodecLimits& lim
         return true;
     };
     for(const auto& frame:snapshot.stack)if(!context_valid(frame.context)||(!snapshot.action_tree_known&&frame.action_tree))throw FormatError("invalid VM entity reference or unknown ActionTree");
+    // SessionBundle route values flatten a real frame (and optional replay
+    // frame) plus pending/replay instruction into a non-executable envelope.
+    // Executable source ancestry is still authenticated by Vm::restore_snapshot.
+    const bool frame_envelope=snapshot.status==VmStatus::ready&&!snapshot.run_generation&&!snapshot.steps&&
+        !snapshot.ticket_sequence&&snapshot.stack.size()<=2&&snapshot.suspended_pending.size()<=1&&
+        !snapshot.interaction_return&&!snapshot.external_frame_return&&snapshot.immediate_continuations.empty()&&
+        !snapshot.immediate_return&&!snapshot.advertisement_changes;
+    for(std::size_t depth=0;depth<snapshot.stack.size();++depth){const auto& frame=snapshot.stack[depth];
+        if(!frame.original_import)continue;
+        const auto kind=frame.original_import->result;
+        if(frame.original_import->uses.size()>limits.vm.frame_variables||
+           std::any_of(frame.original_import->uses.begin(),frame.original_import->uses.end(),[](const auto& use){return use.target.id<=0||!use.target.generation;}))
+            throw FormatError("invalid original use bank identity or size");
+        if(!snapshot.action_tree_known||kind>VmOriginalReturn::interaction||
+           (kind==VmOriginalReturn::retry&&((!depth&&!frame_envelope)||frame.return_mode!=VmCallReturnMode::ordinary||frame.invocation_ticket))||
+           (kind==VmOriginalReturn::interaction&&((!depth&&!frame_envelope)||frame.return_mode!=VmCallReturnMode::interaction_next_tick||!frame.invocation_ticket||!frame.action_tree)))
+            throw FormatError("invalid original import frame annotation");
+    }
+
     if(snapshot.pending&&!context_valid(snapshot.pending->context))throw FormatError("invalid pending entity references");
     for(const auto& pending:snapshot.suspended_pending)if(!context_valid(pending.context))throw FormatError("invalid suspended entity references");
     for(const auto& continuation:snapshot.immediate_continuations)if(continuation.parent_pending&&!context_valid(continuation.parent_pending->context))throw FormatError("invalid immediate entity references");
@@ -498,7 +529,7 @@ std::vector<std::uint8_t> encode_vm_snapshot(
     Writer writer(limits.max_bytes);
     const auto exact=std::any_of(snapshot.stack.begin(),snapshot.stack.end(),[](const auto& frame){return frame.exact_arguments;});
     const bool modern=uses_reference_state(snapshot);
-    const std::uint16_t version=uses_named_state(snapshot)?codec_version:snapshot.advertisement_changes?std::uint16_t{7}:modern?std::uint16_t{6}:exact?std::uint16_t{5}:(!snapshot.immediate_continuations.empty()||snapshot.immediate_return)
+    const std::uint16_t version=std::any_of(snapshot.stack.begin(),snapshot.stack.end(),[](const auto& frame){return frame.original_import.has_value();})?codec_version:uses_named_state(snapshot)?std::uint16_t{8}:snapshot.advertisement_changes?std::uint16_t{7}:modern?std::uint16_t{6}:exact?std::uint16_t{5}:(!snapshot.immediate_continuations.empty()||snapshot.immediate_return)
         ? std::uint16_t{4} : (snapshot.status==VmStatus::next_tick ? next_tick_codec_version : std::uint16_t{2});
     writer.u16(version);
     if(version>=6)writer.boolean(snapshot.action_tree_known);
@@ -605,6 +636,8 @@ VmSnapshot decode_vm_snapshot(
     }
     if (!reader.done()) throw FormatError("VM snapshot has unclaimed bytes");
     validate_shape(snapshot, limits);
+    if(version==9&&!std::any_of(snapshot.stack.begin(),snapshot.stack.end(),[](const auto& frame){return frame.original_import.has_value();}))
+        throw FormatError("empty VM original-import extension is noncanonical");
     if(version==8&&!uses_named_state(snapshot))throw FormatError("empty VM named resource extension is noncanonical");
     if(version==6&&!uses_reference_state(snapshot))throw FormatError("empty VM reference extension is noncanonical");
     return snapshot;

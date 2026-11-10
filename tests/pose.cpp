@@ -168,5 +168,23 @@ int main(){try{
          {&second.animation,&second.cfp,0,0.5f}});
      close(mixed.bones[0].rotation[2],std::sqrt(0.5f),"collection rotations use shortest-arc Slerp");
      close(mixed.bones[0].rotation[3],std::sqrt(0.5f),"collection rotation midpoint stays finite");}
+    {Clip carry;carry.translations({{0,0,0},{10,0,0},{20,0,0}});carry.motion("ROOT",3,0);
+     const auto old=odh::sample_pose(s,nullptr,nullptr,0,&carry.animation,&carry.cfp);
+     const auto imported=odh::sample_pose(s,nullptr,nullptr,0,&carry.animation,&carry.cfp,1.5);
+     const auto collection=odh::sample_pose_collection(s,{},&carry.animation,&carry.cfp,1);
+     require(old.bones[0].translation!=imported.bones[0].translation&&
+         collection.bones[0].translation==imported.bones[0].translation,
+         "nonzero original carry frame reaches both real pose consumers and overrides at full source weight");}
+    {const std::array<float,12> neck{1,0,0,0,0,1,0,0,0,0,1,0};
+     const auto forward=odh::calculate_head_seek(neck,{0,0,1},float(3.14159265358979323846));
+     close(forward[0],0,"source forward head target horizontal angle");close(forward[1],0,"source forward vertical angle");close(forward[3],1,"source forward head quaternion");
+     const auto limited=odh::calculate_head_seek(neck,{0,-100,1},float(3.14159265358979323846));
+     close(limited[0],std::sin(float(3.14159265358979323846)*65/360),"source horizontal head clamp65 degrees");
+     auto rig=s;rig.bones[1].name="HEAD";odh::AvatarHeadSeekSnapshot state;
+     state.actor=1;state.actor_generation=1;state.vm_generation=1;state.weight=15;state.current=limited;state.target=limited;
+     const auto before=odh::sample_pose(rig);const auto after=odh::apply_head_seek(before,state);
+     require(after.bones[1].rotation==limited&&before.bones[1].rotation!=limited,"head overlay uses full source quaternion after animation/carry without mutating sampled input");
+     state.weight=0;require(odh::apply_head_seek(before,state).bones[1].rotation==before.bones[1].rotation,"zero head weight preserves sampled pose");
+     reject([&]{odh::calculate_head_seek({}, {0,0,1},0);},"singular actual neck matrix cannot create fake head pose");}
     std::cout<<checks<<" pose checks passed (synthetic CPU transforms only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Pose test failed: "<<e.what()<<'\n';return 1;}}

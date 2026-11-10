@@ -2,6 +2,7 @@
 #include "odh/installed_lot_limits.hpp"
 
 #include <array>
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -457,6 +458,27 @@ int main() {
             require(large.write(frame,1,0,7),"real attributed World mutation after the initial read-only guard");
             require(odh::encode_world_snapshot(large.snapshot(),admitted)!=before,
                 "using the owner's admission limit still detects an actual World mutation");
+        }
+        {
+            odh::World flags;require(flags.create(1,odh::EntityKind::object),"flags codec object");
+            require(flags.set_dynamic_sprite_flag(1,0,true)&&flags.set_dynamic_sprite_flag(1,63,true),"old low flags");
+            const auto legacy=odh::encode_world_snapshot(flags.snapshot());require(legacy[0]!=13,"low-only World retains exact existing wire version");
+            auto decoded=odh::decode_world_snapshot(legacy);require(decoded.entities.front().dynamic_sprite_flags_high==0&&
+                odh::encode_world_snapshot(decoded)==legacy,"old native archive restores high0 without original raw reimport");
+            require(flags.set_dynamic_sprite_flag(1,64,true)&&flags.set_dynamic_sprite_flag(1,127,true),"new high flags");
+            const auto modern=odh::encode_world_snapshot(flags.snapshot());require(modern[0]==13,"high runtime state selects explicit World codec13");
+            odh::World cold;require(cold.restore_snapshot(odh::decode_world_snapshot(modern))&&
+                odh::encode_world_snapshot(cold.snapshot())==modern&&cold.dynamic_sprite_flag(1,64)==std::optional<bool>{true}&&
+                cold.dynamic_sprite_flag(1,127)==std::optional<bool>{true},"cold preserves actual low/high flags exactly");
+            std::vector<std::uint8_t> banks(16,0);banks[0]=banks[8]=1;banks[7]=banks[15]=128;
+            auto invalid_high=modern;const auto banks_at=std::search(invalid_high.begin(),invalid_high.end(),banks.begin(),banks.end());
+            require(banks_at!=invalid_high.end(),"fixture contains its adjacent actual low/high banks");
+            std::fill(banks_at+8,banks_at+16,std::uint8_t{0});
+            rejects([&]{odh::decode_world_snapshot(invalid_high);},"codec13 empty high extension is noncanonical");
+            require(cold.set_dynamic_sprite_flag(1,64,false)&&cold.set_dynamic_sprite_flag(1,127,false)&&
+                odh::encode_world_snapshot(cold.snapshot())==legacy,"clearing new bank reproduces byte-identical old low archive");
+            auto state=odh::decode_world_snapshot(modern);state.entities[0].dynamic_sprite_flags_high=0;
+            require(odh::encode_world_snapshot(state)==legacy,"high-free state canonicalizes to old version, no forced migration");
         }
         std::cout << "World snapshot codec checks passed\n";
     } catch (const std::exception& error) {

@@ -467,6 +467,32 @@ void route_stack_archive_tests() {
         const auto encoded=odh::encode_session_bundle(mixed);
         require(odh::encode_session_bundle(odh::decode_session_bundle(encoded))==encoded,
             "whole SessionBundle round-trips queued action portal parked route and immediate runnable/waiting/returned child");
+        auto imported=mixed;auto& imported_state=imported.runtime_entities.front();
+        auto& imported_vm=imported_state.vm;imported_vm.action_tree_known=true;
+        const auto annotation=odh::VmOriginalFrameState{321,odh::VmOriginalReturn::retry};
+        // The active action remains its own Interaction/ticket1 boundary.
+        // Source Retry belongs to an ordinary saved child of its route45,
+        // which can itself own the current route and parked portal replay.
+        auto retry=imported_vm.stack[1];retry.key=odh::routine_key(4098);
+        retry.return_mode=odh::VmCallReturnMode::ordinary;retry.invocation_ticket=0;
+        retry.original_import=annotation;retry.action_tree=true;
+        imported_vm.stack.insert(imported_vm.stack.begin()+2,retry);
+        for(std::size_t i=1;i<imported_vm.stack.size();++i)imported_vm.stack[i].action_tree=true;
+        auto& imported_parent=imported_state.route_stack->jobs.front();
+        imported_parent.route_frame=retry;imported_parent.replay_frame=retry;
+        imported_parent.pending.instruction.key=retry.key;++imported_parent.pending.instruction.depth;
+        auto& imported_portal=imported_state.route_stack->jobs.back();
+        imported_portal.route_frame=imported_vm.stack[3];++imported_portal.pending.instruction.depth;
+        imported_vm.suspended_pending={imported_parent.pending};
+        ++imported_vm.immediate_continuations.front().parent_depth;
+        imported_vm.immediate_continuations.front().parent_pending=imported_portal.pending;
+        if(imported_vm.pending)++imported_vm.pending->instruction.depth;
+        const auto imported_bytes=odh::encode_session_bundle(imported);
+        const auto imported_cold=odh::decode_session_bundle(imported_bytes);
+        require(odh::encode_session_bundle(imported_cold)==imported_bytes&&
+            imported_cold.runtime_entities.front().route_stack->jobs.front().route_frame.original_import==annotation&&
+            imported_cold.runtime_entities.front().route_stack->jobs.front().replay_frame->original_import==annotation,
+            "SessionBundle route and replay value envelopes retain source annotations beside pending and replay instructions");
         auto malformed=mixed;++malformed.runtime_entities[0].vm.suspended_pending[0].context.code_owner;
         rejects([&]{odh::encode_session_bundle(malformed);},"mixed bundle cannot substitute external parent resource owner");
         malformed=mixed;++malformed.runtime_entities[0].vm.immediate_continuations[0].parent_pending->instruction.depth;
@@ -3490,7 +3516,46 @@ void headless_frozen_object_fault_cases() {
     require(decide(changed,&source).reason==Reason::healthy,"ordinary healthy VM policy remains unchanged");
 }
 
+void original_playback_codec_matrix(){
+    const auto legacy=live_playback_wait_fixture();const auto old=odh::encode_session_bundle(legacy);
+    require(odh::encode_session_bundle(odh::decode_session_bundle(old))==old,"legacy PLAY1 remains byte-identical without new original fields");
+    auto bundle=legacy;auto& playback=bundle.runtime_entities.front().playback;
+    playback.state->original_import=true;playback.state->weight=0.5f;playback.state->speed=0;
+    odh::PlaybackClipSnapshot carry=*playback.state;carry.wait.reset();carry.queue.clear();carry.events_run=0;carry.ticks=0;
+    carry.frame=1.25f;carry.weight=-0.5f;carry.resource.kind=odh::PlaybackResourceKey::Kind::original_animation;
+    carry.resource.source=0;carry.resource.id=0;carry.resource.callee=0;carry.resource.stack_object=0;carry.resource.code_owner=0;
+    carry.resource.original_name="original-carry";
+    playback.carry=carry.resource;playback.original_carry=carry;
+    const auto bytes=odh::encode_session_bundle(bundle);const auto cold=odh::decode_session_bundle(bytes);
+    const auto& reopened=cold.runtime_entities.front().playback;
+    require(reopened.state->original_import&&reopened.state->weight==0.5f&&reopened.state->speed==0&&
+        reopened.original_carry&&reopened.original_carry->frame==1.25f&&reopened.original_carry->weight==-0.5f&&
+        reopened.carry->original_name=="original-carry"&&odh::encode_session_bundle(cold)==bytes,
+        "PLAY3 preserves imported current/carry frame, speed0, raw weight and named identity byte-exactly");
+    auto head_bundle=bundle;auto& head_playback=head_bundle.runtime_entities.front().playback;
+    odh::AvatarHeadSeekSnapshot head;head.actor=head_playback.state->actor;head.actor_generation=head_playback.state->actor_generation;
+    head.vm_generation=head_playback.state->vm_generation;head.weight=7;head.last_fraction=.25f;
+    head.current={0,std::sqrt(.5f),0,std::sqrt(.5f)};head.target={0,0,std::sqrt(.5f),std::sqrt(.5f)};head.last_tick=head_bundle.host.tick;
+    head_playback.head_seek=head;
+    const auto head_bytes=odh::encode_session_bundle(head_bundle);const auto head_cold=odh::decode_session_bundle(head_bytes);
+    require(head_cold.runtime_entities.front().playback.head_seek==head_playback.head_seek&&odh::encode_session_bundle(head_cold)==head_bytes,
+        "PLAY4 preserves runtime head weight/quaternions/epoch and identity without replay");
+    auto bad_head=head_bundle;bad_head.runtime_entities.front().playback.head_seek->weight=16;
+    rejects([&]{odh::encode_session_bundle(bad_head);},"head weight outside source15 budget rejected before save");
+    bad_head=head_bundle;bad_head.runtime_entities.front().playback.head_seek->actor_generation++;
+    rejects([&]{odh::encode_session_bundle(bad_head);},"stale head pose generation cannot cold resume");
+    auto bad=bundle;bad.runtime_entities.front().playback.original_carry.reset();
+    rejects([&]{odh::encode_session_bundle(bad);},"named original carry without full state cannot invent frame zero");
+    bad=bundle;bad.runtime_entities.front().playback.original_carry->vm_generation++;
+    rejects([&]{odh::encode_session_bundle(bad);},"stale original carry VM run rejected before persistence");
+    bad=bundle;bad.runtime_entities.front().playback.original_carry->queue.push_back(1);
+    rejects([&]{odh::encode_session_bundle(bad);},"carry never acquires a fake event queue");
+    bad=bundle;bad.runtime_entities.front().playback.original_carry->resource.original_name="changed";
+    rejects([&]{odh::encode_session_bundle(bad);},"carry state cannot redirect its persisted resource key");
+}
+
 int main() {
+    original_playback_codec_matrix();
     headless_frozen_object_fault_cases();
     character_body_retirement_cases();
     character_family_execution_cases();

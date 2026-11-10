@@ -1,4 +1,5 @@
 #include "odh/playback.hpp"
+#include "../tools/original_playback_import.hpp"
 #include <iostream>
 #include <cmath>
 
@@ -49,6 +50,119 @@ bool same_primary(const odh::PlaybackSnapshot& a,const odh::PlaybackSnapshot& b)
        x.low!=y.low||x.high!=y.high||x.queue!=y.queue||x.events_run!=y.events_run||x.ticks!=y.ticks||bool(x.wait)!=bool(y.wait))return false;
     return !x.wait||(x.wait->ticket==y.wait->ticket&&x.wait->bank==y.wait->bank&&
         x.wait->index==y.wait->index&&x.wait->expected==y.wait->expected);
+}
+void avatar_head_seek_tests(){
+    Fixture f;require(f.vm.start(odh::routine_key(4096),{1,1,1,0})==odh::VmStatus::running,"head seek actual bound thread");
+    require(f.world.create(2,odh::EntityKind::object,{})&&f.world.set_person_data(1,41,2)&&f.world.set_person_data(1,42,1)&&
+        f.world.set_person_data(1,43,1)&&f.world.set_person_data(1,45,2),"head seek live source target/person banks");
+    const auto ref=odh::WorldEntityReference{1,f.world.find(1)->generation};std::string why;
+    require(f.player.advance_head_seek(ref,1,{},&why)&&f.player.head_seek()->weight==1&&f.world.find(1)->person_data[45]==1,
+        "headless weight and timeout progress without resources or animation");
+    require(!f.player.advance_head_seek(ref,1,{},&why)&&f.player.head_seek()->weight==1,"same tick cannot double advance head seek");
+    odh::AvatarHeadSeekVisualInput forged{1,2,ref.generation,f.world.find(2)->generation,f.vm.run_generation()+1,2,{0,0,0,1}};
+    require(!f.player.advance_head_seek(ref,2,forged,&why)&&f.player.head_seek()->weight==1&&f.world.find(1)->person_data[45]==1,
+        "forged visual VM generation cannot publish head or person state");
+    forged.vm_generation=f.vm.run_generation();forged.quaternion={0,0,0,0};
+    require(!f.player.advance_head_seek(ref,2,forged,&why)&&f.player.head_seek()->weight==1,"non-unit visual quaternion cannot create a fake pose");
+
+    require(f.player.advance_head_seek(ref,2,{},&why)&&f.player.head_seek()->weight==2&&f.world.find(1)->person_data[42]==4,
+        "source timeout switches state after increasing weight");
+    odh::PlaybackSnapshot cold;require(f.player.capture_snapshot(cold,&why)&&cold.head_seek&&
+        f.player.restore_snapshot(cold,f.vm,{},&why),"head seek survives cold controller restore with no clips");
+    require(f.player.advance_head_seek(ref,3,{},&why)&&f.player.head_seek()->weight==1&&
+        f.player.advance_head_seek(ref,4,{},&why)&&f.player.head_seek()->weight==0&&f.world.find(1)->person_data[42]==8&&
+        f.world.find(1)->person_data[43]==0,"source return-to-idle completes and clears finish flag");
+    require(f.world.set_person_data(1,42,1)&&f.world.set_person_data(1,41,2)&&f.world.set_person_data(1,45,0)&&
+        f.player.advance_head_seek(ref,5,{},&why)&&f.player.advance_head_seek(ref,6,{},&why)&&f.player.head_seek()->weight==2,
+        "unlimited live target seek increases source weight");
+    require(f.world.set_person_data(1,41,999)&&f.player.advance_head_seek(ref,7,{},&why)&&f.player.head_seek()->weight==1&&
+        f.world.find(1)->person_data[42]==1,"missing target executes case4 without prematurely changing source state1");
+    require(f.player.advance_head_seek(ref,8,{},&why)&&f.player.head_seek()->weight==0&&f.world.find(1)->person_data[42]==8,
+        "missing target reaches state8 only after weight decays to zero");
+    auto bad=cold;bad.head_seek->actor_generation++;require(!f.player.restore_snapshot(bad,f.vm,{},&why),"stale cold head seek actor is rejected");
+}
+void original_playback_import_tests(){
+    for(const bool reverse:{false,true})for(const bool frozen:{false,true}){
+        Fixture f;f.a=clip(30);f.a->name="clip";f.reset_a=clip(20);f.reset_a->name="carry";
+        f.a->motions[0].time_properties={{{0,{{"xevt","1"},{"dress","old0"},{"sound","old0"}}},
+            {250,{{"xevt","2"},{"lefthand","2"},{"dress","old250"}}},
+            {251,{{"xevt","3"},{"dress","new251"}}}}};
+        const auto ref=odh::WorldEntityReference{1,f.world.find(1)->generation};
+        require(f.world.define_type(1,42)&&f.vm.start(odh::routine_key(4096),{1,1,1,0})==odh::VmStatus::running,
+            "original import keeps actual typed avatar and undispatched VM");
+        require(!f.world.find(1)->position&&f.world.declare_object_word(1,1,3),"source nonzero OOW direction bank");
+        std::string vm_error;bool source_current=true;auto original_frame=f.vm.stack().front();
+        original_frame.original_import=odh::VmOriginalFrameState{0,odh::VmOriginalReturn::normal};
+        auto original_thread=f.vm.prepare_original_import({original_frame},f.vm.temps(),[&]{return source_current;},vm_error);
+        if(!original_thread)throw std::runtime_error("typed original VM preparation: "+vm_error);
+        const auto prospective=original_thread->snapshot();
+        odh::ObjmPersonState source{};source.person_data=f.world.find(1)->person_data;source.accessory_count=0;
+        source.animation.bytes=std::string("source-clip-alias;ignored;")+(reverse?"-1000":"1000")+";250;"+(frozen?"0":"500")+";0";
+        source.carry_animation.bytes="source-carry-alias;ignored;0;500;-500;1;unused";source.animation_event_count=257;
+        source.base_animation.bytes="ignored invalid base must never resolve";
+        unsigned visuals=0;std::string why;
+        const auto named=[&](const std::string& name)->std::shared_ptr<const odh::AnimationHeader>{
+            if(name=="source-clip-alias")return f.a;if(name=="source-carry-alias")return f.reset_a;return {};};
+        auto plan=odh_host::OriginalPlaybackImportPlan::prepare(f.world,ref,f.vm,f.player,source,prospective,0,named,
+            [&](const auto& accessories,odh::AvatarOutfitReference& outfit,std::string&){++visuals;outfit.literal="source-daywear";return accessories.empty();},why);
+        require(plan&&visuals>=1&&plan->current(why)&&f.vm.run_generation()+1==prospective.run_generation&&
+            !f.player.progress(),"preparation validates real resources without VM/animation mutation or base replay");
+        require(f.vm.original_import_current(*original_thread)&&f.vm.commit_original_import(*original_thread),
+            "actual undispatched VM commits its typed original import plan");
+        if(!plan->commit(f.vm.snapshot(),why))throw std::runtime_error("original playback commit: "+why);
+        require(f.world.find(1)->avatar_appearance&&f.world.find(1)->avatar_appearance->body&&
+            f.world.find(1)->avatar_appearance->body->literal=="source-daywear"&&f.world.find(1)->person_data[8]==source.person_data[8],
+            "source CurrentOutfit publishes through real World appearance owner without changing source person banks");
+        require(!f.world.find(1)->position&&f.world.find(1)->radian_direction==3*float(3.14159265358979323846/4.0)&&f.world.find(1)->object_words.at(1)==3,"source radians restored for out-of-world avatar");
+        odh::PlaybackSnapshot imported;require(f.player.capture_snapshot(imported,&why)&&imported.state&&imported.original_carry&&
+            imported.state->frame==7.5f&&imported.state->events_run==1&&imported.state->queue.empty()&&!imported.state->wait&&
+            imported.original_carry->frame==10&&imported.original_carry->weight==-0.5f&&f.player.carry_frame()==10,
+            "source float conversion, byte event count, static carry frame and raw carry weight survive import");
+        require(reverse?imported.state->high==1:imported.state->low==2,
+            "source Load prunes all consumed properties including exact-time equality in either direction");
+        // First actual opcode44 sees the same immutable catalog clip. It must
+        // preserve imported cursor/speed/weight rather than restarting by name.
+        f.vm.run(1);require(f.vm.status()==odh::VmStatus::waiting&&f.player.progress()->frame==7.5f,
+            "first real Animate44 preserves original clip and creates its own authentic wait");
+        std::vector<std::int32_t> events;require(f.player.advance(1,[&](const auto& e){events.push_back(e.time_id);}),"advance imported primary once");
+        require(f.player.carry_frame()==10,"carry remains static and never advances alongside primary");
+        if(frozen)require(events.empty()&&f.player.progress()->frame==7.5f,"weight0 pauses frames and every event property");
+        else if(reverse)require(events.empty()&&f.player.progress()->frame==6.5f,"reverse excludes consumed exact/future tags without replay");
+        else require(events==std::vector<std::int32_t>{251}&&f.player.progress()->frame==8.5f&&
+            f.world.find(1)->bound_appearances==std::vector<std::string>{"new251"},"only new properties execute after imported cursor");
+        odh::PlaybackSnapshot saved;require(f.player.capture_snapshot(saved,&why),"capture exact live original continuation");
+        Fixture cold(0,0,1,{},true,{0,88,1},false);cold.a=f.a;cold.reset_a=f.reset_a;
+        require(cold.world.restore_snapshot(f.world.snapshot())&&cold.vm.restore_snapshot(f.vm.snapshot())&&
+            cold.player.restore_snapshot(saved,cold.vm,[&](const auto& key){return key.kind==odh::PlaybackResourceKey::Kind::original_animation?
+                named(key.original_name):std::shared_ptr<const odh::AnimationHeader>(cold.a);},&why)&&cold.player.carry_frame()==10,
+            "cold playback restores actual VM wait and nonzero static carry without import replay");
+        odh::PlaybackSnapshot reopened;require(cold.player.capture_snapshot(reopened,&why)&&same_primary(saved,reopened)&&
+            reopened.state->weight==saved.state->weight&&reopened.original_carry->frame==10,
+            "cold current/carry weight, wait, event cursor and gestures are durable");
+    }
+    for(const bool stopped:{false,true}){
+        Fixture f;f.a=clip(30);f.a->motions[0].time_properties={{{251,{{"xevt","1"}}}}};
+        require(f.world.define_type(1,42)&&f.vm.start(odh::routine_key(4096),{1,1,1,0})==odh::VmStatus::running,
+            "source speed0/counter boundary actor");
+        std::string why;const auto raw=stopped?"clip;ignored;0;250;1000;0":"clip;ignored;1000;250;1000;0";
+        auto state=f.player.prepare_original_import({1,f.world.find(1)->generation},f.vm.snapshot(),raw,"",stopped?0:255,0,
+            [&](const auto&){return f.a;},why);
+        require(state&&f.player.restore_snapshot(*state,f.vm,[&](const auto&){return f.a;},&why)&&f.player.advance(1),
+            "source speed0 and byte-counter profiles bind without artificial failure");
+        odh::PlaybackSnapshot saved;require(f.player.capture_snapshot(saved,&why)&&saved.state->events_run==0&&
+            (stopped?(saved.state->frame==7.5f&&saved.state->queue.empty()):(saved.state->frame==8.5f&&saved.state->queue.size()==1)),
+            "speed0 pauses at source frame; original xevt byte counter wraps exactly at255");
+    }
+    {
+        Fixture f;require(f.world.define_type(1,42)&&f.world.declare_object_word(1,1,0)&&f.vm.start(odh::routine_key(4096),{1,1,1,0})==odh::VmStatus::running,"empty original setup with explicit source direction bank");
+        std::string vm_error;auto original_thread=f.vm.prepare_original_import({},f.vm.temps(),[]{return true;},vm_error);
+        if(!original_thread)throw std::runtime_error("typed empty original VM preparation: "+vm_error);
+        const auto target=original_thread->snapshot();odh::ObjmPersonState source{};source.person_data=f.world.find(1)->person_data;
+        unsigned visuals=0;std::string why;auto plan=odh_host::OriginalPlaybackImportPlan::prepare(f.world,{1,f.world.find(1)->generation},
+            f.vm,f.player,source,target,3,[&](const auto&){return f.a;},[&](const auto&,odh::AvatarOutfitReference& outfit,auto&){++visuals;outfit.literal="source-daywear";return true;},why);
+        require(plan&&visuals>=1,"empty clips still require and prepare actual appearance consumers");
+        require(f.world.set_person_data(1,58,2)&&!plan->current(why),"actor age mutation invalidates prepared import before VM publication");
+    }
 }
 void default_slot_carry_tests(){
     Fixture source;
@@ -656,7 +770,7 @@ int main(){try{
     prepared_carry_transfer_tests();
     route_animation_tests();
     immediate_preemption_tests();
-    default_slot_carry_tests();synchronous_created_carry_tests();
+    default_slot_carry_tests();avatar_head_seek_tests();original_playback_import_tests();synchronous_created_carry_tests();
     {Fixture source(1);source.a->motions[0].frames=1;source.xevt(0,"7");source.start();source.player.tick(1);
      odh::PlaybackSnapshot saved;std::string why;require(source.player.capture_snapshot(saved,&why)&&saved.state&&saved.state->resource.id==1&&
         saved.state->resource.caller==1&&saved.state->resource.callee==2&&saved.state->resource.stack_object==2&&saved.last_tick==1,

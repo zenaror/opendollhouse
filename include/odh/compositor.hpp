@@ -44,8 +44,10 @@ struct CompositeFrame {
 // must have shaded <= tested and the cumulative tested count must fit samples
 // without overflow. Merge comparisons do not add raster samples. All validation
 // precedes copying; invalid inputs throw FormatError with inputs unchanged.
+// Optional straight opacity blends accepted layer RGB over base, retains
+// opaque output and accepted depth/owner. Opacity0 changes no pixel/depth/owner.
 RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
-                         RasterLimits = {});
+                         RasterLimits = {},std::uint8_t opacity=255);
 
 // Integer 1:1 placement and nearest sampling, with horizontal color/Z mirroring.
 // Depth is back_depth + ((1 - z/255.0)/0.4)*front_depth_delta, evaluated in double

@@ -1,5 +1,6 @@
 #pragma once
 #include "odh/skeleton.hpp"
+#include "odh/avatar_head_seek.hpp"
 
 namespace odh {
 struct PoseBone {
@@ -33,7 +34,7 @@ struct SkeletonPose {
 SkeletonPose sample_pose(const Skeleton&,const AnimationHeader* =nullptr,
                          const CfpPlanes* =nullptr,double frame=0,
                          const AnimationHeader* carry_animation=nullptr,
-                         const CfpPlanes* carry_cfp=nullptr);
+                         const CfpPlanes* carry_cfp=nullptr,double carry_frame=0);
 struct PoseClipSample {
     const AnimationHeader* animation=nullptr;
     const CfpPlanes* cfp=nullptr;
@@ -45,8 +46,12 @@ struct PoseClipSample {
 // quaternion Slerp. Missing channels preserve preceding transforms. Zero-weight
 // clips contribute no transforms (avoiding source 0/0 on a leading idle clip).
 // At most three clips, matching the current native locomotion collection.
-// Carry overrides its channels at frame0 after the entire collection.
+// Carry overrides its channels at its explicit static frame after the entire collection.
 SkeletonPose sample_pose_collection(const Skeleton&,const std::vector<PoseClipSample>&,
                          const AnimationHeader* carry_animation=nullptr,
-                         const CfpPlanes* carry_cfp=nullptr);
+                         const CfpPlanes* carry_cfp=nullptr,double carry_frame=0);
+// Value-only source neck/target calculation and post-carry HEAD overlay.
+HeadSeekQuaternion calculate_head_seek(const std::array<float,12>& neck,const std::array<float,3>& target,float radians);
+SkeletonPose apply_head_seek(const SkeletonPose&,const AvatarHeadSeekSnapshot&);
+
 }

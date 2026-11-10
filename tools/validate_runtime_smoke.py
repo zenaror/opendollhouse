@@ -161,6 +161,46 @@ class Smoke:
     def originals(self):
         return {name: digest(self.args.game_root / name) for name in self.protected}
 
+    def produced_home_head(self, document, profile, saves, env):
+        """Select a producer's final HOME transaction by native journal authority."""
+        context = document.get("integrated_session_context")
+        if (self.session_inspector is None or not isinstance(context, dict) or
+                not integer(context.get("neighborhood_mode")) or context["neighborhood_mode"] != 1 or
+                not integer(context.get("house_number")) or
+                not 1 <= context["house_number"] <= 98 or
+                not integer(context.get("family_chunk_id")) or
+                not 1 <= context["family_chunk_id"] <= 65535):
+            raise ValueError("multiple produced sessions require a native inspector and exact HOME identity")
+        reported = document.get("saved_session_path")
+        if not isinstance(reported, str):
+            raise ValueError("multiple produced sessions require an explicit final save path")
+        selected = [p for p in saves if p.resolve() == Path(reported).resolve()]
+        if len(selected) != 1 or not within(selected[0].resolve(), profile.resolve()):
+            raise ValueError("reported final save is not a produced file in the isolated profile")
+        before = profile_files(profile)
+        if digest(self.session_inspector) != self.session_inspector_hash:
+            raise ValueError("native session inspector changed before journal inspection")
+        inspected = subprocess.run([str(self.session_inspector), "--inspect-session-head",
+            str(self.args.game_root.resolve()), str(context["house_number"]),
+            str(context["family_chunk_id"])], env=env, capture_output=True, text=True, timeout=30)
+        # Evidence is outside the profile whose immutability is checked below.
+        (profile.parent / "journal-head.json").write_text(inspected.stdout)
+        (profile.parent / "journal-head.stderr").write_text(inspected.stderr)
+        if (digest(self.session_inspector) != self.session_inspector_hash or
+                profile_files(profile) != before):
+            raise ValueError("native journal inspection changed inspector or profile")
+        if inspected.returncode != 0:
+            raise ValueError("native journal inspection rejected the produced HOME checkpoint")
+        authority = json.loads(inspected.stdout)
+        if (not isinstance(authority, dict) or authority.get("authenticated_journal_head") is not True or
+                authority.get("archive_path") != str(selected[0].resolve()) or
+                not integer(authority.get("house")) or not integer(authority.get("family_chunk_id")) or
+                authority.get("house") != context["house_number"] or
+                authority.get("family_chunk_id") != context["family_chunk_id"] or
+                not integer(authority.get("tick")) or authority["tick"] != document.get("ticks")):
+            raise ValueError("native journal authority disagrees with the reported final HOME checkpoint")
+        return selected[0]
+
     def run(self, name, source, ticks, extras, requirements, expected_base=None, stop=None, expected_source_hash=None,
             automatic_dialog_ok=True, report_validator=None, overall_deadline=None,
             profile_source=None, expected_profile_hashes=None):
@@ -285,9 +325,18 @@ class Smoke:
                 saved = copied
                 record["canonical_zero_tick_input_reused"] = True
             else:
-                if len(saves) != 1:
+                if len(saves) > 1 and profile_source is not None:
+                    # Original-session adoption may publish an initial managed
+                    # head and then the requested transaction. Never choose by
+                    # filename, timestamp or an unverified producer assertion.
+                    saved = self.produced_home_head(document, profile, saves, env)
+                    record["produced_saved_sessions"] = [str(p) for p in saves]
+                    record["selected_by_authenticated_journal_head"] = True
+                    record["journal_head_json_sha256"] = digest(directory / "journal-head.json")
+                elif len(saves) != 1:
                     raise ValueError("expected exactly one produced saved session, got " + str(len(saves)))
-                saved = saves[0]
+                else:
+                    saved = saves[0]
             if not saved.is_file() or not within(saved.resolve(), profile.resolve()):
                 raise ValueError("saved session escapes the fresh profile")
             if document.get("saved_session_path") is not None and Path(document["saved_session_path"]).resolve() != saved.resolve():

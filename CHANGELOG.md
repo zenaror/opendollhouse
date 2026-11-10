@@ -8,6 +8,9 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Persistência nativa para animações importadas, poses de objetos segurados e
+  controle de olhar, com leitura dos formatos anteriores suportados.
+
 - Pontos de retorno opcionais em testes sem janela, usando o salvamento nativo
   para preservar progresso aceito antes de uma falha.
 - Serviços C++ de cadastro de personagens e mudança de família, com preservação
@@ -32,6 +35,12 @@ Ainda não há uma versão completa jogável publicada.
   limitações explícitas; registros internos e resultados gerados fora do Git.
 
 ### Consertado
+
+- Entrada comum de uma casa original, com recursos conferidos antes da recuperação
+  e salvamento com o relógio parado, sem opções experimentais obrigatórias nesse percurso.
+- Reabertura de uma continuação curta da importação clássica, preservando o
+  salvamento inteiro após respostas únicas aos diálogos observados e avanço da
+  simulação. Um salvamento nativo anterior também foi reaberto sem alteração.
 
 - Criação de objetos carregados na mão durante uma ação, preservando a ação
   do personagem e recusando mudanças inesperadas durante a preparação da animação.

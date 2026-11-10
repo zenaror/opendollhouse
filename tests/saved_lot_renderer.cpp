@@ -84,13 +84,17 @@ void object_checks(const Temp& temp,const std::filesystem::path& floors,const st
  const auto path=temp.p/"object.iff";write(path,object_fixture(camera,wall_pixel));
  odh::DefinitionIndex definitions({candidate(path,123)});odh::SavedWorld saved;saved.world=std::make_unique<odh::World>();auto& world=*saved.world;
  std::array<std::int16_t,68> words{};check(world.create_saved_entity(2,odh::EntityKind::object,123,{},{},{},words,{},0));
- check(world.set_position(2,{24,24,1,0}));odh::SavedWorldEntity record{};record.saved.object_id=2;record.saved.guid=123;record.common.dynamic_sprite_flags={1};saved.records.push_back(record);
+ check(world.set_position(2,{24,24,1,0})&&world.set_dynamic_sprite_flag(2,0,true));odh::SavedWorldEntity record{};record.saved.object_id=2;record.saved.guid=123;record.common.dynamic_sprite_flags={1};saved.records.push_back(record);
  auto a=architecture();a.architecture.levels[0].walls[5]={1,0,1,0,1,0,0,0};
  SavedLotRenderer renderer(std::move(a),saved,definitions,floors.string(),walls.string());
  const auto empty=odh::rasterize(camera.width,camera.height,{},{});const odh::VmFrame f{odh::routine_key(4096),0,{2,2,2,0},{},{}};
  check(world.write(f,3,34,1));const auto wall=renderer.render(camera,empty);check(wall.objects==0&&wall.object_hidden==1);
  check(world.write(f,3,34,0));const auto near=renderer.render(camera,empty,true);
  check(near.objects==1&&near.object_layers==1&&near.object_shaded_samples==1&&near.object_cached_frame_bytes==6);
+ check(world.set_dynamic_sprite_flag(2,0,false));const auto authored_off=renderer.render(camera,empty,true);
+ check(authored_off.objects==1&&authored_off.object_layers==0&&saved.records.front().common.dynamic_sprite_flags[0]==1);
+ check(world.set_dynamic_sprite_flag(2,0,true)&&renderer.render(camera,empty,true).object_layers==1); // executable World wins over stale original raw flags
+
  check(near.image.depth[wall_pixel]<wall.image.depth[wall_pixel]);
  check(near.object_pick_ids.size()==empty.pixels.size()&&near.object_pick_ids[wall_pixel]==2);
  // Full-wall cutaway is presentation only; its preflight may not publish a
@@ -298,7 +302,7 @@ void footprint_part_checks(const Temp& temp,const std::filesystem::path& floors,
  auto& world=*saved.world;
  for(const auto pair:{std::pair<std::int16_t,std::uint32_t>{2,123},{3,124}}){
   check(world.create_saved_entity(pair.first,odh::EntityKind::object,pair.second,{},{},{},{},{},0));
-  check(world.set_position(pair.first,{24,24,1,0}));
+  check(world.set_position(pair.first,{24,24,1,0})&&world.set_dynamic_sprite_flag(pair.first,0,true));
   odh::SavedWorldEntity record{};record.saved.object_id=static_cast<std::uint16_t>(pair.first);
   record.saved.guid=pair.second;record.common.dynamic_sprite_flags={1};saved.records.push_back(record);
  }

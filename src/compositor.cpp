@@ -36,7 +36,7 @@ bool representable(double value) {
 } // namespace
 
 RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
-                         RasterLimits limits) {
+                         RasterLimits limits,std::uint8_t opacity) {
     if(base.width != layer.width || base.height != layer.height)
         throw FormatError("raster merge dimensions must match");
     std::uint64_t tested = 0, shaded = 0;
@@ -61,13 +61,15 @@ RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
                 throw FormatError("raster merge depth must be finite or positive infinity");
     }
     RasterFrame result = base;
-    if(result.owner_ids.empty()&&!layer.owner_ids.empty())
+    if(opacity&&result.owner_ids.empty()&&!layer.owner_ids.empty())
         result.owner_ids.assign(result.pixels.size(),0);
     result.tested_samples = tested;
     result.shaded_samples = shaded;
     for(std::size_t i = 0; i < result.pixels.size(); ++i) {
-        if(layer.depth[i] < result.depth[i]) {
-            result.pixels[i] = layer.pixels[i];
+        if(opacity&&layer.depth[i] < result.depth[i]) {
+            if(opacity==255)result.pixels[i]=layer.pixels[i];
+            else for(unsigned c=0;c<3;++c)result.pixels[i][c]=static_cast<std::uint8_t>(
+                (unsigned(layer.pixels[i][c])*opacity+unsigned(result.pixels[i][c])*(255-opacity)+127)/255);
             result.depth[i] = layer.depth[i];
             if(!result.owner_ids.empty())
                 result.owner_ids[i]=layer.owner_ids.empty()?0:layer.owner_ids[i];

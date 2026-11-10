@@ -3,12 +3,15 @@
 #include "odh/mesh.hpp"
 #include "odh/bcf.hpp"
 #include "odh/sha256.hpp"
+#include "odh/original_animation.hpp"
 #include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <algorithm>
 #include <set>
+#include <cmath>
+#include <climits>
 
 namespace {
 std::string fold(std::string s) {for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c+'a'-'A');return s;}
@@ -73,24 +76,17 @@ AppearanceResource body_resource(const std::string& raw,const char* kind) {
 }
 }
 SavedAnimationAppearance saved_animation_appearance(const std::string& raw,const odh::AnimationHeader& header) {
-    bounded_name(raw);std::array<std::string,8> fields;std::size_t start=0;
-    for(std::size_t i=0;i<fields.size();++i){auto end=raw.find(';',start);
-        if((i<7&&end==std::string::npos)||(i==7&&end!=std::string::npos))throw odh::FormatError("saved animation requires eight fields");
-        fields[i]=raw.substr(start,end==std::string::npos?end:end-start);start=end==std::string::npos?raw.size():end+1;}
-    if(fold(fields[0])!=fold(header.name))throw odh::FormatError("saved animation header name mismatch");
-    auto number=[&](std::size_t i){std::int32_t n=0;const auto& s=fields[i];auto r=std::from_chars(s.data(),s.data()+s.size(),n);
-        if(s.empty()||r.ec!=std::errc{}||r.ptr!=s.data()+s.size())throw odh::FormatError("saved animation invalid integer");
-        return n;};
-    SavedAnimationAppearance out;out.raw=raw;out.header=header;out.priority=number(1);out.speed_milli=number(2);
-    out.normalized_frame=number(3);out.weight_milli=number(4);auto loop=number(5);out.unknown1=number(6);out.unknown2=number(7);
-    if((fields[5]!="0"&&fields[5]!="1")||loop<0||loop>1||out.normalized_frame<0||out.normalized_frame>1000||out.weight_milli<0||out.weight_milli>1000)
-        throw odh::FormatError("saved animation frame, weight or loop outside supported range");
-    if(header.motions.empty())throw odh::FormatError("saved animation has no motions");
-    std::uint32_t frames=0;for(const auto& m:header.motions)frames=std::max(frames,m.frames);
-    if(frames==0)throw odh::FormatError("saved animation zero frames");
-    out.frame=static_cast<double>(frames)*out.normalized_frame/1000.0;out.loop=loop==1;out.backwards=out.speed_milli<0;
-    out.end_reached=out.normalized_frame==(out.backwards?0:1000);return out;
+    const auto parsed=odh::parse_original_animation_record(raw);
+    if(fold(parsed.name)!=fold(header.name))throw odh::FormatError("saved animation header name mismatch");
+    SavedAnimationAppearance out;out.raw=raw;out.header=header;out.priority=parsed.priority;out.speed_milli=parsed.speed;
+    out.normalized_frame=parsed.normalized_frame;out.weight_milli=parsed.weight;out.unknown1=parsed.unknown1;out.unknown2=parsed.unknown2;
+    std::uint32_t frames=0;for(const auto& motion:header.motions)frames=std::max(frames,motion.frames);
+    if(!frames)throw odh::FormatError("saved animation has no frames");
+    out.frame=static_cast<float>(frames)*(static_cast<float>(parsed.normalized_frame)/1000.0f);
+    if(!std::isfinite(out.frame)||out.frame<static_cast<double>(INT32_MIN)||out.frame>static_cast<double>(INT32_MAX))throw odh::FormatError("saved animation frame exceeds native sampling budget");
+    out.loop=parsed.loop;out.backwards=parsed.speed<0;out.end_reached=parsed.normalized_frame==(out.backwards?0:1000);return out;
 }
+
 struct SavedAppearanceResources::Impl {
     SceneConfig config;Archive animations,textures;
     std::map<std::string,std::vector<Named>> appearances,loose_appearance_names,clips,skeletons;
@@ -334,12 +330,10 @@ struct SavedAppearanceResources::Impl {
     SavedAppearance body_head_animation(const odh::ObjmPersonState& person) {
         if(person.accessory_count<0||static_cast<std::size_t>(person.accessory_count)!=person.accessories.size()||person.accessories.size()>16)
             throw odh::FormatError("saved appearance accessory count outside supported profile");
-        if(!person.carry_animation.bytes.empty())throw odh::FormatError("saved appearance carry animation unsupported");
         SavedAppearance out;out.scene=config;
         part(out.scene,person.body.bytes,person.body_texture.bytes);part(out.scene,person.head.bytes,person.head_texture.bytes);
         for(const auto& item:person.accessories)accessory(out.scene,item);
-        out.current=animation(person.animation.bytes);out.base=animation(person.base_animation.bytes);
-        if(out.current&&out.current->weight_milli!=1000)throw odh::FormatError("saved appearance current animation blending unsupported");
+        out.current=animation(person.animation.bytes);out.base=animation(person.base_animation.bytes);out.carry=animation(person.carry_animation.bytes);
         return out;
     }
 };

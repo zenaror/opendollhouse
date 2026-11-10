@@ -114,8 +114,10 @@ SavedRecoveryResult recover_original_saved_objects(World& world,
                 ++planned_operations;plan.push_back({{p,entity,target,full,{}},clear,false,probe_candidates});};
             for(const auto& person:cohort)if(person.kind==SavedRecoveryClass::person && person.reference!=target)
                 add(Phase::notify_person,person.reference);
-            if(e.kind==SavedRecoveryClass::special_cursor) add(Phase::special_cursor,target);
-            else if(e.kind==SavedRecoveryClass::person) {
+            // The exact always-reset definition is Placeholder.iff, native
+            // ordinary cXObject (type4/master0), not cXCursorObject. Its marker
+            // selects WHEN to reset; the real shared class service owns HOW.
+            if(e.kind==SavedRecoveryClass::person) {
                 for(const auto phase:{Phase::person_unwind,Phase::person_visuals,Phase::person_placement,
                         Phase::restart_main,Phase::person_cleanup,Phase::person_actions})
                     add(phase,target,true);

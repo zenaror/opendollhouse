@@ -1,4 +1,5 @@
 #include "odh/avatar_containment.hpp"
+#include "odh/pose.hpp"
 #include "odh/slot_height.hpp"
 #include "odh/session_source_checkpoint.hpp"
 #include "headless_checkpoint_guard.hpp"
@@ -175,6 +176,8 @@
 #include "json.hpp"
 #include "saved_tail_json.hpp"
 #include "saved_appearance.hpp"
+#include "original_playback_import.hpp"
+#include "original_motive_import.hpp"
 #include "saved_resources.hpp"
 #include "saved_thread_plan_audit.hpp"
 #include "saved_object_subroutine.hpp"
@@ -719,6 +722,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<odh::EntityPosition> placement_candidate;
     bool check_recovery_position=false,place_recovery_position=false;
     bool recover_saved_code=false;
+    const char* original_import_recovery_selection="none";
     std::optional<odh::SavedRecoveryResult> saved_code_recovery_result;
     struct RecoveryPositionDiagnostic {odh::WorldEntityReference person;odh::EntityPosition candidate;
         odh::AvatarPositionValidResult result;bool position_unchanged=false,expired_scope_refused=false;std::size_t ep5_requests=0;bool had_position=false;std::string candidate_kind;
@@ -8597,6 +8601,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
         const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
             odh::VmFrame frame;frame.context={key.caller,key.callee,key.stack_object,key.code_owner};
+            if(key.kind==odh::PlaybackResourceKey::Kind::original_animation){
+                if(!animation_catalog)throw odh::FormatError("original playback named catalog unavailable");
+                auto clip=animation_catalog->resolve(key.original_name);const auto* header=&clip->header;
+                return std::shared_ptr<const odh::AnimationHeader>(std::move(clip),header);
+            }
             if(key.kind==odh::PlaybackResourceKey::Kind::reach)return resolve_reach_animation(key.id);
             if(key.kind==odh::PlaybackResourceKey::Kind::route_walk||key.kind==odh::PlaybackResourceKey::Kind::source_locomotion)
                 return resolve_route_animation(frame,key.id,key.source==1);
@@ -8639,6 +8648,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         prepare_household_bodies();
         const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
             odh::VmFrame frame;frame.context={key.caller,key.callee,key.stack_object,key.code_owner};
+            if(key.kind==odh::PlaybackResourceKey::Kind::original_animation){
+                if(!animation_catalog)throw odh::FormatError("original playback named catalog unavailable");
+                auto clip=animation_catalog->resolve(key.original_name);const auto* header=&clip->header;
+                return std::shared_ptr<const odh::AnimationHeader>(std::move(clip),header);
+            }
             if(key.kind==odh::PlaybackResourceKey::Kind::reach)return resolve_reach_animation(key.id);
             if(key.kind==odh::PlaybackResourceKey::Kind::route_walk||key.kind==odh::PlaybackResourceKey::Kind::source_locomotion)
                 return resolve_route_animation(frame,key.id,key.source==1);
@@ -16769,7 +16783,7 @@ struct PlacementCandidateProbe {
         const odh::VmFrame frame{odh::routine_key(4096),0,{object->id,object->id,object->id,0},{},{}};
         odh::BuyModeExistingObject result{{object->id,object->generation},selected->guid,*base->position,
             world.read(frame,3,0),{}};
-        for(auto bits=object->dynamic_sprite_flags;bits;bits>>=1)result.dynamic_sprite_flags.push_back((bits&1U)?1:0);
+        result.dynamic_sprite_flags=odh::dynamic_sprite_flag_values(*object);
         odh::BuyModePreviewGroup preview;
         std::optional<std::int16_t> selected_native_heading;
         if(physical->native_head){
@@ -16795,7 +16809,7 @@ struct PlacementCandidateProbe {
                 visual.native=odh::BuyModeNativePreviewPart{part.native->authored,
                     static_cast<std::uint8_t>((heading->second-*selected_native_heading+8)&7),part.native->current};
             }
-            for(auto bits=entity->dynamic_sprite_flags;bits;bits>>=1)visual.dynamic_sprite_flags.push_back((bits&1U)?1:0);
+            visual.dynamic_sprite_flags=odh::dynamic_sprite_flag_values(*entity);
             if(part.id==(selected_native_heading?object->id:physical->base_id))preview.base_index=preview.parts.size();
             preview.parts.push_back(std::move(visual));
         }
@@ -16840,7 +16854,7 @@ struct PlacementCandidateProbe {
             const auto draw_graphic=world.read(frame,3,0);
             if(!draw_graphic){info.visuals.clear();return info;}
             SavedObjectVisual visual{e->id,e->definition->guid,*draw_graphic,graphic.direction,graphic.tile_position,{}};
-            for(auto bits=e->dynamic_sprite_flags;bits;bits>>=1)visual.dynamic_sprite_flags.push_back((bits&1U)?1:0);
+            visual.dynamic_sprite_flags=odh::dynamic_sprite_flag_values(*e);
             info.visuals.push_back(std::move(visual));
         }
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -17515,13 +17529,14 @@ struct PlacementCandidateProbe {
             render_lot_view.level=*focus_level;
             if(render_lot)render_lot->set_view_level(*focus_level);
         }
-        SceneState scene_state;scene_state.animation=sample?sample->clip.get():nullptr;scene_state.frame=sample?sample->frame:0;
+        SceneState scene_state;scene_state.simulation_tick=ticks;scene_state.animation=sample?sample->clip.get():nullptr;scene_state.frame=sample?sample->frame:0;
         scene_state.hands=sample?sample->hands:primary_animation()?primary_animation()->hands().value_or(odh::AvatarHands{}):odh::AvatarHands{};
         scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
         scene_state.avatar_visible=primary_runtime&&(!saved_world_main||(sample_actor&&sample_actor->position.has_value()));
-        if(collection&&collection->count>1)for(std::size_t i=0;i<collection->count;++i){const auto& layer=collection->layers[i];
+        if(collection&&collection->count>0)for(std::size_t i=0;i<collection->count;++i){const auto& layer=collection->layers[i];
             scene_state.animation_layers.push_back({layer.sample.clip.get(),layer.sample.frame,layer.weight});}
-        if(sample_actor)scene_state.avatar_radians=sample_actor->radian_direction;
+        if(sample_actor){scene_state.avatar_radians=sample_actor->radian_direction;apply_avatar_display(scene_state,*sample_actor);}
+        if(primary_animation())scene_state.head_seek=primary_animation()->head_seek();
         if(const auto visual=source_walk_visuals.find(frame_actor);visual!=source_walk_visuals.end()&&
            visual->second.generation==frame_actor_generation&&sample_actor&&sample_actor->position&&
            *sample_actor->position==visual->second.logical){
@@ -17530,7 +17545,8 @@ struct PlacementCandidateProbe {
             if(render_lot)scene_state.avatar_tile[2]+=odh::terrain_interp_altitude(render_lot->runtime_architecture_resource().architecture,
                 effects.visual.x,effects.visual.y);
         }
-        const auto carry_clip=primary_animation()?primary_animation()->carry_clip():decltype(primary_animation()->carry_clip()){};scene_state.carry_animation=carry_clip.get();
+        const auto carry_clip=primary_animation()?primary_animation()->carry_clip():decltype(primary_animation()->carry_clip()){};scene_state.carry_animation=carry_clip.get();scene_state.carry_frame=primary_animation()?primary_animation()->carry_frame():0;
+        if((scene_state.display_flags&4096)&&render_lot)scene_state.ground_normal=odh::terrain_interp_normal(render_lot->runtime_architecture_resource().architecture,scene_state.avatar_tile[0],scene_state.avatar_tile[1]);
         const bool track_actor_pixels=(headless_main||saved_world_main)&&render_output;
         const bool measure_actor_pixels=track_actor_pixels||render_window||headless_window_interaction.has_value();
         if(track_actor_pixels)scene_state.owner_id=std::numeric_limits<std::uint16_t>::max();
@@ -17582,19 +17598,21 @@ struct PlacementCandidateProbe {
                 if(!live_member||!live_member->position||
                    (member_sample&&(live_member->generation!=member_sample->actor_generation||member_sample->actor!=member->id)))continue;
                 const auto graphics=render_lot->entity_graphics(member->id);
-                SceneState member_state;member_state.animation=member_sample?member_sample->clip.get():nullptr;
+                SceneState member_state;member_state.simulation_tick=ticks;member_state.animation=member_sample?member_sample->clip.get():nullptr;
                 member_state.frame=member_sample?member_sample->frame:0;
                 member_state.hands=member_sample?member_sample->hands:member->playback->hands().value_or(odh::AvatarHands{});
-                const auto member_carry=member->playback->carry_clip();member_state.carry_animation=member_carry.get();
+                const auto member_carry=member->playback->carry_clip();member_state.carry_animation=member_carry.get();member_state.carry_frame=member->playback->carry_frame();
                 member_state.avatar_direction=graphics.direction;member_state.avatar_tile=graphics.tile_position;
-                member_state.avatar_radians=live_member->radian_direction;
-                if(member_collection&&member_collection->count>1)for(std::size_t i=0;i<member_collection->count;++i){const auto& layer=member_collection->layers[i];
+                member_state.avatar_radians=live_member->radian_direction;apply_avatar_display(member_state,*live_member);
+                member_state.head_seek=member->playback->head_seek();
+                if(member_collection&&member_collection->count>0)for(std::size_t i=0;i<member_collection->count;++i){const auto& layer=member_collection->layers[i];
                     member_state.animation_layers.push_back({layer.sample.clip.get(),layer.sample.frame,layer.weight});}
                 if(const auto visual=source_walk_visuals.find(member->id);visual!=source_walk_visuals.end()&&
                    visual->second.generation==live_member->generation&&*live_member->position==visual->second.logical){
                     const auto& effects=visual->second.effects;member_state.avatar_tile={effects.visual.x,effects.visual.y,effects.visual_z};
                     member_state.avatar_tile[2]+=odh::terrain_interp_altitude(render_lot->runtime_architecture_resource().architecture,effects.visual.x,effects.visual.y);
                 }
+                if((member_state.display_flags&4096)&&render_lot)member_state.ground_normal=odh::terrain_interp_normal(render_lot->runtime_architecture_resource().architecture,member_state.avatar_tile[0],member_state.avatar_tile[1]);
                 member_state.owner_id=static_cast<std::uint16_t>(member->id);
                 auto member_options=scene_options;
                 member_options.record_owner_ids=render_window||headless_window_interaction.has_value()||track_actor_pixels;
@@ -17912,8 +17930,10 @@ struct PlacementCandidateProbe {
                 if((!samples&&animation->progress())||(samples&&(!samples->count||samples->count>3)))return {};
                 const auto graphics=render_lot->entity_graphics(avatar.id);
                 SceneState state;state.avatar_direction=graphics.direction;
-                state.avatar_radians=avatar.radian_direction;state.avatar_tile=graphics.tile_position;
-                const auto carry=animation->carry_clip();state.carry_animation=carry.get();
+                state.avatar_radians=avatar.radian_direction;state.avatar_tile=graphics.tile_position;apply_avatar_display(state,avatar);state.head_seek=animation->head_seek();
+                // Hidden controls drawing; this indexed, positioned avatar still owns real bones.
+                state.avatar_visible=true;
+                const auto carry=animation->carry_clip();state.carry_animation=carry.get();state.carry_frame=animation->carry_frame();
                 // With no running animation the reference still has a real
                 // skeleton. Use its base pose, just as capture_frame does.
                 if(samples){
@@ -17921,7 +17941,7 @@ struct PlacementCandidateProbe {
                         const auto& layer=samples->layers[i];
                         if(layer.sample.actor!=avatar.id||layer.sample.actor_generation!=avatar.generation)return {};
                         if(i==0){state.animation=layer.sample.clip.get();state.frame=layer.sample.frame;state.hands=layer.sample.hands;}
-                        if(samples->count>1)state.animation_layers.push_back({layer.sample.clip.get(),layer.sample.frame,layer.weight});
+                        if(samples->count>0)state.animation_layers.push_back({layer.sample.clip.get(),layer.sample.frame,layer.weight});
                     }
                 }
                 if(const auto visual=source_walk_visuals.find(avatar.id);visual!=source_walk_visuals.end()&&
@@ -20425,6 +20445,9 @@ struct PlacementCandidateProbe {
             return !actor->lexical_primary_resource;
         }),retired_actor_storage.end());
     };
+    // Installed before the numbered loop; original per-entity post-VM order is
+    // Decay -> Playback -> HeadSeek composition -> continuous -> PD27.
+    std::function<void(odh::WorldEntityReference)> original_avatar_decay_tick;
     const auto execute=[&](bool scheduled_tick) {
         struct ReleaseAtDispatchExit {
             const decltype(release_retired_actor_threads)& release;
@@ -20458,6 +20481,60 @@ struct PlacementCandidateProbe {
                 }else if(entity!=runtime_avatar_id)trace_in("household_main")(record);
                 else phase_trace(record);
             };
+            const auto source_avatar_pose=[&](const odh::Entity& body){
+                auto* actor=actor_runtime_for(body.id);auto* animation=actor_playback_for(body.id);
+                if(!actor||actor->generation!=body.generation||!animation||!body.position||!render_lot)
+                    throw odh::FormatError("head seek live avatar pose owner is unavailable");
+                auto* renderer=prepare_actor_scene(*actor);if(!renderer)throw odh::FormatError("head seek actual avatar renderer is unavailable");
+                const auto graphics=render_lot->entity_graphics(body.id);SceneState state;
+                state.avatar_tile=graphics.tile_position;state.avatar_direction=graphics.direction;state.avatar_radians=body.radian_direction;
+                const auto carry=animation->carry_clip();state.carry_animation=carry.get();state.carry_frame=animation->carry_frame();
+                state.head_seek=animation->head_seek();
+                const auto collection=animation->sample_collection();
+                if(!collection&&animation->progress())throw odh::FormatError("head seek animation sample is unavailable");
+                if(collection)for(std::size_t i=0;i<collection->count;++i){const auto& layer=collection->layers[i];
+                    if(layer.sample.actor!=body.id||layer.sample.actor_generation!=body.generation)
+                        throw odh::FormatError("head seek animation actor is stale");
+                    state.animation_layers.push_back({layer.sample.clip.get(),layer.sample.frame,layer.weight});}
+                return renderer->pose_anchors(state);
+            };
+            const auto advance_avatar_head_seek=[&](std::int16_t id){
+                const auto* body=world.find(id);if(!body||body->kind!=odh::EntityKind::avatar)return true;
+                auto* animation=actor_playback_for(id);auto* vm=actor_vm_for(id);
+                if(!animation||!vm){host_diagnostic="head seek actual avatar controller is unavailable";return false;}
+                const odh::WorldEntityReference ref{id,body->generation};
+                std::optional<odh::AvatarHeadSeekVisualInput> visual;
+                if(render_requested&&render_lot&&body->position&&body->person_data.size()>45&&body->person_data[42]==1){
+                    const auto* target=world.find(body->person_data[41]);
+                    if(target&&target->position){
+                        const auto target_ref=odh::WorldEntityReference{target->id,target->generation};
+                        const auto revision=world.spatial_revision(),epoch=ticks;const auto before=vm->snapshot();
+                        const auto person=body->person_data;
+                        try{
+                            if(!world.evaluate_appearance_lookup([&]{
+                                const auto own=source_avatar_pose(*body);if(!own.neck_matrix)throw odh::FormatError("head seek actual neck matrix missing");
+                                std::array<float,3> target_point;
+                                if(target->kind==odh::EntityKind::avatar){const auto other=source_avatar_pose(*target);
+                                    if(!other.headline_target)throw odh::FormatError("head seek actual target HEAD missing");
+                                    target_point=*other.headline_target;
+                                }else target_point=render_lot->object_look_target(target->id);
+                                const auto origin=render_lot->entity_graphics(id).tile_position;
+                                const std::array<float,3> difference{(target_point[0]-origin[0])*3,(target_point[2]-origin[2])*3-1,(target_point[1]-origin[1])*3};
+                                visual=odh::AvatarHeadSeekVisualInput{id,target_ref.id,ref.generation,target_ref.generation,before.run_generation,epoch,
+                                    odh::calculate_head_seek(*own.neck_matrix,difference,body->radian_direction)};
+                            }))throw odh::FormatError("head seek geometry provider attempted World mutation");
+                            const auto after=vm->snapshot();body=world.resolve_reference(ref);target=world.resolve_reference(target_ref);
+                            bool frames=before.stack.size()==after.stack.size();for(std::size_t i=0;frames&&i<before.stack.size();++i)
+                                frames=odh::vm_frame_equal(before.stack[i],after.stack[i]);
+                            if(!body||!target||body->person_data!=person||world.spatial_revision()!=revision||ticks!=epoch||vm->dispatch_active()||!frames||
+                               before.run_generation!=after.run_generation||before.steps!=after.steps||before.status!=after.status||before.temps!=after.temps||before.temp_xl!=after.temp_xl||
+                               bool(before.pending)!=bool(after.pending)||(before.pending&&before.pending->ticket!=after.pending->ticket))
+                                throw odh::FormatError("head seek geometry provenance changed");
+                        }catch(const std::exception& error){host_diagnostic=error.what();return false;}
+                    }
+                }
+                return animation->advance_head_seek(ref,ticks,visual,&host_diagnostic);
+            };
             if(!entity_scheduler.tick(ticks,session_policy.tick_budget(total_steps(),entity_scheduler.size()),budget,
                 scheduled_trace,recover_missing_object_main,[&](std::int16_t entity,std::uint64_t,bool ran_vm){
                     const odh::Sleep* entity_sleep=nullptr;const odh::Vm* thread=nullptr;
@@ -20467,12 +20544,26 @@ struct PlacementCandidateProbe {
                     else if(second_main_thread && headless_second_main && entity==headless_second_main->avatar.id){entity_sleep=&second_main_thread->sleep();thread=second_main_vm.get();}
                     else if(saved_phone_sleep && entity==saved_phone_id){entity_sleep=saved_phone_sleep.get();thread=saved_phone_thread.get();}
                     else for(const auto* member:auxiliary_actors)if(member->id==entity){entity_sleep=&member->controllers->sleep();thread=member->vm.get();break;}
+                    const auto* motive_actor=world.find(entity);
+                    const bool motive_avatar=motive_actor&&!motive_actor->dead&&motive_actor->kind==odh::EntityKind::avatar;
+                    const odh::WorldEntityReference motive_ref{entity,motive_actor?motive_actor->generation:0};
+                    if(saved_world_main&&motive_avatar){
+                        if(!original_avatar_decay_tick){host_diagnostic="original avatar decay owner is unavailable";return false;}
+                        original_avatar_decay_tick(motive_ref);
+                    }
                     if(saved_world_main){
                         auto* animation=actor_playback_for(entity);
                         if(animation&&!animation->advance(ticks,record_animation_event)){
                             host_diagnostic="animation advance for "+std::to_string(entity)+": "+animation->diagnostic();
                             return false;
                         }
+                    }
+                    if(saved_world_main&&!advance_avatar_head_seek(entity))return false;
+                    // The source head-seek phase is composed here before
+                    // continuous changes, after the actual Playback advance.
+                    if(saved_world_main&&motive_avatar&&
+                       (!world.tick_motive_changes(motive_ref)||!odh::tick_ts1_avatar_counter(world,motive_ref))){
+                        host_diagnostic="original avatar continuous motive/counter tick failed";return false;
                     }
                     const bool idle=thread && (thread->status()==odh::VmStatus::returned_true || thread->status()==odh::VmStatus::returned_false);
                     const auto* actor=world.find(entity);
@@ -20840,6 +20931,13 @@ struct PlacementCandidateProbe {
                     if(origin==created_object_origins.end()||origin->second.generation!=entry.generation||origin->second.guid!=entry.definition->guid)
                         throw odh::FormatError("class recovery runtime constructor origin unavailable id="+std::to_string(entry.id));
                 }
+                // Native431edd selects the exact Placeholder definition, then
+                // invokes its REAL virtual Reset. The installed type4/master0
+                // profile uses ordinary cXObject; do not invent Cursor services.
+                if(entry.definition->guid==0x3c08965fU&&
+                   (entry.kind!=odh::EntityKind::object||definition->definition.object_type!=4||
+                    definition->definition.master_id!=0||definition->definition.sub_index!=0))
+                    throw odh::FormatError("always-reset definition has an unsupported native class profile");
                 auto kind=entry.kind==odh::EntityKind::avatar?odh::SavedRecoveryClass::person:
                     entry.definition->guid==0x3c08965f?odh::SavedRecoveryClass::special_cursor:
                     definition->definition.object_type==8?odh::SavedRecoveryClass::portal:odh::SavedRecoveryClass::object;
@@ -20854,6 +20952,23 @@ struct PlacementCandidateProbe {
                 descriptors.push_back({ref,kind,changed,entry.entry_points->size()>3&&entry.entry_points->at(3).action!=0,
                     native_group,words->at(49),thread,std::move(pieces)});
                 if(kind==odh::SavedRecoveryClass::person)required_people.emplace(ref,changed);
+            }
+            std::set<odh::WorldEntityReference> resetting_originals;
+            for(const auto& descriptor:descriptors)
+                if(descriptor.code_changed||descriptor.kind==odh::SavedRecoveryClass::special_cursor)
+                    resetting_originals.insert(descriptor.reference);
+            for(auto& [person,needs_reset]:required_people){
+                if(needs_reset)continue;
+                const auto source=originals.find(person);
+                if(source==originals.end()||!source->second->tail.person)
+                    throw odh::FormatError("compatible original person lacks its actual source metadata");
+                const auto& native=*source->second->tail.person;
+                const auto notified=[&](std::int16_t id){
+                    const auto ref=original_reference(id);
+                    return ref&&*ref!=person&&resetting_originals.count(*ref)!=0;
+                };
+                needs_reset=notified(native.active_interaction.icon)||
+                    std::any_of(native.object_uses.begin(),native.object_uses.end(),[&](const auto& use){return notified(use.target_id);});
             }
             // Known original resource banks are prewarmed before hydration;
             // later script-created resources retain their bounded loader. The
@@ -20877,8 +20992,8 @@ struct PlacementCandidateProbe {
             for(const auto& [ref,changed]:required_people){
                 const auto source=originals.find(ref);const auto* service=actor_services_for(ref.id);
                 auto* actor=service?service->actor:nullptr;
-                if(source==originals.end()||!actor||!actor->vm||!actor->controllers||!changed)
-                    throw odh::FormatError("class recovery needs a proven full original-person recovery id="+std::to_string(ref.id));
+                if(source==originals.end()||!actor||!actor->vm||!actor->controllers)
+                    throw odh::FormatError("class recovery needs the actual original-person execution owners id="+std::to_string(ref.id));
                 std::set<std::uint32_t> guids;
                 const auto plan=odh::make_simitone_saved_thread_plan(*source->second,*objt);
                 for(const auto& frame:plan.frames)guids.insert(frame.code_owner_guid);
@@ -20931,6 +21046,78 @@ struct PlacementCandidateProbe {
             auto& importing=people_context.avatar_import;importing.world=&world;importing.types=&*objt;
             importing.source_still_matches=current;importing.original_reference=original_reference;
             importing.will_reset_before_dispatch=[&](auto ref){const auto found=required_people.find(ref);return found!=required_people.end()&&found->second;};
+            std::map<odh::WorldEntityReference,odh_host::OriginalPlaybackImportPlan> original_playback_plans;
+            std::map<odh::WorldEntityReference,odh::AvatarBodyDescriptor> original_body_plans;
+            const auto live_body_descriptor=[&](odh::WorldEntityReference ref){
+                const auto* service=actor_services_for(ref.id);auto* actor=service?service->actor:nullptr;
+                const auto* body=world.resolve_reference(ref);
+                if(!actor||!actor->body_state||!actor->body_state->body||!actor->data.startup||!body||body->person_data.size()<=58)
+                    throw odh::FormatError("original LoadCrossRef live body owner unavailable");
+                const bool child=body->person_data[58]<18;
+                const std::uint16_t walk=child?151:150,swim=child?160:158;
+                const auto tables=load_strings(*globals,{walk,swim});
+                if(!tables.count(walk)||!tables.count(swim))throw odh::FormatError("original live-age walk/swim resources unavailable");
+                const auto private_tables=load_strings(actor->resource,{150});const auto overrides=private_tables.find(150);
+                auto value=odh::derive_avatar_body_descriptor(world,ref.id,random,actor->body_state->body,tables.at(walk),tables.at(swim),
+                    overrides==private_tables.end()?std::optional<odh::StringTable>{}:std::optional<odh::StringTable>{overrides->second},true);
+                value.selected_name=actor->body_state->selected_name;return value;
+            };
+            const auto live_body_current=[&](odh::WorldEntityReference ref){
+                const auto stored=original_body_plans.find(ref);if(stored==original_body_plans.end())return false;
+                const auto live=live_body_descriptor(ref);const auto& before=stored->second;
+                return live.child==before.child&&live.global_walk_id==before.global_walk_id&&live.global_swim_id==before.global_swim_id&&
+                    live.walk==before.walk&&live.swim==before.swim&&live.selected_name==before.selected_name;
+            };
+            std::map<odh::WorldEntityReference,odh_host::OriginalMotiveImportPlan> original_motive_plans;
+            importing.prepare_services=[&](auto ref,const odh::ObjmPersonState& source,const odh::VmSnapshot& prospective,std::string& error){
+                const auto* service=actor_services_for(ref.id);auto* actor=service?service->actor:nullptr;
+                auto* thread=actor_vm_for(ref.id);auto* animation=actor_playback_for(ref.id);
+                if(!current()||!actor||!actor->body_state||!actor->body_state->body||!thread||!animation||!animation_catalog){
+                    error="original avatar playback/body services are unavailable";return false;}
+                const auto named=[&](const std::string& name){
+                    auto clip=animation_catalog->resolve(name);const auto* header=&clip->header;
+                    // Prewarm real CFP/pose resources even for a silent load.
+                    (void)animation_catalog->decode(*header);
+                    return std::shared_ptr<const odh::AnimationHeader>(std::move(clip),header);
+                };
+                const auto visuals=[&,ref](const std::vector<std::string>& accessories,odh::AvatarOutfitReference& outfit,std::string& why){
+                    if(!current())return false;const auto* body=world.resolve_reference(ref);
+                    const auto* entry=actor_services_for(ref.id);auto* actual=entry?entry->actor:nullptr;
+                    if(!body||!actual||!actual->body_state||!actual->body_state->body){why="original avatar visual identity expired";return false;}
+                    const auto current_suit=odh::resolve_ts1_person_suit(world,ref.id,static_cast<std::uint16_t>(body->person_data.at(8)),suit_services);
+                    if(current_suit.state!=odh::Ts1SuitResourceState::ready){why="original CurrentOutfit unavailable: "+current_suit.diagnostic;return false;}
+                    outfit=current_suit.outfit;
+                    auto preview=*body;auto visual_state=preview.avatar_appearance.value_or(odh::AvatarAppearanceState{});
+                    visual_state.body=outfit;preview.avatar_appearance=std::move(visual_state);
+                    ensure_appearance_resources();
+                    auto config=render_appearances->resolve_avatar_body(odh::effective_avatar_body(*actual->body_state->body,preview));
+                    render_appearances->append_accessories(config,accessories);return current();
+                };
+                auto prepared=odh_host::OriginalPlaybackImportPlan::prepare(world,ref,*thread,*animation,source,prospective,ticks,named,visuals,error);
+                if(!prepared)return false;
+                const auto decay=simulation_motives.find(ref.id);
+                if(!simulation_clock||decay==simulation_motives.end()){
+                    error="original avatar actual motive decay/clock services are unavailable";return false;}
+                auto motives=odh_host::OriginalMotiveImportPlan::prepare(world,ref,*thread,decay->second,
+                    *simulation_clock,source,prospective,current,error);
+                if(!motives)return false;
+                original_body_plans.emplace(ref,live_body_descriptor(ref));
+                return original_playback_plans.emplace(ref,std::move(*prepared)).second&&
+                    original_motive_plans.emplace(ref,std::move(*motives)).second;
+            };
+            importing.services_current=[&](auto ref,std::string& error){const auto found=original_playback_plans.find(ref);
+                const auto motives=original_motive_plans.find(ref);
+                return current()&&found!=original_playback_plans.end()&&motives!=original_motive_plans.end()&&
+                    live_body_current(ref)&&found->second.current(error)&&motives->second.current(error);};
+            importing.commit_services=[&](auto ref,const odh::VmSnapshot& actual,std::string& error){const auto found=original_playback_plans.find(ref);
+                const auto motives=original_motive_plans.find(ref);
+                if(!current()||found==original_playback_plans.end()||motives==original_motive_plans.end()||
+                   !live_body_current(ref)||!found->second.commit(actual,error))return false;
+                auto* service=actor_services_for(ref.id);auto* actor=service?service->actor:nullptr;
+                if(!actor){error="original LoadCrossRef body publication lost actor";return false;}
+                actor->body_state=std::move(original_body_plans.at(ref));
+                return motives->second.commit(actual,error);};
+
             importing.resolve_owner=[&](auto ref,std::uint32_t guid)->std::optional<odh_host::SavedRecoveryAvatarOwner>{
                 const auto found=person_banks.find({ref,guid});return found==person_banks.end()?std::nullopt:std::optional<odh_host::SavedRecoveryAvatarOwner>{found->second};};
             importing.resolve_action=[&](auto ref,auto target,const auto& raw)->std::optional<odh_host::SavedRecoveryAvatarActionSource>{
@@ -20942,7 +21129,10 @@ struct PlacementCandidateProbe {
                 // Preserve the old raw routine for ordered recovery. Presence or
                 // absence of its actual resource TTAB is known, but its old TTA
                 // index is not asserted to identify a row in the changed table.
-                return odh_host::SavedRecoveryAvatarActionSource{odh::routine_key(static_cast<std::uint16_t>(raw.action_tree_id)),code->second,std::nullopt};};
+                const auto classification=required_people.find(ref);
+                const bool opaque=classification!=required_people.end()&&classification->second;
+                return odh_host::SavedRecoveryAvatarActionSource{odh::routine_key(static_cast<std::uint16_t>(raw.action_tree_id)),code->second,
+                    opaque?std::nullopt:std::optional<std::int32_t>{raw.tta_index}};};
             people_context.binding_still_matches=[&](auto ref,const auto* vm,const auto* queue,const auto* controllers){
                 if(!current())return false;const auto* entry=actor_services_for(ref.id);const auto* actor=entry?entry->actor:nullptr;
                 return entry&&entry->identity==ref&&actor&&actor->vm.get()==vm&&actor->controllers.get()==controllers&&
@@ -21088,8 +21278,9 @@ struct PlacementCandidateProbe {
             // Probe each currently possible physical reset before hydration.
             // Native conditional owners are capabilities, not accepted no-ops.
             std::vector<std::string> detach_admission_errors;
-            for(const auto& descriptor:descriptors)if(descriptor.kind!=odh::SavedRecoveryClass::person&&!descriptor.has_cleanup&&
-                    descriptor.kind!=odh::SavedRecoveryClass::special_cursor){
+            // The exact always-reset marker uses ordinary no-Cleanup detach
+            // too. Admit the actual physical hooks before hydration or Load.
+            for(const auto& descriptor:descriptors)if(descriptor.kind!=odh::SavedRecoveryClass::person&&!descriptor.has_cleanup){
                 const auto known=native_poses.find(descriptor.reference);
                 const auto pose=known==native_poses.end()?std::nullopt:std::optional<odh::EntityPosition>{known->second};
                 const auto hooks=recovery_removal_services(descriptor.reference,current,pose);
@@ -21129,7 +21320,7 @@ struct PlacementCandidateProbe {
             host.supports=[&](const auto& call,std::string& error){using Phase=odh::SavedRecoveryPhase;
                 if(person_phase(call))return people.supports(call,error);
                 if(odh_host::SavedRecoveryObjectAdapter::handles(call.phase))return objects.supports(call,error);
-                if(call.phase==Phase::special_cursor){error="special cursor actual class consumer unavailable";return false;}
+                if(call.phase==Phase::special_cursor){error="obsolete selector phase cannot replace actual native object recovery";return false;}
                 if(call.phase==Phase::refresh)return current();
                 if(call.phase==Phase::post_load_lookup_flags){
                     struct CacheOnly {bool& value;bool previous;CacheOnly(bool& flag):value(flag),previous(flag){value=true;}~CacheOnly(){value=previous;}}frozen(definition_words_cache_only);
@@ -21325,6 +21516,22 @@ struct PlacementCandidateProbe {
                     globals,&*definition_index,true);
                 return std::make_shared<const odh::VmProgram>(std::move(source.routines));
             });
+        const odh_host::OriginalImportRecoveryBoundary recovery_boundary{
+            saved_world_main,!restoring_object_lifetime,!session_context->single_resident_session,
+            restoring_object_lifetime,occupancy_saved_execution_invalidated,
+            bool(check_recovery_position||place_recovery_position),bool(session_context->resources),
+            live_native_group_construction==odh::NativeObjectGroupConstructionProfile::original_native,actorless_arrival};
+        const auto recovery_selection=odh_host::select_original_import_recovery(recovery_boundary,imported_code_plan->comparison);
+        if(recovery_selection==odh_host::OriginalImportRecoverySelection::unsupported)
+            throw odh::FormatError("original import code recovery unsupported: resource_identity="+std::to_string(bool(session_context->resources))+
+                " native_groups="+std::to_string(live_native_group_construction==odh::NativeObjectGroupConstructionProfile::original_native)+
+                " comparison_state="+std::to_string(static_cast<unsigned>(imported_code_plan->comparison.state))+
+                " unsupported_types="+std::to_string(imported_code_plan->unsupported.size()));
+        if(recovery_selection==odh_host::OriginalImportRecoverySelection::home||
+           recovery_selection==odh_host::OriginalImportRecoverySelection::destination){
+            recover_saved_code=true;
+            original_import_recovery_selection=recovery_selection==odh_host::OriginalImportRecoverySelection::home?"original_home":"original_destination";
+        }else if(recover_saved_code)original_import_recovery_selection="explicit_diagnostic";
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
         session_log.event("source code compatibility prepared types="+
             std::to_string(imported_code_plan->comparison.types.size())+" changed="+
@@ -22280,21 +22487,32 @@ struct PlacementCandidateProbe {
         if(runtime_house_layout_history&&std::tie(before.day,before.month,before.year)!=std::tie(after.day,after.month,after.year))
             odh::rotate_house_layout_history(*runtime_house_layout_history);
     };
-    const auto update_simulation_motives=[&]{
-        if(!simulation_clock)return;
+    const auto update_simulation_motives=[&](std::optional<odh::WorldEntityReference> only=std::nullopt,bool update_decay=true){
+        if(!simulation_clock){
+            if(only)throw odh::FormatError("original avatar motive clock unavailable");
+            return;
+        }
+        if(only&&simulation_motives.find(only->id)==simulation_motives.end())
+            throw odh::FormatError("original avatar motive decay owner unavailable");
         const auto& time=simulation_clock->snapshot();
         const auto motive_contributions=room_lighting_controller&&room_lighting_controller->current()
             ?std::vector<odh::RoomScoreContribution>{}:odh::room_score_contributions(world);
         for(auto& entry:simulation_motives){
+            if(!update_decay)break;
+            if(only&&entry.first!=only->id)continue;
             const auto* actor=world.find(entry.first);
+            if(only&&(!actor||actor->generation!=only->generation))
+                throw odh::FormatError("original per-entity motive decay generation changed");
             const auto* runtime=actor_runtime_for(entry.first);
             if(runtime&&runtime->npc_origin&&runtime->creation_tick==ticks)continue;
             odh::Ts1MotiveInputs in;
             if(!actor || actor->motives.size()<16 || !actor->object_words.count(34)){
-                simulation_motive_status[entry.first]="unsupported_missing_avatar_banks";++simulation_skipped_updates;continue;
+                simulation_motive_status[entry.first]="unsupported_missing_avatar_banks";++simulation_skipped_updates;
+                if(only)throw odh::FormatError("original avatar motive tick unsupported_missing_avatar_banks");continue;
             }
             if(!vm_room_map){
-                simulation_motive_status[entry.first]="unsupported_room_map_unavailable";++simulation_skipped_updates;continue;
+                simulation_motive_status[entry.first]="unsupported_room_map_unavailable";++simulation_skipped_updates;
+                if(only)throw odh::FormatError("original avatar motive tick unsupported_room_map_unavailable");continue;
             }
             // TS1 samples the avatar's own position, including OUT_OF_WORLD, before testing Hidden.
             const auto position=actor->position.value_or(odh::EntityPosition{-32768,-32768,1,0});
@@ -22303,7 +22521,8 @@ struct PlacementCandidateProbe {
                 :odh::calculate_room_score(*vm_room_map,motive_contributions,
                     position.x,position.y,position.level);
             if(!room_score){
-                simulation_motive_status[entry.first]="unsupported_room_score_unresolved";++simulation_skipped_updates;continue;
+                simulation_motive_status[entry.first]="unsupported_room_score_unresolved";++simulation_skipped_updates;
+                if(only)throw odh::FormatError("original avatar motive tick unsupported_room_score_unresolved");continue;
             }
             if(!world.set_motive(entry.first,13,room_score->score))
                 throw odh::FormatError("simulation room-score write failed");
@@ -22318,7 +22537,8 @@ struct PlacementCandidateProbe {
             const auto result=entry.second.update(time.hour,time.minute,in);
             simulation_motive_status[entry.first]=result.status==odh::Ts1MotiveStatus::updated?"updated":
                 result.status==odh::Ts1MotiveStatus::unchanged?"unchanged":"unsupported_input_profile";
-            if(result.status==odh::Ts1MotiveStatus::unsupported){++simulation_skipped_updates;continue;}
+            if(result.status==odh::Ts1MotiveStatus::unsupported){++simulation_skipped_updates;
+                if(only)throw odh::FormatError("original avatar motive tick unsupported input profile");continue;}
             if(result.status==odh::Ts1MotiveStatus::updated){
                 for(std::size_t i=0;i<odh::ts1_need_count;++i)
                     if(result.needs_written[i]&&!world.set_motive(entry.first,static_cast<std::int16_t>(odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))),result.needs[i]))
@@ -22340,6 +22560,7 @@ struct PlacementCandidateProbe {
         }
 #endif
     };
+    original_avatar_decay_tick=[&](odh::WorldEntityReference ref){update_simulation_motives(ref);};
     std::optional<odh_host::NeighborhoodTransitionRequest> neighborhood_transition;
     const auto execute_object_command=[&](const odh_host::SessionObjectCommand& intent,
             std::optional<std::uint64_t> expected_generation)->odh_host::NeighborhoodTransitionRequest {
@@ -24061,10 +24282,12 @@ struct PlacementCandidateProbe {
         }
         if(primary_go_here){primary_go_here->observe(host_failed,host_diagnostic);sync_primary_go_here();}
         if(!host_failed){
-            if(!world.tick_motive_changes())throw odh::FormatError("continuous motive change tick failed");
-            update_simulation_motives();
+            if(!saved_world_main){
+                if(!world.tick_motive_changes())throw odh::FormatError("continuous motive change tick failed");
+                update_simulation_motives();
+                if(!odh::tick_ts1_avatar_counters(world))throw odh::FormatError("TS1 avatar tick counter update failed");
+            }else update_simulation_motives(std::nullopt,false); // title only; actual avatar effects ran per entity
             sample_house_history();
-            if(!odh::tick_ts1_avatar_counters(world))throw odh::FormatError("TS1 avatar tick counter update failed");
         }
         for(auto* member:auxiliary_actors){
             if(!member->go_here)continue;
@@ -25350,6 +25573,7 @@ struct PlacementCandidateProbe {
         }
         std::cout<<"]}";
     }else std::cout<<"null";
+    std::cout<<",\"original_import_recovery_selection\":"<<json_bytes(original_import_recovery_selection);
     std::cout<<",\"complete_class_recovery\":";
     if(saved_code_recovery_result)std::cout<<"{\"prepared\":"<<(saved_code_recovery_result->prepared?"true":"false")
         <<",\"completed\":"<<(saved_code_recovery_result->completed?"true":"false")<<",\"operations\":"<<saved_code_recovery_result->operations

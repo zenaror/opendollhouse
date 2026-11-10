@@ -295,7 +295,12 @@ bool SavedRecoveryPersonService::notify(State& s,const SavedRecoveryCall& call,s
     }
     if(context_.tracker&&!context_.tracker->observe(s.binding.queue->snapshot()))
         return fail(error,"player request tracker rejected person notification state");
+    if(full)s.self_reset_completed=true;
     return true;
+}
+bool SavedRecoveryPersonService::completed_self_reset(WorldEntityReference ref) const {
+    const auto found=people_.find(ref);
+    return prepared_&&found!=people_.end()&&!resetting_.count(ref)&&found->second.self_reset_completed;
 }
 bool SavedRecoveryPersonService::execute(const SavedRecoveryCall& call,std::string& error){
     if(!supports(call,error))return false;
@@ -305,7 +310,7 @@ bool SavedRecoveryPersonService::execute(const SavedRecoveryCall& call,std::stri
     if(call.phase==Phase::person_unwind){resetting_.insert(call.entity);return unwind(s,call,error);}
     if(call.phase==Phase::person_actions){
         if(!clear_active(s,error)||!discard_queued(s,{},error))return false;
-        resetting_.erase(call.entity);return true;
+        resetting_.erase(call.entity);s.self_reset_completed=true;return true;
     }
     if(!phase(s,call.phase,error))return false;
     if(context_.tracker&&!context_.tracker->observe(s.binding.queue->snapshot()))return fail(error,"player request tracker rejected person recovery state");

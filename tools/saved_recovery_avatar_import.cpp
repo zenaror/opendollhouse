@@ -19,7 +19,7 @@ std::int16_t signed_word(std::int32_t value){const auto bits=static_cast<std::ui
 SavedRecoveryAvatarImport::SavedRecoveryAvatarImport(SavedRecoveryAvatarImportContext context):context_(std::move(context)){}
 bool SavedRecoveryAvatarImport::current(const Prepared& p,std::string& error) const {
     if(!context_.source_still_matches||!context_.source_still_matches()||
-       !context_.will_reset_before_dispatch(p.binding.person))return fail(error,"avatar recovery-only import authority expired");
+       context_.will_reset_before_dispatch(p.binding.person)!=p.reset_before_dispatch)return fail(error,"avatar original import classification/authority expired");
     const auto* actor=context_.world->find(p.binding.person.id);
     if(!actor||actor->generation!=p.binding.person.generation||actor->dead||actor->ui_ghost||actor->kind!=EntityKind::avatar||
        p.binding.thread->dispatch_active()||!p.binding.queue->bound_to(*p.binding.thread)||
@@ -39,6 +39,8 @@ bool SavedRecoveryAvatarImport::current(const Prepared& p,std::string& error) co
     for(const auto& frame:p.execution.stack)
         for(const auto role:{VmEntityRole::caller,VmEntityRole::callee,VmEntityRole::stack_object})
             if(!exact(vm_context_reference(frame.context,role)))return fail(error,"avatar saved frame lost its exact original body reference");
+    for(const auto& frame:p.execution.stack)if(frame.original_import)
+        for(const auto& use:frame.original_import->uses)if(!exact(use.target))return fail(error,"avatar original use metadata lost its exact original body");
     for(const auto& action:p.queue.actions)
         if(!exact({action.call.context.callee,action.target_generation})||
            (action.icon_owner&&!exact({action.icon_owner->id,action.icon_owner->generation})))
@@ -64,7 +66,13 @@ bool SavedRecoveryAvatarImport::current(const Prepared& p,std::string& error) co
        q.last_tick!=oldq.last_tick||q.resume_tick!=oldq.resume_tick||q.interrupted!=oldq.interrupted||
        q.diagnostic!=oldq.diagnostic||q.profile!=oldq.profile||q.next_queue_uid!=oldq.next_queue_uid)
         return fail(error,"avatar controllers changed after import preparation");
-    if(!p.binding.queue->can_restore_snapshot(p.queue,p.execution))return fail(error,"actual avatar queue cannot admit the prepared recovery-only execution");
+    if(!p.reset_before_dispatch){
+        if(!p.continuation||!p.binding.thread->original_import_current(*p.continuation)||
+           !context_.services_current||
+           !p.binding.controllers->can_import_original(p.execution,p.queue))
+            return fail(error,"actual avatar controllers cannot admit the original continuation");
+        if(!context_.services_current(p.binding.person,error))return false;
+    }else if(!p.binding.queue->can_restore_snapshot(p.queue,p.execution))return fail(error,"actual avatar queue cannot admit the prepared recovery-only execution");
     return true;
 }
 bool SavedRecoveryAvatarImport::prepare(const std::vector<SavedRecoveryAvatarBinding>& bindings,std::string& error){
@@ -91,12 +99,14 @@ bool SavedRecoveryAvatarImport::prepare(const std::vector<SavedRecoveryAvatarBin
                !binding.source->tail.person||binding.source->serialized_object_type!=2||
                binding.source->saved.object_id!=binding.person.id||binding.source->imported_generation!=binding.person.generation||
                !people.insert(binding.person).second)return fail(error,"avatar import binding/source identity is invalid or duplicate");
-            if(!context_.will_reset_before_dispatch(binding.person))return fail(error,"native avatar continuation is unsupported without proven full recovery before dispatch");
             const auto* actor=context_.world->find(binding.person.id);
             if(!actor||actor->generation!=binding.person.generation||!actor->definition||
                actor->definition->guid!=binding.source->saved.guid||actor->kind!=EntityKind::avatar||actor->dead||actor->ui_ghost)
                 return fail(error,"avatar import does not identify its original live definition");
             Prepared p;p.binding=binding;p.binding.source=nullptr;p.before=binding.thread->snapshot();
+            p.reset_before_dispatch=context_.will_reset_before_dispatch(binding.person);
+            if(!p.reset_before_dispatch&&(!context_.prepare_services||!context_.services_current||!context_.commit_services))
+                return fail(error,"compatible original avatar lacks its actual playback/appearance import consumers");
             p.controllers_before=binding.controllers->snapshot();
             if(binding.thread->dispatch_active()||p.before.steps||p.before.ticket_sequence||!no_async(p.before)||p.before.stack.size()>1||
                p.before.run_generation==std::numeric_limits<std::uint64_t>::max()||p.before.status==VmStatus::fault||
@@ -111,6 +121,20 @@ bool SavedRecoveryAvatarImport::prepare(const std::vector<SavedRecoveryAvatarBin
                 if(std::none_of(p.owners.begin(),p.owners.end(),[&](const auto& old){return old.first==found->owner;}))p.owners.emplace_back(found->owner,found->program);
                 return found;
             };
+            if(!p.reset_before_dispatch){
+                // Pinned converter maps ObjectUses against the ACTUAL caller
+                // instruction. No inferred wait/deadline/routing state is read.
+                apply_simitone_saved_return_mapping(p.source_plan,[&](const auto& raw)->std::optional<std::uint16_t>{
+                    const auto code=owner(raw.code_owner_guid);if(!code)return {};
+                    const auto key=routine_key(raw.routine_id);
+                    const auto bank=key.scope==RoutineScope::global?binding.thread->shared_program_for_owner(0):code->program;
+                    if(!bank)return {};const auto routine=bank->routines().find(key);
+                    if(routine==bank->routines().end()||raw.instruction_pointer>=routine->second.instructions.size())return {};
+                    return routine->second.instructions[raw.instruction_pointer].opcode;
+                });
+                for(auto& raw:p.source_plan.frames)if(raw.return_state==SimitoneSavedReturnState::unresolved)
+                    raw.return_state=SimitoneSavedReturnState::normal;
+            }
             std::vector<VmFrame> frames;frames.reserve(p.source_plan.frames.size());
             for(const auto& raw:p.source_plan.frames){
                 const auto code=owner(raw.code_owner_guid);if(!code)return fail(error,"avatar saved frame lacks its exact installed frozen code owner");
@@ -133,8 +157,26 @@ bool SavedRecoveryAvatarImport::prepare(const std::vector<SavedRecoveryAvatarBin
                     return fail(error,"avatar saved frame resolves an unsupported native BHAV format");
                 // These are opaque unwind frames, not reconstructed invocation
                 // continuations. Raw return/primitive metadata stays in source_plan.
-                frame.arguments=raw.arguments;frame.locals=raw.locals;frames.push_back(std::move(frame));
+                frame.arguments=raw.arguments;frame.locals=raw.locals;
+                if(!p.reset_before_dispatch){
+                    frame.action_tree=raw.action_tree;
+                    const auto kind=raw.return_state==SimitoneSavedReturnState::retry?VmOriginalReturn::retry:
+                        raw.return_state==SimitoneSavedReturnState::interaction?VmOriginalReturn::interaction:VmOriginalReturn::normal;
+                    frame.original_import=VmOriginalFrameState{raw.saved_primitive_state,kind};
+                }
+                frames.push_back(std::move(frame));
             }
+            if(!p.reset_before_dispatch){
+                for(const auto& use:binding.source->tail.person->object_uses){
+                    if(use.stack_length<1||std::size_t(use.stack_length)>frames.size())return fail(error,"original use bank depth is outside the actual stack");
+                    WorldEntityReference target;if(!reference(use.target_id,target)||!target.id)return fail(error,"original use bank target identity is unavailable");
+                    frames[std::size_t(use.stack_length)-1].original_import->uses.push_back(VmOriginalUse{target,use.unknown2});
+                }
+                p.continuation=binding.thread->prepare_original_import(std::move(frames),p.source_plan.temp_registers,
+                    context_.source_still_matches,error);
+                if(!p.continuation)return false;
+                p.execution=p.continuation->snapshot();
+            }else{
             p.execution=p.before;p.execution.run_generation=p.before.run_generation+1;p.execution.steps=0;
             p.execution.diagnostic.clear();p.execution.pending.reset();p.execution.suspended_pending.clear();
             p.execution.interaction_return.reset();p.execution.external_frame_return.reset();
@@ -144,6 +186,7 @@ bool SavedRecoveryAvatarImport::prepare(const std::vector<SavedRecoveryAvatarBin
             else{
                 p.execution.stack=binding.thread->prepare_dormant_frames(std::move(frames),VmSavedRoutinePolicy::defer_missing_or_pc_fault);
                 p.execution.status=VmStatus::dormant;p.execution.action_tree_known=false;
+            }
             }
             // Account metadata-driven zero padding using the SAME VM reader.
             for(const auto& frame:p.execution.stack)
@@ -187,6 +230,24 @@ bool SavedRecoveryAvatarImport::prepare(const std::vector<SavedRecoveryAvatarBin
                 for(std::size_t i=1;i<p.queue.actions.size();++i)
                     if(p.queue.actions[i].priority>person.person_data[33])p.queue.actions.front().notify_idle=true;
             }
+            if(!p.reset_before_dispatch){
+                std::vector<const VmFrame*> boundaries;
+                for(const auto& frame:p.execution.stack)
+                    if(frame.original_import&&frame.original_import->result==VmOriginalReturn::interaction)boundaries.push_back(&frame);
+                if(boundaries.size()!=(active?std::size_t{1}:std::size_t{0}))return fail(error,"original active header lacks its exact single Interaction frame boundary");
+                if(active){
+                    const auto& frame=*boundaries.front();auto& header=p.queue.actions.front();
+                    if(frame.key.scope!=header.call.key.scope||frame.key.id!=header.call.key.id||
+                       frame.context.code_owner!=header.call.context.code_owner||frame.context.caller!=binding.person.id||
+                       frame.context.callee!=header.call.context.callee||frame.context.callee_generation!=header.target_generation||
+                       frame.arguments.size()<header.call.arguments.size())
+                        return fail(error,"original active action/frame resource identity differs");
+                    header.call.exact_arguments=frame.exact_arguments;
+                    header.argument_mode=frame.exact_arguments?InteractionArgumentMode::source_explicit:InteractionArgumentMode::legacy_metadata;
+                    p.queue.active=InteractionActiveSnapshot{header.uid,frame.invocation_ticket};
+                }
+            }
+            if(!p.reset_before_dispatch&&!context_.prepare_services(binding.person,*binding.source->tail.person,p.execution,error))return false;
             if(!current(p,error))return false;
             staged.push_back(std::move(p));
         }
@@ -201,6 +262,18 @@ SavedRecoveryAvatarImportResult SavedRecoveryAvatarImport::commit(){
         for(const auto& p:prepared_)if(!current(p,result.diagnostic))return result;
         for(auto& p:prepared_){
             result.discard_candidate=true;auto& thread=*p.binding.thread;
+            if(!p.reset_before_dispatch){
+                if(!p.continuation||!thread.commit_original_import(*p.continuation)||
+                   !p.binding.controllers->commit_original_import(p.queue,p.before.run_generation)){
+                    result.diagnostic="actual original avatar VM/controller publication failed";return result;
+                }
+                if(!context_.commit_services(p.binding.person,thread.snapshot(),result.diagnostic))return result;
+                if(thread.steps()!=0||thread.run_generation()!=p.execution.run_generation||
+                   !equal_frames(thread.stack(),p.execution.stack)){
+                    result.diagnostic="original avatar publication differs from admitted continuation";return result;
+                }
+                ++result.avatars;continue;
+            }
             if(p.execution.stack.empty()){
                 if(!thread.reset_execution_state()){result.diagnostic="empty native avatar thread cannot enter its recovery-only state";return result;}
                 thread.temps()=p.execution.temps;

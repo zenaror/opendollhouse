@@ -75,10 +75,33 @@ void motion_range(std::uint32_t active,std::int32_t start,std::uint32_t frames,s
     if(start<0||static_cast<std::uint64_t>(start)+frames>count)throw FormatError("pose motion sample range outside CFP");
 }
 }
+static void rebuild_pose_matrices(SkeletonPose& pose){
+    for(const auto& bone:pose.bones)if(bone.parent_index<-1||bone.parent_index>=static_cast<std::int32_t>(pose.bones.size()))
+        throw FormatError("pose parent index outside skeleton");
+    // Walk parent chains iteratively so file order and deep trees cannot cause
+    // stack recursion. Every chain must reach the unique root without a cycle.
+    std::vector<std::uint8_t> state(pose.bones.size(),0);std::vector<std::size_t> path;path.reserve(pose.bones.size());
+    for(std::size_t i=0;i<pose.bones.size();++i){
+        auto index=static_cast<std::int32_t>(i);path.clear();
+        while(index>=0&&state[static_cast<std::size_t>(index)]!=2){
+            const auto current=static_cast<std::size_t>(index);
+            if(state[current]==1)throw FormatError("pose skeleton parent cycle");
+            state[current]=1;path.push_back(current);index=pose.bones[current].parent_index;
+        }
+        while(!path.empty()){
+            const auto current=path.back();path.pop_back();auto& bone=pose.bones[current];
+            const auto local=local_matrix(bone);
+            bone.absolute_matrix=bone.parent_index<0?local:compose(pose.bones[static_cast<std::size_t>(bone.parent_index)].absolute_matrix,local);
+            bone.absolute_position={bone.absolute_matrix[3],bone.absolute_matrix[7],bone.absolute_matrix[11]};state[current]=2;
+        }
+    }
+}
 static SkeletonPose sample_pose_impl(const Skeleton& skeleton,const std::vector<PoseClipSample>& clips,double requested,
-    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp) {
+    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp,double carry_frame) {
     if(!std::isfinite(requested)||requested<std::numeric_limits<std::int32_t>::min()||requested>std::numeric_limits<std::int32_t>::max())
         throw FormatError("pose requested frame outside finite signed range");
+    if(!std::isfinite(carry_frame)||carry_frame<std::numeric_limits<std::int32_t>::min()||carry_frame>std::numeric_limits<std::int32_t>::max())
+        throw FormatError("pose carry frame outside finite signed range");
     if(clips.size()>3)throw FormatError("pose primary collection exceeds three clips");
     for(const auto& clip:clips){
         if(!clip.animation||!clip.cfp)throw FormatError("pose animation and CFP must be supplied together");
@@ -128,7 +151,7 @@ static SkeletonPose sample_pose_impl(const Skeleton& skeleton,const std::vector<
             frames=std::max(frames,motion.frames);
         }
         std::uint32_t frame=0;float fraction=0;
-        if(!carry){
+        {
             bool completed=false;
             if(clip_requested<0)completed=true;
             else {const auto whole=static_cast<std::uint32_t>(std::floor(clip_requested));
@@ -136,7 +159,7 @@ static SkeletonPose sample_pose_impl(const Skeleton& skeleton,const std::vector<
                 completed=whole>frames||static_cast<std::uint64_t>(frame)+1>frames;
                 if(whole>frames)fraction=0;
             }
-            if(primary){pose.completed=completed;pose.frame=frame;pose.fraction=fraction;}
+            if(primary&&!carry){pose.completed=completed;pose.frame=frame;pose.fraction=fraction;}
         }
         // A zero contribution still validates its immutable resources above,
         // but never writes NaN from the source's leading zero prefix (0/0).
@@ -171,36 +194,50 @@ static SkeletonPose sample_pose_impl(const Skeleton& skeleton,const std::vector<
         const auto weight=clip.weight==0?0.0f:clip.weight/total_weight;
         apply_clip(clip.animation,clip.cfp,false,clip.frame,weight,i==0);
     }
-    apply_clip(carry_animation,carry_cfp,true,0,1.0f,false);
-    // Walk parent chains iteratively so file order and deep trees cannot cause
-    // stack recursion. Every chain must reach the unique root without a cycle.
-    std::vector<std::uint8_t> state(pose.bones.size(),0);std::vector<std::size_t> path;path.reserve(pose.bones.size());
-    for(std::size_t i=0;i<pose.bones.size();++i){
-        auto index=static_cast<std::int32_t>(i);path.clear();
-        while(index>=0&&state[static_cast<std::size_t>(index)]!=2){
-            const auto current=static_cast<std::size_t>(index);
-            if(state[current]==1)throw FormatError("pose skeleton parent cycle");
-            state[current]=1;path.push_back(current);index=pose.bones[current].parent_index;
-        }
-        while(!path.empty()){
-            const auto current=path.back();path.pop_back();auto& bone=pose.bones[current];
-            const auto local=local_matrix(bone);
-            bone.absolute_matrix=bone.parent_index<0?local:compose(pose.bones[static_cast<std::size_t>(bone.parent_index)].absolute_matrix,local);
-            bone.absolute_position={bone.absolute_matrix[3],bone.absolute_matrix[7],bone.absolute_matrix[11]};state[current]=2;
-        }
-    }
+    // VMAvatar.PreDraw supplies (int)CurrentFrame and fraction0 for carry.
+    apply_clip(carry_animation,carry_cfp,true,std::trunc(carry_frame),1.0f,false);
+    rebuild_pose_matrices(pose);
     return pose;
 }
 SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animation,const CfpPlanes* cfp,double frame,
-    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp){
+    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp,double carry_frame){
     if(bool(animation)!=bool(cfp))throw FormatError("pose animation and CFP must be supplied together");
     std::vector<PoseClipSample> clips;
     if(animation)clips.push_back({animation,cfp,frame,1.0f});
-    return sample_pose_impl(skeleton,clips,frame,carry_animation,carry_cfp);
+    return sample_pose_impl(skeleton,clips,frame,carry_animation,carry_cfp,carry_frame);
 }
 SkeletonPose sample_pose_collection(const Skeleton& skeleton,const std::vector<PoseClipSample>& clips,
-    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp){
-    return sample_pose_impl(skeleton,clips,clips.empty()?0:clips.front().frame,carry_animation,carry_cfp);
+    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp,double carry_frame){
+    return sample_pose_impl(skeleton,clips,clips.empty()?0:clips.front().frame,carry_animation,carry_cfp,carry_frame);
+}
+
+HeadSeekQuaternion calculate_head_seek(const std::array<float,12>& m,const std::array<float,3>& target,float radians){
+    finite(m);finite(target);if(!std::isfinite(radians))throw FormatError("head seek angle is not finite");
+    const float angle=static_cast<float>(static_cast<double>(radians)-3.14159265358979323846),
+        c=static_cast<float>(std::cos(static_cast<double>(angle))),s=static_cast<float>(std::sin(static_cast<double>(angle)));
+    const std::array<float,3> t{c*target[0]+s*target[2]-m[3],target[1]-m[7],-s*target[0]+c*target[2]-m[11]};
+    const float det=m[0]*(m[5]*m[10]-m[6]*m[9])-m[1]*(m[4]*m[10]-m[6]*m[8])+m[2]*(m[4]*m[9]-m[5]*m[8]);
+    if(!std::isfinite(det)||std::abs(det)<1e-12f)throw FormatError("head seek neck matrix is singular");
+    const std::array<float,3> diff{
+        ((m[5]*m[10]-m[6]*m[9])*t[0]+(m[2]*m[9]-m[1]*m[10])*t[1]+(m[1]*m[6]-m[2]*m[5])*t[2])/det,
+        ((m[6]*m[8]-m[4]*m[10])*t[0]+(m[0]*m[10]-m[2]*m[8])*t[1]+(m[2]*m[4]-m[0]*m[6])*t[2])/det,
+        ((m[4]*m[9]-m[5]*m[8])*t[0]+(m[1]*m[8]-m[0]*m[9])*t[1]+(m[0]*m[5]-m[1]*m[4])*t[2])/det};
+    const float pi=float(3.14159265358979323846),limit=pi*(65.f/180.f);
+    const float h=std::clamp(static_cast<float>(std::atan2(-double(diff[1]),double(diff[2]))),-limit,limit);
+    const double distance=std::sqrt(double(diff[2]*diff[2]+diff[1]*diff[1]));
+    const float v=std::clamp(static_cast<float>(std::atan(double(diff[0])/distance)),-pi/4,pi/4);
+    const float sh=std::sin(h/2),ch=std::cos(h/2),sv=std::sin(v/2),cv=std::cos(v/2);
+    HeadSeekQuaternion q{sh*cv,ch*sv,sh*sv,ch*cv};finite(q);return q;
+}
+SkeletonPose apply_head_seek(const SkeletonPose& input,const AvatarHeadSeekSnapshot& state){
+    if(!head_seek_valid(state))throw FormatError("pose head seek state is invalid");
+    if(state.weight<=0)return input;auto pose=input;std::optional<std::size_t> head;
+    for(std::size_t i=0;i<pose.bones.size();++i){auto name=pose.bones[i].name;for(auto& c:name)if(c>='a'&&c<='z')c=char(c-'a'+'A');
+        if(name=="HEAD"){if(head)throw FormatError("pose HEAD bone is ambiguous");head=i;}}
+    if(!head)throw FormatError("pose HEAD bone is unavailable");
+    const float weight=std::min(1.f,state.weight/15.f);
+    pose.bones[*head].rotation=weight==1?state.current:slerp(pose.bones[*head].rotation,state.current,weight);
+    rebuild_pose_matrices(pose);return pose;
 }
 
 }

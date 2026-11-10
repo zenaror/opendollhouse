@@ -54,6 +54,10 @@ public:
     bool prepare(const std::vector<SavedRecoveryPersonBinding>&,std::string&);
     bool supports(const odh::SavedRecoveryCall&,std::string&) const;
     bool execute(const odh::SavedRecoveryCall&,std::string&);
+    // Source notifications can complete a compatible person's full self reset
+    // before that person's own (matched) post-load visit. This is a completed
+    // lifecycle fact, not proof inferred from run_generation or an empty queue.
+    bool completed_self_reset(odh::WorldEntityReference) const;
 private:
     struct Use {odh::WorldEntityReference target;std::size_t depth;std::uint8_t flags;};
     struct State {
@@ -63,6 +67,7 @@ private:
         std::optional<std::uint64_t> active_uid;
         std::vector<odh::VmFrame> frames;
         std::uint64_t run=0;
+        bool self_reset_completed=false;
     };
     SavedRecoveryPersonContext context_;
     std::map<odh::WorldEntityReference,State> people_;

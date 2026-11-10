@@ -303,7 +303,7 @@ bool vm_context_copy_reference(VmContext& dst,VmEntityRole to,const VmContext& s
 bool vm_frame_equal(const VmFrame&a,const VmFrame&b) noexcept {
     return a.key.scope==b.key.scope&&a.key.id==b.key.id&&a.pc==b.pc&&vm_context_equal(a.context,b.context)&&
         a.arguments==b.arguments&&a.locals==b.locals&&a.return_mode==b.return_mode&&
-        a.invocation_ticket==b.invocation_ticket&&a.exact_arguments==b.exact_arguments&&a.action_tree==b.action_tree;
+        a.invocation_ticket==b.invocation_ticket&&a.exact_arguments==b.exact_arguments&&a.action_tree==b.action_tree&&a.original_import==b.original_import;
 }
 
 namespace {
@@ -524,12 +524,7 @@ bool Vm::matches_active_query(const VmFrame& frame,const Instruction& instructio
             a.operands==b.operands;
     };
     const auto& top=stack_.back();
-    if(!vm_context_equal(top.context,frame.context)||top.action_tree!=frame.action_tree||top.key.scope!=frame.key.scope||top.key.id!=frame.key.id||top.pc!=frame.pc||
-       top.context.caller!=frame.context.caller||top.context.callee!=frame.context.callee||
-       top.context.stack_object!=frame.context.stack_object||top.context.code_owner!=frame.context.code_owner||
-       top.arguments!=frame.arguments||top.locals!=frame.locals||top.return_mode!=frame.return_mode||
-       top.invocation_ticket!=frame.invocation_ticket||top.exact_arguments!=frame.exact_arguments||
-       !same_instruction(instruction,*active_primitive_instruction_))return false;
+    if(!vm_frame_equal(top,frame)||!same_instruction(instruction,*active_primitive_instruction_))return false;
     const auto* routine=resolve(top.key,top.context.code_owner);
     return routine&&top.pc<routine->instructions.size()&&same_instruction(instruction,routine->instructions[top.pc]);
 }
@@ -541,11 +536,7 @@ bool Vm::matches_active_call_commit(const VmFrame& frame,const Instruction& inst
        dispatch.check_mode||active_call_commit_dispatch_->check_mode||!dispatch.ticket||
        dispatch.ticket!=active_call_commit_dispatch_->ticket)return false;
     const auto& parent=stack_[depth-1];const auto& operation=*active_call_commit_instruction_;
-    if(!vm_context_equal(parent.context,frame.context)||parent.action_tree!=frame.action_tree||parent.key.scope!=frame.key.scope||parent.key.id!=frame.key.id||parent.pc!=frame.pc||
-       parent.context.caller!=frame.context.caller||parent.context.callee!=frame.context.callee||
-       parent.context.stack_object!=frame.context.stack_object||parent.context.code_owner!=frame.context.code_owner||
-       parent.arguments!=frame.arguments||parent.locals!=frame.locals||parent.return_mode!=frame.return_mode||
-       parent.invocation_ticket!=frame.invocation_ticket||parent.exact_arguments!=frame.exact_arguments||
+    if(!vm_frame_equal(parent,frame)||
        operation.opcode!=instruction.opcode||operation.on_true!=instruction.on_true||
        operation.on_false!=instruction.on_false||operation.operands!=instruction.operands)return false;
     const auto* routine=resolve(parent.key,parent.context.code_owner);
@@ -704,6 +695,20 @@ bool Vm::restore_snapshot(const VmSnapshot& state,VmSavedRoutinePolicy policy) {
             if((!frame.exact_arguments&&frame.arguments.size()<std::max<std::size_t>(4,metadata->arguments)) ||
                 frame.locals.size()<std::max<std::size_t>(metadata->locals,metadata->arguments))return false;
         }
+        if(frame.original_import){
+            if(!state.action_tree_known||!routine||frame.original_import->result>VmOriginalReturn::interaction)return false;
+            if(frame.original_import->uses.size()>limits_.frame_variables||
+               std::any_of(frame.original_import->uses.begin(),frame.original_import->uses.end(),[](const auto& use){return use.target.id<=0||!use.target.generation;}))return false;
+            const auto kind=frame.original_import->result;
+            if(kind!=VmOriginalReturn::normal){
+                if(!depth)return false;
+                const auto& parent=state.stack[depth-1];const auto* code=resolve(parent.key,parent.context.code_owner);
+                if(!code||parent.pc>=code->instructions.size())return false;
+                const auto opcode=code->instructions[parent.pc].opcode;
+                if(kind==VmOriginalReturn::retry&&(frame.return_mode!=VmCallReturnMode::ordinary||frame.invocation_ticket||(opcode!=27&&opcode!=45)))return false;
+                if(kind==VmOriginalReturn::interaction&&(frame.return_mode!=VmCallReturnMode::interaction_next_tick||!frame.action_tree||(opcode!=17&&opcode!=30)))return false;
+            }
+        }
         if (!depth && (frame.return_mode != VmCallReturnMode::ordinary || frame.invocation_ticket)) return false;
         switch (frame.return_mode) {
         case VmCallReturnMode::ordinary: break;
@@ -726,7 +731,7 @@ bool Vm::restore_snapshot(const VmSnapshot& state,VmSavedRoutinePolicy policy) {
         default: return false;
         }
         if (frame.invocation_ticket) {
-            if (!ticket_valid(frame.invocation_ticket) || (!state.steps&&frame.return_mode!=VmCallReturnMode::immediate) ||
+            if (!ticket_valid(frame.invocation_ticket) || (!state.steps&&frame.return_mode!=VmCallReturnMode::immediate&&!(frame.original_import&&frame.original_import->result==VmOriginalReturn::interaction)) ||
                 frame.invocation_ticket <= last_ticket) return false;
             last_ticket = frame.invocation_ticket;
             tickets.push_back(frame.invocation_ticket);
@@ -900,10 +905,12 @@ std::vector<WorldEntityReference> Vm::strong_entity_references() const {
     const auto add=[&](const VmContext& context){if(!context.entity_references_bound)return;
         for(const auto role:{VmEntityRole::caller,VmEntityRole::callee,VmEntityRole::stack_object}){
             const auto ref=vm_context_reference(context,role);if(ref.id>0&&ref.generation)references.insert(ref);}};
-    for(const auto& frame:stack_)add(frame.context);
+    const auto add_frame=[&](const VmFrame& frame){add(frame.context);if(frame.original_import)
+        for(const auto& use:frame.original_import->uses)references.insert(use.target);};
+    for(const auto& frame:stack_)add_frame(frame);
     for(auto* scope=instruction_scope_;scope;scope=scope->previous_vm)
-        for(const auto& frames:scope->retained)for(const auto& frame:frames)add(frame.context);
-    if(entity_thread_stack_)for(const auto& frame:*entity_thread_stack_)add(frame.context);
+        for(const auto& frames:scope->retained)for(const auto& frame:frames)add_frame(frame);
+    if(entity_thread_stack_)for(const auto& frame:*entity_thread_stack_)add_frame(frame);
     if(pending_)add(pending_->context);
     for(const auto& pending:suspended_pending_)add(pending.context);
     for(const auto& continuation:immediate_continuations_)if(continuation.parent_pending)add(continuation.parent_pending->context);
@@ -1013,6 +1020,7 @@ std::vector<VmFrame> Vm::prepare_dormant_frames(std::vector<VmFrame> frames,VmSa
         throw std::logic_error("VM run generation overflow");
 
     for (auto& frame : frames) {
+        if(frame.original_import)throw std::invalid_argument("ordinary dormant restore cannot admit original-import metadata");
         if (!routine_key_valid(frame.key)||(named_routine_scope(frame.key.scope)&&!frame.context.code_owner))
             throw std::invalid_argument("restored frame has invalid routine scope or named owner");
         if (frame.context.code_owner != 0 && owners_.find(frame.context.code_owner) == owners_.end())
@@ -1068,6 +1076,84 @@ void Vm::restore_dormant_state(std::vector<VmFrame> frames,
     external_frame_return_.reset();
     immediate_continuations_.clear();immediate_return_.reset();
     status_ = VmStatus::dormant;
+}
+bool Vm::original_import_current(const VmOriginalImportPlan& plan) const {
+    if(plan.origin_!=this||plan.consumed_||!plan.source_current_||!plan.source_current_()||executing_||check_active_)return false;
+    const auto& old=plan.before_;
+    if(status_!=old.status||steps_!=old.steps||run_generation_!=old.run_generation||ticket_sequence_!=old.ticket_sequence||
+       register_temps()!=old.temps||register_xl()!=old.temp_xl||diagnostic_!=old.diagnostic||
+       action_tree_known_!=old.action_tree_known||advertisement_changes_!=old.advertisement_changes||
+       pending_||!suspended_pending_.empty()||interaction_return_||external_frame_return_||
+       !immediate_continuations_.empty()||immediate_return_||stack_.size()!=old.stack.size())return false;
+    return std::equal(stack_.begin(),stack_.end(),old.stack.begin(),vm_frame_equal);
+}
+std::optional<VmOriginalImportPlan> Vm::prepare_original_import(std::vector<VmFrame> frames,
+        const Ts1Temps& temps,std::function<bool()> current,std::string& diagnostic) const {
+    const auto fail=[&](const char* message)->std::optional<VmOriginalImportPlan>{diagnostic=message;return {};};
+    if(!current||!current()||executing_||check_active_||
+       (status_!=VmStatus::ready&&status_!=VmStatus::running)||steps_||ticket_sequence_||pending_||
+       !suspended_pending_.empty()||interaction_return_||external_frame_return_||
+       !immediate_continuations_.empty()||immediate_return_||stack_.size()>1||
+       std::any_of(stack_.begin(),stack_.end(),[](const auto& f){return f.pc||f.invocation_ticket||f.return_mode!=VmCallReturnMode::ordinary||f.original_import;}))
+        return fail("original import requires its actual undispatched Thread");
+    if(run_generation_==UINT64_MAX)return fail("original import run identity exhausted");
+    try {
+        // The ordinary resource validator remains unchanged. Source annotations
+        // are checked here, and runtime return/ticket ownership is installed only
+        // after that same metadata and address admission succeeds.
+        std::vector<VmOriginalFrameState> raw;raw.reserve(frames.size());
+        for(auto& frame:frames){
+            if(!frame.original_import||frame.original_import->result>VmOriginalReturn::interaction||
+               !vm_context_references_valid(frame.context)||!frame.context.entity_references_bound||
+               frame.return_mode!=VmCallReturnMode::ordinary||frame.invocation_ticket)
+                return fail("original import lacks bound source frame metadata");
+            if(frame.original_import->uses.size()>limits_.frame_variables||
+               std::any_of(frame.original_import->uses.begin(),frame.original_import->uses.end(),[](const auto& use){return use.target.id<=0||!use.target.generation;}))
+                return fail("original import use bank has invalid original identity or size");
+            raw.push_back(*frame.original_import);frame.original_import.reset();
+        }
+        if(frames.empty()){
+            // The reference starts Main on an empty Thread. This actual Main was
+            // already authenticated/prepared by the host, and has never run.
+            if(stack_.size()!=1)return fail("empty original Thread has no prepared Main");
+            frames=stack_;
+        }else frames=prepare_dormant_frames(std::move(frames),VmSavedRoutinePolicy::require_present);
+        VmOriginalImportPlan plan;plan.origin_=this;plan.before_=snapshot();plan.source_current_=std::move(current);
+        plan.prepared_=plan.before_;auto& result=plan.prepared_;
+        result.stack=std::move(frames);result.temps=temps;result.run_generation=run_generation_+1;
+        result.status=VmStatus::running;result.action_tree_known=true;result.diagnostic.clear();
+        for(std::size_t depth=0;depth<raw.size();++depth){
+            auto& frame=result.stack[depth];frame.original_import=raw[depth];
+            if(raw[depth].result==VmOriginalReturn::normal)continue;
+            if(!depth)return fail("original return override has no calling frame");
+            const auto& parent=result.stack[depth-1];const auto* bank=resolve(parent.key,parent.context.code_owner);
+            if(!bank||parent.pc>=bank->instructions.size())return fail("original return caller unavailable");
+            const auto opcode=bank->instructions[parent.pc].opcode;
+            if(raw[depth].result==VmOriginalReturn::retry){
+                if(opcode!=27&&opcode!=45)return fail("original Retry lacks its routing caller");
+            }else{
+                if((opcode!=17&&opcode!=30)||!frame.action_tree)
+                    return fail("original Interaction lacks its exact source caller/action boundary");
+                if(result.ticket_sequence==UINT64_MAX)return fail("original interaction ticket exhausted");
+                frame.return_mode=VmCallReturnMode::interaction_next_tick;
+                frame.invocation_ticket=++result.ticket_sequence;
+            }
+        }
+        if(!original_import_current(plan))return fail("original import preimage expired during admission");
+        return plan;
+    }catch(const std::exception& error){diagnostic=std::string("original import frame admission: ")+error.what();return {};}
+}
+bool Vm::commit_original_import(VmOriginalImportPlan& plan) {
+    reject_storage_proof_mutation();
+    if(!original_import_current(plan))return false;
+    plan.consumed_=true;
+    // All allocations precede publication; move the already admitted candidate.
+    auto frames=plan.prepared_.stack;auto diagnostic=plan.prepared_.diagnostic;
+    stack_=std::move(frames);diagnostic_=std::move(diagnostic);
+    register_temps()=plan.prepared_.temps;register_xl()=plan.prepared_.temp_xl;
+    run_generation_=plan.prepared_.run_generation;ticket_sequence_=plan.prepared_.ticket_sequence;
+    status_=plan.prepared_.status;action_tree_known_=true;
+    return true;
 }
 bool Vm::activate_dormant_state() {
     reject_storage_proof_mutation();
@@ -1245,6 +1331,10 @@ bool Vm::expression(const Instruction& i) {
 bool Vm::pop_current_frame(bool result) {
     if(stack_.empty()){status_=result?VmStatus::returned_true:VmStatus::returned_false;return false;}
     const auto& frame=stack_.back();
+    if(frame.original_import&&frame.original_import->result==VmOriginalReturn::retry){
+        stack_.pop_back();status_=stack_.empty()?VmStatus::returned_false:VmStatus::running;
+        return false;
+    }
         if (frame.return_mode == VmCallReturnMode::interaction_next_tick) {
             interaction_return_ = VmInteractionReturn{frame.invocation_ticket, result,
                                                        frame.context.code_owner, run_generation_};

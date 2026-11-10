@@ -80,6 +80,14 @@ int main() {
         check(modified.resource_fingerprint == other_language.resource_fingerprint &&
               modified.resource_fingerprint == other_expansions.resource_fingerprint,
               "resource fingerprint covers files while metadata keeps language and expansions separate");
+        check(odh::encode_session_resource_identity(modified)!=odh::encode_session_resource_identity(other_language)&&
+              odh::encode_session_resource_identity(modified)!=odh::encode_session_resource_identity(other_expansions),
+              "selected identity admission compares full META including language/mask, not only same-file fingerprint");
+        rejects([&] { (void)odh_host::identify_session_resources(root, {}, 14, 0x7f); },
+            "fresh selected plan cannot manufacture identity from an empty resource catalog");
+        rejects([&] { (void)odh_host::identify_session_resources(root, forward, 14, 0x80); },
+            "fresh selected plan cannot admit unsupported expansion metadata");
+
 
         rejects([&] { (void)odh_host::identify_session_resources(root,
             {"GameData/Global.far", "GameData/Global.far"}, 1, 0); },
@@ -92,7 +100,7 @@ int main() {
             "unsupported language rejects before reading files");
         rejects([&] { (void)odh_host::identify_session_resources(root, forward, 1, 0,
             4); }, "manifest over byte budget rejects");
-        std::cout << "session resource manifest: 12 checks passed\n";
+        std::cout << "session resource manifest: 15 checks passed\n";
     } catch (...) {
         std::filesystem::remove_all(root);
         std::filesystem::remove(outside);

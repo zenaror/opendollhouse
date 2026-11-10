@@ -79,9 +79,16 @@ bool SavedRecoveryObjectAdapter::preflight(const std::vector<odh::SavedRecoveryE
         return fail(error,"saved recovery requires actual complete placement/registry/support/code services");
     std::map<Ref,odh::SavedRecoveryEntity> candidate;
     for(const auto& profile:cohort){
-        if(profile.kind!=odh::SavedRecoveryClass::object&&profile.kind!=odh::SavedRecoveryClass::portal)continue;
+        if(profile.kind!=odh::SavedRecoveryClass::object&&profile.kind!=odh::SavedRecoveryClass::portal&&
+           profile.kind!=odh::SavedRecoveryClass::special_cursor)continue;
         const auto* e=entity(profile.reference);const auto yes=admit(id(profile.reference));
         if(!e||!yes||!*yes||e->kind!=odh::EntityKind::object)return fail(error,"saved object resource/class admission unavailable");
+        if(profile.kind==odh::SavedRecoveryClass::special_cursor){
+            const auto* definition=context_.definitions->unique(e->definition->guid);
+            if(e->definition->guid!=0x3c08965fU||!definition||definition->definition.object_type!=4||
+               definition->definition.master_id!=0||definition->definition.sub_index!=0||profile.native_group)
+                return fail(error,"always-reset definition lacks the proven ordinary native class profile");
+        }
         for(const auto index:{1,8,13,14,26,29,34,40,51,59,63})if(!word(*e,index))return fail(error,"saved object native bank is incomplete");
         if((std::uint16_t(*word(*e,40))&0xc000U)&&!s.architectural_wall_style)
             return fail(error,"architectural recovery requires actual wall-style publication");

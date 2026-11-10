@@ -22,6 +22,11 @@ int main() {try {
     auto a=plane();const auto original=*a.altitude;
     for(std::uint32_t y=0;y<a.height;++y)for(std::uint32_t x=0;x<a.width;++x)
         near(odh::terrain_corner_altitude(a,x,y),static_cast<float>((10+x*2+y*3)*10)*(3.0f/160.0f),"corner byte1, scale and row-major index");
+    const auto n=odh::terrain_interp_normal(a,1.25f,2.75f);const float length=std::sqrt(.375f*.375f+1.f+.5625f*.5625f);
+    near(n[0],-.375f/length,"source live interpolated terrain normal X slope");
+    near(n[1],1/length,"source terrain normal normalized up");near(n[2],-.5625f/length,"source terrain normal Y slope");
+    const auto integer_normal=odh::terrain_interp_normal(a,2,2);
+    near(integer_normal[0],0,"source ceil equals floor at integer normal coordinate");near(integer_normal[1],1,"source integer ground normal source profile");
     near(odh::terrain_interp_altitude(a,1.25f,2.75f),20.75f*10.0f*(3.0f/160.0f),"bilinear plane");
     near(odh::terrain_interp_altitude(a,2.0f,2.0f),odh::terrain_corner_altitude(a,2,2),"integer sample");
     near(odh::terrain_interp_altitude(a,0,0),odh::terrain_corner_altitude(a,1,1),"lower clamp excludes corner0");

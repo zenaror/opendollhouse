@@ -2884,14 +2884,18 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         std::to_string(action.x),std::to_string(action.y),std::to_string(action.level),
                         std::to_string(action.tick)});
                 }
-                std::optional<odh::SessionResourceIdentity> verified_identity;
+                // Authenticate the ACTUAL selected catalog for every native
+                // entry, including fresh original HOME/destinations. The
+                // runtime's pre-dispatch recovery gate needs this authority;
+                // plan-only/save-time fingerprinting cannot supply it later.
+                const std::optional<odh::SessionResourceIdentity> verified_identity =
+                    odh_host::identify_session_resources(game,plan.resources,
+                        static_cast<std::uint8_t>(options.language),plan.expansion_mask);
 #ifdef __linux__
                 if(property_lot){
                     // Fresh reoccupation has no HOME restore_bundle. Establish
                     // its resource authority from the ACTUAL selected plan now,
                     // before runtime preparation; never borrow the document's META.
-                    verified_identity=odh_host::identify_session_resources(game,plan.resources,
-                        static_cast<std::uint8_t>(options.language),plan.expansion_mask);
                     if(!property_lot->first.document.objects)
                         throw odh::FormatError("vacant property lacks its resource-bearing object lifetime");
                     const auto& expected=property_lot->first.document.objects->resources;
@@ -2903,8 +2907,6 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }
 #endif
                 if (options.restore_bundle) {
-                    verified_identity = odh_host::identify_session_resources(game, plan.resources,
-                        static_cast<std::uint8_t>(options.language), plan.expansion_mask);
                     const auto& bundle = *options.restore_bundle;
                     if (odh::encode_session_resource_identity(bundle.resources) !=
                         odh::encode_session_resource_identity(*verified_identity))
@@ -2935,9 +2937,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }
 #endif
                 if (options.plan_only) {
-                    const auto identity = odh_host::identify_session_resources(game, plan.resources,
-                        static_cast<std::uint8_t>(options.language), plan.expansion_mask);
-                    print_plan(options, house, session, *resident, plan, identity, game);
+                    print_plan(options, house, session, *resident, plan, *verified_identity, game);
                     return 0;
                 }
 #ifdef ODH_HAVE_LINUX_USER_CONFIG

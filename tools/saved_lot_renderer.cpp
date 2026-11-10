@@ -1,4 +1,5 @@
 #include "saved_lot_renderer.hpp"
+#include "odh/avatar_display.hpp"
 #include "saved_wall_appearance.hpp"
 #include "session_generic_resource_path.hpp"
 #include "odh/compositor.hpp"
@@ -469,6 +470,14 @@ std::array<float,3> SavedLotRenderer::preview_tile_position(const odh::EntityPos
         static_cast<float>(position.x)/16,static_cast<float>(position.y)/16);
     return result;
 }
+std::array<float,3> SavedLotRenderer::object_look_target(std::int16_t id){
+    const auto* body=saved_.world->find(id);
+    if(!body||body->kind!=odh::EntityKind::object||!body->definition||!body->position)
+        throw odh::FormatError("object look target needs actual live graphics identity");
+    const auto graphic=body->object_words.find(0);if(graphic==body->object_words.end())throw odh::FormatError("object look target graphic missing");
+    const auto graphics=entity_graphics(id);auto result=graphics.tile_position;
+    result[2]+=objects_.look_target_height(body->definition->guid,graphic->second);return result;
+}
 odh::GraphicsEntity SavedLotRenderer::entity_graphics(std::int16_t id) {
     const auto* child=saved_.world->find(id);
     const auto* parent=child&&child->attachment?saved_.world->find(child->attachment->container):nullptr;
@@ -650,6 +659,14 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
         avatar_pick_depth.assign(static_cast<std::size_t>(pixels),std::numeric_limits<float>::infinity());
     }
     for(const auto& avatar_layer:avatar_layers){
+        std::uint8_t opacity=255;
+        if(avatar_layer.entity_id){const auto* actor=saved_.world->find(avatar_layer.entity_id);
+            if(!actor||actor->kind!=odh::EntityKind::avatar||actor->generation!=avatar_layer.entity_generation)
+                throw odh::FormatError("avatar display layer identity is stale");
+            const auto hidden=actor->object_words.find(34);if(hidden!=actor->object_words.end()&&hidden->second!=0)continue;
+            opacity=odh::avatar_display_color(actor->person_data.size()>74?static_cast<std::uint16_t>(actor->person_data[74]):0,
+                actor->person_data.size()>68&&actor->person_data[68]>0)[3];
+        }
         auto lit_image=std::optional<odh::RasterFrame>{};
         if(lighting_){
             const auto* actor=saved_.world->find(avatar_layer.entity_id);
@@ -683,10 +700,10 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
         // Multi-resident layers use a dedicated avatar buffer and must not
         // leak resident tokens into the ground buffer.
         const bool legacy_owner_merge=avatar_layers.size()==1&&avatar_layer.pick_id==0;
-        if(legacy_owner_merge)image=odh::merge_raster(image,layer);
+        if(legacy_owner_merge)image=odh::merge_raster(image,layer,{},opacity);
         else {
             auto visual_layer=layer;visual_layer.owner_ids.clear();
-            image=odh::merge_raster(image,visual_layer);
+            image=odh::merge_raster(image,visual_layer,{},opacity);
         }
     }
     if(walls_){
@@ -769,16 +786,15 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
         const auto identity=object_generations_.find(id);
         if(identity!=object_generations_.end()&&!runtime_objects_.count(id)){
             if(retired_import(*saved_.world,id,identity->second,raw.saved.guid)){++result.object_removed;continue;}
-            append(id,identity->second,raw.saved.guid,raw.common.dynamic_sprite_flags);
+            const auto* entity=saved_.world->find(id);
+            if(!entity||entity->generation!=identity->second)throw odh::FormatError("live saved object dynamic flags identity expired");
+            append(id,identity->second,raw.saved.guid,odh::dynamic_sprite_flag_values(*entity));
         }
     }
     for(const auto& [id,binding]:runtime_objects_){
-        std::vector<std::int16_t> flags;
-        if(const auto* entity=saved_.world->find(id)){
-            auto bits=entity->dynamic_sprite_flags;
-            for(unsigned bit=0;bits;++bit,bits>>=1)flags.push_back((bits&1U)?1:0);
-        }
-        append(id,binding.generation,binding.guid,flags);
+        const auto* entity=saved_.world->find(id);
+        append(id,binding.generation,binding.guid,entity&&entity->generation==binding.generation?
+            odh::dynamic_sprite_flag_values(*entity):std::vector<std::int16_t>{});
     }
     // Walls have binary alpha and establish the opaque base before objects;
     // reversing these passes loses the wall color behind translucent objects.

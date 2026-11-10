@@ -13,11 +13,11 @@ struct SavedAnimationAppearance {
     bool loop = false, backwards = false, end_reached = false;
     double frame = 0;
 };
-// Eight exact semicolon fields; no resource lookup. Header supplied separately.
+// Source ConvertAnimation fields (at least six); no resource lookup. Header supplied separately.
 SavedAnimationAppearance saved_animation_appearance(const std::string&, const odh::AnimationHeader&);
 struct SavedAppearance {
     SceneConfig scene;
-    std::optional<SavedAnimationAppearance> current, base;
+    std::optional<SavedAnimationAppearance> current, base, carry;
     // Base is preserved for evidence; FreeSO's new activator does not restore it.
     bool base_executed = false;
 };

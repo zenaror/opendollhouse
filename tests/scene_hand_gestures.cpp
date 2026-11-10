@@ -182,6 +182,29 @@ int main(){try{
     (void)pelvis_renderer.render(pelvis_state,camera,{},&drawn_facts);
     check(facts.avatar_slots==drawn_facts.avatar_slots&&facts.avatar_slots[2].has_value());
     check(pelvis_renderer.cache_samples()==before_pose_samples);
+    // Display banks affect drawing, while functional queries keep the actual
+    // indexed skeleton. Ghost tint/alpha never remove or move source bones.
+    {odh::World display_world;check(display_world.create(7,odh::EntityKind::avatar,{0,88,0}));
+     check(display_world.declare_object_word(7,34,1)&&display_world.set_person_data(7,68,1)&&display_world.set_person_data(7,74,1));
+     auto hidden_draw=pelvis_state;apply_avatar_display(hidden_draw,*display_world.find(7));
+     check(!hidden_draw.avatar_visible&&pelvis_renderer.render(hidden_draw,camera).image.shaded_samples==0);
+     auto query=hidden_draw;query.avatar_visible=true;const auto hidden_bones=pelvis_renderer.pose_anchors(query);
+     check(hidden_bones.avatar_slots==facts.avatar_slots&&hidden_bones.neck_matrix==facts.neck_matrix);
+     check(hidden_bones.headline_target==facts.headline_target);
+    }
+    // A hidden draw must not slide the source VisualNormal. A bone query is
+    // also a read-only operation, even when passed a later presentation epoch.
+    {SceneRenderer normals(pelvis_config);SceneState align;align.avatar_tile=camera.center_tile;
+     align.display_flags=4096;align.ground_normal=std::array<float,3>{.6f,.8f,0};align.simulation_tick=0;
+     const auto flat=normals.render(align,camera).image;check(flat.shaded_samples>0);
+     align.avatar_visible=false;align.simulation_tick=1;check(normals.render(align,camera).image.shaded_samples==0);
+     align.avatar_visible=true;align.simulation_tick=2;const auto first_visible=normals.render(align,camera).image;
+     check(first_visible.depth==flat.depth&&first_visible.pixels==flat.pixels);
+     align.simulation_tick=3;const auto tilted=normals.render(align,camera).image;check(tilted.depth!=flat.depth);
+     align.simulation_tick=100;const auto query1=normals.pose_anchors(align),query2=normals.pose_anchors(align);
+     check(query1.avatar_slots==query2.avatar_slots&&query1.neck_matrix==query2.neck_matrix);
+     align.simulation_tick=4;(void)normals.render(align,camera); // Query did not consume epoch100.
+    }
     // CenterTo adds back the slot-only half-tile XY offset; vertical bone
     // height remains composed. A logical avatar origin is not the pelvis.
     const auto focus=*facts.avatar_slots[2];

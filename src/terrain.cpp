@@ -44,4 +44,16 @@ float terrain_interp_altitude(const SavedArchitecture& a,float x,float y,std::in
     const float high=fx*height(a,x1,y1)+(1.0f-fx)*height(a,x0,y1);
     return altitude(fy*high+(1.0f-fy)*low,base_alt);
 }
+std::array<float,3> terrain_interp_normal(const SavedArchitecture& a,float x,float y){
+    validate(a);if(!std::isfinite(x)||!std::isfinite(y)||x<-32768||y<-32768||x>32767||y>32767)
+        throw std::runtime_error("terrain normal coordinate outside profile");
+    const auto bx=clamp_index(std::floor(x),a.width),by=clamp_index(std::floor(y),a.height);
+    const auto nx=clamp_index(std::ceil(x),a.width),ny=clamp_index(std::ceil(y),a.height);
+    const float fx=std::fmod(x,1.f),h00=height(a,bx,by),h01=height(a,bx,ny),h10=height(a,nx,by),h11=height(a,nx,ny);
+    const float low=fx*h10+(1-fx)*h00,high=fx*h11+(1-fx)*h01;
+    const float dx=fx*((h10-h00)*(3.f/160.f))+(1-fx)*((h11-h01)*(3.f/160.f));
+    const float dy=(high-low)*(3.f/160.f),length=std::sqrt(dx*dx+1+dy*dy);
+    return {-dx/length,1/length,-dy/length};
+}
+
 }

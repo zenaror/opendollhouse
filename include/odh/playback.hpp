@@ -1,4 +1,5 @@
 #pragma once
+#include "odh/avatar_head_seek.hpp"
 #include "odh/animation.hpp"
 #include "odh/world.hpp"
 #include "odh/avatar_hands.hpp"
@@ -41,17 +42,20 @@ struct PlaybackProgress {std::string name;float frame;std::uint32_t frames;std::
 // Turn clips retain source0 walk/source1 swim and actor table index3..9.
 // Locomotion clips use a distinct kind and table indices3/20/21/25.
 struct PlaybackResourceKey {
-    enum class Kind : std::uint8_t { animation, posture_reset, route_walk, source_locomotion, reach };
+    enum class Kind : std::uint8_t { animation, posture_reset, route_walk, source_locomotion, reach, original_animation };
     Kind kind=Kind::animation;
     std::uint32_t source=0;
     std::uint16_t id=0;
     std::int16_t posture=0;
     std::int16_t caller=0,callee=0,stack_object=0,actor_age=0;
     std::uint32_t code_owner=0;
+    // Original ConvertAvatar names resolve through the SAME immutable catalog
+    // as opcode44. No invented source/table index is assigned at import.
+    std::string original_name;
     bool operator==(const PlaybackResourceKey& other) const {
         return kind==other.kind&&source==other.source&&id==other.id&&posture==other.posture&&
                caller==other.caller&&callee==other.callee&&stack_object==other.stack_object&&
-               actor_age==other.actor_age&&code_owner==other.code_owner;
+               actor_age==other.actor_age&&code_owner==other.code_owner&&original_name==other.original_name;
     }
 };
 using PlaybackRestoreResolver=std::function<std::shared_ptr<const AnimationHeader>(const PlaybackResourceKey&)>;
@@ -63,6 +67,8 @@ struct PlaybackClipSnapshot {
     std::size_t low=0,high=0;std::deque<std::int16_t> queue;
     std::uint16_t events_run=0;std::uint64_t ticks=0;
     std::optional<PlaybackWaitSnapshot> wait;
+    float weight=1;
+    bool original_import=false;
 };
 struct PlaybackHandsSnapshot {
     AvatarHands value;std::int16_t actor=0;std::uint64_t actor_generation=0,vm_generation=0;
@@ -81,6 +87,9 @@ struct PlaybackSnapshot {
     // state is source CurrentAnimationState (lane0); secondary lanes retain
     // individual frame/event cursors, but all xevt queues target lane0.
     std::optional<PlaybackSourceWalkSnapshot> source_walk;
+    // Original carry keeps a static saved frame/metadata; it never ticks props.
+    std::optional<PlaybackClipSnapshot> original_carry;
+    std::optional<AvatarHeadSeekSnapshot> head_seek;
 };
 // Silent animation controller. Resolver supplies explicit immutable resource
 // identity, including posture reset clips. Carry mode retains its resource,
@@ -117,6 +126,15 @@ public:
     Playback(const Playback&)=delete;
     Playback& operator=(const Playback&)=delete;
     bool bind(Vm&);
+    bool advance_head_seek(WorldEntityReference,std::uint64_t,const std::optional<AvatarHeadSeekVisualInput>& = {},std::string* error=nullptr);
+    const std::optional<AvatarHeadSeekSnapshot>& head_seek()const noexcept{return head_seek_;}
+    bool bound_to(const Vm& vm)const noexcept{return vm_==&vm;}
+    using NamedAnimationResolver=std::function<std::shared_ptr<const AnimationHeader>(const std::string&)>;
+    // Pure read-only preparation against a typed prospective original VM. No
+    // pending/wait is manufactured; first real opcode44 adopts its real ticket.
+    std::optional<PlaybackSnapshot> prepare_original_import(WorldEntityReference,const VmSnapshot&,
+        const std::string& current,const std::string& carry,std::int32_t events_run,
+        std::uint64_t tick,const NamedAnimationResolver&,std::string& error) const;
     // Host safe-point hooks for the pinned VMAvatar slot contract. Call attach
     // only after a NEW successful slot0 attachment, never an already-in-slot
     // no-op: it always replaces custom carry with reset_resolver(frame,-1).
@@ -241,6 +259,7 @@ public:
     // Resolved carry resource retained by AnimMode 2; the renderer
     // composes this secondary pose after the ordinary animation at frame0.
     std::shared_ptr<const AnimationHeader> carry_clip() const {return carry_clip_;}
+    float carry_frame() const {return original_carry_&&carry_resource_&&original_carry_->resource==*carry_resource_?original_carry_->frame:0;}
     // Read-only. Rejects stale actor/run/wait identity before the next tick;
     // terminal nonblocking loops remain valid while their VM run is unchanged.
     // A blend has no meaningful single render sample; use sample_collection.
@@ -259,10 +278,11 @@ private:
         float frame,speed;std::uint32_t frames;bool backwards,end=false,loop=false;
         std::vector<AnimationTimeProperty> events;std::size_t low=0,high=0;
         std::deque<std::int16_t> queue;std::uint16_t events_run=0;std::uint64_t ticks=0;
+        float weight=1;bool original_import=false;
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     PrimitiveOutcome reach(const VmFrame&,const Instruction&,const VmDispatch&,const ReachServices&);
-    std::optional<State> prepare(std::shared_ptr<const AnimationHeader>,const Entity&,bool backwards,bool loop,bool hurryable,std::string& error) const;
+    std::optional<State> prepare(std::shared_ptr<const AnimationHeader>,const Entity&,bool backwards,bool loop,bool hurryable,std::string& error,bool original_order=false) const;
     struct SourceWalkState {std::array<State,2> secondary;std::array<float,3> weights;};
     bool deliver();
     bool tick_impl(std::uint64_t,const std::function<void(const PlaybackEvent&)>&,
@@ -275,10 +295,12 @@ private:
     ResetAnimationLookupResolver reset_lookup_resolver_;
     AnimationResetResolver reset_resolver_;RouteAnimationResolver route_resolver_;
     SourceWalkAnimationNameResolver walk_name_resolver_;
+    std::optional<AvatarHeadSeekSnapshot> head_seek_;
     Vm* vm_=nullptr;std::optional<State> state_;std::optional<Wait> wait_;
     std::optional<SourceWalkState> source_walk_;
     std::shared_ptr<const AnimationHeader> carry_clip_;
     std::optional<PlaybackResourceKey> carry_resource_;
+    std::optional<PlaybackClipSnapshot> original_carry_;
     struct HandsState {AvatarHands value;std::int16_t actor;std::uint64_t actor_generation,vm_generation;};
     std::optional<HandsState> hands_;
     std::optional<std::uint64_t> last_tick_;std::string diagnostic_;bool executing_=false,reach_executing_=false;

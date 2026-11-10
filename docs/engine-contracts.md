@@ -65,6 +65,44 @@ Arquivo danificado, nome ambíguo, erro de leitura e limite de recursos continua
 sendo falhas. Movimento, alcance de objetos e restauração de animações salvas
 mantêm seus próprios contratos; essa regra não autoriza ignorar seus erros.
 
+## Importação de partidas clássicas
+
+A importação confere as definições, os recursos e as assinaturas de código antes
+de escolher o procedimento de recuperação de cada classe. Uma classificação
+interna de recuperação não substitui o tipo real do OBJD. Carga, retirada de
+vínculos, reset e inicialização continuam exigindo seus serviços correspondentes.
+
+Quando uma pessoa e suas dependências admitem continuidade, os planos preparam
+a pilha da VM, a fila e os controladores do próprio personagem. Preparar não executa Main nem avança o
+relógio. As rotinas de carga e recuperação pertencem às etapas do coordenador.
+A publicação volta a conferir identidade, geração, recursos e estado anterior;
+uma falha exige descartar a candidata, preservando a sessão aceita e os dados
+originais. Uma pilha opaca não é substituída por uma espera fictícia de caminhada
+ou animação.
+
+Os valores atuais das necessidades e suas taxas contínuas são dados distintos.
+Importar uma taxa não significa executar novamente a interação que a produziu.
+Na retomada nativa, as frações e o relógio dos serviços vêm do estado salvo.
+
+### Continuidade de animação
+
+A animação atual conserva quadro, velocidade, direção, repetição, peso e cursor
+de propriedades. Propriedades já atravessadas, inclusive no instante exato do
+quadro salvo, são descartadas sem executar novamente som, troca de roupa ou gesto.
+Um peso zero pausa o avanço e essas propriedades. Um nome de recurso preenchido
+exige resolução válida; uma animação salva ausente não recebe um clipe parecido.
+
+O clipe de transporte (`carry`), usado na pose de segurar objetos, conserva seu
+próprio quadro. Ele é amostrado de forma estática, com peso visual um, sem avançar
+ou disparar propriedades a cada passo. O campo de animação base do registro clássico não acrescenta uma pista:
+o conversor TS1 de referência não o usa. O primeiro pedido real da mesma animação
+atual reutiliza o recurso autenticado e o cursor, criando sua própria espera.
+Um nome alternativo admitido pelo catálogo continua ligado à mesma identidade
+de recurso, mesmo que o cabeçalho contenha outro nome canônico.
+
+Esses estados têm versões próprias no [formato nativo](formats.md#salvamentos-nativos).
+A retomada não reinicia quadros, filas ou eventos só para simplificar a carga.
+
 ## Objetos, posições e retirada
 
 O estado espacial admite vários ocupantes no mesmo quadrado. A cadeia original
@@ -299,6 +337,32 @@ de gestos preenchidos permanecem estritos.
 Esses serviços de criação e apresentação não definem adoção, comportamento,
 controle ou participação do animal na família. Cada um desses fluxos precisa
 de implementação e validação próprias.
+
+### Aparência ao carregar e consultar
+
+Na carga TS1, a roupa atual passa pelo serviço de seleção de roupas e a cabeça
+vem da tabela corporal da definição (BodySTR). Esses valores reaplicados durante
+a carga prevalecem sobre os campos brutos de roupa e cabeça do registro OBJM.
+Os acessórios admitidos são resolvidos como recursos reais. As tabelas de
+caminhada e nado usam a idade viva dos dados pessoais; derivar a aparência não
+reescreve idade, gênero ou o registro de roupas.
+
+O controlador de olhar conserva alvo, transição, timeout e peso. Sua progressão
+não exige uma janela; o desenho usa a estrutura corporal e a geometria disponíveis.
+Consultar ossos para um efeito não despacha scripts nem avança a interpolação
+visual. Ocultar o personagem com Hidden impede seu desenho, mas conserva a
+instância e as consultas de ossos de um personagem posicionado.
+
+Os indicadores de exibição e de fantasma vêm do World atual. ShowAsGhost tem
+precedência sobre IsGhost na cor e transparência. Transparência não elimina os
+critérios de profundidade e identificação usados na composição. O alinhamento
+ao solo usa a inclinação real do terreno e o relógio de apresentação; um desenho
+oculto não interpola essa orientação.
+
+No perfil gráfico 2D, a altura usada para olhar um objeto vem de seus recursos
+DGRP/SPR2. Os limites geométricos de malhas RC3D e seus caches no FreeSO não são
+importados para fornecer essa altura. Isso delimita o provedor gráfico atual,
+sem atribuir a ele equivalência com a reconstrução 3D da referência.
 
 ## Conferir uma mudança
 

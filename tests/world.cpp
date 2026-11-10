@@ -1109,8 +1109,38 @@ void atomic_personal_projection(){
         "personal batch preserves Entity pointers, positions and exact native traversal");
 }
 
+void original_dynamic_flags128(){
+    using namespace odh;World world;require(world.create(1,EntityKind::object),"dynamic128 body");
+    VmContext context{1,1,1,0};require(world.bind_context_live(context),"dynamic128 actual context");
+    for(const std::uint16_t bit:{0,63,64,127}){
+        require(world.dynamic_sprite_flag(1,bit)==std::optional<bool>{false},"each source bank begins zero");
+        Instruction assign{2,254,255,{0,0,1,0,0,5,27,7}};
+        Vm write({{routine_key(4096),Bhav{0x8002,{assign},{},Bhav::Metadata{0,4,0,0}}}},world.vm_memory());
+        write.start(routine_key(4096),context);write.temps()[0]=static_cast<std::int16_t>(bit);
+        require(write.run(1)==VmStatus::returned_true&&world.dynamic_sprite_flag(1,bit)==std::optional<bool>{true},
+            "actual Expression scope27 writes source low/high boundary");
+        Instruction equal{2,254,255,{0,0,1,0,0,2,27,7}};
+        Vm read({{routine_key(4096),Bhav{0x8002,{equal},{},Bhav::Metadata{0,4,0,0}}}},world.vm_memory());
+        read.start(routine_key(4096),context);read.temps()[0]=static_cast<std::int16_t>(bit);
+        require(read.run(1)==VmStatus::returned_true,"actual Expression scope27 reads the same runtime bank");
+    }
+    require(world.find(1)->dynamic_sprite_flags==((std::uint64_t{1}<<63)|1)&&
+        world.find(1)->dynamic_sprite_flags_high==((std::uint64_t{1}<<63)|1),"low/high are independent source banks");
+    require(world.set_dynamic_sprite_flag(1,64,false)&&world.dynamic_sprite_flag(1,0)==std::optional<bool>{true},
+        "clearing high64 never aliases low0");
+    auto values=dynamic_sprite_flag_values(*world.find(1));require(values.size()==128&&values[0]&&values[63]&&!values[64]&&values[127],
+        "single World projection carries exact high sprite visibility");
+    require(!world.dynamic_sprite_flag(1,128)&&!world.set_dynamic_sprite_flag(1,128,true)&&
+        world.dynamic_sprite_flag(1,0)==std::optional<bool>{true},"outside128 unsupported profile never aliases low bank");
+    auto stale=context;require(world.remove(1)&&world.create(1,EntityKind::object),"recycle original flag body");
+    const auto memory=world.vm_memory();VmFrame query{routine_key(4096),0,stale,{},{}};
+    require(!memory.dynamic_sprite_flag(query,127)&&!memory.set_dynamic_sprite_flag(query,127,true),
+        "scope27 cannot retarget bound original generation after ID reuse");
+}
+
 int main() {
     try {
+        original_dynamic_flags128();
         neighborhood_data_reference_contract();
         retired_container_contents();
         source_direction_setters();

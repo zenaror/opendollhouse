@@ -123,7 +123,15 @@ struct Entity {
     // unknown, not floor1. Heading remains the current raw ObjectData1.
     // In-world bodies use position directly and leave this field absent.
     std::optional<std::int16_t> native_out_of_world_level;
+    // Dynamic flags64..127. Trailing field keeps existing low-bank API and
+    // aggregate initializers intact. Old native archives restore this as0;
+    // never reconstruct it from stale original OBJM after a native restore.
+    std::uint64_t dynamic_sprite_flags_high=0;
 };
+// Runtime projection for every object renderer: one executable World state,
+// independent from immutable original OBJM metadata. Index0..127, values0/1;
+// trailing zero flags omitted (missing remains false), preserving draw budgets.
+std::vector<std::int16_t> dynamic_sprite_flag_values(const Entity&);
 struct WorldLimits {
     std::size_t entities = 4096;
     std::size_t words = 65536;
@@ -476,6 +484,15 @@ public:
     // pre-tick request that Simitone deliberately ignores.
     bool set_motive_change(std::int16_t id,std::int16_t motive,
                            std::int16_t per_hour_change,std::int16_t maximum);
+    // Original ConvertAvatar7e bank publication, before first dispatch/tick.
+    // Values have already been decoded/rounded by the source adapter. This is
+    // not SetMotiveChange ordering or native cold restore: all 16 fractional
+    // carries and Ticked must be source defaults0/false. Exact generation and
+    // controller preimage are checked before an atomic bank replacement. Does
+    // not touch motives, PersonData, clock, decay or execute a primitive.
+    bool publish_original_motive_changes(WorldEntityReference,
+        const std::vector<MotiveChangeState>& expected,
+        const std::array<MotiveChangeState,16>& values);
     bool clear_motive_changes(std::int16_t id);
     bool tick_motive_changes();
     // Actual original constructor Simulate0: only this newly born body advances.

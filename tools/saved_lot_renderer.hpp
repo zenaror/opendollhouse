@@ -137,6 +137,7 @@ public:
     // Runtime projection anchor including the same terrain/group-centre rules
     // used when drawing a saved object in this lot.
     odh::GraphicsEntity entity_graphics(std::int16_t id);
+    std::array<float,3> object_look_target(std::int16_t id);
     std::array<float,3> preview_tile_position(const odh::EntityPosition&) const;
     // Available only when the immutable prepared architecture has unambiguous
     // floor/wall identities. Matches GetRoomAt room-zero fallback outside the

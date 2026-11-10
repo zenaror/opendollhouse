@@ -96,6 +96,27 @@ uma aparência encontrada. Veja os [contratos de aparência](engine-contracts.md
 O suporte ainda é experimental e não comprova compatibilidade completa com
 animais personalizados nem com sua inclusão na família.
 
+### Animação, visibilidade e continuidade
+
+Prepare a animação principal e a pose de segurar objetos (`carry`) para seus
+papéis próprios. O clipe de pose conserva um quadro estático; seus marcadores
+de som ou efeito não são executados a cada passo. Efeitos da ação precisam estar nos
+comportamentos e nas animações que realmente os executam. Ao salvar no meio de
+uma animação, conservar seu cursor evita que um som antigo toque novamente ao
+reabrir a partida.
+
+Hidden oculta o desenho e conserva o personagem no mundo. Ele ainda pode ser
+alvo de comportamentos e fornecer posições de ossos a efeitos. Para criar um
+fantasma, defina também suas regras de jogo: o indicador visual controla cor e
+transparência; morte, relações e retirada seguem o ciclo de vida correspondente.
+
+Os indicadores dinâmicos de sprites aceitos pelo motor usam os índices 0–127.
+Esse índice é relativo ao conjunto dinâmico do objeto, não o número geral do
+sprite. Uma camada que exige um índice superior precisa de suporte adicional,
+mesmo que sua imagem isolada possa ser lida. A prévia visual confere recursos;
+fila, cancelamento e retomada precisam ser conferidos numa partida completa.
+Veja os [contratos de importação e animação](engine-contracts.md#importação-de-partidas-clássicas).
+
 ### Uma cafeteira e a ação “Preparar café”
 
 Prepare a definição, os desenhos, os textos, o preço e os lugares de uso.

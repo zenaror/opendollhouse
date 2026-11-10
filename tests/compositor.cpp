@@ -282,6 +282,11 @@ int main() { try {
     raster_base.depth = {2,2,2,infinity,infinity};
     raster_layer.depth = {1,3,2,4,infinity};
     const auto merged = odh::merge_raster(raster_base,raster_layer);
+    const auto translucent=odh::merge_raster(base(1,1,blue,5),base(1,1,red,1),{},64);
+    require(translucent.pixels[0]==std::array<std::uint8_t,4>{64,0,191,255}&&translucent.depth[0]==1,
+        "opt-in source ghost alpha blends visible RGB while retaining opaque output and accepted depth");
+    const auto invisible=odh::merge_raster(base(1,1,blue,5),base(1,1,red,1),{},0);
+    require(invisible.pixels[0]==blue&&invisible.depth[0]==5,"zero opacity preserves backdrop depth and pixels");
     require(merged.pixels == std::vector<Pixel>{red,blue,blue,red,blue} &&
             merged.depth == std::vector<float>{1,2,2,4,infinity},
             "raster merge resolves front, back, ties, finite background and infinite background");

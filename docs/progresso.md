@@ -5,7 +5,7 @@ parcial. Ainda não há uma versão completa jogável publicada.
 
 | Área | Resultado observado em percursos delimitados | O que falta para aceitar o conjunto |
 | --- | --- | --- |
-| Motor e dados | Leitura de dados, execução de ações, movimento e estado salvo ligados ao aplicativo. Uma casa da instalação original Complete Collection abriu, salvou e reabriu com o relógio parado, preservando o arquivo salvo inteiro. | Completar caminhos ausentes e entrada comum sem opções experimentais obrigatórias. |
+| Motor e dados | Leitura de dados, execução de ações, movimento e estado salvo ligados ao aplicativo. Uma casa da instalação original Complete Collection abriu pela entrada comum e salvou com o relógio parado, sem opções experimentais obrigatórias nesse percurso. | Ampliar entrada e retomada em outras casas e estados de scripts originais. |
 | Casa | Alimentação, sono, conversa, banheiro, banho e serviços em cenários registrados. Uma continuação doméstica avançou cerca de quatro horas dentro do jogo e salvou o progresso. Também foram observados pânico e combate manual ao fogo. A ação de apagar um foco continuou após reabrir a partida e terminou com sucesso; outros focos permaneceram na casa. | Sessão residencial completa e estável com o mesmo conjunto de código. Completar propagação, combate ao fogo, bombeiros e consequências do incêndio, incluindo cinzas e mortes. |
 | Escola e carreira | Retorno de escola/trabalho, promoção, salário e bônus observados. | Ampliar carreiras, horários e progressão. |
 | Salvamento | Partidas delimitadas salvam e reabrem preservando o estado. Uma visita ao Centro também reabriu com o cadastro de personagens e o salvamento inteiro idênticos. A continuação residencial com fogo reabriu preservando os três familiares e retomou a simulação. | Continuidade também após viagens, edição e gestão de famílias. |
@@ -20,6 +20,17 @@ parcial. Ainda não há uma versão completa jogável publicada.
 
 Os resultados acima vêm de cenários e revisões diferentes. Não são uma prova de
 que todos os recursos já funcionam juntos na revisão atual.
+
+Uma cadeia de importação clássica, em verificação sem janela, respondeu uma
+única vez a cada diálogo observado e alcançou 64 passos de simulação. A
+reabertura em outro processo, sem avançar o relógio, preservou o salvamento
+inteiro. Um salvamento nativo anterior também foi reaberto sem alteração.
+Isso delimita uma continuação curta, sem aceitar todos os estados de scripts
+originais nem a apresentação da interface e do áudio.
+
+Em outro percurso, um pedido de refeição entrou na fila, mas a execução parou num
+diálogo sobre táxis antes de alcançar a continuação planejada. O resultado não
+comprova preparo ou consumo de comida nessa casa.
 
 Um percurso com os dados originais mostrou a morte de uma moradora, a criação
 da urna e a retirada da personagem, preservando os outros dois moradores. A casa

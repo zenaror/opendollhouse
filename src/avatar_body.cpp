@@ -104,7 +104,7 @@ AvatarBodyStrings parse_avatar_body_strings(const StringTable& table) {
 AvatarBodyDescriptor derive_avatar_body_descriptor(const World& world,std::int16_t actor,
     const RandomState& random,const std::optional<AvatarBodyStrings>& body,
     const StringTable& global_walk,const StringTable& global_swim,
-    const std::optional<StringTable>& object_walk) {
+    const std::optional<StringTable>& object_walk,bool use_live_age) {
     const auto* entity=world.find(actor);
     if(!entity||entity->kind!=EntityKind::avatar||entity->person_data.size()<66||entity->motives.size()!=16)
         throw FormatError("avatar body descriptor requires PersonData age/gender fields and Motives[16]");
@@ -113,7 +113,7 @@ AvatarBodyDescriptor derive_avatar_body_descriptor(const World& world,std::int16
     const auto special=object_walk?us_strings(*object_walk):std::vector<std::string>{};
     AvatarBodyDescriptor result{};result.body=body;
     if(body)result.body_type=avatar_body_type(body->avatar_type);
-    const auto age=body?*body->age:entity->person_data[58];
+    const auto age=body&&!use_live_age?*body->age:entity->person_data[58];
     result.child=age<18;result.global_walk_id=result.child?151:150;result.global_swim_id=result.child?160:158;
     if(body)result.phenotype=AvatarPhenotype::ts1_light;
     for(std::size_t i=0;i<walk.size();++i)result.walk[i]=walk[i];

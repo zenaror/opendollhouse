@@ -3,6 +3,14 @@
 #include "odh/avatar_tick.hpp"
 
 namespace odh {
+bool tick_ts1_avatar_counter(World& world,WorldEntityReference ref) {
+    const auto* actor=world.resolve_reference(ref);
+    if(!world.is_live_reference(ref)||!actor||actor->dead||actor->kind!=EntityKind::avatar||actor->person_data.size()<=27)return false;
+    const auto bits=static_cast<std::uint16_t>(static_cast<std::uint16_t>(actor->person_data[27])+1U);
+    const auto value=static_cast<std::int16_t>(bits<=32767U?static_cast<std::int32_t>(bits):
+        static_cast<std::int32_t>(bits)-65536);
+    return world.set_person_data(ref.id,27,value);
+}
 bool tick_ts1_avatar_counters(World& world,std::size_t avatar_budget) {
     constexpr std::size_t maximum_avatars=4096;
     if(avatar_budget>maximum_avatars)return false;

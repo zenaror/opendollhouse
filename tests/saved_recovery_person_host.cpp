@@ -13,7 +13,7 @@ struct Fixture {
     World world;EntityThreadControllers controls{world,1};Vm vm;
     SavedWorldEntity source{};Objt types{};WorldEntityReference person{},target{};
     bool lease=true,owners=true,recover=true,entry4_admitted=true;
-    unsigned resolutions=0,dispatches=0,cleanup=0,skipped=0,detach=0;
+    unsigned resolutions=0,dispatches=0,cleanup=0,skipped=0,detach=0;std::optional<std::uint64_t> service_run;
     Fixture():vm({},world.vm_memory(),{},[&](const auto&,const auto&,const auto&,const auto&){
         ++dispatches;return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};},{{77,code()},{88,code()}}){
         std::array<std::int16_t,68> words{};words[3]=-1;
@@ -46,6 +46,11 @@ struct Fixture {
             ++resolutions;if(ref!=person||other!=target)return {};
             return SavedRecoveryAvatarActionSource{routine_key(raw.action_tree_id),{88,vm.shared_program_for_owner(88)},raw.tta_index};};
         a.will_reset_before_dispatch=[this](auto){return recover;};
+        a.prepare_services=[this](auto ref,const ObjmPersonState& raw,const VmSnapshot& proposed,std::string& error){
+            if(ref!=person||!world.is_live_reference(ref)||!raw.animation.bytes.empty()||!raw.carry_animation.bytes.empty()||proposed.run_generation!=vm.run_generation()+1||proposed.steps){error="synthetic service preflight rejected";return false;}
+            service_run=vm.run_generation();return true;};
+        a.services_current=[this](auto ref,std::string&){return owners&&lease&&ref==person&&service_run&&*service_run==vm.run_generation();};
+        a.commit_services=[this](auto ref,const VmSnapshot& proposed,std::string&){return owners&&lease&&ref==person&&service_run&&proposed.run_generation==*service_run+1&&proposed.run_generation==vm.run_generation();};
         c.binding_still_matches=[this](auto ref,const Vm* thread,const InteractionQueue* queue,const EntityThreadControllers* bundle){
             return owners&&ref==person&&thread==&vm&&queue==&controls.interactions()&&bundle==&controls;};
         p.supports_phase=[](auto,auto,std::string&){return true;};
@@ -95,6 +100,21 @@ void full_cohort_cycle(){
         f.vm.temps()[0]==71&&f.vm.temp_xl()[0]==123456&&!f.dispatches,"real unwind, queue removal, Main/EP3 and target EP4 complete without resource I/O or Main dispatch");
     require(!host.commit().completed,"person host hydration is single-use");
 }
+void compatible_notifier_preserves_continuation(){
+    Fixture f;f.recover=false;f.source.common.stack.front().node_id=0;
+    f.source.tail.person->active_interaction.tta_index=-1;f.source.tail.person->object_uses.clear();
+    SavedRecoveryPersonHost host(f.context());std::string error;
+    require(host.prepare({f.binding()},error)&&host.commit().completed&&host.dispatch_ready(),error);
+    const auto before=f.vm.snapshot();const auto motive=f.world.find(1)->motives;
+    SavedRecoveryCall notification{Phase::notify_person,f.person,f.target,false,{}};
+    notification.reset_referenced=[](auto,std::string&){return false;};
+    require(host.supports(notification,error)&&host.execute(notification,error),error);
+    require(host.dispatch_ready()&&f.detach==0&&f.cleanup==0&&f.vm.run_generation()==before.run_generation&&
+        f.vm.stack().size()==before.stack.size()&&vm_frame_equal(f.vm.stack().front(),before.stack.front())&&
+        f.world.find(1)->motives==motive&&f.skipped==1&&f.controls.interactions().snapshot().actions.empty(),
+        "compatible person remains in real notifications: queued EP4 removal never invents a full Reset");
+}
+
 void failures(){
     for(unsigned scenario=0;scenario<4;++scenario){
         Fixture f;auto context=f.context();if(scenario==0)f.recover=false;
@@ -120,5 +140,5 @@ void failures(){
             "actual registry loss rejects before dereferencing or detaching borrowed services");}
 }
 }
-int main(){try{full_cohort_cycle();failures();std::cout<<"saved person host integration passed\n";return 0;}
+int main(){try{full_cohort_cycle();compatible_notifier_preserves_continuation();failures();std::cout<<"saved person host integration passed\n";return 0;}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

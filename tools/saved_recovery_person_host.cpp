@@ -148,6 +148,7 @@ bool SavedRecoveryPersonHost::execute(const odh::SavedRecoveryCall& call,std::st
             }
         }
         if(!s.people->execute(call,error)){s.failed=true;return false;}
+        if(s.people->completed_self_reset(call.entity))s.required.erase(call.entity);
         if(phase!=sequence.end()){
             auto& progress=s.reset_progress[call.entity];++progress;
             if(progress==sequence.size()){s.required.erase(call.entity);progress=0;}

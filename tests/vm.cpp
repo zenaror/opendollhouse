@@ -2327,7 +2327,13 @@ int main() {
                     parent=frame;operation=instruction;token=dispatch;
                     odh::PrimitiveOutcome result{odh::PrimitiveDisposition::call,{}};
                     result.call=odh::VmCall{key(4097),{1,2,2,0},{},odh::VmCallReturnMode::ordinary,true};
-                    result.call_commit=[&]{committed=active->matches_active_call_commit(parent,operation,token,1);return committed;};
+                    result.call_commit=[&]{
+                        auto altered_original=parent;
+                        altered_original.original_import=odh::VmOriginalFrameState{71,odh::VmOriginalReturn::normal};
+                        require(!active->matches_active_call_commit(altered_original,operation,token,1),
+                            "child commit proof rejects copied parent differing only in original import metadata");
+                        committed=active->matches_active_call_commit(parent,operation,token,1);return committed;
+                    };
                     return result;
                 });active=&source;source.start(key(),{1,1,2});
             require(source.run(3,[&](const auto& event){if(event.key.id==4097)
@@ -2390,6 +2396,10 @@ int main() {
                 auto forged=dispatch;forged.check_mode=!dispatch.check_mode;
                 auto stale=dispatch;++stale.ticket;
                 auto wrong_frame=frame;++wrong_frame.pc;
+                auto altered_original=frame;
+                altered_original.original_import=odh::VmOriginalFrameState{71,odh::VmOriginalReturn::normal};
+                require(!active->matches_active_query(altered_original,instruction,dispatch),
+                    "query proof rejects copied frame differing only in original import metadata in normal and Check dispatch");
                 auto wrong_op=instruction;wrong_op.operands[0]^=1;
                 require(!active->matches_active_query(frame,instruction,forged)&&
                     !active->matches_active_query(frame,instruction,stale)&&

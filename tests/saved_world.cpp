@@ -366,6 +366,23 @@ int main() {
         require(!pending->world->find(3)->definition->master_guid && !pending->multitile_groups[0].master_guid,
                 "missing unique resource master remains explicit pending identity");
         require(restored->world->find(2)==avatar && restored->world->find(2)->motives[1]==130,"failed candidates do not mutate already published world");
+        {
+            auto original=fixture();auto& common=original[2].common;
+            common.dynamic_sprite_flags.assign(128,0);common.dynamic_sprite_flag_count=128;
+            for(unsigned bit:{0U,63U,64U,127U})common.dynamic_sprite_flags[bit]=bit==64?-7:1;
+            odh::DefinitionIndex defs(candidates(original));auto loaded=odh::make_saved_world(original,defs);
+            for(std::uint16_t bit:{0,63,64,127})require(loaded->world->dynamic_sprite_flag(1,bit)==std::optional<bool>{true},
+                "original nonzero ObjM flag imports into actual low/high World banks");
+            require(loaded->world->set_dynamic_sprite_flag(1,64,false)&&
+                loaded->world->dynamic_sprite_flag(1,0)==std::optional<bool>{true},"live high flag can change independently after original import");
+            const auto raw=std::find_if(loaded->records.begin(),loaded->records.end(),[](const auto& row){return row.saved.object_id==1;});
+            require(raw!=loaded->records.end()&&raw->common.dynamic_sprite_flags[64]==-7&&
+                !odh::dynamic_sprite_flag_values(*loaded->world->find(1))[64],"raw source remains immutable and is not the renderer's executable flag state");
+            original[2].common.dynamic_sprite_flags.resize(129,0);original[2].common.dynamic_sprite_flag_count=129;
+            require(bool(odh::make_saved_world(original,defs)),"trailing zero outside source128 adds no executable bit");
+            original[2].common.dynamic_sprite_flags[128]=1;
+            rejected([&]{(void)odh::make_saved_world(original,defs);},"unproved nonzero original flag beyond128 is explicit unsupported profile");
+        }
         std::cout<<checks<<" saved-world checks passed\n";
     } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

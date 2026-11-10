@@ -11,7 +11,7 @@
 namespace {
 using namespace odh;using namespace odh_host;using Phase=SavedRecoveryPhase;
 void require(bool yes,const char* text){if(!yes)throw std::runtime_error(text);}
-ObjectDefinition definition(std::uint16_t master=0){ObjectDefinition d{};d.version=138;d.guid=100;d.object_type=4;d.tile_width=16;d.footprint_mask=0;d.master_id=master;return d;}
+ObjectDefinition definition(std::uint16_t master=0,std::uint32_t guid=100,std::uint16_t type=4){ObjectDefinition d{};d.version=138;d.guid=guid;d.object_type=type;d.tile_width=16;d.footprint_mask=0;d.master_id=master;return d;}
 struct Fixture {
     World world;PreparedArchitecture prepared;SavedArchitecture architecture;GeometricRoomMap rooms;
     DefinitionIndex definitions;ArchitectureObjectSupport support;
@@ -22,7 +22,7 @@ struct Fixture {
     std::map<std::int16_t,unsigned> remove_calls,placement_calls;
     std::map<std::int16_t,SavedRecoveryNativeOffset> offsets{{1,{0,0,0}},{2,{16,0,0}}};
     bool authorized=true;bool portal_group=false,triple_group=false,regrouped=false;
-    Fixture(bool portals=false,bool triple=false,std::uint16_t master=0,std::optional<bool> seat_fixture={}):definitions({{"fixture","",128,definition(master)}}),support(make_architecture_object_support(4,4)),portal_group(portals),triple_group(triple){
+    Fixture(bool portals=false,bool triple=false,std::uint16_t master=0,std::optional<bool> seat_fixture={},std::uint32_t guid=100,std::uint16_t type=4):definitions({{"fixture","",128,definition(master,guid,type)}}),support(make_architecture_object_support(4,4)),portal_group(portals),triple_group(triple){
         prepared.width=prepared.height=architecture.width=architecture.height=4;prepared.buildable.assign(16,1);
         for(auto& level:prepared.levels){level.floors.assign(16,1);level.walls.resize(16);}
         rooms.width=rooms.height=4;rooms.floor_resources_resolved=rooms.light_base_rooms_resolved=true;
@@ -34,7 +34,7 @@ struct Fixture {
         for(std::int16_t n=1;n<=(triple?3:2);++n){
             auto table=entries(portals);
             if(seat_fixture){if(n==1)table[26].action=*seat_fixture?4096:0;if(n==3)table[25].action=4096;}
-            require(world.create_runtime_object(n,100,{1,0,2},table),"real object constructor");
+            require(world.create_runtime_object(n,guid,{1,0,2},table),"real object constructor");
             require(world.declare_object_word(n,14,-1)&&world.declare_object_word(n,41,314)&&world.set_position(n,{triple?(n==3?40:24):(n==1?24:40),triple&&n==2?40:24,1,0}),"source banks and actual pose");
             threads.push_back(std::make_unique<Vm>(program,ShareVmProgramTag{},world.vm_memory()));
             for(std::size_t parameter=0;parameter<4;++parameter)
@@ -145,6 +145,26 @@ void ordinary(){Fixture f;SavedRecoveryObjectAdapter adapter(f.context());std::s
     require(f.world.declare_object_word(1,8,0x20)&&f.world.declare_object_word(1,62,3)&&f.run(adapter,Phase::cleanup_flags)&&
         f.world.find(1)->object_words.at(8)==0&&f.world.find(1)->object_words.at(62)==0,"Cleanup publishes occupied flag and verified actual UseCount62 owner");
 }
+void always_reset_actual_class(){
+    Fixture f(false,false,0,{},0x3c08965fU);
+    for(auto& profile:f.profiles){profile.kind=SavedRecoveryClass::special_cursor;profile.code_changed=false;}
+    SavedRecoveryObjectAdapter adapter(f.context());std::string why;const auto original=f.reference(1);
+    require(adapter.preflight(f.profiles,why),"exact always-reset ordinary definition binds real shared class services");
+    require(f.run(adapter,Phase::capture_placement)&&f.run(adapter,Phase::detach)&&!f.world.find(1)->position&&
+        f.remove_calls[1]==1,"shared native detach executes actual EP10 for selected ordinary object");
+    require(f.run(adapter,Phase::before_clear)&&f.run(adapter,Phase::restore_placement)&&f.run(adapter,Phase::placement_entry)&&
+        f.world.is_live_reference(original)&&f.registry.complete&&f.placement_calls[1]==1&&f.world.find(1)->attributes[0]==1,
+        "always-reset object uses real placement registry, original identity and authored EP9 effects");
+    require(f.world.declare_object_word(1,8,32)&&f.world.declare_object_word(1,62,5)&&
+        f.run(adapter,Phase::cleanup_flags)&&f.world.find(1)->object_words.at(8)==0&&f.world.find(1)->object_words.at(62)==0,
+        "same selected object uses actual shared Cleanup flags and UseCount consumer");
+    Fixture cursor_class(false,false,0,{},0x3c08965fU,9);
+    for(auto& profile:cursor_class.profiles)profile.kind=SavedRecoveryClass::special_cursor;
+    SavedRecoveryObjectAdapter unsupported(cursor_class.context());
+    require(!unsupported.preflight(cursor_class.profiles,why)&&cursor_class.remove_calls.empty(),
+        "same GUID with unproved Cursor type rejects before native callbacks instead of claiming ordinary capability");
+}
+
 void containment(){Fixture f;require(f.registry_event(f.identity(1),false,true)&&f.world.place_in_slot(2,0,1)&&
     f.world.declare_object_word(1,26,2)&&f.world.declare_object_word(1,14,1)&&f.registry_event(f.identity(1),true,true,f.room(1)),
     "real native reciprocal container hierarchy and actual moved registry");
@@ -382,5 +402,5 @@ void originally_outside(){
         "3206d skips old-OOW restoration and its EP9, preserving Init placement");
 }
 }
-int main(){try{ordinary();containment();portals();portal_order();failures();native_entries();placement_entry_order();native_group_offset_units();native_placement_binding();originally_outside();std::cout<<"saved object recovery adapter checks passed (synthetic resources, actual native placement binding)\n";return 0;}
+int main(){try{ordinary();always_reset_actual_class();containment();portals();portal_order();failures();native_entries();placement_entry_order();native_group_offset_units();native_placement_binding();originally_outside();std::cout<<"saved object recovery adapter checks passed (synthetic resources, actual native placement binding)\n";return 0;}
 catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -5,9 +5,9 @@ implementado ou observado em parte; não significa sistema completo.
 
 | Sistema | Situação | Cobertura ainda necessária |
 | --- | --- | --- |
-| Dados e recursos | Parcial | Variantes, recursos ausentes e identidade em todos os consumidores. |
+| Dados e recursos | Parcial; entrada comum e salvamento com o relógio parado observados em uma casa original. | Outras casas, variantes, recursos ausentes e identidade em todos os consumidores. |
 | Scripts, objetos e interações | Parcial | Ciclo completo de criação, execução, cancelamento e retirada em mais perfis. |
-| Movimento e animação | Parcial | Escadas, obstáculos, personagens e ações nos percursos integrados. |
+| Movimento e animação | Parcial | Escadas, obstáculos, personagens e ações nos percursos integrados; ampliar a conferência de animações já em andamento na importação clássica. |
 | Necessidades e autonomia | Parcial | Dia residencial completo, sem ações falhando silenciosamente. |
 | Incêndios | Parcial | Fogo, pânico e combate manual de um foco observados; a ação continuou após reabrir a partida, terminou com sucesso e o foco selecionado desapareceu. Ainda havia outros focos. Completar a cobertura de propagação, consequências, bombeiros por telefone ou alarme e apresentação. |
 | Roubo, polícia e alarme contra roubo | Em aberto | Chegada do ladrão, detecção, roubo, chamada manual ou por alarme, intervenção policial e consequências sobre os bens ao continuar a partida. |
@@ -18,7 +18,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Famílias e vizinhança | Parcial | Criação com adulto e criança, cancelamentos, renomeação e exclusão elegível observados pelas telas, com reabertura dos dados e encerramento normal do aplicativo. O diagnóstico ainda aponta memória não liberada ao encerrar. Completar edição de personagens existentes, mudanças pelas telas e progresso entre famílias. |
 | Compra e venda | Parcial | Grupos de várias peças, posicionamento, cancelamento e orçamento. |
 | Construção | Parcial | Ferramentas completas, pisos superiores, custo e atualização da circulação. |
-| Salvamento | Parcial | Estados ativos e transições de família/lote/destino do conjunto completo. |
+| Salvamento | Parcial; continuação curta de importação clássica e reabertura de um salvamento nativo anterior preservaram os arquivos inteiros. | Estados ativos e transições de família/lote/destino do conjunto completo. |
 | Interface original | Parcial | Navegação, catálogos, diálogos, retratos e proporção em todas as telas. |
 | Gráficos e áudio | Parcial | Apresentação, iluminação, animações, vozes, música e efeitos integrados. |
 | Animais e ciclos de personagens | Gambá original criado, salvo e reaberto em percurso curto; aparência por espécie e desenho observados em verificação delimitada. | Aquisição, comportamento, controle, serviços e persistência nos demais estados; validar os animais dentro dos percursos completos. |
@@ -32,6 +32,12 @@ implementado ou observado em parte; não significa sistema completo.
 | Num Passe de Mágica | Em aberto | Cidade Mágica, inventário, moedas, feitiços e retorno/mudança elegível. |
 | Pacote jogável Linux | Em aberto | Primeiro uso, sessão prolongada e diagnóstico de falhas. |
 | Demais plataformas | Não aceitas | Execução e desempenho próprios; veja [portabilidade](portability.md). |
+
+A continuação da importação clássica chegou a 64 passos após respostas únicas
+aos diálogos observados; a reabertura foi conferida sem avançar o relógio.
+O pedido de refeição apenas entrou na fila e parou num diálogo sobre táxis,
+sem comprovar preparo ou consumo. Esses casos sem janela não aceitam a
+interface, o áudio ou a continuidade de todos os estados de scripts originais.
 
 A relação não substitui os [requisitos jogáveis](linux-playable-scope.md).
 Uma atividade bem-sucedida não aceita uma expansão inteira; testes de componentes

@@ -54,6 +54,8 @@ public:
     ~SavedObjectRenderer();
     SavedObjectRenderer(SavedObjectRenderer&&) noexcept;
     SavedObjectRenderer& operator=(SavedObjectRenderer&&) noexcept;
+    // Source GetParticleBounds sprite-height branch, using real current DGRP/SPR2 metadata.
+    float look_target_height(std::uint32_t guid,std::int16_t graphic);
     SavedObjectRenderResult render(const std::vector<SavedObjectVisual>&,
                                   const odh::WorldProjection&, const odh::RasterFrame&,
                                   bool record_picks=false, bool record_sprite_rgba=false);

@@ -10,4 +10,7 @@ namespace odh {
 // Preflight every avatar before writes; false leaves all counters unchanged.
 // Ghost images are included, as in the reference avatar Tick implementation.
 bool tick_ts1_avatar_counters(World&,std::size_t avatar_budget=4096);
+// Same source write for the actual scheduler entity, after that avatar's
+// decay/animation/continuous changes. No roster scan or second tick.
+bool tick_ts1_avatar_counter(World&,WorldEntityReference);
 }

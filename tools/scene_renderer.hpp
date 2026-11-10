@@ -4,6 +4,9 @@
 #include "odh/compositor.hpp"
 #include "odh/projection.hpp"
 #include "odh/avatar_hands.hpp"
+#include "odh/avatar_head_seek.hpp"
+#include "odh/world.hpp"
+#include "odh/avatar_display.hpp"
 #include <functional>
 #include <memory>
 #include <optional>
@@ -56,6 +59,7 @@ struct SceneState {
     // Native fresh carry profile: frame0 weight1 local-channel overlay after
     // the ordinary clip. Imported nonzero carry frames are not represented.
     const odh::AnimationHeader* carry_animation = nullptr;
+    double carry_frame=0; // Original carry is sampled statically at its saved frame.
     // Ordered native locomotion collection. When present this supplies the
     // primary pose; animation/frame above remain the lane0 diagnostic identity.
     std::vector<SceneAnimationLayer> animation_layers;
@@ -63,13 +67,27 @@ struct SceneState {
     // No World position (e.g. in a departing vehicle): retain the scene/camera
     // and objects but emit no avatar geometry, pose sampling or bone anchors.
     bool avatar_visible = true;
+    std::uint16_t display_flags=0;bool is_ghost=false;
+    std::optional<std::array<float,3>> ground_normal;
+    std::optional<std::uint64_t> simulation_tick;
+    std::optional<odh::AvatarHeadSeekSnapshot> head_seek;
 };
+
+// World remains the sole runtime bank owner. Legacy layouts without these
+// words retain opaque/visible defaults; original persons have all source fields.
+inline void apply_avatar_display(SceneState& state,const odh::Entity& body){
+    const auto hidden=body.object_words.find(34);if(hidden!=body.object_words.end()&&hidden->second!=0)state.avatar_visible=false;
+    state.display_flags=body.person_data.size()>74?static_cast<std::uint16_t>(body.person_data[74]):0;
+    state.is_ghost=body.person_data.size()>68&&body.person_data[68]>0;
+}
 
 // Final same-draw scale-one bone attachment points in graphics tile coordinates.
 // Slot order is R_FINGER0, HEAD, PELVIS; missing bones remain absent.
 // Positions already include SceneState.avatar_tile (and its terrain offset).
 struct ScenePoseAnchors {
     std::array<std::optional<std::array<float,3>>,3> avatar_slots{};
+    std::optional<std::array<float,12>> neck_matrix;
+    std::optional<std::array<float,3>> headline_target;
 };
 
 // CPU portrait profile based on Simitone's UIIconCache defaults. Projection is

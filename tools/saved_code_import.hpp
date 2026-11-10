@@ -7,6 +7,24 @@
 #include <memory>
 
 namespace odh_host {
+enum class OriginalImportRecoverySelection { none, home, destination, unsupported };
+struct OriginalImportRecoveryBoundary {
+    bool saved_world_main=false,fresh_original=false,whole_household=false;
+    bool native_lifetime=false,occupancy_invalidated=false,position_diagnostic=false;
+    bool authenticated_resources=false,original_native_groups=false,actorless_destination=false;
+};
+// Shared import selector, independent of explicit CLI flags and travel-option
+// spelling. Native resumed life/property and position diagnostics never enter.
+inline OriginalImportRecoverySelection select_original_import_recovery(
+        const OriginalImportRecoveryBoundary& boundary,const odh::SavedCodePreflight& comparison){
+    if(!boundary.saved_world_main||!boundary.fresh_original||!boundary.whole_household||
+       boundary.native_lifetime||boundary.occupancy_invalidated||boundary.position_diagnostic)
+        return OriginalImportRecoverySelection::none;
+    if(!boundary.authenticated_resources||!boundary.original_native_groups||
+       comparison.state!=odh::SavedCodePreflightState::complete)
+        return OriginalImportRecoverySelection::unsupported;
+    return boundary.actorless_destination?OriginalImportRecoverySelection::destination:OriginalImportRecoverySelection::home;
+}
 struct SavedCodeImportResource {
     odh::DefinitionCandidate definition;
     odh::EntryPointTable entries;

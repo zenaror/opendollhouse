@@ -79,3 +79,29 @@ não implica gravá-lo de volta no mesmo formato. Compatibilidade de conteúdo,
 execução e salvamento precisam ser avaliadas em conjunto. Consulte o
 [escopo jogável](linux-playable-scope.md), a [arquitetura](architecture.md) e as
 [ferramentas](tools.md) para entender esses usos.
+
+## Salvamentos nativos
+
+Os arquivos ODHS guardam o estado nativo da sessão. Suas estruturas internas
+possuem versões independentes; os números abaixo não são versões do jogo nem
+do IFF. O leitor confere também referências, recursos e estados dos serviços.
+
+| Estrutura | Extensão | Quando o gravador a utiliza |
+| --- | --- | --- |
+| World v13 | Segundo banco de indicadores dinâmicos de sprites, completando os índices 0–127 | Quando algum indicador do banco alto está ativo; os demais estados continuam escolhendo os layouts anteriores conforme seus campos |
+| VM v9 | Metadados dos quadros importados de uma partida clássica, incluindo estado original da primitiva, mapeamento de retorno e usos de objetos | Quando a pilha contém esses metadados; a anotação de uma primitiva não cria uma espera nativa |
+| PLAY v3 | Estado de animação importado, identidade por nome, peso e quadro estático da pose de transporte (`carry`) | Quando esses dados precisam da extensão; as animações de caminhada mantêm seu próprio conjunto de pistas |
+| PLAY v4 | Estado do controlador de olhar: identidade, peso, rotações, fração e último passo | Quando o controlador possui estado, inclusive depois de seu peso voltar a zero |
+
+O leitor aceita World nas versões 1–13, VM nas versões 1–9 e PLAY nas versões
+1–4, dentro dos respectivos contratos e limites. A ausência do banco alto em um World antigo corresponde a
+zero nesse banco; a ausência do novo controlador de olhar conserva seu estado
+inicial. Outros metadados desconhecidos continuam sujeitos às regras de sua
+versão. Isso não autoriza preencher campos arbitrários com zeros.
+
+Retomar um ODHS restaura serviços e cursores já gravados. Não é uma nova
+importação do save clássico, nem um pedido para repetir seus eventos de
+animação. Uma versão antiga do motor pode recusar extensões mais novas;
+conserve o perfil completo para voltar à versão anterior. Os contratos de
+[importação e continuidade](engine-contracts.md#importação-de-partidas-clássicas)
+explicam as verificações que acompanham esses formatos.

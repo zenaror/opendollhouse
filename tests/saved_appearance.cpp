@@ -2,6 +2,7 @@
 #include "saved_appearance_far_index.hpp"
 #include "odh/sha256.hpp"
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -125,9 +126,11 @@ int main(int argc,char** argv){try{
  full_name_index_matrix();
  odh::AnimationHeader h{};h.name="clip";odh::BoneMotion motion{};motion.frames=121;h.motions.push_back(motion);
  auto parsed=saved_animation_appearance("clip;6;1000;25;1000;0;7;8",h);
- check(parsed.frame==3.025&&parsed.priority==6&&parsed.weight_milli==1000&&parsed.speed_milli==1000);check(!parsed.loop&&!parsed.backwards&&!parsed.end_reached&&parsed.unknown1==7&&parsed.unknown2==8);
+ check(parsed.frame==static_cast<double>(121.0f*(25.0f/1000.0f))&&parsed.priority==6&&parsed.weight_milli==1000&&parsed.speed_milli==1000);check(!parsed.loop&&!parsed.backwards&&!parsed.end_reached&&parsed.unknown1==7&&parsed.unknown2==8);
  parsed=saved_animation_appearance("CLIP;-10;-1000;0;500;1;1;1",h);check(parsed.loop&&parsed.backwards&&parsed.end_reached&&parsed.weight_milli==500);
- for(const auto* s:{"clip;1;2;3;4;0;0","clip;1;2;3;4;0;0;0;0","clip;1;2;1001;4;0;0;0","clip;1;2;-1;4;0;0;0","clip;1;2;3;1001;0;0;0","clip;1;2;3;4;2;0;0","clip;1;2;3;4;01;0;0","clip;1;x;3;4;0;0;0","clip;1;2;3;4;0;0;","other;1;2;3;4;0;0;0","clip;2147483648;2;3;4;0;0;0"})rejects([&]{saved_animation_appearance(s,h);});
+ for(const auto* s:{"clip;1;2;3;4","clip;1;x;3;4;0","clip;1;+-1;3;4;0","clip;1;++1;3;4;0","other;1;2;3;4;0","clip;1;2147483648;3;4;0","clip;1;-2147483648;3;4;0"})rejects([&]{saved_animation_appearance(s,h);});
+ parsed=saved_animation_appearance("clip;ignored;0;1001;-500;01;ignored;ignored;extra",h);
+ check(parsed.speed_milli==0&&parsed.weight_milli==-500&&!parsed.loop&&parsed.frame>121&&parsed.unknown1==0);
  auto empty=h;empty.motions.clear();rejects([&]{saved_animation_appearance("clip;1;2;3;4;0;0;0",empty);});
  Temp dir;const auto a=dir.path/"animations.far",t=dir.path/"textures.far";
  std::vector<Entry> entries={{"rig.bcf","rig"},{"unexpected-host.bcf",appearance("body",{"mesh0","mesh1","mesh2"})},{"head-host.bcf",appearance("head",{"headmesh"})},{"hand-host.bcf",appearance("hand",{"handmesh"})},{"mesh0.bmf",mesh("mesh0","unmatched")},{"mesh1.bmf",mesh("mesh1","skinlgt")},{"mesh2.bmf",mesh("mesh2","x")},{"headmesh.bmf",mesh("headmesh","x")},{"handmesh.bmf",mesh("handmesh","x")},
@@ -165,6 +168,23 @@ int main(int argc,char** argv){try{
  check(loose_renderer.vertices()==24&&loose_renderer.triangles()==8&&loose_renderer.texture_bytes()==32);
  odh::WorldProjection loose_camera;loose_camera.width=160;loose_camera.height=160;
  check(loose_renderer.render(SceneState{},loose_camera).image.shaded_samples>0);
+ {SceneState ghost;ghost.display_flags=1;ghost.is_ghost=true;
+  const auto ordinary=loose_renderer.render(SceneState{},loose_camera).image;
+  const auto colored=loose_renderer.render(ghost,loose_camera).image;
+  check(colored.depth==ordinary.depth,"display tint preserves actual geometry and depth");
+  for(std::size_t i=0;i<ordinary.depth.size();++i)if(std::isfinite(ordinary.depth[i])){
+   const auto tint=odh::avatar_display_color(1,true);
+   for(unsigned c=0;c<3;++c)check(colored.pixels[i][c]==(unsigned(ordinary.pixels[i][c])*tint[c]+127)/255,"source ShowAsGhost tint precedes actual alpha composition");
+  }
+  check(odh::avatar_display_color(0,true)[3]==64&&odh::avatar_display_color(1,true)[3]==168,
+      "ShowAsGhost has source precedence over IsDead alpha");
+  odh::World display_world;check(display_world.create(7,odh::EntityKind::avatar,{0,88,0})&&display_world.declare_object_word(7,34,1),"display actual World actor");
+  apply_avatar_display(ghost,*display_world.find(7));check(!ghost.avatar_visible&&loose_renderer.render(ghost,loose_camera).image.shaded_samples==0,
+      "live Hidden bank suppresses actual avatar geometry");
+  check(display_world.declare_object_word(7,34,0)&&display_world.set_person_data(7,68,1)&&display_world.set_person_data(7,74,1),"live ghost/display banks");
+  ghost=SceneState{};apply_avatar_display(ghost,*display_world.find(7));check(ghost.avatar_visible&&ghost.is_ghost&&ghost.display_flags==1,"visual flags are derived from current World banks");
+ }
+
  // TS1 hands are independent optional appearances. TragicClown authors only
  // idle hands, but this contract applies to either side and every gesture.
  // Render each absent selection and compare it with explicit no-hand state:
@@ -562,6 +582,10 @@ int main(int argc,char** argv){try{
  auto gesture_result=gestures.resolve_gestures(p,body);check(gesture_result.scene.parts.size()==10);
  check(gesture_result.current->raw==p.animation.bytes&&gesture_result.base->raw==p.base_animation.bytes&&!gesture_result.base_executed);
  check(gesture_result.current->frame==2.5&&gesture_result.base->weight_milli==500);
+ p.carry_animation.bytes="clip;1;0;500;250;1;0;0";p.animation.bytes="clip;6;1000;250;500;0;7;8";
+ auto imported=gestures.resolve_gestures(p,body);check(imported.current->weight_milli==500&&imported.carry&&
+   imported.carry->frame==5&&imported.carry->speed_milli==0&&!imported.base_executed);
+ p.carry_animation.bytes="";p.animation.bytes="clip;6;1000;250;1000;0;7;8";
  for(std::size_t i=0;i<6;++i){const auto& part=gesture_result.scene.parts[i+4];check(part.appearance_name==names[i]);check(part.hand&&part.hand->right==(i%2==1)&&part.hand->gesture==static_cast<odh::HandGesture>(i/2));}
  check(!gesture_result.scene.parts[0].hand&&!gesture_result.scene.parts[3].hand);
  check(gesture_result.scene.parts[4].texture_entry=="override.bmp"&&gesture_result.scene.parts[6].texture_entry=="skinlgt.bmp"&&gesture_result.scene.parts[8].texture_entry=="unmatched.bmp");

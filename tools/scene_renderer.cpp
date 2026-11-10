@@ -211,7 +211,18 @@ odh::BitmapImage loose_bmp(const std::string& path) {
 }
 } // namespace
 
+static std::array<float,3> align_avatar_normal(const std::array<float,3>& point,const std::array<float,3>& normal){
+    const auto dot=[](const auto& a,const auto& b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];};
+    const auto unit=[&](std::array<float,3> v){const float length=std::sqrt(dot(v,v));if(!std::isfinite(length)||length<1e-6f)
+        throw odh::FormatError("avatar ground alignment basis is singular");for(auto& x:v)x/=length;return v;};
+    const auto u1=unit(normal);std::array<float,3> u2{0,0,1};const float a=dot(u1,u2);for(unsigned c=0;c<3;++c)u2[c]-=a*u1[c];u2=unit(u2);
+    std::array<float,3> u3{1,0,0};const float b=dot(u1,u3),c=dot(u2,u3);for(unsigned i=0;i<3;++i)u3[i]-=b*u1[i]+c*u2[i];u3=unit(u3);
+    return {u3[0]*point[0]+u1[0]*point[1]+u2[0]*point[2],u3[1]*point[0]+u1[1]*point[1]+u2[1]*point[2],u3[2]*point[0]+u1[2]*point[1]+u2[2]*point[2]};
+}
 struct SceneRenderer::Impl {
+    std::array<float,3> visual_normal{0,1,0};
+    std::optional<std::uint64_t> normal_tick;
+
     struct Clip {
         std::string entry_name; // Retain the actual archive spelling for evidence/errors.
         std::uint32_t translations, rotations;
@@ -435,17 +446,30 @@ struct SceneRenderer::Impl {
                 }
             }
             pose = layer_samples.empty()?
-                odh::sample_pose(skeleton,state.animation,cfp,state.frame,state.carry_animation,carry_cfp):
-                odh::sample_pose_collection(skeleton,layer_samples,state.carry_animation,carry_cfp);
+                odh::sample_pose(skeleton,state.animation,cfp,state.frame,state.carry_animation,carry_cfp,state.carry_frame):
+                odh::sample_pose_collection(skeleton,layer_samples,state.carry_animation,carry_cfp,state.carry_frame);
         }
+        if(state.avatar_visible&&state.head_seek)pose=odh::apply_head_seek(pose,*state.head_seek);
+        const bool ground_align=(state.display_flags&4096)&&!portrait&&state.avatar_visible;
+        if(ground_align&&state.ground_normal){const auto& normal=*state.ground_normal;
+            float length=0;for(float v:normal){if(!std::isfinite(v))throw odh::FormatError("avatar actual ground normal is not finite");length+=v*v;}
+            if(std::abs(length-1)>0.001f)throw odh::FormatError("avatar actual ground normal is not normalized");
+            (void)align_avatar_normal({0,0,0},normal);}
         ScenePoseAnchors prepared_anchors;
         if(anchors&&state.avatar_visible){
+            std::optional<std::size_t> head;
+            for(std::size_t i=0;i<pose.bones.size();++i)if(fold(pose.bones[i].name)=="head"){
+                if(head)throw odh::FormatError("head seek HEAD bone is ambiguous");head=i;}
+            if(head&&pose.bones[*head].parent_index>=0)prepared_anchors.neck_matrix=pose.bones[static_cast<std::size_t>(pose.bones[*head].parent_index)].absolute_matrix;
             constexpr std::array<const char*,3> names{"r_finger0","head","pelvis"};
             for(const auto& bone:pose.bones)for(std::size_t slot=0;slot<names.size();++slot){
                 if(fold(bone.name)!=names[slot])continue;
                 if(prepared_anchors.avatar_slots[slot])
                     throw odh::FormatError("scene renderer avatar slot bone is ambiguous");
-                const auto point=rotate_avatar(bone.absolute_position,state.avatar_direction,state.avatar_radians);
+                auto point=rotate_avatar(bone.absolute_position,state.avatar_direction,state.avatar_radians);
+                if(slot==1)prepared_anchors.headline_target=std::array<float,3>{finite_float(double(point[0])/3+state.avatar_tile[0]),
+                    finite_float(double(point[2])/3+state.avatar_tile[1]),finite_float(double(point[1])/3+state.avatar_tile[2])};
+                if(ground_align)point=align_avatar_normal(point,visual_normal);
                 prepared_anchors.avatar_slots[slot]=std::array<float,3>{
                     finite_float(double(point[0])/3+state.avatar_tile[0]-.5),
                     finite_float(double(point[2])/3+state.avatar_tile[1]-.5),
@@ -503,10 +527,12 @@ struct SceneRenderer::Impl {
             projected.reserve(mesh.vertices.size());
             for (const auto& vertex : mesh.vertices) {
                 auto world = rotate_avatar(vertex.position, state.avatar_direction,state.avatar_radians);
+                if(ground_align)world=align_avatar_normal(world,visual_normal);
                 world[0] = finite_float(double(world[0]) + 3 * double(state.avatar_tile[0]));
                 world[1] = finite_float(double(world[1]) + 3 * double(state.avatar_tile[2]));
                 world[2] = finite_float(double(world[2]) + 3 * double(state.avatar_tile[1]));
                 projected.push_back({odh::project_world(camera, world), vertex.texcoord,
+                                     ground_align?align_avatar_normal(rotate_avatar(vertex.normal,state.avatar_direction,state.avatar_radians),visual_normal):
                                      rotate_avatar(vertex.normal, state.avatar_direction,state.avatar_radians)});
             }
             for (const auto& face : mesh.faces)
@@ -514,8 +540,21 @@ struct SceneRenderer::Impl {
                     state.owner_id?state.owner_id:static_cast<std::uint16_t>(index)});
         }
         if(portrait)options.perspective_correct=true;
-        const auto base = portrait ? odh::rasterize(portrait->viewport_size,portrait->viewport_size,triangles,textures,options)
+        auto base = portrait ? odh::rasterize(portrait->viewport_size,portrait->viewport_size,triangles,textures,options)
                                    : odh::rasterize(camera.width,camera.height,triangles,textures,options);
+        if(ground_align&&state.ground_normal&&state.simulation_tick){
+            if(normal_tick&&*state.simulation_tick<*normal_tick)throw odh::FormatError("avatar ground presentation clock moved backwards");
+            const auto frames=normal_tick?*state.simulation_tick-*normal_tick:0;
+            const float retain=static_cast<float>(std::pow(0.80,static_cast<double>(frames)));auto next=visual_normal;float length=0;
+            for(unsigned c=0;c<3;++c){next[c]=next[c]+((*state.ground_normal)[c]-next[c])*(1-retain);length+=next[c]*next[c];}
+            length=std::sqrt(length);if(!std::isfinite(length)||length<1e-6f)throw odh::FormatError("avatar ground normal interpolation is singular");
+            for(auto& v:next)v/=length;visual_normal=next;}
+        if(!portrait&&state.simulation_tick)normal_tick=state.simulation_tick;
+        const auto color=odh::avatar_display_color(state.display_flags,state.is_ghost);
+        if(color!=std::array<std::uint8_t,4>{255,255,255,255})for(std::size_t i=0;i<base.pixels.size();++i)if(std::isfinite(base.depth[i])){
+            for(unsigned c=0;c<3;++c){const auto tinted=(unsigned(base.pixels[i][c])*color[c]+127)/255;
+                base.pixels[i][c]=static_cast<std::uint8_t>(portrait?(tinted*color[3]+unsigned(options.clear[c])*(255-color[3])+127)/255:tinted);}
+        }
         if (!image) {
             if(anchors)*anchors=prepared_anchors;
             return {base};

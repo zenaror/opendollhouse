@@ -8,7 +8,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 12;
+constexpr std::uint16_t codec_version = 13;
 constexpr std::size_t minimum_header_size = 31;
 
 class Writer {
@@ -248,6 +248,7 @@ void write_entity(Writer& writer, const Entity& entity,std::uint16_t version) {
     writer.count(entity.bound_appearances.size());
     for(const auto& name:entity.bound_appearances)writer.text(name);
     writer.u64(entity.dynamic_sprite_flags);
+    if(version>=13)writer.u64(entity.dynamic_sprite_flags_high);
     if(version>=5){
         writer.boolean(entity.lockout_count.has_value());
         if(entity.lockout_count){
@@ -355,6 +356,7 @@ Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits,std::u
             entity.bound_appearances.push_back(reader.text(256));
     }
     if(version>=4)entity.dynamic_sprite_flags=reader.u64();
+    if(version>=13)entity.dynamic_sprite_flags_high=reader.u64();
     if(version>=5&&reader.boolean()){
         EntityLockoutCountState state;state.thread_present=reader.boolean();
         if(reader.boolean())state.timestamp=reader.u32();
@@ -416,7 +418,10 @@ std::vector<std::uint8_t> encode_world_snapshot(
     const bool native_slots=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),has_native_slot)||std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),has_native_slot);
     const auto has_native_oow=[](const auto& entity){return entity.native_out_of_world_level.has_value();};
     const bool native_oow=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),has_native_oow)||std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),has_native_oow);
-    const auto version=static_cast<std::uint16_t>(native_oow?12:native_slots?11:position_policy?10:reset_policy?9:names?8:!snapshot.retained_entities.empty()||marked?7:appearance?6:snapshot.lockout_count_clock?5:4);
+    const auto has_high=[](const auto& entity){return entity.dynamic_sprite_flags_high!=0;};
+    const bool high=std::any_of(snapshot.entities.begin(),snapshot.entities.end(),has_high)||
+        std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),has_high);
+    const auto version=static_cast<std::uint16_t>(high?13:native_oow?12:native_slots?11:position_policy?10:reset_policy?9:names?8:!snapshot.retained_entities.empty()||marked?7:appearance?6:snapshot.lockout_count_clock?5:4);
     writer.u16(version);
     writer.u8(static_cast<std::uint8_t>(snapshot.attribute_policy));
     writer.u64(static_cast<std::uint64_t>(snapshot.word_count));
@@ -482,6 +487,12 @@ WorldSnapshot decode_world_snapshot(
         const auto known=[](const auto& e){return e.native_out_of_world_level.has_value();};
         if(!std::any_of(snapshot.entities.begin(),snapshot.entities.end(),known)&&!std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),known))
             throw FormatError("empty native-out-of-world extension is noncanonical");
+    }
+    if(version==13){
+        const auto high=[](const auto& entity){return entity.dynamic_sprite_flags_high!=0;};
+        if(!std::any_of(snapshot.entities.begin(),snapshot.entities.end(),high)&&
+           !std::any_of(snapshot.retained_entities.begin(),snapshot.retained_entities.end(),high))
+            throw FormatError("empty dynamic sprite high-bank extension is noncanonical");
     }
     if (!reader.done()) throw FormatError("World snapshot has unclaimed bytes");
     validate_snapshot(snapshot, limits.world);

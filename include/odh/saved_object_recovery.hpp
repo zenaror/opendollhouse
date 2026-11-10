@@ -7,13 +7,17 @@
 namespace odh {
 // Original OBJM import only. An ODHS continuation must never call this service.
 // This coordinator mutates the caller's PRIVATE World, never a second World.
+// special_cursor is the historical name of the exact always-reset definition
+// selector (GUID3c08965f), not the OBJD Cursor class. The admitted original is
+// Placeholder.iff type4/master0; it uses the ordinary object service phases.
 enum class SavedRecoveryClass { object, person, portal, special_cursor };
 enum class SavedRecoveryPhase {
     load, notify_person, capture_placement, portal_detach,
     remove_entry, detach, before_clear, restart_main, init,
     restore_group, restore_placement, placement_entry, portal_restore, portal_reconcile,
     cleanup, cleanup_flags, person_unwind, person_visuals,
-    person_placement, person_cleanup, person_actions, refresh, special_cursor,
+    person_placement, person_cleanup, person_actions, refresh,
+    special_cursor, // Reserved legacy phase; no source class dispatch produces it.
     // Base431edd always publishes World lookup masks2/8 after Load/reset,
     // including a compatible original whose body was retained after removal.
     post_load_lookup_flags

@@ -164,6 +164,68 @@ class RuntimeSmokeTests(unittest.TestCase):
                 else:
                     self.assertTrue(record['errors'])
 
+    def test_multiple_home_transactions_require_native_current_head(self):
+        import importlib.util
+        from types import SimpleNamespace
+        spec = importlib.util.spec_from_file_location('journal_head_smoke', RUNNER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        inspector = self.base / 'inspector.py'
+        inspector.write_text('''#!/usr/bin/env python3
+import json,os,sys
+from pathlib import Path
+p=Path(os.environ['XDG_STATE_HOME'])
+mode=(p/'inspection-mode').read_text()
+assert sys.argv[1]=='--inspect-session-head' and sys.argv[-2:]==['5','6']
+result={'authenticated_journal_head':True,'archive_path':str((p/'final.odhs').resolve()),
+        'house':5,'family_chunk_id':6,'tick':101}
+if mode=='unauthenticated':result['authenticated_journal_head']=False
+if mode=='other_head':result['archive_path']=str((p/'adoption.odhs').resolve())
+if mode=='wrong_family':result['family_chunk_id']=7
+if mode=='wrong_house':result['house']=8
+if mode=='wrong_tick':result['tick']=102
+if mode=='mutation':(p/'side-effect').write_text('unexpected')
+print(json.dumps(result))
+''')
+        inspector.chmod(0o700)
+        for mode in ('valid', 'unauthenticated', 'other_head', 'wrong_family',
+                     'wrong_house', 'wrong_tick', 'mutation', 'no_inspector',
+                     'non_home', 'boolean_mode', 'reported_old', 'reported_outside'):
+            with self.subTest(mode=mode):
+                directory = self.base / ('journal-' + mode)
+                profile = directory / 'profile'
+                state = profile / 'state'
+                state.mkdir(parents=True)
+                (state/'inspection-mode').write_text(mode)
+                initial, adoption, final = [state/name for name in ('input.odhs', 'adoption.odhs', 'final.odhs')]
+                initial.write_text('unchanged copied original')
+                adoption.write_text('initial managed transaction')
+                final.write_text('completed purchase transaction')
+                before = module.profile_files(profile)
+                args = SimpleNamespace(binary=Path(sys.executable),
+                    session_inspector=None if mode=='no_inspector' else inspector,
+                    game_root=self.game, checkpoint=initial,
+                    protected_manifest=self.manifest, output=directory,
+                    require_integer=[])
+                smoke = module.Smoke(args)
+                document = {'ticks':101, 'saved_session_path':str(final),
+                    'integrated_session_context':{'neighborhood_mode':1, 'house_number':5, 'family_chunk_id':6}}
+                if mode=='non_home':document['integrated_session_context']['neighborhood_mode']=2
+                if mode=='boolean_mode':document['integrated_session_context']['neighborhood_mode']=True
+                if mode=='reported_old':document['saved_session_path']=str(initial)
+                if mode=='reported_outside':document['saved_session_path']=str(self.game/'protected.dat')
+                env = dict(os.environ, XDG_STATE_HOME=str(state),
+                    XDG_CONFIG_HOME=str(profile/'config'), XDG_DATA_HOME=str(profile/'data'),
+                    XDG_CACHE_HOME=str(profile/'cache'))
+                if mode=='valid':
+                    self.assertEqual(smoke.produced_home_head(document,profile,[adoption,final],env),final)
+                else:
+                    with self.assertRaises(ValueError):
+                        smoke.produced_home_head(document,profile,[adoption,final],env)
+                if mode!='mutation':
+                    self.assertEqual(module.profile_files(profile),before)
+                self.assertEqual(initial.read_text(),'unchanged copied original')
+
     def test_host_failure_exit_zero_blocks_every_later_phase(self):
         result, report = self.run_smoke("host_failed")
         self.assertEqual(result.returncode, 1)

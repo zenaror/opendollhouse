@@ -1,5 +1,7 @@
 #include "saved_object_renderer.hpp"
+#include "odh/world.hpp"
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -22,6 +24,12 @@ std::string rotation_group(){std::string b(6+4*(12+32),'\0');set(b,0,20004,2);se
 std::string rotation_iff(){std::string b="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";b.resize(64,'\0');b+=chunk("OBJD",1,objd());b+=chunk("DGRP",10,rotation_group());b+=chunk("PALT",7,palette());for(std::uint16_t id=5;id<9;++id)b+=chunk("SPR2",id,large_transparent_sprite());return b;}
 std::string group(){std::string b(82,'\0');set(b,0,20004,2);set(b,2,1);set(b,6,1);set(b,10,3);set(b,14,2);set(b,18,5);set(b,50,6);set(b,58,1);return b;}
 std::string iff(unsigned flags=3,bool duplicate=false,bool spr1=false,bool empty=false){std::string b="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";b.resize(64,'\0');b+=chunk("OBJD",1,objd());b+=chunk("DGRP",10,group());b+=chunk("PALT",7,palette());b+=chunk(spr1?"SPR#":"SPR2",5,empty?empty_sprite():sprite(flags));b+=chunk("SPR2",6,sprite(flags));if(duplicate)b+=chunk("DGRP",10,group());return b;}
+std::string high_flag_iff(unsigned bit){
+    auto definition=objd();set(definition,130,129,2);auto draw=group();set(draw,18,5+bit);set(draw,50,300);
+    std::string b="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";b.resize(64,'\0');
+    b+=chunk("OBJD",1,definition);b+=chunk("DGRP",10,draw);b+=chunk("PALT",7,palette());
+    b+=chunk("SPR2",static_cast<std::uint16_t>(5+bit),sprite());b+=chunk("SPR2",300,sprite());return b;
+}
 struct Temp {std::filesystem::path p;Temp(){p=std::filesystem::temp_directory_path()/("odh-saved-objects-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));std::filesystem::create_directory(p);}~Temp(){std::error_code e;std::filesystem::remove_all(p,e);}};
 void write(const std::filesystem::path& p,const std::string& b){std::ofstream f(p,std::ios::binary);f.write(b.data(),static_cast<std::streamsize>(b.size()));if(!f)throw std::runtime_error("fixture write failed");}
 odh::DefinitionCandidate candidate(const std::filesystem::path& p){std::istringstream stream(objd());return {p.string(),"",1,odh::read_object_definition(odh::View(stream,objd().size()))};}
@@ -41,6 +49,21 @@ int main(){try{
  const auto picked=renderer.render({visual},camera,base,true);check(picked.composite.owner_ids.size()==base.pixels.size());
  std::size_t owned=0;bool valid_owners=true;for(auto id:picked.composite.owner_ids){valid_owners=valid_owners&&(id==0||id==1);if(id)++owned;}check(valid_owners&&owned==2);
  visual.dynamic_sprite_flags={0};rendered=renderer.render({visual},camera,base);check(rendered.layers==1&&rendered.records[0].omitted_dynamic_layers==1);visual.dynamic_sprite_flags={-1};check(renderer.render({visual},camera,base).layers==2);visual.dynamic_sprite_flags.clear();check(renderer.render({visual},camera,base).layers==1);visual.dynamic_sprite_flags={1};
+ for(unsigned bit:{0U,63U,64U,127U}){
+     const auto path=tmp.p/("dynamic"+std::to_string(bit)+".iff");write(path,high_flag_iff(bit));
+     odh::DefinitionIndex defs({candidate(path)});SavedObjectRenderer high_renderer(defs);
+     odh::World live;check(live.create(1,odh::EntityKind::object));
+     auto object=visual;object.dynamic_sprite_flags=odh::dynamic_sprite_flag_values(*live.find(1));
+     check(high_renderer.render({object},camera,base).layers==1);
+     check(live.set_dynamic_sprite_flag(1,static_cast<std::uint16_t>(bit),true));
+     object.dynamic_sprite_flags=odh::dynamic_sprite_flag_values(*live.find(1));
+     check(high_renderer.render({object},camera,base).layers==2);
+     check(live.set_dynamic_sprite_flag(1,static_cast<std::uint16_t>(bit),false));
+     object.dynamic_sprite_flags=odh::dynamic_sprite_flag_values(*live.find(1));
+     check(high_renderer.render({object},camera,base).layers==1);
+ }
+ {const auto path=tmp.p/"dynamic128.iff";write(path,high_flag_iff(128));odh::DefinitionIndex defs({candidate(path)});
+  SavedObjectRenderer out_of_profile(defs);rejects([&]{out_of_profile.render({visual},camera,base);});}
  auto bad=visual;bad.id=0;rejects([&]{renderer.render({bad},camera,base);});rejects([&]{renderer.render({visual,visual},camera,base);});bad=visual;bad.direction=8;rejects([&]{renderer.render({bad},camera,base);});bad=visual;bad.graphic=-1;rejects([&]{renderer.render({bad},camera,base);});bad.graphic=1;rejects([&]{renderer.render({bad},camera,base);});bad=visual;bad.guid=124;rejects([&]{renderer.render({bad},camera,base);});bad=visual;bad.direction=2;rejects([&]{renderer.render({bad},camera,base);});bad=visual;bad.tile_position[0]=std::numeric_limits<float>::quiet_NaN();rejects([&]{renderer.render({bad},camera,base);});
  auto wrong_camera=camera;wrong_camera.width=33;rejects([&]{renderer.render({visual},wrong_camera,base);});rejects([&]{renderer.render(std::vector<SavedObjectVisual>(4097,visual),camera,base);});bad=visual;bad.dynamic_sprite_flags.resize(65537);rejects([&]{renderer.render({bad},camera,base);});
  odh::DefinitionIndex ambiguous({candidate(path),candidate(path)});SavedObjectRenderer ambiguous_renderer(ambiguous);rejects([&]{ambiguous_renderer.render({visual},camera,base);});
@@ -85,7 +108,10 @@ int main(){try{
   check(result.composite.tested_samples>0&&result.composite.shaded_samples>0);
   auto v=visual;v.id=33;v.tile_position={0,0,0};visible.push_back(v);rejects([&]{r.render(visible,camera,base);});}
  {const auto p=tmp.p/"rotation-cache.iff";write(p,rotation_iff());odh::DefinitionIndex defs({candidate(p)});
-  SavedObjectRenderer r(defs);auto v=visual;v.tile_position={10000,10000,0};camera.rotation=0;
+  SavedObjectRenderer r(defs);
+  check(std::abs(r.look_target_height(123,0)-(100.f/95.f-.5f))<.00001f);
+  rejects([&]{r.look_target_height(124,0);});rejects([&]{r.look_target_height(123,1);});
+  auto v=visual;v.tile_position={10000,10000,0};camera.rotation=0;
   auto v2=v;v2.id=2;v2.direction=2;auto v3=v;v3.id=3;v3.direction=4;
   // Three distinct valid 1M images are outside the camera. They add no
   // decoded pixels even though their combined extent exceeds the 2M cap.
