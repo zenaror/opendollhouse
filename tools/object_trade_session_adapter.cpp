@@ -19,6 +19,8 @@
 #include "odh/object_type.hpp"
 #include "odh/object_value_registry.hpp"
 #include "odh/entity_next.hpp"
+#include "odh/distance_to.hpp"
+#include "odh/direction_to.hpp"
 #include "odh/sha256.hpp"
 #include <algorithm>
 #include <cmath>
@@ -988,15 +990,24 @@ struct CandidateBinding {
         auto budget=ts1_budget_primitive(stable_memory,[this](const VmFrame&){return context.host.family_budget;},
             [this](const VmFrame&,std::int32_t value){if(!context.host.family_budget)return false;context.host.family_budget=value;return true;});
         auto type=object_type_primitive(context.world);
+        auto distance=get_distance_to_primitive(context.world,stable_memory);
+        auto direction=get_direction_to_primitive(context.world,stable_memory);
+        // The transaction owns this restored relationship matrix. Both TS1
+        // and legacy opcodes must use the same candidate World/register memory;
+        // never forward relationship effects into the live session owner.
+        auto relationships=context.relationships.primitive(context.world,stable_memory);
         auto refresh=session_refresh_primitive(context.world,&rooms);
         auto extra=hooks.extra_primitive_factory?hooks.extra_primitive_factory(context,stable_memory):VmPrimitive{};
-        return [this,rng=std::move(rng),budget=std::move(budget),type=std::move(type),refresh=std::move(refresh),&stable_memory,extra=std::move(extra)]
+        return [this,rng=std::move(rng),budget=std::move(budget),type=std::move(type),relationships=std::move(relationships),distance=std::move(distance),direction=std::move(direction),refresh=std::move(refresh),&stable_memory,extra=std::move(extra)]
             (const VmFrame& frame,const Instruction& instruction,const Ts1Temps& temps,const VmDispatch& dispatch)->PrimitiveOutcome{
             if(!authority())return {PrimitiveDisposition::unsupported,"object command authority expired"};
             switch(instruction.opcode){case 7:return refresh(frame,instruction,temps,dispatch);case 8:return rng(frame,instruction,temps,dispatch);case 25:return budget(frame,instruction,temps,dispatch);
                 case 31:{std::vector<std::vector<std::int16_t>> group_ids;
                     for(const auto& group:groups){std::vector<std::int16_t> ids;for(const auto& member:group.members)ids.push_back(member.id);group_ids.push_back(std::move(ids));}
                     return entity_next_primitive(context.world,stable_memory,{},std::move(group_ids))(frame,instruction,temps,dispatch);}
+                case 11:return distance(frame,instruction,temps,dispatch);
+                case 12:return direction(frame,instruction,temps,dispatch);
+                case 24:case 26:return relationships(frame,instruction,temps,dispatch);
                 case 32:return type(frame,instruction,temps,dispatch);default:break;}
             return extra?extra(frame,instruction,temps,dispatch):PrimitiveOutcome{PrimitiveDisposition::unsupported,
                 "candidate object command requires native primitive "+std::to_string(instruction.opcode)};

@@ -36,6 +36,12 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Preparação de compra, movimentação e venda ligada aos serviços nativos de
+  relacionamentos, distância e direção, usando o estado isolado da transação.
+- Consulta do menu preserva a origem dos estados visuais e dos níveis dos objetos,
+  mantendo a partida do jogador protegida de alterações da consulta.
+- Fluxo experimental de saída de famílias com partida nativa salva passa a preparar
+  a casa desocupada pelo serviço existente. A validação pelas telas continua pendente.
 - Consulta de ações dos objetos conserva a informação do cômodo, sem alterar
   o estado da casa ou os registros do personagem durante a verificação do menu.
 - Conferência dos arquivos do jogo acelerada nos sistemas compatíveis,

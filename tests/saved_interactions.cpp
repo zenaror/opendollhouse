@@ -2,6 +2,7 @@
 #include "odh/neighbor_info.hpp"
 #include "odh/room_map.hpp"
 #include "odh/world_snapshot_codec.hpp"
+#include "odh/vm_snapshot_codec.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -95,6 +96,117 @@ std::string far(const std::vector<std::pair<std::string,std::string>>& entries){
         put(bytes,offsets[i],4);put(bytes,static_cast<std::uint32_t>(entry.first.size()),4);bytes+=entry.first;}
     return bytes;
 }
+void typed_world_readers_menu_projection(const std::filesystem::path& root){
+    const auto path=root/"typed-world-readers.iff";
+    odh::ObjectDefinition object{};object.guid=123;
+    const odh::DefinitionCandidate definition{path.string(),"",7,object};
+    odh::World live;
+    check(live.create(1,odh::EntityKind::avatar)&&live.create(2,odh::EntityKind::object)&&
+          live.create(3,odh::EntityKind::object)&&live.create(4,odh::EntityKind::object)&&
+          live.define_type(2,123)&&live.define_type(3,123)&&live.define_type(4,123)&&
+          live.set_position(1,{16,16,3,0})&&live.set_position(2,{32,16,1,0})&&
+          live.set_position(3,{48,16,2,0})&&live.set_position(4,{64,16,2,0})&&
+          live.declare_definition_word(2,56,0)&&live.declare_definition_word(3,56,-1)&&
+          live.declare_object_word(1,29,1500)&&live.declare_object_word(1,40,7),
+          "typed menu source has actual World levels, unsigned offset and ordinary object word");
+    odh::World world;
+    check(world.restore_snapshot(live.snapshot())&&world.set_position(1,{16,16,1,0})&&
+          world.set_position(2,{32,16,2,0}),"query World is a real snapshot clone with opposite floor predicate");
+    for(const auto flag:{63,64,69,127})check(world.set_dynamic_sprite_flag(2,static_cast<std::uint16_t>(flag),true),
+        "query owns authentic low/high dynamic flag banks");
+    check(world.set_dynamic_sprite_flag(3,127,true),"nested StackObject has a distinct real high flag");
+    odh::Vm owner({{odh::routine_key(4096),{0x8002,{{0,254,255,{}}},{},odh::Bhav::Metadata{0,0,0,0}}}},
+        live.vm_memory(),{},[](const auto&,const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};});
+    check(owner.start(odh::routine_key(4096),{1,3,3},{},true)==odh::VmStatus::running&&
+          owner.run(1)==odh::VmStatus::waiting,"source Thread is parked with an unrelated real callee/StackObject");
+    owner.temps()[0]=11;owner.temps()[7]=91;owner.temp_xl()={70000,-80000};
+    const auto owner_before=odh::encode_vm_snapshot(owner.snapshot());
+    odh::RandomState random(42);const auto seed=random.seed();
+    unsigned unexpected_mutations=0,unexpected_host_calls=0;
+    std::vector<odh::VmFrame> level_frames,flag_frames;std::vector<std::uint16_t> selectors;
+    auto source=live.vm_memory();const auto query_memory=world.vm_memory();
+    // Same normalization as the host: these two getters belong to the query
+    // World, while unsafe source mutation callbacks are deliberately still present.
+    source.expression_levels=[&](const odh::VmFrame& f){level_frames.push_back(f);return query_memory.expression_levels(f);};
+    source.dynamic_sprite_flag=[&](const odh::VmFrame& f,std::uint16_t flag){flag_frames.push_back(f);selectors.push_back(flag);return query_memory.dynamic_sprite_flag(f,flag);};
+    source.set_dynamic_sprite_flag=[&](const auto&,auto,bool){++unexpected_mutations;return true;};
+    source.expression_write=[&](const auto&,auto,auto,auto)->std::optional<bool>{++unexpected_mutations;return true;};
+    source.write=[&](const auto&,auto,auto,auto){++unexpected_mutations;return true;};
+    const std::function<odh::VmPrimitive(const odh::VmMemory&,const odh::VmPrimitive&,odh::Vm*)> readonly=
+        [&](const auto&,const auto&,auto*){return odh::VmPrimitive{[&](const auto&,const auto&,const auto&,const auto&){
+            ++unexpected_host_calls;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"unexpected typed menu primitive"};}};};
+    const auto lo=[](std::int16_t v){return static_cast<std::uint8_t>(static_cast<std::uint16_t>(v));};
+    const auto hi=[](std::int16_t v){return static_cast<std::uint8_t>(static_cast<std::uint16_t>(v)>>8);};
+    using Expr=std::array<std::uint8_t,8>;
+    const auto evaluate=[&](const std::vector<Expr>& expressions,const odh::VmMemory* provider,
+                            bool cloned_registers,bool nested,std::int16_t target=2){
+        const auto query_before=odh::encode_world_snapshot(world.snapshot());
+        const auto live_before=odh::encode_world_snapshot(live.snapshot());
+        level_frames.clear();flag_frames.clear();selectors.clear();
+        odh::RoutineSet globals;
+        if(nested){
+            // Consume real probe RNG then enter two global helper frames.
+            std::string condition;put(condition,0x8002,2);put(condition,2,2);
+            condition.push_back(0);condition.push_back(4);condition.append(6,'\0');
+            put(condition,8,2);condition.push_back(1);condition.push_back(static_cast<char>(255));
+            for(auto x:Expr{0,0,8,0,10,0,7,0})condition.push_back(static_cast<char>(x));
+            put(condition,301,2);condition.push_back(static_cast<char>(254));condition.push_back(static_cast<char>(255));condition.append(8,'\0');
+            write(path,iff(chunk("BHAV",4098,condition)));
+            const auto parse=[](const std::string& bytes){std::istringstream input(bytes,std::ios::binary);return odh::read_bhav(odh::View(input,bytes.size()));};
+            globals.emplace(odh::routine_key(301),parse(call_global_bhav(302)));
+            globals.emplace(odh::routine_key(302),parse(expression_bhav(expressions)));
+        }else write(path,iff(chunk("BHAV",4098,expression_bhav(expressions))));
+        const auto result=evaluate_saved_test_functions(definition,world,1,target,{4098},128,128,{0,0,0,0},
+            nullptr,{},nullptr,nullptr,{},nested?&globals:nullptr,nullptr,nullptr,std::nullopt,nullptr,false,{}, {},
+            cloned_registers?&owner:nullptr,false,{},provider,nullptr,{},&random,cloned_registers?readonly:decltype(readonly){});
+        check(odh::encode_world_snapshot(world.snapshot())==query_before&&
+              odh::encode_world_snapshot(live.snapshot())==live_before&&random.seed()==seed,
+              "typed synchronous checks preserve complete query/live World bytes and source RNG");
+        check(odh::encode_vm_snapshot(owner.snapshot())==owner_before&&unexpected_mutations==0&&unexpected_host_calls==0,
+              "typed checks preserve the complete parked source Thread and never borrow source setters");
+        return result.front();
+    };
+    for(bool cloned:{false,true})for(bool nested:{false,true}){
+        const Expr less{29,0,0,4,0,1,3,7},greater_equal{29,0,0,4,0,14,3,7};
+        check(evaluate({less},&source,cloned,nested).state==SavedTestFunctionResult::State::eligible&&
+              level_frames.size()==1&&level_frames.back().key.id==(nested?302:4098)&&
+              level_frames.back().context.callee==2,
+              "exact Room1024 uses executing query frame, not live World/source Thread floor metadata");
+        check(evaluate({greater_equal},&source,cloned,nested).state==SavedTestFunctionResult::State::ineligible,
+              "opposite authored floor predicate returns false rather than unsupported");
+        for(const auto flag:{0,63,64,69,127}){
+            const auto expected=flag==0?0:1;
+            check(evaluate({{0,0,lo(flag),hi(flag),0,5,8,7},{0,0,lo(expected),0,0,2,27,7}},&source,cloned,nested).state==SavedTestFunctionResult::State::eligible&&
+                  selectors.size()==1&&selectors.back()==flag&&flag_frames.back().key.id==(nested?302:4098),
+                  "scope27 reads actual query low/high banks using executing probe Temp selector");
+        }
+        check(evaluate({{0,0,3,0,0,5,10,7},{0,0,127,0,0,5,8,7},{0,0,1,0,0,2,27,7}},&source,cloned,nested).state==SavedTestFunctionResult::State::eligible&&
+              flag_frames.back().context.stack_object==3&&flag_frames.back().context.stack_object_generation==world.find(3)->generation,
+              "nested/current StackObject is generation-bound to the query entity");
+        for(const std::int16_t flag:{std::int16_t{-1},std::int16_t{128}})
+            check(evaluate({{0,0,lo(flag),hi(flag),0,5,8,7},{0,0,0,0,0,2,27,7}},&source,cloned,nested).state==SavedTestFunctionResult::State::unsupported,
+                  "unknown dynamic flag is not a fabricated zero");
+        check(evaluate({less},&source,cloned,nested,3).state==SavedTestFunctionResult::State::ineligible,
+              "query callee OBJD LevelOffset is unsigned65535 rather than signed minus one");
+        auto missing_getters=source;missing_getters.expression_levels={};missing_getters.dynamic_sprite_flag={};
+        check(evaluate({less},&missing_getters,cloned,nested).state==SavedTestFunctionResult::State::unsupported&&
+              evaluate({{0,0,69,0,0,5,8,7},{0,0,1,0,0,2,27,7}},&missing_getters,cloned,nested).state==SavedTestFunctionResult::State::unsupported,
+              "present source memory with absent typed getters remains unsupported");
+        check(evaluate({less},&source,cloned,nested,4).state==SavedTestFunctionResult::State::unsupported,
+              "actual query entity with missing LevelOffset remains unknown");
+        check(evaluate({less},nullptr,cloned,nested).state==SavedTestFunctionResult::State::unsupported&&
+              evaluate({{0,0,69,0,0,5,8,7},{0,0,1,0,0,2,27,7}},nullptr,cloned,nested).state==SavedTestFunctionResult::State::unsupported,
+              "absent source capabilities do not become synthetic World bindings");
+        check(evaluate({{0,0,69,0,0,5,8,7},{0,0,0,0,0,5,27,7}},&source,cloned,nested).state==SavedTestFunctionResult::State::unsupported&&
+              evaluate({{40,0,9,0,0,5,3,7}},&source,cloned,nested).state==SavedTestFunctionResult::State::unsupported,
+              "dynamic flag setter and ordinary mutating Expression remain denied");
+    }
+    check(live.set_dynamic_sprite_flag(2,69,true)&&world.set_dynamic_sprite_flag(2,69,false),
+          "reverse live/query flag facts for another real menu pass");
+    check(evaluate({{0,0,69,0,0,5,8,7},{0,0,1,0,0,2,27,7}},&source,true,true).state==SavedTestFunctionResult::State::ineligible,
+          "later menu pass reads current query flag rather than opposite live or cached flag");
+}
+
 void room_scope_menu_projection(const std::filesystem::path& root){
     const auto path=root/"room-context-check.iff";
     // A private condition enters a global helper after consuming a disposable
@@ -598,6 +710,7 @@ int main(){try{
     relationship_host_isolation(root);
     readonly_menu_state(root);
     room_scope_menu_projection(root);
+    typed_world_readers_menu_projection(root);
     source_error_menu_matrix(root);
     explicit_named_check_resources(root);
     named_dynamic_menu_owner(root);

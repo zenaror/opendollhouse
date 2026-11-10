@@ -559,6 +559,12 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         // room provider without lending source writes or borrowing VM registers.
         // Missing/unresolved geometry must remain unsupported, never indoors.
         memory.room_by_temp0=source_memory->room_by_temp0;
+        // The host binds these pure readers to the SAME query World passed
+        // below. Vm supplies the executing probe frame/Temp selector, including
+        // nested helpers; never capture a source Thread's frame or registers.
+        // Keep both mutation adapters empty in this read-only memory profile.
+        memory.expression_levels=source_memory->expression_levels;
+        memory.dynamic_sprite_flag=source_memory->dynamic_sprite_flag;
     }
     memory.resolve_live_entity=[&world](std::int16_t id)->std::optional<odh::WorldEntityReference>{
         const auto* e=world.find(id);return e?std::optional<odh::WorldEntityReference>{{id,e->generation}}:std::nullopt;

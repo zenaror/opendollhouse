@@ -10949,6 +10949,11 @@ struct PlacementCandidateProbe {
         menu_resources->resources.insert_or_assign(static_cast<odh::CodeOwner>(target),
             Resource{candidate.source,candidate.asset,candidate.asset.empty()});
         odh::VmMemory menu_source_memory=memory;
+        // These frame-sensitive pure readers must observe this query's cloned
+        // World, not the live runtime captured by the source memory factory.
+        const auto menu_world_memory=world.vm_memory();
+        menu_source_memory.expression_levels=menu_world_memory.expression_levels;
+        menu_source_memory.dynamic_sprite_flag=menu_world_memory.dynamic_sprite_flag;
         const auto live_menu_read=memory.read;
         menu_source_memory.read=[&,menu_resources,live_menu_read](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index)->std::optional<std::int16_t>{
             if(scope!=26)return live_menu_read?live_menu_read(frame,scope,index):std::nullopt;

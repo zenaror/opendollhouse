@@ -95,9 +95,10 @@ def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0, em
     for index in range(80):
         block.word(person_posture if index == 0 else 0)
     block.integer()  # routing frames
-    for _ in range(2):  # active and last dormant interactions
+    for _ in range(2):  # absent active and last interactions (OBJMInteraction.IsValid)
         block.integer(); block.integer()
-        block.word(); block.word(); block.word(); block.integer()
+        # TTAIndex=-1 is the original absence sentinel; zero is an ACTIVE row0.
+        block.word(); block.word(); block.word(); block.integer(-1)
         for _ in range(4):
             block.word()
         block.integer(); block.word(); block.integer(); block.integer()

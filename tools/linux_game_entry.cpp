@@ -1528,6 +1528,16 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
         std::optional<odh::FamilyOverlay> family_overlay;
 #endif
         std::shared_ptr<odh_host::FamilySessionJournal> pending_move_in;
+#if defined(__linux__) && defined(ODH_HAVE_X11)
+        struct GuiPropertyReleaseRequest {
+            Options previous_options;
+            odh::FamilyOverlay expected_overlay;
+            std::array<std::uint8_t,32> neighborhood_identity;
+            std::uint16_t family=0,house=0;
+            std::filesystem::path checkpoint;
+        };
+        std::optional<GuiPropertyReleaseRequest> gui_property_release;
+#endif
 #ifdef __linux__
         using CurrentProperty=std::pair<odh_host::StoredCommunityLot,odh::FamilyPropertyRelease>;
         const auto load_current_property=[&](std::uint16_t house,const std::optional<odh::FamilyOverlay>& overlay)->std::optional<CurrentProperty>{
@@ -2095,9 +2105,29 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                                 latest_family->chunk_id, static_cast<std::uint16_t>(house),selected_home_mode))
                             throw odh::FormatError("managed move-out requires a current transferable checkpoint");
                     }
-                    const auto next_overlay = managed ? odh::plan_family_managed_move_out_overlay(
-                        latest_map.source_families, latest_neighborhood_identity, &*latest_overlay, latest_family->chunk_id) :
-                        odh::plan_family_move_out_overlay(latest_map.source_families, latest_neighborhood_identity,
+                    if (managed) {
+                        // Confirmation is complete, but no occupancy/refund has been
+                        // published. Reuse the same isolated restored runtime and
+                        // typed property release as the CLI, including real cleanup.
+                        odh_host::FamilySessionJournal journal(latest_map.source_families, latest_neighborhood_identity,
+                            latest_overlay, static_cast<std::uint16_t>(house), latest_family->chunk_id,std::nullopt,storage);
+                        const auto checkpoint=journal.checkpoint_path();
+                        if(!checkpoint||gui_property_release)
+                            throw odh::FormatError("GUI property release requires one current checkpoint and no pending release");
+                        journal.verify_current();
+                        gui_property_release=GuiPropertyReleaseRequest{options,*latest_overlay,latest_neighborhood_identity,
+                            latest_family->chunk_id,static_cast<std::uint16_t>(house),*checkpoint};
+                        Options release_options;
+                        release_options.game_root=game;release_options.mode=selected_home_mode;
+                        release_options.neighborhood=storage.number();release_options.language=options.language;
+                        release_options.preferences=options.preferences;release_options.lot_window_size=options.lot_window_size;
+                        release_options.headless_ticks=0;release_options.audio_disabled=true;
+                        release_options.house=house;release_options.load_session=*checkpoint;
+                        release_options.headless_move_out_family=latest_family->chunk_id;
+                        options=std::move(release_options);
+                        return true;
+                    }
+                    const auto next_overlay = odh::plan_family_move_out_overlay(latest_map.source_families, latest_neighborhood_identity,
                             latest_overlay ? &*latest_overlay : nullptr, latest_family->chunk_id);
                     odh_host::compare_exchange_linux_family_overlay_atomic(
                         odh_host::linux_family_overlay_path(latest_neighborhood_identity,storage),
@@ -2985,6 +3015,22 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }
 #endif
                 if(options.headless_move_out_family){
+#ifdef ODH_HAVE_X11
+                    if(gui_property_release){
+                        const auto& request=*gui_property_release;
+                        const auto source=odh::load_neighborhood_family_source(userdata/"Neighborhood.iff");
+                        const auto current=odh_host::read_linux_family_overlay_for_neighborhood(userdata/"Neighborhood.iff",storage);
+                        if(house!=request.house||*options.headless_move_out_family!=request.family||
+                           source.identity!=request.neighborhood_identity||!current||
+                           odh::encode_family_overlay(*current)!=odh::encode_family_overlay(request.expected_overlay)||
+                           !session_context.family_journal||!session_context.family_journal->expected_overlay()||
+                           odh::encode_family_overlay(*session_context.family_journal->expected_overlay())!=
+                               odh::encode_family_overlay(request.expected_overlay)||
+                           session_context.family_journal->checkpoint_path()!=std::optional<std::filesystem::path>{request.checkpoint})
+                            throw odh::FormatError("confirmed GUI property release source changed before runtime preparation");
+                        session_context.family_journal->verify_current();
+                    }
+#endif
                     if(!session_context.family_journal||session.family_chunk_id!=*options.headless_move_out_family||
                        temporary_trip||options.single_resident_session)
                         throw odh::FormatError("property release selection differs from its current occupied family");
@@ -3132,6 +3178,21 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         <<",\"refund\":"<<prepared.refund()<<",\"vacant_purchase_value\":"<<prepared.release().vacant_purchase_value
                         <<",\"deleted_roots\":"<<prepared.deleted_roots()<<",\"durability_uncertain\":"
                         <<(publication.durability_uncertain?"true":"false")<<"}\n";
+#ifdef ODH_HAVE_X11
+                    if(gui_property_release){
+                        // The retired runtime is gone and its publication is final,
+                        // including exact-readback uncertain durability. Never replay
+                        // this request or roll back to the old occupancy.
+                        auto previous=std::move(gui_property_release->previous_options);
+                        gui_property_release.reset();rollback_options.reset();saved_lots.clear();
+                        options=std::move(previous);options.house.reset();options.load_session.reset();
+                        options.restore_bundle.reset();options.restore_archive.clear();options.load_session_advisory=false;
+                        travel_options=options;
+                        if(!run_management_map())return 0;
+                        travel_options.mode=options.mode;travel_options.neighborhood=storage.number();
+                        options.house=house;continue;
+                    }
+#endif
                     return 0;
                 }
                 if(result.prepared_property_release)

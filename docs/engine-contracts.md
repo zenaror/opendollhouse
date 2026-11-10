@@ -4,6 +4,29 @@ Estas regras ajudam a entender e revisar a implementação C/C++.
 São contratos internos experimentais, não uma API pública estável.
 Veja também [arquitetura](architecture.md), [formatos](formats.md) e [mods](modding.md).
 
+## Consultar, preparar e executar
+
+O mesmo serviço pode ser usado em momentos diferentes, com permissões diferentes:
+
+| Momento | Estado usado | Efeitos permitidos |
+| --- | --- | --- |
+| Consultar uma ação no menu | Cópia da partida usada pela consulta | Ler os dados necessários e produzir o resultado da consulta. A consulta não altera a partida do jogador. |
+| Preparar compra, movimentação ou venda | Cópia autenticada da partida | Executar as etapas síncronas admitidas e preparar o estado inteiro para confirmação. |
+| Executar a simulação | Estado atual, filas e serviços próprios de cada personagem ou objeto | Executar as ações e persistir seus efeitos pelos serviços correspondentes. |
+
+Ter uma operação implementada no motor não basta: cada consumidor precisa estar
+ligado ao serviço e ao estado correto. Na preparação de objetos, relações,
+consultas de distância e direção usam os dados da cópia, junto dos demais serviços
+admitidos. Espera, diálogo ou outra operação sem suporte nesse contexto continua
+sendo uma limitação explícita; sua presença no modo de simulação não autoriza
+executá-la durante a preparação.
+
+Os leitores usados pelo menu precisam observar a mesma cópia consultada. Isso
+inclui os estados visuais dos objetos e os níveis necessários às expressões dos
+scripts. Funções de escrita não podem ser emprestadas da partida em andamento.
+Conferir essa origem faz parte da integração; copiar uma função, por si só, não
+comprova isolamento.
+
 ## Identidade e recursos
 
 Um objeto é identificado por número e geração. Referências antigas não podem

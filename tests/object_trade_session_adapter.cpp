@@ -13,6 +13,7 @@
 #include "linux_family_overlay_store.hpp"
 #include "linux_session_archive_store.hpp"
 #include "odh/sha256.hpp"
+#include "odh/relationship_snapshot_codec.hpp"
 #include "odh/seated_session_continuation.hpp"
 #include "odh/room_lighting_codec.hpp"
 #include "odh/vm_snapshot_codec.hpp"
@@ -869,6 +870,193 @@ void wall_trade_matrix(const std::filesystem::path& root){
     }
 }
 
+void candidate_relationship_matrix(const std::filesystem::path& root){
+    const auto game=root/"relationship-game";std::filesystem::create_directories(game);
+    std::string objd(190,'\0');at(objd,0,138,4);at(objd,8,1,2);at(objd,18,4,2);
+    at(objd,28,0x2345,4);at(objd,36,100,2);at(objd,44,1,2);at(objd,80,1,2);at(objd,116,2,2);at(objd,134,16,2);
+    std::string objf(16+33*4,'\0');at(objf,4,1,4);objf.replace(8,4,"fJBO");at(objf,12,33,4);
+    const auto object_file=game/"matrix.iff",global_file=game/"Global.far";
+    write(object_file,iff({chunk("OBJD",128,objd),chunk("OBJf",128,objf)}));
+    write(global_file,far({{"global.iff",iff({chunk("BHAV",256,assignments({{0,1}}))})}}));
+    std::istringstream input(objd,std::ios::binary);
+    DefinitionIndex index({{object_file.string(),"",128,read_object_definition(View(input,objd.size()))}});
+    ObjectTradeResourceLibrary resources(game,index,global_file,"global.iff");
+    const auto resource=resources.load_group(0x2345);
+    PreparedArchitecture prepared;prepared.width=prepared.height=4;prepared.buildable.assign(16,1);
+    SavedArchitecture raw;raw.width=raw.height=4;raw.altitude=std::vector<std::array<std::uint8_t,4>>(16);
+    for(unsigned level=0;level<2;++level){prepared.levels[level].floors.assign(16,1);prepared.levels[level].walls.resize(16);
+        raw.levels[level].floors=prepared.levels[level].floors;raw.levels[level].walls.resize(16);}
+    const auto rooms=generate_prepared_room_map(prepared);
+    RelationshipSnapshot initial;initial.sources={{RelationshipMatrix::neighbor,41,0,{}},{RelationshipMatrix::neighbor,42,0,{}}};
+    const auto initial_bytes=encode_relationship_snapshot(initial);
+    const auto operation=[](unsigned opcode,unsigned mode,unsigned set,unsigned flags,unsigned field=2){
+        if(opcode==24)return Instruction{24,254,255,{static_cast<std::uint8_t>(set),static_cast<std::uint8_t>(field),1,
+            static_cast<std::uint8_t>(mode),static_cast<std::uint8_t>(flags),255,255,255}};
+        return Instruction{26,254,255,{static_cast<std::uint8_t>(field),static_cast<std::uint8_t>(mode),
+            static_cast<std::uint8_t>(flags|((set&1U)<<2U)|((set&2U)<<4U)),0,9,0,1,0}};
+    };
+    for(unsigned opcode:{24U,26U})for(unsigned kind=0;kind<3;++kind)for(unsigned mode=0;mode<4;++mode){
+        World world;
+        require(world.create(101,EntityKind::avatar,{0,88,0})&&world.create(202,EntityKind::avatar,{0,88,0})&&
+            world.set_person_data(101,31,41)&&world.set_person_data(202,31,42)&&
+            world.create(303,EntityKind::object,{2,0,0})&&world.define_type(303,0x2345)&&
+            world.create(404,EntityKind::object,{2,0,0})&&world.define_type(404,0x2345),"candidate relationship actual participant banks");
+        require(world.set_position(303,{16,16,1,0})&&world.set_position(404,{32,16,1,0}),"candidate spatial participants");
+        SessionBundle components;components.world=world.snapshot();components.relationships=initial;
+        RelationshipState isolated,reference;
+        require(isolated.restore_snapshot(initial)&&reference.restore_snapshot(initial),"candidate and runtime-reference relationship snapshots restore");
+        SessionHostState host;RandomState random(17);bool authority=true;unsigned extra_calls=0;
+        ObjectTradeSessionHooks hooks;
+        hooks.extra_primitive_factory=[&](const ObjectTradeCandidateContext&,const VmMemory&){return VmPrimitive{
+            [&](const auto&,const auto&,const auto&,const auto&){++extra_calls;return PrimitiveOutcome{PrimitiveDisposition::unsupported,"unexpected extension primitive"};}};};
+        auto factory=make_object_trade_candidate_factory(resources,components,prepared,raw,rooms,hooks,{},303,0x2345,0x2345,[&]{return authority;},nullptr,nullptr);
+        auto binding=factory(world,isolated,host,random,nullptr,nullptr,resource);
+        auto primitive=binding.primitive_factory(binding.memory);
+        auto runtime=reference.primitive(world,binding.memory);
+        const auto world_before=encode_world_snapshot(world.snapshot());
+        const std::int16_t caller=kind==0?303:101,stack=kind==0?404:kind==1?202:42;
+        const std::int16_t selected=kind==0?303:kind==1?101:41;
+        VmFrame frame{routine_key(5000),0,{caller,caller,stack,0},{selected,55,0,0},{selected,0,0,0}};
+        Ts1Temps temps{};const unsigned flags=kind==2?2U:0U;
+        for(unsigned set:{1U,2U,0U}){
+            frame.arguments[1]=static_cast<std::int16_t>(set==1?55:7);
+            const auto ins=operation(opcode,mode,set,flags);
+            const auto got=primitive(frame,ins,temps,{nullptr,17}),expected=runtime(frame,ins,temps,{nullptr,17});
+            require(got.disposition==PrimitiveDisposition::goto_true&&got.disposition==expected.disposition,
+                "candidate TS1/legacy direction and matrix dispatch matches existing runtime relationship service");
+            require(encode_relationship_snapshot(isolated.snapshot())==encode_relationship_snapshot(reference.snapshot()),
+                "candidate relationship creation/growth/set/increment/read preserves all runtime matrix bytes");
+            if(set==0)require(got.write&&expected.write&&got.write->bank==VmFrameBank::arguments&&
+                got.write->index==1&&got.write->value==62&&expected.write->value==62,"candidate read returns actual relation via its own frame output");
+        }
+        if(opcode==26){auto literal=operation(26,mode,1,flags);literal.operands[4]=7;literal.operands[6]=1;
+            require(primitive(frame,literal,temps,{nullptr,17}).disposition==PrimitiveDisposition::goto_true&&
+                runtime(frame,literal,temps,{nullptr,17}).disposition==PrimitiveDisposition::goto_true&&
+                encode_relationship_snapshot(isolated.snapshot())==encode_relationship_snapshot(reference.snapshot()),
+                "TS1 literal assignment follows the same dispatch shape as original PhoneGlobals8220");}
+        require(extra_calls==0&&random.seed()==17&&encode_world_snapshot(world.snapshot())==world_before&&
+            encode_relationship_snapshot(components.relationships)==initial_bytes,
+            "relationship builtins never borrow extension/live owners or mutate source World/RNG/snapshot");
+        const auto before=encode_relationship_snapshot(isolated.snapshot());
+        require(primitive(frame,operation(opcode,mode,3,flags),temps,{nullptr,18}).disposition==PrimitiveDisposition::goto_true&&
+            encode_relationship_snapshot(isolated.snapshot())==before,"set-mode3 preserves an existing relationship with no variable access");
+        require(primitive(frame,operation(opcode,mode,1,flags|1U,5),temps,{nullptr,18}).disposition==PrimitiveDisposition::goto_false&&
+            encode_relationship_snapshot(isolated.snapshot())==before,"no-create refuses growth without partial effects");
+        if(kind==2){auto unknown=frame;unknown.context.stack_object=99;unknown.locals[0]=99;unknown.arguments[0]=99;
+            require(primitive(unknown,operation(opcode,3,1,flags),temps,{nullptr,18}).disposition==PrimitiveDisposition::unsupported&&
+                encode_relationship_snapshot(isolated.snapshot())==before,"unknown explicit neighbor source is never manufactured");}
+        auto invalid=operation(opcode,4,1,flags);
+        require(primitive(frame,invalid,temps,{nullptr,18}).disposition==PrimitiveDisposition::unsupported&&
+            encode_relationship_snapshot(isolated.snapshot())==before,"unsupported direction refuses without partial relationship effects");
+        invalid=operation(opcode,mode,1,flags);invalid.operands[opcode==24?2:6]=255;
+        require(primitive(frame,invalid,temps,{nullptr,19}).disposition==PrimitiveDisposition::unsupported&&
+            encode_relationship_snapshot(isolated.snapshot())==before,"invalid frame input rejects atomically in both formats");
+        if(opcode==24&&kind==0&&mode==0){
+            const Instruction distance{11,254,255,{0,0,1,9,0,0,0,0}};
+            const Instruction direction{12,254,255,{1,0,8,0,1,9,0,0}};
+            const auto d=primitive(frame,distance,temps,{nullptr,20});
+            const auto a=primitive(frame,direction,temps,{nullptr,20});
+            require(d.disposition==PrimitiveDisposition::goto_true&&d.temp_write&&d.temp_write->index==0&&d.temp_write->value==1&&
+                a.disposition==PrimitiveDisposition::goto_true&&a.variable_write&&a.variable_write->scope==8&&
+                a.variable_write->index==1&&a.variable_write->value==2,"candidate distance/direction use actual scoped participants and stage distinct VM outputs");
+            auto missing=frame;missing.arguments[0]=999;
+            require(primitive(missing,distance,temps,{nullptr,20}).disposition==PrimitiveDisposition::unsupported&&
+                primitive(missing,direction,temps,{nullptr,20}).disposition==PrimitiveDisposition::unsupported,"spatial selectors cannot invent missing entities");
+            auto bad_distance=distance;bad_distance.operands[0]=20;
+            auto bad_direction=direction;bad_direction.operands[2]=255;
+            require(primitive(frame,bad_distance,temps,{nullptr,20}).disposition==PrimitiveDisposition::unsupported&&
+                primitive(frame,bad_direction,temps,{nullptr,20}).disposition==PrimitiveDisposition::unsupported,
+                "spatial output bounds and unsupported setters remain fail closed");
+            require(extra_calls==0&&random.seed()==17&&encode_world_snapshot(world.snapshot())==world_before&&
+                encode_relationship_snapshot(isolated.snapshot())==before,"spatial queries only stage VM output without mutating candidate state");
+            authority=false;
+            require(primitive(frame,distance,temps,{nullptr,20}).disposition==PrimitiveDisposition::unsupported&&
+                primitive(frame,direction,temps,{nullptr,20}).disposition==PrimitiveDisposition::unsupported,"expired authority also blocks both spatial services");
+        }
+        authority=false;
+        require(primitive(frame,operation(opcode,mode,1,flags),temps,{nullptr,20}).disposition==PrimitiveDisposition::unsupported&&
+            encode_relationship_snapshot(isolated.snapshot())==before&&extra_calls==0,"expired candidate authority rejects before relationship or extension dispatch");
+    }
+    // A full native transaction, not merely the primitive table: effects from
+    // Init0/EP8/EP11 survive publication and cold decoding; subsequent move/sell
+    // and a failed later primitive use the same candidate service/abort owner.
+    for(unsigned opcode:{24U,26U}){
+        const auto file=game/("lifecycle-"+std::to_string(opcode)+".iff");const auto guid=0x3450U+opcode;
+        auto def=objd;at(def,28,guid,4);
+        auto entries=objf;
+        for(const auto& e:std::vector<std::pair<unsigned,unsigned>>{{0,5000},{1,5001},{8,5002},{11,5003},{12,5004},{2,5005}})
+            at(entries,16+e.first*4+2,e.second,2);
+        const auto relation_code=[&](unsigned set,unsigned value,bool fail){
+            auto b=assignments({{4,1},{13,128},{42,1},{23,2},{43,10}});
+            b[5]=4;at(b,6,4,2);at(b,2,static_cast<std::uint32_t>(fail?10:9),2);b[12+4*12+2]=5;
+            const auto add=[&](unsigned op,unsigned yes,std::array<std::uint8_t,8> args){put(b,op,2);b.push_back(static_cast<char>(yes));b.push_back(static_cast<char>(253));for(auto x:args)b.push_back(static_cast<char>(x));};
+            add(2,6,{0,0,11,0,0,5,10,3}); // Actual own ID -> StackObject.
+            add(2,7,{1,0,static_cast<std::uint8_t>(value),0,0,5,9,7});
+            auto rel=operation(opcode,0,set,0);add(opcode,8,rel.operands);
+            // Reading through the same opcode must return the value to Param1.
+            auto read=operation(opcode,0,0,0);add(opcode,fail?9:254,read.operands);
+            if(fail)add(655,254,{}); // Missing shared routine, AFTER real matrix effects.
+            return b;
+        };
+        const auto populate=[&](bool fail){write(file,iff({chunk("OBJD",128,def),chunk("OBJf",128,entries),
+            chunk("BHAV",5000,relation_code(1,11,fail)),chunk("BHAV",5001,sleep_bhav()),
+            chunk("BHAV",5002,relation_code(2,7,false)),chunk("BHAV",5003,relation_code(2,7,false)),
+            chunk("BHAV",5004,relation_code(2,7,false)),chunk("BHAV",5005,relation_code(2,7,false))}));};
+        populate(false);
+        std::istringstream def_input(def,std::ios::binary);DefinitionIndex definitions({{file.string(),"",128,read_object_definition(View(def_input,def.size()))}});
+        ObjectTradeResourceLibrary live_resources(game,definitions,global_file,"global.iff");
+        SavedWorld original;original.world=std::make_unique<World>();original.relationships=std::make_unique<RelationshipState>();
+        SessionResourceIdentity identity;identity.resource_fingerprint.fill(0x62);
+        auto globals=RuntimeGlobals::from_legacy({}).snapshot();globals.words[32]=1;
+        auto state=make_community_object_baseline(original,identity,globals,std::nullopt,17);
+        const auto source_before=encode_actorless_object_trade_state(state);
+        CommunityObjectCommandServices services;services.source_still_matches=[]{return true;};
+        ObjectTradeSessionCommand cmd;cmd.kind=ObjectTradeSessionCommandKind::purchase;cmd.guid=guid;cmd.position={24,24,1,0};
+        auto bought=prepare_community_object_command(live_resources,state,prepared,raw,rooms,cmd,services);
+        require(bought.candidate&&bought.status==ObjectTradeTransactionStatus::prepared_success,
+            "relationships in actual Init/EP8/EP11 transaction must prepare: "+bought.diagnostic);
+        require(encode_actorless_object_trade_state(state)==source_before,"preparation cannot mutate the source actorless relationships or other state");
+        auto reopened=decode_actorless_object_trade_state(bought.archive,&identity);
+        require(encode_actorless_object_trade_state(reopened)==bought.archive&&reopened.relationships.pair_count==1&&
+            reopened.relationships.value_count==3,"published candidate relationship pair/growth survives exact cold codec");
+        // VMEntity.Init runs EP0 then EP8. The constructor OOW post skips
+        // dynamic update, but the actual in-world PostPositionChange runs EP8
+        // again before the explicit user EP11: 11 + 7 + 7 + 7 = 32.
+        const auto purchased_relation=reopened.relationships.sources.front().pairs.front().values.at(2);
+        require(purchased_relation==32,"purchase relation opcode="+std::to_string(opcode)+
+            " expected32 (Init11 + initial EP8 7 + placed Post EP8 7 + EP11 7), actual="+std::to_string(purchased_relation));
+        const auto id=reopened.world.entities.front().id;const auto generation=reopened.world.entities.front().generation;
+        cmd.kind=ObjectTradeSessionCommandKind::move;cmd.target={id,generation};cmd.position={40,24,1,0};
+        const auto purchased_scene=prepare_community_object_scene(original,reopened,definitions,live_resources);
+        services.groups=purchased_scene.physical_groups;
+        const auto move_source=encode_actorless_object_trade_state(reopened);
+        auto moved=prepare_community_object_command(live_resources,reopened,prepared,raw,rooms,cmd,services);
+        require(moved.candidate&&moved.status==ObjectTradeTransactionStatus::prepared_success&&
+            encode_actorless_object_trade_state(reopened)==move_source,"move lifecycle uses isolated relationship service: "+moved.diagnostic);
+        auto moved_state=decode_actorless_object_trade_state(moved.archive,&identity);
+        // Moving the singleton runs its in-world Post EP8 then user EP11.
+        const auto moved_relation=moved_state.relationships.sources.front().pairs.front().values.at(2);
+        require(moved_relation==46,"move relation opcode="+std::to_string(opcode)+
+            " expected46 (purchase32 + moved Post EP8 7 + EP11 7), actual="+std::to_string(moved_relation));
+        cmd.kind=ObjectTradeSessionCommandKind::sell;
+        const auto moved_scene=prepare_community_object_scene(original,moved_state,definitions,live_resources);
+        services.groups=moved_scene.physical_groups;
+        const auto sell_source=encode_actorless_object_trade_state(moved_state);
+        auto sold=prepare_community_object_command(live_resources,moved_state,prepared,raw,rooms,cmd,services);
+        require(sold.candidate&&sold.status==ObjectTradeTransactionStatus::prepared_success&&
+            encode_actorless_object_trade_state(moved_state)==sell_source,"sell pickup/retirement shares relationship service: "+sold.diagnostic);
+        const auto sold_state=decode_actorless_object_trade_state(sold.archive,&identity);
+        require(sold_state.world.entities.empty()&&sold_state.relationships.pair_count==0,"sell retires inbound/self relationship targets through the existing cleanup");
+        populate(true);ObjectTradeResourceLibrary failing_resources(game,definitions,global_file,"global.iff");
+        cmd.kind=ObjectTradeSessionCommandKind::purchase;cmd.target={};cmd.position={24,24,1,0};
+        services.groups.clear(); // The abort case returns to the original empty source.
+        const auto abort_before=encode_actorless_object_trade_state(state);
+        auto failed=prepare_community_object_command(failing_resources,state,prepared,raw,rooms,cmd,services);
+        require(!failed.candidate&&failed.status==ObjectTradeTransactionStatus::unsupported&&
+            encode_actorless_object_trade_state(state)==abort_before,
+            "failure after relationship writes discards candidate rather than publishing partial matrix effects");
+    }
+}
 void lifecycle_and_journal(const std::filesystem::path& root){
     const auto game=root/"game";std::filesystem::create_directories(game/"GameData/Objects");std::filesystem::create_directories(game/"GameData/Global");
     std::string objd(190,'\0');at(objd,0,138,4);at(objd,8,1,2);at(objd,18,4,2);at(objd,28,0x1234,4);at(objd,36,100,2);at(objd,44,1,2);at(objd,80,1,2);at(objd,116,1,2);at(objd,134,16,2);
@@ -1794,5 +1982,6 @@ int main(){try{TemporaryDirectory dir;
     run("dynamic association matrix",[&]{dynamic_association_matrix(dir.path);});
     run("wall trade matrix",[&]{wall_trade_matrix(dir.path);});
     run("lifecycle and journal",[&]{lifecycle_and_journal(dir.path);});
+    run("candidate relationship service",[&]{candidate_relationship_matrix(dir.path);});
     std::cout<<"object trade session adapter fixtures passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
