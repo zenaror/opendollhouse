@@ -10,7 +10,8 @@ void require(bool condition,const char* why){if(!condition)throw std::runtime_er
 // Test-only observer. Copies accepted prefixes to inspect the next generated
 // samples after cancellation; production sink retains no PCM trace.
 struct ObservedSink final : odh::PcmSink {
-    odh_host::LinuxPcmSink output{8000,{64}}; // Only16 stereo frames.
+    odh_host::LinuxPcmSink output;
+    explicit ObservedSink(odh_host::LinuxAudioRuntime& runtime):output(runtime,8000,{64}){} // Only16 stereo frames.
     std::vector<std::int16_t> accepted;
     unsigned clears=0;
     odh::PcmSinkFormat format() const override{return output.format();}
@@ -40,7 +41,8 @@ struct NoteOwner final : odh::SoundThreadLifetime {
 int main(){try{
     const char* driver=std::getenv("SDL_AUDIODRIVER");
     require(driver && std::string(driver)=="dummy","transport test requires dummy output");
-    ObservedSink sink;
+    odh_host::LinuxAudioRuntime runtime(odh_host::LinuxAudioRuntime::Ownership::application);
+    ObservedSink sink(runtime);
     {
         odh::PcmTransport transport(sink,{4096,4,32,128});
         odh::XaAudio stereo{16000,2,std::vector<std::int16_t>(800),0};

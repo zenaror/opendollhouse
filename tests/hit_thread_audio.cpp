@@ -13,6 +13,7 @@ int main() { try {
     const char* driver = std::getenv("SDL_AUDIODRIVER");
     if (!driver || std::string(driver) != "dummy")
         throw std::runtime_error("HIT audio test requires silent dummy driver");
+    odh_host::LinuxAudioRuntime runtime(odh_host::LinuxAudioRuntime::Ownership::application);
     std::string bytes(24+30, '\0');
     bytes.replace(0,4,std::string("XAI\0",4));
     auto word = [&](std::size_t at, std::uint32_t value, unsigned count) {
@@ -34,7 +35,7 @@ int main() { try {
         if(patch!=100 || starts++) throw std::runtime_error("wrong/duplicate audio start");
         std::istringstream stream(bytes);
         pcm=odh::read_xa(odh::View(stream,bytes.size()));
-        output=std::make_unique<odh_host::LinuxAudio>(odh_host::AudioFormat{pcm.sample_rate,pcm.channels});
+        output=std::make_unique<odh_host::LinuxAudio>(runtime,odh_host::AudioFormat{pcm.sample_rate,pcm.channels});
         if(output->queue(pcm.samples.data(),pcm.samples.size())!=56)
             throw std::runtime_error("incomplete decoded PCM queue");
         return 17; // Opens paused: queued-but-not-started is active.
@@ -59,9 +60,10 @@ int main() { try {
     output.reset(); // Dummy permits one open device; first probe is complete.
     // A collection must cancel queued audio even when WaitSamp cannot finish.
     struct AudioOwner:odh::SoundThreadLifetime {
-        odh_host::LinuxAudio audio{{8000,1}};
+        odh_host::LinuxAudio audio;
         unsigned& stops;std::size_t& queued_before;bool& clean;bool stopped=false;
-        AudioOwner(unsigned& s,std::size_t& q,bool& c):stops(s),queued_before(q),clean(c){}
+        AudioOwner(odh_host::LinuxAudioRuntime& runtime,unsigned& s,std::size_t& q,bool& c)
+            :audio(runtime,{8000,1}),stops(s),queued_before(q),clean(c){}
         void stop() noexcept override {
             if(stopped)return;
             stopped=true;++stops;
@@ -75,7 +77,7 @@ int main() { try {
     request.source_variables=odh::sound_source_variables(*world.find(1));
     unsigned stops=0;std::size_t queued_before=0;bool clean=false;
     odh::SoundThreadCollection collection(world,[&](const auto&,const auto& binding){
-        auto owner=std::make_unique<AudioOwner>(stops,queued_before,clean);
+        auto owner=std::make_unique<AudioOwner>(runtime,stops,queued_before,clean);
         auto* device=owner.get();
         odh::HitNoteBackend sound;
         sound.start=[&,device](auto)->std::optional<std::uint64_t>{

@@ -28,7 +28,8 @@ int main(int argc, char** argv) { try {
         const auto amplitude = static_cast<int>(1024 * std::min(edge, std::size_t{220}) / 220);
         pcm[i] = static_cast<std::int16_t>((i % 100 < 50) ? amplitude : -amplitude);
     }
-    odh_host::LinuxAudio output({rate, 1});
+    odh_host::LinuxAudioRuntime runtime(odh_host::LinuxAudioRuntime::Ownership::application);
+    odh_host::LinuxAudio output(runtime,{rate, 1});
     std::cout << "SDL " << output.runtime_version() << ", driver " << output.driver() << '\n';
     const auto accepted = output.queue(pcm.data(), frames);
     if (accepted != frames) throw std::runtime_error("audio probe: incomplete PCM queue");

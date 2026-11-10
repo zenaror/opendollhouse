@@ -21,9 +21,10 @@ def make_missing(root, failure=None, clock=CLOCK):
     user = root / 'UserData'
     # Two FAMI/NBRS/resources, but only the primary and mailbox exist in OBJM.
     records = b''
+    secondary_age = 17 if failure == 'child' else 44
     for index, guid in enumerate(GUIDS):
         bank = [0] * 80
-        bank[7], bank[10], bank[31], bank[58], bank[61] = 17, 23, 11 + index, 44, 201
+        bank[7], bank[10], bank[31], bank[58], bank[61] = 17, 23, 11 + index, secondary_age if index else 44, 201
         if index == 1 and failure == 'ghost': bank[68] = 1
         records += struct.pack('<II', 1, 4) + f'Sim{index}'.encode() + b'\0\0' + struct.pack('<ii', index, 1)
         records += struct.pack('<80h', *bank) + struct.pack('<hIii', 11 + index, guid, -1, 0)
@@ -41,10 +42,16 @@ def make_missing(root, failure=None, clock=CLOCK):
     for value in (0, 0, 0, 0, 744, 744, 1): block.integer(value)
     block.word(); block.word()
     for _ in range(8): block.word()
-    for index in range(68): block.word(2 if index == 11 else -1 if index == 3 else 0)
+    # Authored singleton mailbox root: no floor-chain parent, and virtual
+    # native record0 exists explicitly (physical slots remain separate).
+    words = [0] * 68
+    words[3], words[11], words[14], words[26] = -1, 2, -1, 0
+    for value in words: block.word(value)
     for _ in range(5): block.word()
     for value in (0, 0, -1, 0): block.integer(value)
-    block.word(); block.word(); block.integer()
+    block.word(1)  # One virtual record0; zero count would mean UNKNOWN.
+    block.word(); block.word()  # Authored empty native link: unknown=0, child=0.
+    block.word(); block.integer()  # Dynamic sprite count and unchanged object tail.
     payload = block.data()
     objm += struct.pack('<I', len(objm) + 4 + len(payload) - 12) + payload
     objt = struct.pack('<II4s', 0, 2, b'tjbo')
@@ -52,7 +59,16 @@ def make_missing(root, failure=None, clock=CLOCK):
         objt += struct.pack('<I6H', guid, 0, 0, 0, 0, ident, kind) + b'fixture\0'
     clock_globals = [0] * 32
     for index, value in zip((0, 1, 5, 7, 8), clock): clock_globals[index] = value
-    if failure == 'clock': clock_globals[1] = 0
+    if failure == 'clock':
+        # The rejection source is ONLY invalid SIMI day0. Keep the other31
+        # authored words identical and prove the initial clock is valid.
+        valid_globals = tuple(clock_globals)
+        hour, day, minute, seconds, month, year = (clock_globals[i] for i in (0, 1, 5, 6, 7, 8))
+        assert 0 <= hour < 24 and 1 <= day <= 30 and 0 <= minute < 60
+        assert seconds == 0 and 1 <= month <= 12 and year >= 1
+        clock_globals[1] = 0
+        assert tuple((i, old, new) for i, (old, new) in enumerate(zip(valid_globals, clock_globals))
+                     if old != new) == ((1, day, 0),)
     chunks = [('SIMI', 1, struct.pack('<II4s', 0, 0x3e, b'IMIS') + struct.pack('<32h', *clock_globals) + bytes(34 + 24)),
               ('ObjM', 1, objm), ('objt', 0, objt)]
     chunks += [('Arry', ident, grid(stride)) for ident, stride in
@@ -64,7 +80,12 @@ def make_missing(root, failure=None, clock=CLOCK):
     struct.pack_into('<H', mailbox, 134, 16)
     struct.pack_into('<I', mailbox, 28, MAILBOX if failure != 'mailbox' else 0x11112222)
     if failure == 'ep5_blocker': struct.pack_into('<H', mailbox, 42, 4099)
-    far(root / 'GameData/Objects/Objects.far', [('mailbox.iff', iff([('OBJD', 128, mailbox)]))])
+    mailbox_chunks = [('OBJD', 128, mailbox)]
+    if failure == 'ep5_blocker':
+        # A MISSING EP5 BHAV legitimately evaluates false. This real BHAV
+        # reaches Sleep, which cannot complete a synchronous placement check.
+        mailbox_chunks.append(('BHAV', 4099, routine([(0, 254, 255, bytes(8))])))
+    far(root / 'GameData/Objects/Objects.far', [('mailbox.iff', iff(mailbox_chunks))])
     secondary = bytearray(162)
     struct.pack_into('<I', secondary, 0, 138)
     for offset, value in [(10, 4096), (18, 2), (22, 65535), (38, 200), (86, 4097), (156, 4098)]:
@@ -87,13 +108,25 @@ def make_missing(root, failure=None, clock=CLOCK):
             init.append(expression(8, -31992, scope=3))  # 0x8308
         elif failure == 'dynamic_footprint':
             init.append(expression(8, -32504, scope=3))  # 0x8108
-    if failure == 'global_write': init = [expression(9, 123, scope=6)]
+    if failure == 'global_write':
+        # Native RuntimeGlobals now supports this write; preserve the common
+        # constructor/placement preconditions and verify the effect in Main.
+        init[1] = expression(42, 2, scope=3, yes=2)
+        init.append(expression(9, 123, scope=6))
     if failure == 'primitive': init = [(0, 254, 255, bytes(8))]
     ep8 = [(2, 254, 255, struct.pack('<hhBBBB', 0, 2, 0, 3, 0, 7))]
     # Each true branch checks a distinct lifecycle boundary before Main sleeps.
-    checks = [(0, 13, 0), (58, 44, 18), (61, 201, 18), (31, 12, 18),
+    checks = [(0, 13, 0), (58, secondary_age, 18), (61, 201, 18), (31, 12, 18),
               (7, 17, 18), (10, 23, 18), (65, 0, 18), (0, 100, 14)]
     checks += [(field, value, 3) for field, value in zip((24, 47, 21, 46, 45), clock)]
+    # Actual newborn Main checks the supported write/inheritance AND native
+    # room publication before reaching Sleep; app0 alone is insufficient.
+    effects_to_check = {'global_write': (9, 123, 6), 'ghost': (68, 1, 18),
+                        'roomimpact': (7, 1, 3), 'lighting': (51, 1, 3),
+                        'window': (40, 0x4000, 3), 'portal': (29, 0, 3)}
+    if failure in effects_to_check:
+        checks.append(effects_to_check[failure])
+        checks.append((29, 0, 3))  # Geometric room1 encoded as ObjectData29=0.
     rows = [(2, index + 1, 255, struct.pack('<hhBBBB', lhs, rhs, 0, 2, scope, 7))
             for index, (lhs, rhs, scope) in enumerate(checks)]
     count = len(checks)
@@ -102,9 +135,12 @@ def make_missing(root, failure=None, clock=CLOCK):
     body = [''] * 27
     body[0], body[11], body[12], body[13] = 'adult', 'Ada;Bea', 'male', '27'
     if failure == 'child': body[0], body[13] = 'child', '17'
-    (user / 'Characters/User00001.iff').write_bytes(iff([
+    secondary_chunks = [
         ('OBJD', 128, secondary), ('GLOB', 128, b'\x0dPersonGlobals'), ('STR#', 200, strings(body)),
-        ('BHAV', 4096, routine(rows)), ('BHAV', 4097, routine(init)), ('BHAV', 4098, routine(ep8))]))
+        ('BHAV', 4096, routine(rows)), ('BHAV', 4097, routine(init)), ('BHAV', 4098, routine(ep8))]
+    if failure == 'ep5_actor':
+        secondary_chunks.append(('BHAV', 4099, routine([(0, 254, 255, bytes(8))])))
+    (user / 'Characters/User00001.iff').write_bytes(iff(secondary_chunks))
 
 
 def main():
@@ -134,7 +170,23 @@ def main():
             assert extra['entity_id'] == 3 and extra['guid'] == GUIDS[1], extra
             assert extra['status'] == 'waiting', extra  # all startup/body/inheritance assertions reached Sleep
             assert extra['position'] == [728, 728, 1, 0], extra
-            assert report['household_main']['scheduler_entities'] == 2, report
+            # The scheduler owns both avatars AND imported native object
+            # Threads, including an authenticated empty mailbox code bank.
+            assert len(report['household_main']['additional_residents']) == 1, report
+            assert (report['avatar']['owner'], report['avatar']['guid']) == (1, GUIDS[0]), report
+            assert report['status'] == 'waiting' and report['diagnostic'] == '', report
+            assert type(report['session_loaded']) is bool, report
+            assert report['imported_object_main_count'] == (0 if report['session_loaded'] else 1), report
+            assert report['recovered_object_main_count'] == 0, report
+            assert report['object_main_fault_count'] == 0 and report['last_object_main_fault'] == '', report
+            objects = report['create_object_instance']['runtime_objects']
+            assert len(objects) == 1, objects
+            mailbox = objects[0]
+            assert (mailbox['id'], mailbox['guid']) == (2, MAILBOX), mailbox
+            assert mailbox['status'] == 'ready' and mailbox['main_steps'] == 0, mailbox
+            assert mailbox['position'] == [744, 744, 1, 0] and mailbox['attachment'] is None, mailbox
+            assert {report['avatar']['owner'], extra['entity_id'], mailbox['id']} == {1, 2, 3}, report
+            assert report['household_main']['scheduler_entities'] == 2 + len(objects) == 3, report
             return report
 
         first = run(fresh + ['--headless-ticks', '1', '--save-session-on-exit'])
@@ -167,22 +219,50 @@ def main():
         alternate_clock = base / 'alternate-clock'
         make_missing(alternate_clock, clock=(6, 23, 41, 4, 1999))
         run(fresh + ['--headless-ticks', '1'], alternate_clock)
-        failures = [('ep9', 'absent placement EP9'), ('ep5_actor', 'arrival semantics are unsupported'),
-                    ('ep5_blocker', 'arrival semantics are unsupported'), ('global_write', 'household member activation failed'),
-                    ('primitive', 'startup unsupported'), ('burning', 'startup unsupported'), ('child', 'supports adults only'),
-                    ('mailbox', 'one positioned singleton mailbox'), ('ghost', 'household member activation failed'),
-                    ('roomimpact', 'arrival semantics are unsupported'), ('lighting', 'arrival semantics are unsupported'),
-                    ('window', 'arrival semantics are unsupported'), ('portal', 'arrival semantics are unsupported'),
-                    ('clock', 'supported SIMI clock')]
+        # These cases are supported native behavior, not generic capability
+        # failures. Keep every former case with effectful Main assertions.
+        for effect in ('global_write', 'ghost', 'roomimpact', 'lighting', 'window', 'portal'):
+            supported = base / effect; make_missing(supported, effect)
+            before_sources = {p: hashlib.sha256(p.read_bytes()).digest()
+                              for p in supported.rglob('*') if p.is_file()}
+            observed = run(fresh + ['--headless-ticks', '1', '--save-session-on-exit'], supported)
+            probe = observed['room_info_probe']
+            assert probe['status'] == 'complete' and probe['room'] == 1, probe
+            inventory = probe['room_inventory']
+            assert inventory['status'] == 'complete' and inventory['count'] == 3, inventory
+            assert {o['owner_id'] for o in inventory['obstacles']} == {1, 2, 3}, inventory
+            if effect in ('window', 'portal'):
+                # A singleton with no opposite-room part cannot manufacture
+                # a door/window target. This is NOT portal traversal coverage.
+                walk = probe['attempt_walk_snapshot']
+                assert walk['state'] == 'ready', walk
+                assert walk['architecture_complete'] is True and walk['portal_inventory_complete'] is True, walk
+                assert walk['portal_openings'] == 0 and walk['portal_edges'] == 0, walk
+            assert Path(observed['saved_session_path']).is_file(), observed
+            assert path.read_bytes() == previous, effect + ' changed prior archive'
+            for source, fingerprint in before_sources.items():
+                assert hashlib.sha256(source.read_bytes()).digest() == fingerprint, effect + ' changed fixture sources'
+        failures = [('ep9', 'absent placement EP9'), ('ep5_actor', 'Snap live EP5:'),
+                    ('ep5_blocker', 'Snap live EP5:'),
+                    ('primitive', 'startup unsupported'), ('burning', 'startup unsupported'),
+                    ('child', 'missing household resident walk/swim tables unavailable'),
+                    ('mailbox', 'one positioned singleton mailbox'),
+                    ('clock', 'complete person recovery preparation: original avatar actual motive decay/clock services are unavailable')]
         for failure, diagnostic in failures:
             rejected = base / failure; make_missing(rejected, failure)
+            before_sources = {p: hashlib.sha256(p.read_bytes()).digest()
+                              for p in rejected.rglob('*') if p.is_file()}
             rejected_stderr = run(fresh + ['--headless-ticks', '1', '--save-session-on-exit'], rejected, diagnostic)
+            if failure in ('ep5_actor', 'ep5_blocker'):
+                assert 'interaction check primitive requires synchronous support: 0' in rejected_stderr, rejected_stderr
             if failure == 'burning':
                 assert 'Flags write rejected: old=264 new=-31992 changed_mask=33280' in rejected_stderr, rejected_stderr
             assert path.read_bytes() == previous, failure + ' changed prior archive'
+            for source, fingerprint in before_sources.items():
+                assert hashlib.sha256(source.read_bytes()).digest() == fingerprint, failure + ' changed fixture sources'
         for source, fingerprint in originals.items():
             assert hashlib.sha256(source.read_bytes()).digest() == fingerprint, 'runtime modified source installation'
-    print('Synthetic missing household adult: Init/EP8/Main/body/NBRS/birth/arrival, dynamic-footprint flag and fresh-process resume; 14 fail-closed cases')
+    print('Synthetic missing household adult: Init/EP8/Main/body/NBRS/birth/arrival, dynamic-footprint flag and fresh-process resume; 8 fail-closed cases and 6 supported effects with native Main/RoomInfo proof')
 
 
 if __name__ == '__main__': main()

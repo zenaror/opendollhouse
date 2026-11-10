@@ -26,7 +26,8 @@ int main(int argc, char** argv) { try {
     std::size_t delivered = 0;
     std::string driver;
     if (argc == 3) {
-        odh_host::LinuxAudio output({audio.sample_rate, audio.channels});
+        odh_host::LinuxAudioRuntime runtime(odh_host::LinuxAudioRuntime::Ownership::application);
+        odh_host::LinuxAudio output(runtime,{audio.sample_rate, audio.channels});
         driver = output.driver();
         // Finite source duration plus allowance for driver scheduling. This
         // blocking utility is not the game's scheduler or soundthread.

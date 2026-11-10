@@ -22,12 +22,12 @@ template<class F> void rejects(F action) {
     try { action(); } catch (const std::invalid_argument&) { rejected = true; }
     require(rejected, "invalid audio input accepted");
 }
-void exercise(odh_host::AudioFormat format) {
+void exercise(odh_host::LinuxAudioRuntime& runtime,odh_host::AudioFormat format) {
     using odh_host::LinuxAudio;
     const std::size_t frames = 800;
     const auto bytes = frames * format.channels * sizeof(std::int16_t);
     std::vector<std::int16_t> pcm((frames + 10) * format.channels, 512);
-    LinuxAudio output(format, {bytes});
+    LinuxAudio output(runtime,format, {bytes});
     require(output.driver() == "dummy", "test must never open physical audio");
     require(output.format().sample_rate == format.sample_rate &&
             output.format().channels == format.channels, "application format changed");
@@ -55,7 +55,7 @@ void exercise(odh_host::AudioFormat format) {
     require(output.queued_frames() == 100, "pause did not preserve queued frames");
     // Destructor must safely close while there is still data in the queue.
 }
-void shared_subsystem() {
+void shared_subsystem(odh_host::LinuxAudioRuntime& runtime) {
     // An existing SDL audio owner must survive this backend's destruction.
     void* library = dlopen("libSDL2-2.0.so.0", RTLD_NOW | RTLD_LOCAL);
     require(library != nullptr, "SDL runtime missing for ownership check");
@@ -82,7 +82,7 @@ void shared_subsystem() {
         void (*quit)(std::uint32_t);
         ~SubsystemGuard() { quit(0x10); }
     } external{quit};
-    { odh_host::LinuxAudio output({44100, 1}); }
+    { odh_host::LinuxAudio output(runtime,{44100, 1}); }
     require(was_init(audio) == audio, "backend destroyed another owner's subsystem");
 }
 } // namespace
@@ -92,19 +92,20 @@ int main() { try {
     require(driver && std::string(driver) == "dummy",
             "refusing test: set SDL_AUDIODRIVER=dummy explicitly");
     using odh_host::LinuxAudio;
-    rejects([] { LinuxAudio output({7999, 1}); });
-    rejects([] { LinuxAudio output({192001, 2}); });
-    rejects([] { LinuxAudio output({44100, 0}); });
-    rejects([] { LinuxAudio output({44100, 3}); });
-    rejects([] { LinuxAudio output({44100, 1}, {0}); });
-    rejects([] { LinuxAudio output({44100, 2}, {6}); });
-    rejects([] { LinuxAudio output({44100, 1}, {std::uint64_t{1} << 32}); });
-    exercise({8000, 1});
-    exercise({44100, 2});
-    exercise({192000, 2}); // Reopening also checks subsystem/device cleanup.
-    shared_subsystem();
+    odh_host::LinuxAudioRuntime runtime(odh_host::LinuxAudioRuntime::Ownership::application);
+    rejects([&] { LinuxAudio output(runtime,{7999, 1}); });
+    rejects([&] { LinuxAudio output(runtime,{192001, 2}); });
+    rejects([&] { LinuxAudio output(runtime,{44100, 0}); });
+    rejects([&] { LinuxAudio output(runtime,{44100, 3}); });
+    rejects([&] { LinuxAudio output(runtime,{44100, 1}, {0}); });
+    rejects([&] { LinuxAudio output(runtime,{44100, 2}, {6}); });
+    rejects([&] { LinuxAudio output(runtime,{44100, 1}, {std::uint64_t{1} << 32}); });
+    exercise(runtime,{8000, 1});
+    exercise(runtime,{44100, 2});
+    exercise(runtime,{192000, 2}); // Reopening also checks subsystem/device cleanup.
+    shared_subsystem(runtime);
     {
-        LinuxAudio output({44100, 2});
+        LinuxAudio output(runtime,{44100, 2});
         std::vector<std::int16_t> pcm(2 * (65536 + 1), 0);
         require(output.queue(pcm.data(), 65537) == 65536,
                 "default 256 KiB budget not honored");

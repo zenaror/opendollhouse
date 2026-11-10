@@ -6,6 +6,7 @@
 #include <iosfwd>
 
 namespace odh_host {
+class LinuxAudioRuntime;
 inline constexpr std::array<std::uint8_t,9> native_control_receipt_ids{{17,18,19,20,21,25,46,47,50}};
 using BhavNativeControlReceipt = std::array<std::optional<std::int32_t>,9>;
 struct BhavAudioConfig {
@@ -25,7 +26,7 @@ struct BhavAudioConfig {
 // existing collection; no caller-unit or spatial conversion is performed.
 class BhavAudio {
 public:
-    BhavAudio(odh::World&,BhavAudioConfig);
+    BhavAudio(odh::World&,BhavAudioConfig,LinuxAudioRuntime&);
     ~BhavAudio();
     BhavAudio(const BhavAudio&)=delete;
     BhavAudio& operator=(const BhavAudio&)=delete;

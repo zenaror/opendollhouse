@@ -10,6 +10,9 @@
 #include "resource.hpp"
 #include "probe_view.hpp"
 #include "bhav_audio.hpp"
+#ifdef ODH_HAVE_SDL_AUDIO
+#include "linux_audio.hpp"
+#endif
 
 #include <charconv>
 #include <filesystem>
@@ -595,8 +598,9 @@ int main(int argc, char** argv) {
         std::vector<ObservedSound> sound_requests;
         bool sound_events_truncated=false,sound_event_limit_reached=false;
 #ifdef ODH_HAVE_SDL_AUDIO
+        odh_host::LinuxAudioRuntime audio_runtime(odh_host::LinuxAudioRuntime::Ownership::application);
         std::unique_ptr<odh_host::BhavAudio> audio_service;
-        if(audio_probe)audio_service=std::make_unique<odh_host::BhavAudio>(world,std::move(audio_config));
+        if(audio_probe)audio_service=std::make_unique<odh_host::BhavAudio>(world,std::move(audio_config),audio_runtime);
 #endif
         odh::SoundSink sound_sink;
 #ifdef ODH_HAVE_SDL_AUDIO

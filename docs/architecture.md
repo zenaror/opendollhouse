@@ -57,6 +57,14 @@ Gráficos, áudio, entrada e armazenamento devem ser substituíveis nos demais a
 Orçamento de memória e processamento precisa ser medido; desempenho no computador
 não estabelece viabilidade em um portátil.
 
+No áudio Linux, `LinuxAudioRuntime` mantém o serviço da aplicação entre casas.
+Cada `LinuxAudio` ou `LinuxPcmSink` fecha seu próprio dispositivo e libera sua
+referência; a última referência encerra o serviço. O executável declara
+`Ownership::application`. Um programa que hospede o adaptador junto a outros
+consumidores SDL usa `Ownership::external` e continua responsável pelo
+encerramento global. Essas classes pertencem ao adaptador, sem tipos SDL na
+simulação ou no formato de salvamento. O acesso ocorre no mesmo thread do dono.
+
 Retratos fixos da família e a cabeça móvel do menu de ações têm funções distintas.
 A interface deve seguir o original em navegação, proporção e comportamento.
 A fidelidade visual exige observação em janela, além dos testes da simulação.

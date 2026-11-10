@@ -27,6 +27,7 @@ struct ArchitectureSnapshot;
 
 namespace odh_host {
 class LinuxWindow;
+class LinuxAudioRuntime;
 class OriginalCursorPresentation;
 class LinuxSessionLog;
 class FamilySessionJournal;
@@ -90,6 +91,9 @@ struct SessionObjectCommand {
     std::uint8_t direction=0;
 };
 struct IntegratedSessionContext {
+    // Host presentation lifetime only, never serialized. The launcher retains
+    // the global SDL owner across house/session transitions.
+    std::shared_ptr<LinuxAudioRuntime> audio_runtime;
     std::shared_ptr<const odh::ArchitectureSnapshot> community_architecture;
     // Authenticated launcher-owned request. Runtime prepares only, without
     // scheduler ticks, presentation capture, normal saves or publication.

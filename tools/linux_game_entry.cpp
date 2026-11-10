@@ -1,4 +1,7 @@
 #include "person_runtime.hpp"
+#ifdef ODH_HAVE_SDL_AUDIO
+#include "linux_audio.hpp"
+#endif
 #include "person_session.hpp"
 #include "property_release_session.hpp"
 #include "residential_property_scene.hpp"
@@ -1495,6 +1498,12 @@ void append(std::vector<std::string>& target, std::initializer_list<std::string>
 
 int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* session_log) {
     try {
+#ifdef ODH_HAVE_SDL_AUDIO
+        // Explicit executable ownership, lazy until an audio device is needed.
+        // This scope outlives every per-house sink, including travel rollback.
+        auto audio_runtime=std::make_shared<odh_host::LinuxAudioRuntime>(
+            odh_host::LinuxAudioRuntime::Ownership::application);
+#endif
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
         if(session_log)session_log->stage("launcher-startup");
 #endif
@@ -2989,6 +2998,9 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 pointers.reserve(plan.arguments.size());
                 for (const auto& argument : plan.arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
                 odh_host::IntegratedSessionContext session_context;
+#ifdef ODH_HAVE_SDL_AUDIO
+                session_context.audio_runtime=audio_runtime;
+#endif
 #ifdef ODH_HAVE_X11
                 session_context.cursors=cursors;
                 if(cursors)(void)cursors->select(odh_host::OriginalCursorAsset::Arrow);

@@ -36,6 +36,11 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Encerramento do áudio nas trocas repetidas de casa, preservando os demais
+  consumidores do serviço até que liberem suas referências.
+- Preparação dos moradores antes de entrar na casa e desenhá-los, preservando
+  a identificação do personagem selecionado e as verificações do salvamento.
+
 - Restauração da aparência sem janela passa a localizar os recursos na instalação
   do jogo, sem depender de opções de captura de tela.
 - Importação do personagem principal consulta seus dados de origem pelo mesmo

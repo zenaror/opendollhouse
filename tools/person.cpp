@@ -3001,7 +3001,16 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             property_scene_import->multitile_groups=restored_world->multitile_groups;
         }
     }
-    const auto capture_household_roster=[&](bool verify_current=false) {
+    // Only the pre-dispatch admission boundary may leave source-absent
+    // residents pending. This set is sealed once from the initial World;
+    // an already admitted body can never become "not constructed" again.
+    std::set<std::uint32_t> unconstructed_household_guids;
+    enum class HouseholdRosterBoundary { complete, construction_admission };
+    const auto capture_household_roster=[&](bool verify_current=false,
+            HouseholdRosterBoundary boundary=HouseholdRosterBoundary::complete) {
+        if(boundary==HouseholdRosterBoundary::construction_admission&&
+           (!verify_current||!pending_household_activation))
+            throw odh::FormatError("partial household admission requires its pending construction phase");
         std::vector<odh::SessionHouseholdMember> roster;
         if(!session_context||session_context->single_resident_session)return roster;
         if(npc_primary_execution||(unanchored_family_lot&&session_context->household_members.empty())){
@@ -3085,6 +3094,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                         old.character_asset==logical_asset&&old.character_fingerprint==pinned->second.fingerprint;
                 });
                 if(retired)continue; // Exact old origin, not a new same-GUID NPCA body.
+                const bool admitted=std::any_of(admitted_household_origins.begin(),admitted_household_origins.end(),
+                    [&](const auto& entry){return entry.second.guid==member.guid;});
+                if(boundary==HouseholdRosterBoundary::construction_admission&&
+                   unconstructed_household_guids.count(member.guid)&&!admitted)
+                    continue; // Authenticated source absence, not a retired/disappeared body.
                 throw odh::FormatError("household body disappeared without its exact constructor/resource retirement");
             }
             odh::SessionHouseholdMember entry;entry.id=actor->id;entry.generation=actor->generation;
@@ -3980,8 +3994,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(!main||odh::routine_key(main).scope!=odh::RoutineScope::private_object||
                !data.routines.count(odh::routine_key(main)))
                 throw odh::FormatError("household member Main is absent from its exact private owner");
-            if(*found->object_id==runtime_avatar_id){
-                if(member.guid!=person.binding->guid||main!=root||
+            // A pending GUID-selected resident has no primary Runtime yet;
+            // runtime_avatar_id still carries a provisional bootstrap value.
+            // Only the actual owner identifies an already-admitted primary.
+            if(primary_runtime&&*found->object_id==primary_runtime->id){
+                if(primary_runtime->id!=runtime_avatar_id||member.guid!=person.binding->guid||main!=root||
                    std::filesystem::canonical(member.character_path)!=std::filesystem::canonical(avatar->archive))
                     throw odh::FormatError("selected household resident resource does not match the primary runtime");
                 primary_found=true;
@@ -5544,12 +5561,18 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::uint64_t audio_drain_polls=0;
     bool audio_drain_empty=false;
 #ifdef ODH_HAVE_SDL_AUDIO
+    // Direct diagnostic runs own one lazy runtime; integrated runs borrow the
+    // launcher's explicit owner so a house change never unloads SDL globally.
+    std::shared_ptr<odh_host::LinuxAudioRuntime> audio_runtime;
     std::unique_ptr<odh_host::LinuxPcmSink> audio_sink;
     std::unique_ptr<odh_host::GameAudio> game_audio;
     if(session_audio_requested){
         try{
             if(!session_context)throw odh::FormatError("session audio requires the selected game installation");
-            audio_sink=std::make_unique<odh_host::LinuxPcmSink>();
+            audio_runtime=session_context->audio_runtime;
+            if(!audio_runtime)audio_runtime=std::make_shared<odh_host::LinuxAudioRuntime>(
+                odh_host::LinuxAudioRuntime::Ownership::application);
+            audio_sink=std::make_unique<odh_host::LinuxPcmSink>(*audio_runtime);
             audio_driver=audio_sink->driver();
             game_audio=std::make_unique<odh_host::GameAudio>(world,session_context->game_root,*audio_sink);
         }catch(const std::exception& error){
@@ -6458,9 +6481,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         // Only admitted HHRD or exact NPC construction origin grants the
         // legacy Catalog0 compatibility; a PlayerData-looking path does not.
         if(pin!=pinned_characters.end()&&pin->second.bytes==bytes&&pin->second.fingerprint==fingerprint)
-            for(const auto& member:capture_household_roster(true))
-                if(member.guid==exact.definition.guid&&member.neighbor_id==*nid&&member.object_definition_id==exact.chunk_id&&
+            for(const auto& [reference,member]:admitted_household_origins){
+                const odh::WorldEntityReference ref{reference.first,reference.second};
+                const auto owned=current_household_body_owner?current_household_body_owner(ref):std::optional<bool>{};
+                if(world.is_live_reference(ref)&&owned&&*owned&&member.guid==exact.definition.guid&&
+                   member.neighbor_id==*nid&&member.object_definition_id==exact.chunk_id&&
                    member.character_fingerprint==fingerprint)return true;
+            }
         for(const auto* actor:npc_origin_actors()){const auto& origin=*actor->npc_origin;
             if(origin.guid==exact.definition.guid&&origin.neighbor_id==*nid&&origin.object_definition_id==exact.chunk_id&&
                origin.character_fingerprint==fingerprint&&actor->resource.frozen==bytes&&
@@ -6908,8 +6935,16 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // Freeze exact HHRD construction/resource identities before any dispatch.
     // Membership/control are independent: Generic6/33 may have changed FAMI
     // while this same body/Thread is still owned by the lot.
-    if(session_context&&!session_context->single_resident_session&&!session_context->household_members.empty())
-        (void)capture_household_roster(true);
+    if(session_context&&!session_context->single_resident_session&&!session_context->household_members.empty()){
+        if(pending_household_activation){
+            if(restoring_session)throw odh::FormatError("restored household cannot defer a missing resident construction");
+            for(const auto& member:odh::reconcile_session_household(execution_household_guids_for_reconciliation(),world))
+                if(member.presence==odh::HouseholdMemberPresence::absent)
+                    unconstructed_household_guids.insert(member.guid);
+        }
+        (void)capture_household_roster(true,pending_household_activation?
+            HouseholdRosterBoundary::construction_admission:HouseholdRosterBoundary::complete);
+    }
     const auto owned_household_actor_for_removal=[&](std::int16_t id,std::uint64_t generation)->ActorRuntime*{
         if(!session_context||session_context->single_resident_session||headless_second_main||!current_family_lease())return nullptr;
         ActorRuntime* actor=primary_runtime&&primary_runtime->id==id?primary_runtime.get():nullptr;
@@ -8183,7 +8218,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 startup_steps+=stage.steps;
         if(!startup.completed){host_failed=true;host_diagnostic=startup.diagnostic;}
     }
-    if(!host_failed&&!restoring_session&&primary_runtime){
+    if(!host_failed&&!restoring_session){
+        // Existing peers own actual Threads even while VerifyFamily has not
+        // constructed the selected primary. Prepare every actor's own Main;
+        // no actor dispatches before original recovery/body admission finishes.
+        if(primary_runtime){
         // Stack Main before post-body initialization, then dispatch its first
         // instruction only after the body data stage has completed.
         std::vector<std::int16_t> root_arguments(4);
@@ -8195,6 +8234,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         // exact fresh execution epoch before source import; no tick or reset.
         if(saved_world_main&&!initialize&&!primary_controllers().admit_undispatched_start())
             throw odh::FormatError("original primary Main controller admission failed");
+        }
         if(second_main_vm){
             std::vector<std::int16_t> arguments(4);
             if(headless_second_main_arg0)arguments[0]=static_cast<std::int16_t>(*headless_second_main_arg0);
@@ -8211,6 +8251,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 if(saved_world_main&&!initialize&&!member->controllers->admit_undispatched_start())
                     throw odh::FormatError("original household Main controller admission failed");
             }
+        if(primary_runtime){
         if(initialize&&primary_status()!=odh::VmStatus::fault){
             try{body_seed_before=random.seed();primary_body()=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
@@ -8226,8 +8267,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             }
         }
         if(action&&!host_failed&&primary_status()!=odh::VmStatus::fault&&!primary_queue().enqueue(odh::routine_key(*action_routine),{runtime_avatar_id,2,2,2}))throw odh::FormatError(primary_queue().diagnostic());
+        }
     }
-    if(!restoring_session&&primary_runtime)prepare_household_bodies();
+    if(!restoring_session)prepare_household_bodies();
     using SavedOwnerMap=std::map<std::tuple<std::string,std::string,std::uint16_t,std::uint8_t>,odh::CodeOwner>;
     const auto actor_owner_map_for=[&](std::int16_t actor_id)->SavedOwnerMap* {
         auto* actor=actor_runtime_for(actor_id);
@@ -12047,8 +12089,8 @@ struct PlacementCandidateProbe {
     };
     bool primary_presentation_ready=false;
     const auto ensure_primary_presentation=[&]{
-      if(render_requested&&!primary_presentation_ready){
-        if(render_output){
+      if(render_requested){
+        if(!primary_presentation_ready&&render_output){
             if(render_output->empty()||render_output->size()>4096||render_output->find('\0')!=std::string::npos)
                 throw odh::FormatError("person frame output path outside bounded profile");
             std::error_code path_error;
@@ -12061,11 +12103,15 @@ struct PlacementCandidateProbe {
 
         if(!prepare_actor_scene(*primary_runtime))
             throw odh::FormatError("primary avatar visual resources unavailable");
+        } // No avatar is invented when a managed lot has no resident anchor.
+        // Lot/window readiness does not prove that later VerifyFamily bodies
+        // have presentation resources. Prepare every current resident before
+        // first rendering; prepare_actor_scene caches each actual body/outfit.
         for(auto& member:household_runtime){
             if(member->body_state&&member->body_state->body&&!prepare_actor_scene(*member))
                 throw odh::FormatError("household avatar visual resources unavailable");
         }
-        } // No avatar is invented when a managed lot has no resident anchor.
+        if(primary_presentation_ready)return;
         if(render_floors&&!render_lot){
             render_lot=std::make_unique<SavedLotRenderer>(saved_architecture_resource(*lot_path),
                 *restored_world,*definition_index,*render_floors,render_walls,render_lot_view,render_materials);
@@ -17039,7 +17085,8 @@ struct PlacementCandidateProbe {
         }
         if(session_context&&!session_context->single_resident_session&&!property_release_active&&
            !(residential_property_arrival&&pending_household_activation))
-            for(const auto& member:capture_household_roster(true)){
+            for(const auto& member:capture_household_roster(true,pending_household_activation?
+                    HouseholdRosterBoundary::construction_admission:HouseholdRosterBoundary::complete)){
                 const auto* e=world.find(member.id);const auto* own=definition_index?definition_index->unique(member.guid):nullptr;
                 if(!e||e->generation!=member.generation||!e->definition||e->definition->guid!=member.guid||
                    e->definition->master_guid||!own||own->definition.is_multitile)
@@ -21904,6 +21951,10 @@ struct PlacementCandidateProbe {
                 const auto found=constructor_people.find(id);auto* actor=actor_runtime_for(id);
                 if(&actual!=&world||!current()||found==constructor_people.end()||!world.is_live_reference(found->second)||
                    !actor||!actor->vm||!place_bootstrap_avatar)return Status::unsupported;
+                // NBRS/PD31/PD61 have been inherited by the real constructor
+                // before place() is called. Freeze this generation's resource
+                // origin before EP9/position callbacks can dispatch Delete.
+                (void)capture_household_roster(true,HouseholdRosterBoundary::construction_admission);
                 const auto generation=actor->vm->run_generation();
                 const auto owned=[&,current,ref=found->second,thread=actor->vm.get(),generation]{
                     return current()&&world.is_live_reference(ref)&&actor_runtime_for(ref.id)&&
@@ -21925,6 +21976,11 @@ struct PlacementCandidateProbe {
                 actor->start=world.find(id)->position;
                 return true;
             });
+        // VerifyFamily must resolve every pending member before carry,
+        // scheduler admission or any publication. Complete capture keeps the
+        // exact disappearance/retirement guard used by save and restore.
+        (void)capture_household_roster(true);
+        unconstructed_household_guids.clear();
         apply_deferred_family_carry();
         if(family_carry_relationships)relationships=family_carry_relationships.get();
         if(family_carry_applied)for(const auto& record:family_carry_applied->decays()){
@@ -26682,6 +26738,10 @@ struct PlacementCandidateProbe {
         std::cout<<'}';
     }else std::cout<<"null";
     std::cout<<"}\n";
+    // Complete each house's envelope before destroying presentation backends.
+    // A sanitizer failure remains nonzero; never synthesize missing JSON bytes.
+    std::cout.flush();
+    if(!std::cout)throw odh::FormatError("runtime JSON output write failed");
     const bool requested_ticks_complete=session_context&&session_context->bounded_headless&&
         ticks-resumed_tick==session_policy.tick_limit();
     const int exit_code=host_failed||status==odh::VmStatus::fault||

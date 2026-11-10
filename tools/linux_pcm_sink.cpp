@@ -1,7 +1,7 @@
 #include "linux_pcm_sink.hpp"
 
 namespace odh_host {
-LinuxPcmSink::LinuxPcmSink(std::uint32_t rate,AudioLimits limits):output_({rate,2},limits){}
+LinuxPcmSink::LinuxPcmSink(LinuxAudioRuntime& runtime,std::uint32_t rate,AudioLimits limits):output_(runtime,{rate,2},limits){}
 odh::PcmSinkFormat LinuxPcmSink::format() const {
     const auto f=output_.format();return {f.sample_rate,f.channels};
 }

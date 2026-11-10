@@ -15,13 +15,36 @@ struct AudioLimits {
     std::uint64_t queued_pcm_bytes = 256 * 1024;
 };
 
+// Host-wide SDL lifetime, deliberately separate from a session's device.
+// application: the executable claims global SDL ownership before other SDL
+// owners and releases this scope only after they finish. external: a foreign
+// host owns SDL_Quit; this scope only balances its own audio subsystem leases.
+// Both modes load SDL lazily. Same-policy scopes share one loaded state; mixed
+// live policies reject rather than silently acquiring global cleanup rights.
+// No global strong reference retains SDL. Devices retain the shared state, so
+// closing the last device after its host scope still safely orders finalization.
+// Construct/use/destroy scopes and devices on the same host thread. No SDL types
+// or persistent/simulation state cross this API.
+class LinuxAudioRuntime {
+public:
+    enum class Ownership { application, external };
+    explicit LinuxAudioRuntime(Ownership);
+    ~LinuxAudioRuntime();
+    LinuxAudioRuntime(const LinuxAudioRuntime&)=delete;
+    LinuxAudioRuntime& operator=(const LinuxAudioRuntime&)=delete;
+private:
+    struct Impl;
+    std::shared_ptr<Impl> impl_;
+    friend class LinuxAudio;
+};
+
 // Optional Linux host backend. Native signed PCM16, interleaved L/R for stereo.
 // No SDL types enter this API. All calls must be made by one owner thread.
 // SDL_AUDIODRIVER is respected; construction opens a device, initially paused.
 // Throws std::runtime_error on backend errors, std::invalid_argument on inputs.
 class LinuxAudio {
 public:
-    explicit LinuxAudio(AudioFormat format, AudioLimits limits = {});
+    explicit LinuxAudio(LinuxAudioRuntime&, AudioFormat format, AudioLimits limits = {});
     ~LinuxAudio();
     LinuxAudio(const LinuxAudio&) = delete;
     LinuxAudio& operator=(const LinuxAudio&) = delete;

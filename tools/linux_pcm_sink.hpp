@@ -8,7 +8,7 @@ namespace odh_host {
 // Per-note owners use the transport; they never close the shared device.
 class LinuxPcmSink final : public odh::PcmSink {
 public:
-    explicit LinuxPcmSink(std::uint32_t rate=44100,AudioLimits limits={});
+    explicit LinuxPcmSink(LinuxAudioRuntime&,std::uint32_t rate=44100,AudioLimits limits={});
     odh::PcmSinkFormat format() const override;
     std::size_t queue(const std::int16_t*,std::size_t) override;
     std::size_t queued_frames() const override;

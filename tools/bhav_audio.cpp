@@ -46,12 +46,12 @@ struct BhavAudio::Impl {
     std::optional<odh::HitArguments> last_arguments;
     std::optional<BhavNativeControlReceipt> last_native_controls;
 
-    Impl(odh::World& world_value,BhavAudioConfig config_value)
+    Impl(odh::World& world_value,BhavAudioConfig config_value,LinuxAudioRuntime& runtime)
       :world(world_value),config(std::move(config_value)),
        hsm(read_resource(config.hsm_path,[](const auto& view){return odh::read_hsm(view);})),
        hot(read_resource(config.hot_path,[this](const auto& view){return odh::read_hot(view,&hsm);})),
        hit(read_resource(config.hit_path,[](const auto& view){return odh::read_hit(view);})),
-       catalog(config.sources),sink(config.output_rate),transport(sink),
+       catalog(config.sources),sink(runtime,config.output_rate),transport(sink),
        threads(world,[this](const odh::SoundRequest& request,const odh::SoundSourceBinding& binding){
            auto arguments=config.arguments;
            std::optional<odh::ResolvedHitEvent> resolved;
@@ -97,8 +97,8 @@ struct BhavAudio::Impl {
         catch(const std::exception& error){++scheduler_errors;note_error(error);stopped_pumping=true;}
     }
 };
-BhavAudio::BhavAudio(odh::World& world,BhavAudioConfig config)
-    :impl_(std::make_unique<Impl>(world,std::move(config))){}
+BhavAudio::BhavAudio(odh::World& world,BhavAudioConfig config,LinuxAudioRuntime& runtime)
+    :impl_(std::make_unique<Impl>(world,std::move(config),runtime)){}
 BhavAudio::~BhavAudio()=default;
 bool BhavAudio::submit(const odh::SoundRequest& request){
     impl_->last_arguments.reset();

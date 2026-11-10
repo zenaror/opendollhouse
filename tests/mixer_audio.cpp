@@ -9,6 +9,7 @@
 int main(){try{
     const char* driver=std::getenv("SDL_AUDIODRIVER");
     if(!driver || std::string(driver)!="dummy")throw std::runtime_error("mixer audio test requires dummy");
+    odh_host::LinuxAudioRuntime runtime(odh_host::LinuxAudioRuntime::Ownership::application);
     odh::PcmMixer mixer(8000,{1024,4,32,128});
     odh::XaAudio mono{8000,1,std::vector<std::int16_t>(56,1000),0};
     odh::XaAudio stereo{16000,2,std::vector<std::int16_t>(224),0};
@@ -22,7 +23,7 @@ int main(){try{
     backend.status=[&](auto id){const auto s=mixer.state(id);return s==odh::PcmNoteState::active || s==odh::PcmNoteState::rendered?odh::HitNoteStatus::active:odh::HitNoteStatus::complete;};
     std::array<std::int32_t,29> vars{};odh::HitThread thread(hit,hot,16,vars,{},backend);
     thread.tick();
-    odh_host::LinuxAudio output({8000,2},{64}); // Only16frames accepted, block has32.
+    odh_host::LinuxAudio output(runtime,{8000,2},{64}); // Only16frames accepted, block has32.
     std::array<std::int16_t,64> block{};std::size_t frames=0,cursor=0;
     mixer.render(block.data(),32);frames=32;
     if(block[0]!=3000 || block[1]!=4000 || mixer.state(handle)!=odh::PcmNoteState::active)
