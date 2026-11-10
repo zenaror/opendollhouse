@@ -226,6 +226,96 @@ print(json.dumps(result))
                     self.assertEqual(module.profile_files(profile),before)
                 self.assertEqual(initial.read_text(),'unchanged copied original')
 
+    def test_blocked_boundary_preserves_failure_and_authenticates_only_native_safe_output(self):
+        """Real isolated fixture subprocesses exercise publication and final guards together."""
+        import importlib.util
+        from types import SimpleNamespace
+        spec = importlib.util.spec_from_file_location('boundary_smoke', RUNNER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        app = self.base / 'boundary-app.py'
+        app.write_text(r'''
+import argparse,json,os
+from pathlib import Path
+p=argparse.ArgumentParser();p.add_argument('--game-root',type=Path);p.add_argument('--load-session',type=Path);p.add_argument('--headless-ticks',type=int)
+a,_=p.parse_known_args();state=json.loads(a.load_session.read_text());mode=state['mode']
+folder=Path(os.environ['XDG_STATE_HOME']);folder.mkdir(parents=True,exist_ok=True)
+end=100+a.headless_ticks if mode=='complete' else 101
+saved=folder/'final.odhs';saved.write_text(json.dumps({'tick':end,'mode':mode}))
+if mode.startswith('multi'):(folder/'adoption.odhs').write_text(json.dumps({'tick':100,'mode':mode}))
+(folder/'head').write_text('final.odhs')
+if mode=='other_head':(folder/'head').write_text('input.odhs')
+if mode=='multi_other':(folder/'head').write_text('adoption.odhs')
+if mode=='protected_mutation':(a.game_root/'protected.dat').write_text('changed original')
+if mode=='input_mutation':a.load_session.write_text('changed copied input')
+if mode=='source_mutation':Path(state['original_source']).write_text('changed source')
+if mode=='source_profile_mutation':Path(state['original_source']).with_name('new-file').write_text('changed source profile')
+if mode=='nonzero':raise SystemExit(7)
+d={'host_failed':False,'instruction_budget_exhausted':False,'scheduler_budget_yields':0,
+   'runtime_policy':'gameplay_per_tick_per_entity','runtime_budget_scope':'per_tick',
+   'resumed_tick':100,'ticks':end,'saved_session_path':str(saved),
+   'blocking_dialog':None if mode=='complete' else {'ticket':32,'message':'observed fixture'},
+   'integrated_session_context':{'neighborhood_mode':1,'house_number':5,'family_chunk_id':6}}
+if mode=='missing_counter':del d['scheduler_budget_yields']
+if mode=='outside':d['saved_session_path']=str(a.game_root/'protected.dat')
+print(json.dumps(d))
+''')
+        inspector = self.base / 'boundary-inspector.py'
+        inspector.write_text(r'''#!/usr/bin/env python3
+import json,os,sys
+from pathlib import Path
+folder=Path(os.environ['XDG_STATE_HOME']);saved=folder/(folder/'head').read_text()
+state=json.loads(saved.read_text());mode=state['mode']
+if mode=='decode_failure':raise SystemExit(3)
+if mode=='invalid_authority':print('invalid');raise SystemExit(0)
+if mode=='inspector_mutation':Path(__file__).write_text('mutated inspector')
+result={'authenticated_journal_head':True,'archive_path':str(saved.resolve()),
+        'house':5,'family_chunk_id':6,'tick':state['tick']}
+if mode=='wrong_tick':result['tick']+=1
+if mode=='wrong_identity':result['family_chunk_id']=7
+if mode=='profile_mutation':(folder/'inspection-side-effect').write_text('changed profile')
+print(json.dumps(result))
+''')
+        inspector_source = inspector.read_text()
+        for mode in ('blocked','validator_failure','complete','multi_valid','multi_other',
+                     'other_head','outside','wrong_tick','wrong_identity','decode_failure',
+                     'invalid_authority','protected_mutation','input_mutation','source_mutation',
+                     'source_profile_mutation','profile_mutation','inspector_mutation',
+                     'missing_counter','no_inspector','nonzero'):
+            with self.subTest(mode=mode):
+                (self.game/'protected.dat').write_bytes(self.original)
+                inspector.write_text(inspector_source);inspector.chmod(0o700)
+                root=self.base/('boundary-'+mode);template=root/'template'
+                (template/'state').mkdir(parents=True);(template/'config').mkdir()
+                (template/'config'/'occupancy.odhp').write_text('occupied fixture')
+                source=template/'state'/'input.odhs'
+                source.write_text(json.dumps({'tick':100,'mode':mode,'original_source':str(source)}))
+                before=module.profile_files(template);output=root/'out';output.mkdir()
+                args=SimpleNamespace(binary=Path(sys.executable),launcher_arg=[str(app)],
+                    session_inspector=None if mode=='no_inspector' else inspector,
+                    game_root=self.game,checkpoint=source,protected_manifest=self.manifest,
+                    output=output,require_integer=[],timeout_seconds=3)
+                smoke=module.Smoke(args)
+                def validator(document,record):
+                    if mode=='validator_failure':raise ValueError('observed dialog requires explicit decision')
+                record=smoke.run('continue',source,10,[],[],expected_base=100,
+                    expected_source_hash=module.digest(source),automatic_dialog_ok=False,
+                    report_validator=validator,profile_source=template,expected_profile_hashes=before)
+                authenticated=mode in ('blocked','validator_failure','complete','multi_valid')
+                self.assertEqual(record['checkpoint'] is not None,authenticated,str(record))
+                self.assertEqual(record['ok'],mode=='complete',str(record))
+                self.assertTrue(record['pid_absent'])
+                if mode=='validator_failure':self.assertEqual(record['errors'],['observed dialog requires explicit decision'])
+                if mode in ('blocked','multi_valid'):self.assertEqual(record['errors'],['application horizon mismatch'])
+                if authenticated:
+                    cp=record['checkpoint'];self.assertEqual(cp['tick'],110 if mode=='complete' else 101)
+                    self.assertEqual(cp['sha256'],module.digest(Path(cp['path'])))
+                    self.assertEqual(cp['profile_after'],module.profile_files(Path(record['xdg_profile'])))
+                    self.assertTrue(cp['native_authority']['authenticated_journal_head'])
+                    self.assertTrue(all(record['proofs'].values()))
+                else:self.assertIsNone(record['checkpoint'])
+                if mode=='nonzero':self.assertEqual(record['exit'],7)
+
     def test_host_failure_exit_zero_blocks_every_later_phase(self):
         result, report = self.run_smoke("host_failed")
         self.assertEqual(result.returncode, 1)

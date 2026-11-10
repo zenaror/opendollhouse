@@ -201,6 +201,53 @@ class Smoke:
             raise ValueError("native journal authority disagrees with the reported final HOME checkpoint")
         return selected[0]
 
+    def collect_save(self, document, profile, copied, source_hash, ticks, expected_base,
+                     profile_source, copied_profile_before, env):
+        record = {}
+        if profile_source is None:
+            saves = [p for p in profile.rglob("*.odhs") if p != copied]
+        else:
+            after = profile_files(profile)
+            saves = [profile / name for name, sha in after.items() if Path(name).suffix == ".odhs" and
+                     copied_profile_before.get(name) != sha]
+        if profile_source is not None and ticks == 0 and not saves:
+            # A canonical content-addressed checkpoint may already exist in
+            # this complete copied profile. Only a zero-tick reopen may
+            # reuse that exact input, explicitly reported by the producer.
+            reported = document.get("saved_session_path")
+            if (expected_base is None or not isinstance(reported, str) or
+                    Path(reported).resolve() != copied.resolve() or
+                    not within(copied.resolve(), profile.resolve()) or
+                    not copied.is_file() or digest(copied) != source_hash):
+                raise ValueError("zero-tick canonical save must report the unchanged copied input exactly")
+            saved = copied
+            record["canonical_zero_tick_input_reused"] = True
+        else:
+            if len(saves) > 1 and profile_source is not None:
+                # Original-session adoption may publish an initial managed
+                # head and then the requested transaction. Never choose by
+                # filename, timestamp or an unverified producer assertion.
+                saved = self.produced_home_head(document, profile, saves, env)
+                record["produced_saved_sessions"] = [str(p) for p in saves]
+                record["selected_by_authenticated_journal_head"] = True
+                record["journal_head_json_sha256"] = digest(profile.parent / "journal-head.json")
+            elif len(saves) != 1:
+                raise ValueError("expected exactly one produced saved session, got " + str(len(saves)))
+            else:
+                saved = saves[0]
+        if not saved.is_file() or not within(saved.resolve(), profile.resolve()):
+            raise ValueError("saved session escapes the fresh profile")
+        if document.get("saved_session_path") is not None and Path(document["saved_session_path"]).resolve() != saved.resolve():
+            raise ValueError("reported saved session differs from actual output")
+        record["save"] = str(saved)
+        record["save_sha256"] = digest(saved)
+        record["save_bytes"] = saved.stat().st_size
+        if profile_source is not None:
+            profile_checkpoint(profile, after, record["save_sha256"], self.session_inspector)
+            record["profile_after"] = after
+        record["profile_after"] = profile_files(profile)
+        return record
+
     def run(self, name, source, ticks, extras, requirements, expected_base=None, stop=None, expected_source_hash=None,
             automatic_dialog_ok=True, report_validator=None, overall_deadline=None,
             profile_source=None, expected_profile_hashes=None):
@@ -215,6 +262,13 @@ class Smoke:
         source_hash = None
         source_profile_before = None
         copied_profile_before = None
+        document = None
+        boundary_document = None
+        producer_stdout_hash = None
+        collected_save = None
+        save_error = None
+        boundary_checkpoint = None
+        record["checkpoint"] = None
         try:
             if self.session_inspector is not None and digest(self.session_inspector) != self.session_inspector_hash:
                 raise ValueError("native session inspector changed before launch")
@@ -286,6 +340,15 @@ class Smoke:
                                   parse_constant=lambda value: (_ for _ in ()).throw(ValueError("invalid JSON constant: " + value)))
             if not isinstance(document, dict):
                 raise ValueError("application JSON must be an object")
+            producer_stdout_hash = digest(directory / "stdout.json")
+            boundary_document = json.loads(json.dumps(document))
+            # Save discovery is independent of the outcome gate. A blocked horizon
+            # remains FAIL, but its producer may still have committed a real HOME head.
+            try:
+                collected_save = self.collect_save(document, profile, copied, source_hash, ticks,
+                    expected_base, profile_source, copied_profile_before, env)
+            except Exception as error:
+                save_error = error
             if report_validator is not None:
                 report_validator(document, record)
             if document.get("host_failed") is not False or document.get("instruction_budget_exhausted") is not False:
@@ -306,47 +369,9 @@ class Smoke:
                 value = pointer(document, path)
                 if not integer(value) or value < int(minimum):
                     raise ValueError("required integer branch not observed: " + path)
-            if profile_source is None:
-                saves = [p for p in profile.rglob("*.odhs") if p != copied]
-            else:
-                after = profile_files(profile)
-                saves = [profile / name for name, sha in after.items() if Path(name).suffix == ".odhs" and
-                         copied_profile_before.get(name) != sha]
-            if profile_source is not None and ticks == 0 and not saves:
-                # A canonical content-addressed checkpoint may already exist in
-                # this complete copied profile. Only a zero-tick reopen may
-                # reuse that exact input, explicitly reported by the producer.
-                reported = document.get("saved_session_path")
-                if (expected_base is None or not isinstance(reported, str) or
-                        Path(reported).resolve() != copied.resolve() or
-                        not within(copied.resolve(), profile.resolve()) or
-                        not copied.is_file() or digest(copied) != source_hash):
-                    raise ValueError("zero-tick canonical save must report the unchanged copied input exactly")
-                saved = copied
-                record["canonical_zero_tick_input_reused"] = True
-            else:
-                if len(saves) > 1 and profile_source is not None:
-                    # Original-session adoption may publish an initial managed
-                    # head and then the requested transaction. Never choose by
-                    # filename, timestamp or an unverified producer assertion.
-                    saved = self.produced_home_head(document, profile, saves, env)
-                    record["produced_saved_sessions"] = [str(p) for p in saves]
-                    record["selected_by_authenticated_journal_head"] = True
-                    record["journal_head_json_sha256"] = digest(directory / "journal-head.json")
-                elif len(saves) != 1:
-                    raise ValueError("expected exactly one produced saved session, got " + str(len(saves)))
-                else:
-                    saved = saves[0]
-            if not saved.is_file() or not within(saved.resolve(), profile.resolve()):
-                raise ValueError("saved session escapes the fresh profile")
-            if document.get("saved_session_path") is not None and Path(document["saved_session_path"]).resolve() != saved.resolve():
-                raise ValueError("reported saved session differs from actual output")
-            record["save"] = str(saved)
-            record["save_sha256"] = digest(saved)
-            record["save_bytes"] = saved.stat().st_size
-            if profile_source is not None:
-                profile_checkpoint(profile, after, record["save_sha256"], self.session_inspector)
-                record["profile_after"] = after
+            if save_error is not None:
+                raise save_error
+            record.update(collected_save)
         except Exception as error:
             record["errors"].append(str(error))
         finally:
@@ -355,6 +380,44 @@ class Smoke:
                 process.wait()
             record["pid_absent"] = process is None or (process.poll() is not None and
                 (not Path("/proc").is_dir() or not Path("/proc", str(process.pid)).exists()))
+            # The native head inspector decodes the exact journal-owned archive.
+            # Do this before the final source/process guards; never publish authority
+            # if the inspector or any guarded input changed during this operation.
+            if record.get("exit") == 0 and record["pid_absent"] and collected_save is not None:
+                try:
+                    if self.session_inspector is None:
+                        raise ValueError("checkpoint authentication requires native inspector")
+                    if collected_save.get("canonical_zero_tick_input_reused"):
+                        raise ValueError("canonical zero-tick input is preserved, not a newly produced checkpoint")
+                    base, end = boundary_document.get("resumed_tick"), boundary_document.get("ticks")
+                    if (not integer(base) or not integer(end) or base < 0 or not base <= end <= base + ticks or
+                            (expected_base is not None and base != expected_base)):
+                        raise ValueError("checkpoint tick lies outside the requested continuation")
+                    if (boundary_document.get("host_failed") is not False or
+                            boundary_document.get("instruction_budget_exhausted") is not False or
+                            boundary_document.get("runtime_policy") != "gameplay_per_tick_per_entity" or
+                            boundary_document.get("runtime_budget_scope") != "per_tick" or
+                            not integer(boundary_document.get("scheduler_budget_yields")) or boundary_document["scheduler_budget_yields"] != 0):
+                        raise ValueError("checkpoint runtime safety fields absent or failed")
+                    if digest(directory / "stdout.json") != producer_stdout_hash:
+                        raise ValueError("producer stdout changed before checkpoint authentication")
+                    if profile_files(profile) != collected_save["profile_after"]:
+                        raise ValueError("produced profile changed before checkpoint authentication")
+                    saved = self.produced_home_head(boundary_document, profile, [Path(collected_save["save"])], env)
+                    if digest(saved) != collected_save["save_sha256"]:
+                        raise ValueError("produced save changed during checkpoint authentication")
+                    boundary_checkpoint = {"path": str(saved), "sha256": collected_save["save_sha256"],
+                        "tick": end, "profile": str(profile),
+                        "producer_stdout_sha256": producer_stdout_hash,
+                        "binary_sha256": self.binary_hash, "source_sha256": source_hash,
+                        "profile_after": collected_save["profile_after"],
+                        "native_authority": json.loads((directory / "journal-head.json").read_text()),
+                        "native_authority_sha256": digest(directory / "journal-head.json"),
+                        "session_inspector_sha256": self.session_inspector_hash}
+                except Exception as error:
+                    record["checkpoint_error"] = str(error)
+            elif save_error is not None:
+                record["checkpoint_error"] = str(save_error)
             for key, operation in (
                     ("binary_sha256_after", lambda: digest(self.args.binary)),
                     ("protected_after", self.originals),
@@ -387,6 +450,13 @@ class Smoke:
             if profile_source is not None:
                 record["proofs"]["source_profile_unchanged"] = (source_profile_before is not None and
                     source_profile_before == expected_profile_hashes == record.get("source_profile_after"))
+            if (boundary_checkpoint is not None and all(record["proofs"].values()) and
+                    record.get("session_inspector_sha256") == self.session_inspector_hash and
+                    (directory / "stdout.json").is_file() and
+                    digest(directory / "stdout.json") == producer_stdout_hash):
+                record["checkpoint"] = dict(boundary_checkpoint, authenticated=True)
+            elif boundary_checkpoint is not None:
+                record["checkpoint_error"] = "checkpoint rejected by final immutability or process proof"
             record["ok"] = not record["errors"] and all(record["proofs"].values())
             if not all(record["proofs"].values()):
                 record["errors"].append("immutability or process proof failed")

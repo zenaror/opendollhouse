@@ -552,7 +552,14 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     // LookTowards mode0 is a synchronous source output; retain it only here.
     std::map<odh::WorldEntityReference,std::array<std::int16_t,5>> head_targets;
     odh::VmMemory memory;
-    if(source_memory)memory.job_data=source_memory->job_data;
+    if(source_memory){
+        memory.job_data=source_memory->job_data;
+        // Scope23 is a typed contextual READ: Vm passes THIS probe's Temp0,
+        // including nested global/named checks. Retain the authenticated live
+        // room provider without lending source writes or borrowing VM registers.
+        // Missing/unresolved geometry must remain unsupported, never indoors.
+        memory.room_by_temp0=source_memory->room_by_temp0;
+    }
     memory.resolve_live_entity=[&world](std::int16_t id)->std::optional<odh::WorldEntityReference>{
         const auto* e=world.find(id);return e?std::optional<odh::WorldEntityReference>{{id,e->generation}}:std::nullopt;
     };

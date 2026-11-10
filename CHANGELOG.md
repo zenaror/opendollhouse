@@ -36,6 +36,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Consulta de ações dos objetos conserva a informação do cômodo, sem alterar
+  o estado da casa ou os registros do personagem durante a verificação do menu.
 - Conferência dos arquivos do jogo acelerada nos sistemas compatíveis,
   preservando os resultados e a alternativa portátil.
 - Entrada comum de uma casa original, com recursos conferidos antes da recuperação

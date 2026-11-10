@@ -147,6 +147,52 @@ coletar etapas independentes após um relatório completo de vazamento de memór
 O encerramento permanece reprovado, e o comando continua retornando erro.
 O modo padrão interrompe a verificação nessa falha.
 
+### Continuar de um checkpoint autenticado
+
+Uma execução pode parar em um diálogo antes de atingir a duração pedida e ainda
+gravar um estado válido. No recibo de `validate_runtime_smoke.py`, `ok` e `errors`
+continuam descrevendo o resultado da execução: autenticar um save não aprova um
+horizonte incompleto. O campo separado `checkpoint`, quando presente, descreve
+um novo save conferido pelo inspetor nativo e pelo registro atual da casa, com
+as provas de processo e de integridade das entradas preservadas.
+
+`checkpoint.path`, `sha256` e `tick` identificam o arquivo e o instante;
+`profile` e `profile_after` identificam o perfil completo e seu inventário.
+`native_authority` registra a identidade conferida da casa e da família. Sem
+essa autenticação, `checkpoint` fica `null`; `checkpoint_error`, quando presente,
+explica o impedimento. Uma reabertura canônica de zero atualizações pode ter
+`ok: true` e `checkpoint: null`, pois reutiliza o arquivo de entrada sem produzir
+um novo save.
+
+Para quem integra o verificador em Python, este exemplo usa `record` devolvido
+pela execução anterior e a mesma instância `smoke` de `Smoke`, já configurada
+com binário, inspetor e dados do jogo. Depois de examinar o resultado e decidir
+explicitamente continuar, use um nome de etapa ainda não criado:
+
+```python
+from pathlib import Path
+
+cp = record.get("checkpoint")
+if cp is None or not cp.get("authenticated"):
+    raise ValueError("a execução não forneceu um novo checkpoint autenticado")
+
+continued = smoke.run(
+    "continue-approved", Path(cp["path"]), 1024,
+    extras=["--mode", "1"], requirements=[],
+    expected_base=cp["tick"], expected_source_hash=cp["sha256"],
+    profile_source=Path(cp["profile"]),
+    expected_profile_hashes=cp["profile_after"],
+    automatic_dialog_ok=False,
+)
+```
+
+A chamada copia o perfil e confere novamente seus hashes. Preserve também o
+recibo original e os mesmos arquivos de binário e inspetor. O exemplo não
+responde diálogos nem repete tentativas automaticamente: uma escolha pendente
+precisa de decisão explícita, e a nova execução pode parar novamente. Examine
+`continued["ok"]`, `errors` e seu próprio `checkpoint` separadamente. Nenhum
+campo presume que uma ação anterior continua ativa ou já terminou.
+
 ## Preparar avisos em testes sem janela
 
 `--headless-info-dialog-ok-limit N` confirma até `N` avisos informativos, de 1 a

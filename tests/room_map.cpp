@@ -64,6 +64,15 @@ int main() { try {
             odh::room_by_temp0_data(room_data,1,4)==1 &&
             odh::room_by_temp0_data(room_data,1,0)==100,
             "RoomByTemp0 selects with Temp0 but reads outside from the shared base room");
+    room_data.rooms[1].area=24;room_data.rooms[1].level=0;
+    room_data.rooms[2].area=37;room_data.rooms[2].level=1;
+    require(odh::room_by_temp0_data(room_data,1,2)==0&&
+            odh::room_by_temp0_data(room_data,1,3)==24,
+            "RoomByTemp0 level and area come from LightBaseRoom while pool stays selected-room");
+    const auto valid_base=room_data.rooms[2].light_base_room;
+    room_data.rooms[2].light_base_room=static_cast<std::uint16_t>(room_data.rooms.size());
+    require(!odh::room_by_temp0_data(room_data,1,1),"unknown light-base room never fabricates outside");
+    room_data.rooms[2].light_base_room=valid_base;
     require(odh::room_by_temp0_data(room_data,-32768,4)==0 &&
             odh::room_by_temp0_data(room_data,32767,4)==1,
             "RoomByTemp0 clamps low and high selectors to the available rooms");

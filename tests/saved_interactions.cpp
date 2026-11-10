@@ -1,5 +1,7 @@
 #include "saved_interactions.hpp"
 #include "odh/neighbor_info.hpp"
+#include "odh/room_map.hpp"
+#include "odh/world_snapshot_codec.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -92,6 +94,82 @@ std::string far(const std::vector<std::pair<std::string,std::string>>& entries){
         put(bytes,static_cast<std::uint32_t>(entry.second.size()),4);put(bytes,static_cast<std::uint32_t>(entry.second.size()),4);
         put(bytes,offsets[i],4);put(bytes,static_cast<std::uint32_t>(entry.first.size()),4);bytes+=entry.first;}
     return bytes;
+}
+void room_scope_menu_projection(const std::filesystem::path& root){
+    const auto path=root/"room-context-check.iff";
+    // A private condition enters a global helper after consuming a disposable
+    // RNG value. The global assigns its own Temp0 before the contextual read.
+    std::string condition;put(condition,0x8002,2);put(condition,2,2);
+    condition.push_back(0);condition.push_back(4);condition.append(6,'\0');
+    put(condition,8,2);condition.push_back(1);condition.push_back(static_cast<char>(255));
+    for(auto b:std::array<std::uint8_t,8>{0,0,8,0,10,0,7,0})condition.push_back(static_cast<char>(b));
+    put(condition,301,2);condition.push_back(static_cast<char>(254));condition.push_back(static_cast<char>(255));condition.append(8,'\0');
+    write(path,iff(chunk("BHAV",4098,condition)));
+    odh::ObjectDefinition object{};object.guid=123;
+    const odh::DefinitionCandidate definition{path.string(),"",7,object};
+    odh::World world;
+    check(world.create(1,odh::EntityKind::avatar,{0,46,0,0})&&world.create(2,odh::EntityKind::object)&&
+          world.define_type(2,123)&&world.set_position(1,{16,16,1,0}),"room menu fixture has real actor/target identities");
+    odh::GeometricRoomMap map;map.light_base_rooms_resolved=true;map.rooms.resize(4);
+    for(std::uint16_t id=0;id<4;++id){map.rooms[id].id=id;map.rooms[id].light_base_room=id;}
+    map.rooms[1].area=24;map.rooms[1].outside=false;
+    map.rooms[2].area=37;map.rooms[2].outside=true;map.rooms[2].level=1;
+    map.rooms[3].area=99;map.rooms[3].outside=true;map.rooms[3].level=1;
+    map.rooms[3].pool=true;map.rooms[3].light_base_room=1;
+    const odh::GeometricRoomMap* current=&map;
+    odh::VmMemory source;std::vector<std::pair<std::int16_t,std::int16_t>> queries;
+    source.room_by_temp0=[&](const odh::VmFrame&,std::int16_t temp0,std::int16_t index){
+        queries.emplace_back(temp0,index);
+        return current?odh::room_by_temp0_data(*current,temp0,index):std::nullopt;
+    };
+    odh::RandomState random(42);const auto seed=random.seed();
+    const auto before=odh::encode_world_snapshot(world.snapshot());
+    struct Case{std::int16_t selector,index,value;};
+    const std::vector<Case> cases{{0,0,100},{0,1,0},{0,2,0},{0,3,24},{0,4,0},
+        {1,1,1},{1,2,1},{1,3,37},{2,1,0},{2,2,0},{2,3,24},{2,4,1},
+        {-32768,3,0},{32767,4,1}};
+    const auto evaluate=[&](Case c,const odh::VmMemory* provider,bool seeded_owner){
+        const auto lo=[](std::int16_t v){return static_cast<std::uint8_t>(static_cast<std::uint16_t>(v));};
+        const auto hi=[](std::int16_t v){return static_cast<std::uint8_t>(static_cast<std::uint16_t>(v)>>8);};
+        const auto bytes=expression_bhav({{0,0,lo(c.selector),hi(c.selector),0,5,8,7},
+            {lo(c.index),hi(c.index),lo(c.value),hi(c.value),0,2,23,7}});
+        std::istringstream input(bytes,std::ios::binary);const auto code=odh::read_bhav(odh::View(input,bytes.size()));
+        const odh::RoutineSet globals{{odh::routine_key(301),code}};
+        odh::Vm owner(odh::RoutineSet{{odh::routine_key(4096),code}});
+        check(owner.start(odh::routine_key(4096),{1,2,2,0})==odh::VmStatus::running,"register seed owner starts normally");
+        const auto owner_before=owner.snapshot();unsigned unexpected_host_calls=0;
+        const std::function<odh::VmPrimitive(const odh::VmMemory&,const odh::VmPrimitive&,odh::Vm*)> readonly=
+            [&](const auto&,const auto&,auto*){return odh::VmPrimitive{[&](const auto&,const auto&,const auto&,const auto&){
+                ++unexpected_host_calls;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"unexpected primitive in room check fixture"};}};};
+        const auto result=evaluate_saved_test_functions(definition,world,1,2,{4098},128,128,{0,0,0,0},
+            nullptr,{},nullptr,nullptr,{},&globals,nullptr,nullptr,std::nullopt,nullptr,false,{}, {},
+            seeded_owner?&owner:nullptr,false,{},provider,nullptr,{},&random,seeded_owner?readonly:decltype(readonly){});
+        check(unexpected_host_calls==0&&owner.steps()==owner_before.steps&&owner.temps()==owner_before.temps,
+            "room menu uses disposable VM registers and no host mutation primitive");
+        check(odh::encode_world_snapshot(world.snapshot())==before&&random.seed()==seed,
+            "room menu preserves complete World bytes and source RNG after a real random probe");
+        return result.front();
+    };
+    for(bool seeded:{false,true})for(const auto c:cases){
+        const auto result=evaluate(c,&source,seeded);
+        check(result.state==SavedTestFunctionResult::State::eligible,"shared menu reads authentic inside/outside/pool/level/area with Temp0+1 and clamping");
+        check(queries.back()==std::make_pair(c.selector,c.index),"typed room provider receives the executing probe Temp0 and data index");
+    }
+    check(evaluate({1,1,0},&source,false).state==SavedTestFunctionResult::State::ineligible,
+        "known outside room follows authored false predicate, not a fabricated indoors result");
+    check(evaluate({0,1,0},nullptr,false).state==SavedTestFunctionResult::State::unsupported,
+        "missing room provider is unsupported in a menu check");
+    check(evaluate({0,5,0},&source,false).state==SavedTestFunctionResult::State::unsupported,
+        "unknown RoomByTemp0 data index remains unsupported");
+    current=nullptr;
+    check(evaluate({0,1,0},&source,true).state==SavedTestFunctionResult::State::unsupported,
+        "missing live map is unsupported through the same copied provider");
+    current=&map;map.light_base_rooms_resolved=false;
+    check(evaluate({0,1,0},&source,false).state==SavedTestFunctionResult::State::unsupported,
+        "unresolved geometry is not silently treated as an indoor room");
+    map.light_base_rooms_resolved=true;map.rooms[1].outside=true;
+    check(evaluate({0,1,1},&source,false).state==SavedTestFunctionResult::State::eligible,
+        "later menu pass reads current admitted map instead of stale copied room facts");
 }
 void relationship_host_isolation(const std::filesystem::path& root){
     const auto path=root/"menu-relationship-host-isolation.iff";
@@ -519,6 +597,7 @@ int main(){try{
     semiglobal_table_discovery(root);
     relationship_host_isolation(root);
     readonly_menu_state(root);
+    room_scope_menu_projection(root);
     source_error_menu_matrix(root);
     explicit_named_check_resources(root);
     named_dynamic_menu_owner(root);
