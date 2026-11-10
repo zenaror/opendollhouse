@@ -1,4 +1,6 @@
 #include "odh/sha256.hpp"
+#include "session_resource_manifest.hpp"
+#include <algorithm>
 
 #include <cstdlib>
 #include <iomanip>
@@ -51,5 +53,30 @@ int main() {
     check(hex(million_a.finish()) ==
           "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
           "million repeated bytes match SHA-256 known answer");
-    std::cout << "sha256: 6 checks passed\n";
+    // Resource admission and preimage checks must hash the same bytes as the
+    // portable reference, independent of EVP/fallback and update boundaries.
+    for(std::size_t length=0;length<=129;++length){
+        std::string bytes(length,'\0');
+        for(std::size_t i=0;i<length;++i)bytes[i]=static_cast<char>((i*37u+11u)&255u);
+        const auto expected=odh::sha256(bytes.data(),bytes.size());
+        odh_host::ResourceSha256 resource;
+        resource.update(nullptr,0);
+        for(std::size_t at=0;at<length;){const auto n=std::min<std::size_t>(13,length-at);
+            resource.update(bytes.data()+at,n);at+=n;}
+        check(resource.finish()==expected,"resource digest preserves all SHA padding boundaries");
+        rejects([&]{(void)resource.finish();},"resource digest rejects repeated finish");
+        rejects([&]{resource.update(nullptr,0);},"resource digest rejects update after finish");
+    }
+    const std::string resource_bytes(65537,'x');
+    odh_host::ResourceSha256 resource_chunks;
+    resource_chunks.update(resource_bytes.data(),65536);
+    resource_chunks.update(resource_bytes.data()+65536,1);
+    check(resource_chunks.finish()==odh::sha256(resource_bytes.data(),resource_bytes.size()),
+        "resource streaming block plus tail preserves fingerprint");
+    odh_host::ResourceSha256 invalid_resource;
+    rejects([&]{invalid_resource.update(nullptr,1);},"resource digest rejects null nonempty input");
+    invalid_resource.update("abc",3);
+    check(hex(invalid_resource.finish())=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "rejected null update does not corrupt resource digest preimage");
+    std::cout << "sha256: portable known answers and shared resource backend parity passed\n";
 }

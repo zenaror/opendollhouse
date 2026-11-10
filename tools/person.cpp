@@ -1816,7 +1816,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         const auto add_iff=[&](auto& output,const auto& view,const std::string& source,const std::string& asset){
             odh::Limits limits;limits.iff_chunks=4096;
             if(dialog_metadata_fingerprints.size()>=8192)throw odh::FormatError("dialog metadata resource budget exceeded");
-            odh::Sha256 dialog_digest;std::array<char,65536> dialog_buffer{};
+            odh_host::ResourceSha256 dialog_digest;std::array<char,65536> dialog_buffer{};
             for(std::uint64_t offset=0;offset<view.size();){const auto count=static_cast<std::size_t>(std::min<std::uint64_t>(dialog_buffer.size(),view.size()-offset));
                 view.read(offset,dialog_buffer.data(),count);dialog_digest.update(dialog_buffer.data(),count);offset+=count;}
             const auto dialog_key=std::make_pair(std::filesystem::canonical(source).string(),asset);
@@ -3073,7 +3073,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(verify_current){
                 if(std::filesystem::file_size(path)!=pinned->second.bytes->size())
                     throw odh::FormatError("household character resource changed since it was loaded");
-                std::ifstream input(path,std::ios::binary);odh::Sha256 digest;std::array<char,65536> buffer{};
+                std::ifstream input(path,std::ios::binary);odh_host::ResourceSha256 digest;std::array<char,65536> buffer{};
                 while(input){input.read(buffer.data(),static_cast<std::streamsize>(buffer.size()));
                     if(input.gcount()>0)digest.update(buffer.data(),static_cast<std::size_t>(input.gcount()));}
                 if(!input.eof()||digest.finish()!=pinned->second.fingerprint)
@@ -7271,7 +7271,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         out.character_asset=odh::native_personal_resource_key(session_resource_key(session_context->game_root,definition->source),definition->asset);
         with_resource(Resource{definition->source,definition->asset,definition->asset.empty()},[&](const odh::View& view){
             if(view.size()>16u*1024u*1024u)throw odh::FormatError("family character source exceeds existing16MiB bound");
-            odh::Sha256 hash;std::array<std::uint8_t,4096> block{};
+            odh_host::ResourceSha256 hash;std::array<std::uint8_t,4096> block{};
             for(std::uint64_t at=0;at<view.size();){const auto n=static_cast<std::size_t>(std::min<std::uint64_t>(block.size(),view.size()-at));view.read(at,block.data(),n);hash.update(block.data(),n);at+=n;}
             out.character_fingerprint=hash.finish();
         });return out;

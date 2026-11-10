@@ -9,11 +9,55 @@
 #include <memory>
 #include <string>
 #include <system_error>
-#ifdef ODH_HAVE_OPENSSL_SHA256
+#if defined(ODH_HAVE_OPENSSL_SHA256) && !defined(ODH_RESOURCE_SHA256_FORCE_PORTABLE)
 #include <openssl/evp.h>
 #endif
 
 namespace odh_host {
+struct ResourceSha256::State {
+#if defined(ODH_HAVE_OPENSSL_SHA256) && !defined(ODH_RESOURCE_SHA256_FORCE_PORTABLE)
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digest{EVP_MD_CTX_new(),EVP_MD_CTX_free};
+    State() {
+        if (!digest || EVP_DigestInit_ex(digest.get(),EVP_sha256(),nullptr)!=1)
+            throw odh::FormatError("cannot initialize SHA-256 for game resource fingerprinting");
+    }
+#else
+    odh::Sha256 digest;
+#endif
+    std::uint64_t total_bytes=0;
+    bool finished=false;
+};
+ResourceSha256::ResourceSha256() : state_(std::make_unique<State>()) {}
+ResourceSha256::~ResourceSha256() = default;
+void ResourceSha256::update(const void* data,std::size_t size) {
+    auto& state=*state_;
+    if(state.finished)throw odh::FormatError("SHA-256 state is already finalized");
+    if(size && !data)throw odh::FormatError("SHA-256 input is null");
+    if(size>std::numeric_limits<std::uint64_t>::max()-state.total_bytes)
+        throw odh::FormatError("SHA-256 input length exceeds limit");
+#if defined(ODH_HAVE_OPENSSL_SHA256) && !defined(ODH_RESOURCE_SHA256_FORCE_PORTABLE)
+    if(size && EVP_DigestUpdate(state.digest.get(),data,size)!=1)
+        throw odh::FormatError("cannot update SHA-256 for game resource fingerprinting");
+#else
+    state.digest.update(data,size);
+#endif
+    state.total_bytes+=static_cast<std::uint64_t>(size);
+}
+std::array<std::uint8_t,32> ResourceSha256::finish() {
+    auto& state=*state_;
+    if(state.finished)throw odh::FormatError("SHA-256 state is already finalized");
+    if(state.total_bytes>std::numeric_limits<std::uint64_t>::max()/8u)
+        throw odh::FormatError("SHA-256 bit length exceeds limit");
+#if defined(ODH_HAVE_OPENSSL_SHA256) && !defined(ODH_RESOURCE_SHA256_FORCE_PORTABLE)
+    std::array<std::uint8_t,32> result{};unsigned int count=0;
+    if(EVP_DigestFinal_ex(state.digest.get(),result.data(),&count)!=1 || count!=result.size())
+        throw odh::FormatError("cannot finish SHA-256 for game resource fingerprinting");
+#else
+    const auto result=state.digest.finish();
+#endif
+    state.finished=true;
+    return result;
+}
 namespace {
 constexpr std::size_t maximum_files = 4096;
 constexpr std::size_t maximum_path_bytes = 4096;
@@ -50,14 +94,7 @@ void append_u64(odh::Sha256& digest, std::uint64_t value) {
 std::array<std::uint8_t,32> hash_file(const Resource& resource) {
     std::ifstream input(resource.resolved_path, std::ios::binary);
     if (!input) throw odh::FormatError("cannot open game resource for fingerprinting");
-#ifdef ODH_HAVE_OPENSSL_SHA256
-    using EvpContext = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
-    EvpContext digest(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-    if (!digest || EVP_DigestInit_ex(digest.get(), EVP_sha256(), nullptr) != 1)
-        throw odh::FormatError("cannot initialize SHA-256 for game resource fingerprinting");
-#else
-    odh::Sha256 digest;
-#endif
+    ResourceSha256 digest;
     std::array<char,read_block_bytes> buffer{};
     std::uint64_t bytes_read = 0;
     while (input) {
@@ -69,12 +106,7 @@ std::array<std::uint8_t,32> hash_file(const Resource& resource) {
             if (length > std::numeric_limits<std::uint64_t>::max() - bytes_read)
                 throw odh::FormatError("game resource size exceeds fingerprint limit");
             bytes_read += length;
-#ifdef ODH_HAVE_OPENSSL_SHA256
-            if (EVP_DigestUpdate(digest.get(), buffer.data(), static_cast<std::size_t>(count)) != 1)
-                throw odh::FormatError("cannot update SHA-256 for game resource fingerprinting");
-#else
             digest.update(buffer.data(), static_cast<std::size_t>(count));
-#endif
         }
     }
     if (!input.eof()) throw odh::FormatError("cannot read game resource for fingerprinting");
@@ -84,15 +116,7 @@ std::array<std::uint8_t,32> hash_file(const Resource& resource) {
     const auto size_after = std::filesystem::file_size(resource.resolved_path, error);
     if (error || size_after != resource.size)
         throw odh::FormatError("game resource changed while fingerprinting");
-#ifdef ODH_HAVE_OPENSSL_SHA256
-    std::array<std::uint8_t,32> result{};
-    unsigned int result_size = 0;
-    if (EVP_DigestFinal_ex(digest.get(), result.data(), &result_size) != 1 || result_size != result.size())
-        throw odh::FormatError("cannot finish SHA-256 for game resource fingerprinting");
-    return result;
-#else
     return digest.finish();
-#endif
 }
 }
 

@@ -28,9 +28,11 @@ inteiro. Um salvamento nativo anterior também foi reaberto sem alteração.
 Isso delimita uma continuação curta, sem aceitar todos os estados de scripts
 originais nem a apresentação da interface e do áudio.
 
-Em outro percurso, um pedido de refeição entrou na fila, mas a execução parou num
-diálogo sobre táxis antes de alcançar a continuação planejada. O resultado não
-comprova preparo ou consumo de comida nessa casa.
+Em um percurso separado, sem janela, um pedido de refeição numa casa importada
+prosseguiu pelo preparo, cozimento e serviço de uma refeição coletiva. O alimento
+ficou disponível no balcão, com o vínculo ao móvel preservado no estado salvo;
+a partida reabriu em outro processo com o arquivo inteiro idêntico. O consumo
+dessa refeição e o serviço completo de incêndio não foram conferidos nesse percurso.
 
 Um percurso com os dados originais mostrou a morte de uma moradora, a criação
 da urna e a retirada da personagem, preservando os outros dois moradores. A casa

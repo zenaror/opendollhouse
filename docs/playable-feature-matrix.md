@@ -8,7 +8,7 @@ implementado ou observado em parte; não significa sistema completo.
 | Dados e recursos | Parcial; entrada comum e salvamento com o relógio parado observados em uma casa original. | Outras casas, variantes, recursos ausentes e identidade em todos os consumidores. |
 | Scripts, objetos e interações | Parcial | Ciclo completo de criação, execução, cancelamento e retirada em mais perfis. |
 | Movimento e animação | Parcial | Escadas, obstáculos, personagens e ações nos percursos integrados; ampliar a conferência de animações já em andamento na importação clássica. |
-| Necessidades e autonomia | Parcial | Dia residencial completo, sem ações falhando silenciosamente. |
+| Necessidades e autonomia | Parcial; preparo, cozimento e serviço de uma refeição coletiva observados numa casa importada, com o alimento no balcão preservado ao salvar e reabrir. | Consumo dessa refeição e dia residencial completo, sem ações falhando silenciosamente. |
 | Incêndios | Parcial | Fogo, pânico e combate manual de um foco observados; a ação continuou após reabrir a partida, terminou com sucesso e o foco selecionado desapareceu. Ainda havia outros focos. Completar a cobertura de propagação, consequências, bombeiros por telefone ou alarme e apresentação. |
 | Roubo, polícia e alarme contra roubo | Em aberto | Chegada do ladrão, detecção, roubo, chamada manual ou por alarme, intervenção policial e consequências sobre os bens ao continuar a partida. |
 | Bebês | Em aberto | Nascimento ou adoção conforme as regras originais, cuidados, crescimento para criança, intervenções e continuidade da família após salvar. |
@@ -35,9 +35,10 @@ implementado ou observado em parte; não significa sistema completo.
 
 A continuação da importação clássica chegou a 64 passos após respostas únicas
 aos diálogos observados; a reabertura foi conferida sem avançar o relógio.
-O pedido de refeição apenas entrou na fila e parou num diálogo sobre táxis,
-sem comprovar preparo ou consumo. Esses casos sem janela não aceitam a
-interface, o áudio ou a continuidade de todos os estados de scripts originais.
+Em outro percurso, o preparo, cozimento e serviço de uma refeição coletiva
+chegaram ao alimento disponível no balcão, preservado ao salvar e reabrir.
+O consumo dessa refeição não foi conferido. Esses casos sem janela não aceitam
+a interface, o áudio ou a continuidade de todos os estados de scripts originais.
 
 A relação não substitui os [requisitos jogáveis](linux-playable-scope.md).
 Uma atividade bem-sucedida não aceita uma expansão inteira; testes de componentes

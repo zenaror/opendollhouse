@@ -1768,6 +1768,14 @@ if(BUILD_TESTING)
   add_executable(odh-sha256-tests tests/sha256.cpp)
   target_link_libraries(odh-sha256-tests PRIVATE odh_session_resource_identity)
   add_test(NAME sha256 COMMAND odh-sha256-tests)
+  # Compile the SAME implementation without its optional native backend, even
+  # when this build found OpenSSL. This executable links no crypto dependency.
+  add_executable(odh-resource-sha256-portable-tests tests/sha256.cpp
+    src/sha256.cpp tools/session_resource_manifest.cpp)
+  target_include_directories(odh-resource-sha256-portable-tests PRIVATE include tools)
+  target_compile_features(odh-resource-sha256-portable-tests PRIVATE cxx_std_17)
+  target_compile_definitions(odh-resource-sha256-portable-tests PRIVATE ODH_RESOURCE_SHA256_FORCE_PORTABLE=1)
+  add_test(NAME resource_sha256_portable COMMAND odh-resource-sha256-portable-tests)
   add_executable(odh-session-resource-manifest-tests tests/session_resource_manifest.cpp)
   target_link_libraries(odh-session-resource-manifest-tests PRIVATE odh_session_resource_identity)
   add_test(NAME session_resource_manifest COMMAND odh-session-resource-manifest-tests)

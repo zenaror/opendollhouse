@@ -36,6 +36,8 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Consertado
 
+- Conferência dos arquivos do jogo acelerada nos sistemas compatíveis,
+  preservando os resultados e a alternativa portátil.
 - Entrada comum de uma casa original, com recursos conferidos antes da recuperação
   e salvamento com o relógio parado, sem opções experimentais obrigatórias nesse percurso.
 - Reabertura de uma continuação curta da importação clássica, preservando o

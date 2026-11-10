@@ -1,7 +1,7 @@
 #include "linux_family_transfer.hpp"
 #include "linux_family_overlay_store.hpp"
 #include "linux_session_archive_store.hpp"
-#include "odh/sha256.hpp"
+#include "session_resource_manifest.hpp"
 #include <algorithm>
 #include <fstream>
 
@@ -12,7 +12,7 @@ std::array<std::uint8_t,32> fingerprint(const std::filesystem::path& path) {
         throw odh::FormatError("family transfer character is outside the bounded file profile");
     std::ifstream input(path,std::ios::binary);
     if(!input)throw odh::FormatError("cannot read family transfer character");
-    odh::Sha256 hash;std::array<char,65536> block{};
+    ResourceSha256 hash;std::array<char,65536> block{};
     while(input){input.read(block.data(),static_cast<std::streamsize>(block.size()));
         if(input.gcount()>0)hash.update(block.data(),static_cast<std::size_t>(input.gcount()));}
     if(!input.eof())throw odh::FormatError("cannot finish family transfer character fingerprint");
