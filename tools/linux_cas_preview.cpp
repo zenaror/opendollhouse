@@ -3,6 +3,7 @@
 #include "linux_cas_preview.hpp"
 #include "saved_appearance.hpp"
 #include "resource.hpp"
+#include "preview_archive_inventory.hpp"
 #include "original_portrait.hpp"
 #include <algorithm>
 #include <cmath>
@@ -76,17 +77,8 @@ struct LinuxCasPreview::Impl {
         animations=admit(root/"GameData/Animation/Animation.far");
         textures=admit(root/"GameData/Textures/Textures.far");
         skins=admit(root/"GameData/Skins");
-        std::set<std::string> unique;
-        std::size_t files=0;
-        for(const auto& entry:std::filesystem::recursive_directory_iterator(root)){
-            if(++files>200000)throw odh::FormatError("CAS preview installation index exceeds limit");
-            if(!entry.is_regular_file())continue;
-            auto extension=entry.path().extension().string();
-            std::transform(extension.begin(),extension.end(),extension.begin(),[](unsigned char c){return char(std::tolower(c));});
-            if(extension==".far")unique.insert(admit(entry.path()));
-        }
-        if(unique.size()>256)throw odh::FormatError("CAS preview archive count exceeds limit");
-        archives.assign(unique.begin(),unique.end());
+        const auto inventory=preview_detail::discover_archives(root);
+        archives=inventory.archives;
         for(const auto& entry:std::filesystem::directory_iterator(root))if(entry.is_directory()){
             const auto name=entry.path().filename().string();
             if(name=="Downloads")extra_skins.push_back(admit(entry.path()));
@@ -95,9 +87,9 @@ struct LinuxCasPreview::Impl {
                     if(std::filesystem::is_directory(entry.path()/leaf))extra_skins.push_back(admit(entry.path()/leaf));
             }
         }
-        std::printf("[cold-ui] stage=portrait-sources ms=%.3f filesystem_entries=%zu archives=%zu loose_roots=%zu\n",
+        std::printf("[cold-ui] stage=portrait-sources ms=%.3f filesystem_entries=%zu archives=%zu loose_roots=%zu regular_checks=%zu\n",
             std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count(),
-            files,archives.size(),extra_skins.size());
+            inventory.filesystem_entries,archives.size(),extra_skins.size(),inventory.regular_checks);
     }
     odh::BitmapImage render(const SimitoneCasPersonInput& person,bool portrait){
         odh::AvatarBodyStrings body;

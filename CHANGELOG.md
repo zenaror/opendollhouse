@@ -45,10 +45,15 @@ There is no stable public release yet.
 
 ### Fixed
 
+- Portable resource readers keep a limited number of files open during previews.
+  File-open failures now include the path and system error in the log. Preview
+  discovery avoids unnecessary file checks while retaining deep custom content.
 - Reduced repeated interface, portrait and text-table file reads, bitmap scaling
   work and action-menu image copies on Vita and Switch, preserving the original
   layout. Added measurements for the first frame when entering a house.
   Physical-device performance still needs confirmation with the updated builds.
+- Reduced repeated HUD image conversions and copies while preserving its pixels,
+  portrait button states, needs arrows and language-specific layout.
 - Vita house-loading crash caused by unsupported integer formatting in its
   system library. Log capture now handles both kinds of SDK output streams;
   periodic input measurements help investigate stalls on the device.

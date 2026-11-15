@@ -1,6 +1,7 @@
 #ifndef __3DS__
 /* SPDX-License-Identifier: MPL-2.0 */
 #include "app/ui/OriginalPCUI.h"
+#include "app/ui/OriginalPresentation.h"
 #include "app/front/TS1Font.h"
 #include "app/front/ResGraphics.h"
 #include "linux_text_renderer.hpp"
@@ -82,12 +83,9 @@ struct OriginalPCUI::Impl {
     std::map<uint32_t,AvatarIcon> queue_faces;
     explicit Impl(const std::string& r):root(r),panel(r),queue(r),catalog(r){}
     void copy_in(const Canvas& c,int y,int h){
-        if(surface.width!=unsigned(c.Width)||surface.height!=unsigned(c.Height)){
-            surface.width=c.Width;surface.height=c.Height;surface.pixels.resize(c.Px.size());
-        }
-        for(int yy=std::max(0,y);yy<std::min(c.Height,y+h);++yy)for(int x=0;x<c.Width;++x){auto p=c.Px[size_t(yy)*c.Width+x];surface.pixels[size_t(yy)*c.Width+x]={uint8_t(p),uint8_t(p>>8),uint8_t(p>>16),uint8_t(p>>24)};}
+        original::Raster(c,surface,Rect{0,y,c.Width,h});
     }
-    void copy_out(Canvas& c,int y,int h){for(int yy=std::max(0,y);yy<std::min(c.Height,y+h);++yy)for(int x=0;x<c.Width;++x){const auto& p=surface.pixels[size_t(yy)*c.Width+x];c.Px[size_t(yy)*c.Width+x]=RGBA(p[0],p[1],p[2],p[3]);}}
+    void copy_out(Canvas& c,int y,int h){original::Copy(surface,c,Rect{0,y,c.Width,h});}
     const odh::BitmapImage* generated(const odh::AvatarBodyStrings& body){
         if(!portraits)portraits.reset(new odh_host::LinuxCasPreview(root));
         auto image=portraits->hud_portrait(body);
@@ -222,7 +220,7 @@ OriginalPCUI::~OriginalPCUI()=default;
 OriginalPCUI& OriginalPCUI::Get(){static std::unique_ptr<OriginalPCUI> instance;auto root=FSO::Content::Content::Get()->SimsCompleteDir;if(!instance||instance->P->root!=root)instance.reset(new OriginalPCUI(root));return *instance;}
 void OriginalPCUI::DrawPanel(Canvas& c,odh_host::OriginalPanelMode mode,const odh_host::OriginalPanelState& state){P->last_state=state;P->last_layout=odh_host::original_control_panel_layout(c.Width,c.Height);if(mode!=odh_host::OriginalPanelMode::live){P->last_state.live_tabs.fill(false);P->last_state.inventory_enabled=false;P->last_state.simulation_speed.reset();}P->copy_in(c,c.Height-183,183);P->panel.draw(P->surface,mode,state);P->copy_out(c,c.Height-183,183);}
 const Canvas* OriginalPCUI::Face(Avatar* a,int frame){if(!a||!a->Object||!a->Object->Resource)return nullptr;auto& f=P->faces(a);return &f.canvases[std::clamp(frame,0,int(f.canvases.size())-1)];}
-void OriginalPCUI::DrawPortrait(Canvas& c,odh::UiBitmapRect r,bool selected,Avatar* a){if(!a)return;auto& f=P->faces(a);const auto* image=f.images.faces.empty()?&*f.generated:&f.images.faces[0];P->copy_in(c,r.y,r.height);const auto contains=[&](const std::optional<std::array<int,2>>& p){return p&&r.contains((*p)[0],(*p)[1]);};const auto state=odh_host::original_button_frame(true,selected,contains(P->last_state.pointer),contains(P->last_state.press_origin));P->panel.draw_portrait_state(P->surface,r,state,image,true);P->copy_out(c,r.y,r.height);}
+void OriginalPCUI::DrawPortrait(Canvas& c,odh::UiBitmapRect r,bool selected,Avatar* a){if(!a)return;auto& f=P->faces(a);const auto* image=f.images.faces.empty()?&*f.generated:&f.images.faces[0];const Rect bounds{r.x,r.y,r.width,r.height};original::Raster(c,P->surface,bounds);const auto contains=[&](const std::optional<std::array<int,2>>& p){return p&&r.contains((*p)[0],(*p)[1]);};const auto state=odh_host::original_button_frame(true,selected,contains(P->last_state.pointer),contains(P->last_state.press_origin));P->panel.draw_portrait_state(P->surface,r,state,image,true);original::Copy(P->surface,c,bounds);}
 std::vector<odh_host::QueueTile> OriginalPCUI::QueueTiles(Avatar* a,int width,int height){
     if(!a||!a->Thread)return {};
     odh::InteractionQueueSnapshot snapshot{};snapshot.actor_id=a->ObjectID;snapshot.actor_generation=snapshot.run_generation=1;

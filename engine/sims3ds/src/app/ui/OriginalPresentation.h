@@ -5,14 +5,42 @@
 #include "odh/raster.hpp"
 #include "odh/bitmap.hpp"
 #include <algorithm>
+#include <cstring>
 namespace simapp { namespace original {
+namespace detail {
+using RasterPixel=std::array<std::uint8_t,4>;
+inline void ImportPortable(const std::uint32_t* source,RasterPixel* target,std::size_t count){
+    for(std::size_t i=0;i<count;++i){const auto p=source[i];
+        target[i]={uint8_t(p),uint8_t(p>>8),uint8_t(p>>16),uint8_t(p>>24)};}
+}
+inline void ExportPortable(const RasterPixel* source,std::uint32_t* target,std::size_t count){
+    for(std::size_t i=0;i<count;++i){const auto& p=source[i];target[i]=RGBA(p[0],p[1],p[2],p[3]);}
+}
+inline void Import(const std::uint32_t* source,RasterPixel* target,std::size_t count){
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    // Canvas R|G<<8|B<<16|A<<24 has exactly the RasterPixel byte layout here.
+    // memcpy preserves alpha and avoids aliasing through a different object type.
+    static_assert(sizeof(RasterPixel)==sizeof(std::uint32_t),"RGBA pixel size");
+    if(count)std::memcpy(target,source,count*sizeof(RasterPixel));
+#else
+    ImportPortable(source,target,count);
+#endif
+}
+inline void Export(const RasterPixel* source,std::uint32_t* target,std::size_t count){
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    if(count)std::memcpy(target,source,count*sizeof(RasterPixel));
+#else
+    ExportPortable(source,target,count);
+#endif
+}
+}
 inline odh::RasterFrame Raster(const Canvas& c) {
-    odh::RasterFrame f{}; f.width=c.Width;f.height=c.Height;f.pixels.reserve(c.Px.size());
-    for(auto p:c.Px)f.pixels.push_back({uint8_t(p),uint8_t(p>>8),uint8_t(p>>16),uint8_t(p>>24)});
+    odh::RasterFrame f{}; f.width=c.Width;f.height=c.Height;f.pixels.resize(c.Px.size());
+    detail::Import(c.Px.data(),f.pixels.data(),c.Px.size());
     return f;
 }
 inline void Copy(const odh::RasterFrame& f,Canvas& c){
-    for(size_t i=0;i<c.Px.size();++i){const auto& p=f.pixels[i];c.Px[i]=RGBA(p[0],p[1],p[2],p[3]);}
+    detail::Export(f.pixels.data(),c.Px.data(),c.Px.size());
 }
 inline Rect Clip(const Canvas& c,const Rect& region){
     const auto x=std::clamp(region.X,0,c.Width),y=std::clamp(region.Y,0,c.Height);
@@ -26,16 +54,16 @@ inline void Raster(const Canvas& c,odh::RasterFrame& f,const Rect& region){
     f.width=static_cast<std::uint32_t>(c.Width);f.height=static_cast<std::uint32_t>(c.Height);
     f.pixels.resize(c.Px.size());
     const auto r=Clip(c,region);
-    for(int y=r.Y;y<r.Y+r.H;++y)for(int x=r.X;x<r.X+r.W;++x){
-        const auto i=size_t(y)*c.Width+x;const auto p=c.Px[i];
-        f.pixels[i]={uint8_t(p),uint8_t(p>>8),uint8_t(p>>16),uint8_t(p>>24)};
+    for(int y=r.Y;y<r.Y+r.H;++y){
+        const auto i=size_t(y)*c.Width+r.X;
+        detail::Import(c.Px.data()+i,f.pixels.data()+i,size_t(r.W));
     }
 }
 inline void Copy(const odh::RasterFrame& f,Canvas& c,const Rect& region){
     const auto r=Clip(c,region);
-    for(int y=r.Y;y<r.Y+r.H;++y)for(int x=r.X;x<r.X+r.W;++x){
-        const auto i=size_t(y)*c.Width+x;const auto& p=f.pixels[i];
-        c.Px[i]=RGBA(p[0],p[1],p[2],p[3]);
+    for(int y=r.Y;y<r.Y+r.H;++y){
+        const auto i=size_t(y)*c.Width+r.X;
+        detail::Export(f.pixels.data()+i,c.Px.data()+i,size_t(r.W));
     }
 }
 inline odh::BitmapImage Bitmap(const Canvas& c){auto f=Raster(c);return {f.width,f.height,32,true,std::move(f.pixels),0};}

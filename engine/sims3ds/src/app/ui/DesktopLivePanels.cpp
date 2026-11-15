@@ -32,6 +32,7 @@
 #include "original_live_help.hpp"
 #include "linux_motive_panel.hpp"
 #include "app/ui/OriginalPresentation.h"
+#include "app/ui/OriginalNeedsPresentation.h"
 #include "simantics/model/VMMotive.h"
 #include "linux_text_codec.hpp"
 #include "linux_text_renderer.hpp"
@@ -145,13 +146,12 @@ void DrawDesktopNeedsPanel(Canvas& canvas,LotSession& session,const std::array<i
     odh_host::StatusHud status;status.needs.emplace();
     for(size_t i=0;i<7;++i)(*status.needs)[i]=sim->GetMotiveData(order[i]);
     status.room_score=sim->GetMotiveData(VMMotive::Room);
-    auto frame=Raster(canvas);const auto layout=odh_host::original_control_panel_layout(canvas.Width,canvas.Height);
+    const auto layout=odh_host::original_control_panel_layout(canvas.Width,canvas.Height);
     const auto* tall_art=assets.art->find("cpanel\\backgrounds\\tallsubpanel.tga");
     const auto geometry=odh_host::original_motive_panel_geometry(canvas.Width,canvas.Height,layout,assets.language,tall_art);
-    (void)odh_host::draw_motive_panel(frame,status,assets.language,
-        tall_art,&layout,sim->IsPet()?&assets.pet_needs_labels:&assets.needs_labels,
-        sim->IsPet()?&assets.pet_needs_heading:&assets.needs_heading,&geometry,&change_arrows);
-    Copy(frame,canvas);
+    (void)DrawNeeds(canvas,assets.surface,status,assets.language,tall_art,layout,
+        sim->IsPet()?&assets.pet_needs_labels:&assets.needs_labels,
+        sim->IsPet()?&assets.pet_needs_heading:&assets.needs_heading,geometry,change_arrows);
 }
 
 void OfferDesktopControlHelp(Canvas& canvas,LotScreen& screen){
@@ -386,10 +386,10 @@ void DrawDesktopLivePanel(Canvas& canvas,LotScreen& screen,odh_host::LivePanelTa
             screen.OfferDesktopHover(*text,"career-hours","career",0,Rect(box.x,box.y,box.width,box.height));
         }
     }
-    auto& frame=assets.surface;frame.width=canvas.Width;frame.height=canvas.Height;frame.pixels.resize(canvas.Px.size());
+    auto& frame=assets.surface;
     const int top=std::max(0,common.right_content.y);
-    for(int y=top;y<canvas.Height;++y)for(int x=0;x<canvas.Width;++x){auto p=canvas.Px[size_t(y)*canvas.Width+x];
-        frame.pixels[size_t(y)*canvas.Width+x]={uint8_t(p),uint8_t(p>>8),uint8_t(p>>16),uint8_t(p>>24)};}
+    const Rect region{0,top,canvas.Width,canvas.Height-top};
+    Raster(canvas,frame,region);
     InstallTextBackendIfNeeded();
     view.draw(frame,snapshot,[&](odh::RasterFrame& image,std::string_view text,const odh::UiBitmapRect& box,bool title,odh_host::LiveTextAlignment alignment){
         odh_host::TextOverlayStyle style;style.x=box.x;style.y=box.y;style.width=box.width;style.height=box.height;
@@ -428,8 +428,7 @@ void DrawDesktopLivePanel(Canvas& canvas,LotScreen& screen,odh_host::LivePanelTa
         style.centered=alignment==odh_host::LiveTextAlignment::center;style.right_aligned=alignment==odh_host::LiveTextAlignment::right;
         (void)odh_host::draw_text_overlay(image,text,assets.language,style);
     });
-    for(int y=top;y<canvas.Height;++y)for(int x=0;x<canvas.Width;++x){const auto& p=frame.pixels[size_t(y)*canvas.Width+x];
-        canvas.Px[size_t(y)*canvas.Width+x]=RGBA(p[0],p[1],p[2],p[3]);}
+    Copy(frame,canvas,region);
     const auto selected=careerState.selection.selected();
     if(tab==odh_host::LivePanelTab::career&&snapshot.career&&selected){
         const auto& career=*snapshot.career;const auto& info=career.help[*selected];

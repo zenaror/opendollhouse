@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "resource.hpp"
+#include "preview_archive_inventory.hpp"
+#include <thread>
+#include <atomic>
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 #include <chrono>
 #include <cstring>
 #include <iostream>
@@ -54,5 +62,102 @@ void manifest_identity(const std::filesystem::path& root){
  BufferedResourceFile changed(one.string());auto replaced=shared_far_manifest(one.string(),odh::View(changed,std::filesystem::file_size(one)));check(first!=replaced&&replaced->at(0).name=="Later","modified source reused stale index");check(first->at(0).name=="First","immutable old owner changed");
  save(one,far("LongerName"));BufferedResourceFile resized(one.string());auto grown=shared_far_manifest(one.string(),odh::View(resized,std::filesystem::file_size(one)));check(grown->at(0).name=="LongerName","resized source reused stale index");
 }
+constexpr std::size_t SourceBytes=196731;
+char source_byte(std::size_t owner,std::size_t offset){return static_cast<char>((owner*29+offset*71+9)%256);}
+std::filesystem::path source_path(const std::filesystem::path& root,std::size_t owner){return root/("owner-"+std::to_string(owner)+".bin");}
+void make_sources(const std::filesystem::path& root){
+ for(std::size_t owner=0;owner<90;++owner){std::string bytes(SourceBytes,'\0');for(std::size_t n=0;n<bytes.size();++n)bytes[n]=source_byte(owner,n);save(source_path(root,owner),bytes);}
 }
-int main(){try{Temp temp;buffered_reads(temp.root);entry_lifetime(temp.root);manifest_identity(temp.root);std::cout<<"Buffered resource reads, bounds and live manifest identity passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+void owner_read(BufferedResourceFile& input,std::size_t owner,std::size_t offset){
+ std::array<char,23> bytes{};odh::View view(input,SourceBytes);view.read(offset,bytes.data(),bytes.size());
+ for(std::size_t n=0;n<bytes.size();++n)check(bytes[n]==source_byte(owner,offset+n),"evicted owner read another owner's bytes");
+ check(resource_io_counters().live_handles<=BufferedResourceFile::HandleLimit,"resource backing handle budget exceeded");
+}
+void many_owners(const std::filesystem::path& root){
+ const auto owners_before=resource_io_counters().owners.load(),handles_before=resource_io_counters().live_handles.load();
+ {
+  std::vector<std::unique_ptr<BufferedResourceFile>> owners;
+  for(std::size_t n=0;n<90;++n){owners.emplace_back(new BufferedResourceFile(source_path(root,n).string()));check(bool(*owners.back()),"90-owner admission failed");owner_read(*owners.back(),n,0);}
+  const auto opens=resource_io_counters().opens.load();owner_read(*owners.front(),0,19);
+  check(resource_io_counters().opens==opens,"evicted in-window hit reopened the source");
+  for(std::size_t pass=0;pass<6;++pass)for(std::size_t n=0;n<owners.size();++n)owner_read(*owners[n],n,65530+(pass%2)*65536);
+  BufferedResourceFile independent(source_path(root,0).string());owners[0]->clear();owners[0]->seekg(17);independent.seekg(131081);
+  char a{},b{};owners[0]->read(&a,1);independent.read(&b,1);check(a==source_byte(0,17)&&b==source_byte(0,131081),"same path owners shared a cursor");
+  check(owners[0]->tellg()==18&&independent.tellg()==131082,"owner logical positions interfered");
+  independent.seekg(-3,std::ios::end);check(independent.tellg()==static_cast<std::streamoff>(SourceBytes-3),"evicted end seek failed");
+  for(std::size_t n=0;n<owners.size();n+=2)owners[n].reset();
+ }
+ check(resource_io_counters().owners==owners_before&&resource_io_counters().live_handles==handles_before,"owner teardown left registered readers/handles");
+ try{std::vector<std::unique_ptr<BufferedResourceFile>> unwind;for(int n=0;n<10;++n)unwind.emplace_back(new BufferedResourceFile(source_path(root,n).string()));throw std::runtime_error("unwind");}catch(const std::runtime_error&){}
+ check(resource_io_counters().owners==owners_before&&resource_io_counters().live_handles==handles_before,"exception unwind left registered readers/handles");
+}
+void descriptor_limit(const std::filesystem::path& root){
+#if defined(__linux__)
+ const auto child=::fork();check(child>=0,"fork descriptor fixture");
+ if(child==0){
+  try{
+   struct rlimit limit{};check(::getrlimit(RLIMIT_NOFILE,&limit)==0,"read descriptor budget");limit.rlim_cur=64;check(::setrlimit(RLIMIT_NOFILE,&limit)==0,"set child descriptor budget");
+   std::vector<std::ifstream> other;for(int n=0;n<16;++n){other.emplace_back(source_path(root,0),std::ios::binary);check(bool(other.back()),"open native-budget stand-in");}
+   std::vector<std::ifstream> retained;bool exhausted=false;
+   for(int n=0;n<90;++n){errno=0;retained.emplace_back(source_path(root,n),std::ios::binary);const int error=errno;if(!retained.back()){check(error==EMFILE,"retained baseline failed for a non-budget reason");exhausted=true;break;}}
+   check(exhausted,"retained baseline unexpectedly fit child descriptor budget");retained.clear();
+   many_owners(root);check(resource_io_counters().peak_handles<=BufferedResourceFile::HandleLimit,"child peak exceeded resource budget");::_exit(0);
+  }catch(const std::exception& error){std::cerr<<"descriptor child: "<<error.what()<<'\n';::_exit(1);}
+ }
+ int status=0;check(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0,"bounded readers failed child descriptor fixture");
+#else
+ (void)root;
+#endif
+}
+void concurrent_owners(const std::filesystem::path& root){
+ const auto before=resource_io_counters().owners.load();std::atomic<bool> start{false},failed{false};std::vector<std::thread> workers;
+ for(std::size_t worker=0;worker<8;++worker)workers.emplace_back([&,worker]{
+  try{std::vector<std::unique_ptr<BufferedResourceFile>> inputs;for(std::size_t n=0;n<8;++n)inputs.emplace_back(new BufferedResourceFile(source_path(root,worker*8+n).string()));
+   while(!start.load())std::this_thread::yield();
+   for(std::size_t n=0;n<150;++n)owner_read(*inputs[n%8],worker*8+n%8,(n*7919)%(SourceBytes-23));
+  }catch(...){failed=true;}
+ });
+ start=true;for(auto& thread:workers)thread.join();check(!failed,"independent owners raced while handles were evicted");
+ check(resource_io_counters().owners==before&&resource_io_counters().live_handles==0,"thread teardown left registered readers");
+}
+void changed_reopen(const std::filesystem::path& root){
+ const auto path=root/"mutable.bin";
+ for(int scenario=0;scenario<3;++scenario){
+  std::string original(SourceBytes,'A');save(path,original);const auto old_time=std::filesystem::last_write_time(path);
+  BufferedResourceFile old(path.string());char byte{};old.read(&byte,1);check(byte=='A',"seed immutable owner window");
+  std::vector<std::unique_ptr<BufferedResourceFile>> churn;for(int n=0;n<5;++n)churn.emplace_back(new BufferedResourceFile(source_path(root,n).string()));
+  if(scenario==0){save(path,std::string(SourceBytes+1,'B'));}
+  else if(scenario==1){std::filesystem::remove(path);}
+  else{
+   const auto replacement=root/"replacement.bin";save(replacement,std::string(SourceBytes,'B'));std::filesystem::last_write_time(replacement,old_time);
+   std::filesystem::rename(replacement,path);
+  }
+  // Cached bytes are immutable snapshots, not claims of revalidated disk state.
+  const auto opens=resource_io_counters().opens.load();old.clear();old.seekg(9);old.read(&byte,1);check(byte=='A'&&resource_io_counters().opens==opens,"cached window was replaced or restatted through open");
+#if defined(__linux__) || defined(__APPLE__)
+  old.clear();old.seekg(131080);old.read(&byte,1);check(!old,"changed/removed/replaced source reopened unchecked");
+  check(old.diagnostic().find(path.string())!=std::string::npos&&old.diagnostic().find("reopen-identity")!=std::string::npos,"reopen rejection lost source identity diagnostic");
+#else
+  if(scenario!=2){old.clear();old.seekg(131080);old.read(&byte,1);check(!old,"changed source reopened unchecked");}
+#endif
+  if(scenario!=1){BufferedResourceFile fresh(path.string());fresh.read(&byte,1);check(byte=='B',"new owner inherited an old source window");}
+ }
+ BufferedResourceFile missing((root/"not-present.bin").string());check(!missing&&missing.diagnostic().find("initial-open")!=std::string::npos&&missing.diagnostic().find("errno="+std::to_string(ENOENT))!=std::string::npos,"initial open failure lost path/errno evidence");
+ BufferedResourceFile directory(root.string());check(!directory&&directory.diagnostic().find("identity")!=std::string::npos,"unsupported source metadata/type was admitted");
+}
+void preview_inventory(const std::filesystem::path& root){
+ const auto tree=root/"inventory";std::filesystem::create_directories(tree/"Downloads/deep/custom");std::filesystem::create_directories(tree/"directory.FAR");
+ save(tree/"Main.FAR","a");save(tree/"Downloads/deep/custom/skin.fAr","b");save(tree/"directory.FAR/inside.far","c");
+ for(int n=0;n<40;++n)save(tree/("unrelated-"+std::to_string(n)+".txt"),"ignored");
+ std::error_code symlink_error;std::filesystem::create_symlink(tree/"Main.FAR",tree/"alias.far",symlink_error);
+ const auto canonical=std::filesystem::canonical(tree);const auto inventory=odh_host::preview_detail::discover_archives(canonical);
+ std::vector<std::string> expected{std::filesystem::canonical(tree/"Main.FAR").string(),std::filesystem::canonical(tree/"Downloads/deep/custom/skin.fAr").string(),std::filesystem::canonical(tree/"directory.FAR/inside.far").string()};std::sort(expected.begin(),expected.end());
+ check(inventory.archives==expected,"complete nested/mixed-case/symlink archive inventory changed");
+ std::size_t visited=0;for(const auto& entry:std::filesystem::recursive_directory_iterator(tree)){(void)entry;++visited;}
+ check(inventory.filesystem_entries==visited&&inventory.regular_checks<=5&&inventory.regular_checks<visited,"discovery skipped traversal entries or queried every unrelated file");
+ rejects([&]{(void)odh_host::preview_detail::discover_archives(canonical,2);});rejects([&]{(void)odh_host::preview_detail::discover_archives(canonical,200000,2);});
+ if(!symlink_error){save(root/"outside.far","outside");std::filesystem::create_symlink(root/"outside.far",tree/"escaped.far");rejects([&]{(void)odh_host::preview_detail::discover_archives(canonical);});}
+}
+
+}
+int main(){try{Temp temp;buffered_reads(temp.root);entry_lifetime(temp.root);manifest_identity(temp.root);make_sources(temp.root);descriptor_limit(temp.root);many_owners(temp.root);concurrent_owners(temp.root);changed_reopen(temp.root);preview_inventory(temp.root);check(resource_io_counters().live_handles==0&&resource_io_counters().owners==0,"final resource lifetime leak");std::cout<<"Buffered resource reads, handle budget, lifetime, identity and complete preview inventory passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

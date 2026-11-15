@@ -49,6 +49,10 @@ separate a slow first menu opening from slow drawing afterward.
 simulation, drawing and audio. They appear once per house entry, helping locate
 a loading delay without adding information to the game screen.
 
+If a resource file cannot open, the log includes its path and the system error
+when available. Resource handle counters cover this reader service, not every
+file opened by the whole application. Keep the complete log when reporting it.
+
 The log helps identify which stage took time and how much memory the program
 used. You do not need to interpret its numbers to report a problem. If the file
 is empty or missing, include that with your steps: its absence also helps the
