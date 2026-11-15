@@ -69,6 +69,18 @@ std::string far_names(const std::vector<std::string>& names) {
     }
     return bytes;
 }
+// Count physical stream operations, independent of elapsed host time.
+class CountingBuffer : public std::stringbuf {
+public:
+    explicit CountingBuffer(const std::string& bytes):std::stringbuf(bytes,std::ios::in){}
+    unsigned seeks=0,reads=0;
+    std::streamsize xsgetn(char* destination,std::streamsize count) override {
+        ++reads;return std::stringbuf::xsgetn(destination,count);
+    }
+    pos_type seekpos(pos_type pos,std::ios_base::openmode mode) override {
+        ++seeks;return std::stringbuf::seekpos(pos,mode);
+    }
+};
 } // namespace
 
 int main() {
@@ -130,6 +142,17 @@ int main() {
                 require(odh::read_bhav(c.payload).instructions.size() == 2, "nested BHAV");
             }) == "2.5" && visited == 1, "IFF enumeration");
         });
+        {
+            std::vector<std::string> many_names;
+            for (unsigned i=0;i<4096;++i) many_names.push_back("entry-"+std::to_string(i)+".bmp");
+            const auto bytes=far_names(many_names);
+            CountingBuffer buffer(bytes);std::istream input(&buffer);
+            const auto index=odh::far1_index(odh::View(input,bytes.size()));
+            require(index.size()==many_names.size()&&index.back().name==many_names.back(),
+                "bulk FAR metadata preserves entry order and final name");
+            require(buffer.seeks<=5&&buffer.reads<=5,
+                "FAR metadata I/O remains constant for thousands of entries");
+        }
         auto archive = far(container);
         const auto names = far_names({"same", "same"});
         use(names, [](const odh::View& v) {

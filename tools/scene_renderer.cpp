@@ -1,3 +1,4 @@
+#include "resource.hpp"
 #include "scene_renderer.hpp"
 #include "odh/skinning.hpp"
 #include "odh/mesh.hpp"
@@ -147,10 +148,10 @@ PortraitPolygon clip_portrait_triangle(const PortraitView& camera,
 // retained in the renderer's immutable asset or decoded-resource caches.
 class Archive {
 public:
-    explicit Archive(const std::string& path) : input_(path, std::ios::binary) {
+    explicit Archive(const std::string& path) : input_(path) {
         if (!input_) throw odh::FormatError("scene renderer cannot open archive: " + path);
         size_ = std::filesystem::file_size(path);
-        entries_ = odh::far1_index(odh::View(input_, size_));
+        entries_ = shared_far_manifest(path,odh::View(input_, size_));
     }
     odh::View exact(const std::string& name) {
         return view(select(name, false));
@@ -165,7 +166,7 @@ private:
     const odh::FarEntry& select(const std::string& name, bool insensitive) const {
         const auto key = insensitive ? fold(name) : name;
         const odh::FarEntry* selected = nullptr;
-        for (const auto& entry : entries_) {
+        for (const auto& entry : *entries_) {
             if ((insensitive ? fold(entry.name) : entry.name) != key) continue;
             if (selected) throw odh::FormatError("scene renderer ambiguous archive entry: " + name);
             selected = &entry;
@@ -173,9 +174,9 @@ private:
         if (!selected) throw odh::FormatError("scene renderer archive entry not found: " + name);
         return *selected;
     }
-    std::ifstream input_;
+    BufferedResourceFile input_;
     std::uint64_t size_ = 0;
-    std::vector<odh::FarEntry> entries_;
+    std::shared_ptr<const std::vector<odh::FarEntry>> entries_;
 };
 
 const odh::Chunk& unique_chunk(const std::vector<odh::Chunk>& chunks,
@@ -191,21 +192,21 @@ const odh::Chunk& unique_chunk(const std::vector<odh::Chunk>& chunks,
 }
 
 odh::AppearanceCollection loose_cmx(const std::string& path) {
-    std::ifstream input(path,std::ios::binary);
+    BufferedResourceFile input(path);
     if(!input)throw odh::FormatError("scene renderer cannot open loose CMX: "+path);
     auto result=odh::read_cmx_appearances(odh::View(input,std::filesystem::file_size(path)));
     if(result.remaining_bytes)throw odh::FormatError("scene renderer trailing CMX bytes");
     return result;
 }
 odh::Mesh loose_skn(const std::string& path) {
-    std::ifstream input(path,std::ios::binary);
+    BufferedResourceFile input(path);
     if(!input)throw odh::FormatError("scene renderer cannot open loose SKN: "+path);
     auto result=odh::read_skn(odh::View(input,std::filesystem::file_size(path)));
     if(result.remaining_bytes)throw odh::FormatError("scene renderer trailing SKN bytes");
     return result;
 }
 odh::BitmapImage loose_bmp(const std::string& path) {
-    std::ifstream input(path,std::ios::binary);
+    BufferedResourceFile input(path);
     if(!input)throw odh::FormatError("scene renderer cannot open loose BMP: "+path);
     return odh::read_bmp(odh::View(input,std::filesystem::file_size(path)));
 }

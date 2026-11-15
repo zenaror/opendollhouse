@@ -9,13 +9,23 @@
 #include <cctype>
 #include <deque>
 #include <set>
+#include <chrono>
+#include <cstdio>
 
 namespace odh_host {
 struct LinuxCasPreview::Impl {
     std::filesystem::path root;
     std::string animations,textures,skins;
     std::vector<std::string> archives,extra_skins;
-    std::unique_ptr<SavedAppearanceResources> adults,children;
+    std::unique_ptr<SavedAppearanceResources> resources;
+    SavedAppearanceResources& appearance_resources(){
+        if(!resources){
+            ColdResourceStage stage("portrait-metadata");
+            resources=std::make_unique<SavedAppearanceResources>(animations,textures,
+                "adult-skeleton.cmx.bcf","adult",skins,archives,extra_skins);
+        }
+        return *resources;
+    }
     struct Entry {std::string key;std::optional<odh::BitmapImage> image;std::string error;std::string source;};
     std::string error,last_source;
     std::deque<Entry> cache,portraits;
@@ -55,6 +65,7 @@ struct LinuxCasPreview::Impl {
     }
 
     explicit Impl(const std::filesystem::path& path):root(odh::hostfs::canonical(path)) {
+        const auto started=std::chrono::steady_clock::now();
         const auto admit=[&](const std::filesystem::path& candidate){
             const auto full=odh::hostfs::canonical(candidate);
             const auto relative=full.lexically_relative(root);
@@ -84,6 +95,9 @@ struct LinuxCasPreview::Impl {
                     if(std::filesystem::is_directory(entry.path()/leaf))extra_skins.push_back(admit(entry.path()/leaf));
             }
         }
+        std::printf("[cold-ui] stage=portrait-sources ms=%.3f filesystem_entries=%zu archives=%zu loose_roots=%zu\n",
+            std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count(),
+            files,archives.size(),extra_skins.size());
     }
     odh::BitmapImage render(const SimitoneCasPersonInput& person,bool portrait){
         odh::AvatarBodyStrings body;
@@ -95,12 +109,10 @@ struct LinuxCasPreview::Impl {
         return render_body(body,person.child,portrait);
     }
     odh::BitmapImage render_hud(const odh::AvatarBodyStrings& body,const LiveAvatarPortraitInput* live=nullptr){
-        auto& resources=body.avatar_type=="child"?children:adults;
-        if(!resources)resources=std::make_unique<SavedAppearanceResources>(animations,textures,
-            body.avatar_type=="child"?"child-skeleton.cmx.bcf":"adult-skeleton.cmx.bcf",
-            body.avatar_type=="child"?"child":"adult",skins,archives,extra_skins);
-        const auto config=live?resources->resolve_live_portrait(live->skeleton,live->body,live->head,live->hands,live->accessories)
-            :resources->resolve_avatar_body(body);
+        ColdResourceStage stage("hud-portrait");
+        auto& provider=appearance_resources();
+        const auto config=live?provider.resolve_live_portrait(live->skeleton,live->body,live->head,live->hands,live->accessories)
+            :provider.resolve_avatar_body(body);
         last_source="type="+body.avatar_type+" body="+body.body+" head="+body.head+
             " rig="+config.skeleton_name+" @"+config.skeleton_far+" ["+config.skeleton_entry+"]";
         for(const auto& part:config.parts)last_source+=" part="+part.appearance_name+
@@ -136,10 +148,9 @@ struct LinuxCasPreview::Impl {
         return cell;
     }
     odh::BitmapImage render_body(const odh::AvatarBodyStrings& body,bool child,bool portrait){
-        auto& resources=child?children:adults;
-        if(!resources)resources=std::make_unique<SavedAppearanceResources>(animations,textures,
-            child?"child-skeleton.cmx.bcf":"adult-skeleton.cmx.bcf",child?"child":"adult",skins,archives,extra_skins);
-        SceneRenderer renderer(resources->resolve_body(body));
+        ColdResourceStage stage("cas-preview");
+        auto descriptor=body;descriptor.avatar_type=child?"child":"adult";
+        SceneRenderer renderer(appearance_resources().resolve_human_body(descriptor));
         if(portrait){
             auto frame=renderer.render_head_portrait(SceneState{},original_family_portrait_camera()).image;
             if(frame.depth.size()!=frame.pixels.size())throw odh::FormatError("CAS portrait coverage unavailable");
@@ -213,15 +224,12 @@ odh::BitmapImage LinuxCasPreview::pet_body(const odh::AvatarBodyStrings& body) {
     const bool dog = body.avatar_type == "dog";
     if (!dog && body.avatar_type != "cat" && body.avatar_type != "kat")
         throw odh::FormatError("Pet preview requires a cat or dog");
-    auto& resources = impl_->adults;
-    if (!resources) resources = std::make_unique<SavedAppearanceResources>(
-        impl_->animations, impl_->textures, "adult-skeleton.cmx.bcf", "adult",
-        impl_->skins, impl_->archives, impl_->extra_skins);
+    auto& resources = impl_->appearance_resources();
 
     const auto& pose = impl_->penPose(dog);
     SceneState state;
     state.animation = &pose.header;
-    SceneRenderer renderer(resources->resolve_avatar_body(body), [&](const odh::AnimationHeader& clip) {
+    SceneRenderer renderer(resources.resolve_avatar_body(body), [&](const odh::AnimationHeader& clip) {
         if (&clip != &pose.header) throw odh::FormatError("Unexpected pet preview animation");
         return pose.planes;
     });
@@ -310,11 +318,8 @@ const odh::BitmapImage* LinuxCasPreview::pie_portrait(const odh::AvatarBodyStrin
     impl_->error.clear();
     try{
         if(!impl_->pie_renderer||impl_->pie_body!=key){
-            auto& resources=body.avatar_type=="child"?impl_->children:impl_->adults;
-            if(!resources)resources=std::make_unique<SavedAppearanceResources>(impl_->animations,impl_->textures,
-                body.avatar_type=="child"?"child-skeleton.cmx.bcf":"adult-skeleton.cmx.bcf",
-                body.avatar_type=="child"?"child":"adult",impl_->skins,impl_->archives,impl_->extra_skins);
-            auto renderer=std::make_unique<SceneRenderer>(resources->resolve_avatar_body(body));
+            ColdResourceStage stage("pie-assets");
+            auto renderer=std::make_unique<SceneRenderer>(impl_->appearance_resources().resolve_avatar_body(body));
             impl_->pie_renderer=std::move(renderer);impl_->pie_body=std::move(key);impl_->pie_image.reset();
         }
         if(impl_->pie_image&&impl_->pie_center==center&&impl_->pie_target==target)return &*impl_->pie_image;

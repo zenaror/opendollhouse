@@ -304,6 +304,20 @@ if(ODH_BUILD_DESKTOP)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(odh-portable-formats-contract ../tests/formats.cpp)
+  target_link_libraries(odh-portable-formats-contract PRIVATE odh_original_ui)
+  add_test(NAME portable-formats-contract COMMAND odh-portable-formats-contract)
+  add_executable(odh-portable-resource-io-contract ../tests/resource_io.cpp)
+  target_link_libraries(odh-portable-resource-io-contract PRIVATE odh_original_ui)
+  add_test(NAME portable-resource-io-contract COMMAND odh-portable-resource-io-contract)
+  add_executable(odh-portable-ui-bitmap-exact ../tests/ui_bitmap_exact.cpp)
+  target_link_libraries(odh-portable-ui-bitmap-exact PRIVATE odh_original_ui)
+  add_test(NAME portable-ui-bitmap-exact COMMAND odh-portable-ui-bitmap-exact)
+  add_executable(odh-portable-pie-presentation-exact ../tests/original_pie_presentation_exact.cpp
+    sims3ds/src/app/Canvas.cpp)
+  target_include_directories(odh-portable-pie-presentation-exact PRIVATE sims3ds/src)
+  target_link_libraries(odh-portable-pie-presentation-exact PRIVATE odh_original_ui)
+  add_test(NAME portable-pie-presentation-exact COMMAND odh-portable-pie-presentation-exact)
   # Asset-backed flow: callers supply disposable save/cache roots and game data.
   # Kept out of CTest/default builds because commercial fixtures are not shipped.
   add_executable(odh-classic-continuation-flow EXCLUDE_FROM_ALL tests/classic_continuation_flow.cpp)

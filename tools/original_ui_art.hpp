@@ -3,6 +3,7 @@
 #include "odh/bitmap.hpp"
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,6 +23,8 @@ public:
     const odh::BitmapImage* find(const std::string& key) const;
     const odh::BitmapImage& at(const std::string& key) const;
 private:
-    std::map<std::string,odh::BitmapImage> images_;
+    struct ArchiveCache;
+    std::shared_ptr<ArchiveCache> archive_;
+    std::map<std::string,std::shared_ptr<const odh::BitmapImage>> images_;
 };
 }

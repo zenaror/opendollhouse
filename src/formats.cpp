@@ -90,32 +90,48 @@ std::vector<FarEntry> far1_index(const View& file, const Limits& limits) {
     const auto count = table.le32(0);
     if (count > limits.far_entries || count > (table.size() - 4) / 17)
         throw FormatError("FAR entry count exceeds index bounds or configured limit");
+    // A FAR manifest is a bounded metadata table, not the archive payload.
+    // Read it once: seeking the SD card for each four-byte field dominates
+    // cold portrait loading on handhelds. Keep the same per-name/data bounds.
+    const std::uint64_t record_bytes = 4 + 16 * static_cast<std::uint64_t>(count);
+    if (table.size() - record_bytes > limits.far_name_bytes ||
+        table.size() > std::numeric_limits<std::size_t>::max())
+        throw FormatError("FAR cumulative name bytes exceed configured limit");
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(table.size()));
+    table.read(0, bytes.data(), bytes.size());
+    const auto word = [&](std::size_t offset) {
+        std::uint32_t value = 0;
+        for (unsigned i = 0; i < 4; ++i)
+            value |= static_cast<std::uint32_t>(bytes[offset + i]) << (8 * i);
+        return value;
+    };
     std::vector<FarEntry> entries;
     entries.reserve(count);
-    std::uint64_t position = 4;
+    std::size_t position = 4;
     std::uint64_t name_bytes = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
-        const auto length = table.le32(position);
-        const auto second_length = table.le32(position + 4);
-        const auto offset = table.le32(position + 8);
-        const auto name_length = table.le32(position + 12);
+        if (bytes.size() - position < 16)
+            throw FormatError("truncated FAR index record");
+        const auto length = word(position);
+        const auto second_length = word(position + 4);
+        const auto offset = word(position + 8);
+        const auto name_length = word(position + 12);
         position += 16;
         if (length != second_length)
             throw FormatError("unsupported FAR entry with differing data lengths");
         if (offset < 16 || offset > manifest || length > manifest - offset)
             throw FormatError("FAR entry outside pre-manifest data area");
-        if (name_length == 0 || name_length > limits.far_name_length || name_length > table.size() - position)
+        if (name_length == 0 || name_length > limits.far_name_length || name_length > bytes.size() - position)
             throw FormatError("FAR name outside index bounds or supported length");
         if (name_length > limits.far_name_bytes - name_bytes)
             throw FormatError("FAR cumulative name bytes exceed configured limit");
         name_bytes += name_length;
-        std::string name(name_length, '\0');
-        table.read(position, name.data(), name.size());
+        std::string name(reinterpret_cast<const char*>(bytes.data() + position), name_length);
         if (name.find('\0') != std::string::npos) throw FormatError("FAR name contains NUL");
         position += name_length;
         entries.push_back({std::move(name), offset, length});
     }
-    if (position != table.size())
+    if (position != bytes.size())
         throw FormatError("unsupported FAR index layout or trailing bytes");
     return entries;
 }

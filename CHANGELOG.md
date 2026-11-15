@@ -45,6 +45,9 @@ There is no stable public release yet.
 
 ### Fixed
 
+- Reduced repeated interface and portrait file reads, bitmap scaling work and
+  action-menu image copies on Vita and Switch, preserving the original layout.
+  Physical-device performance still needs confirmation with the updated builds.
 - Vita house-loading crash caused by unsupported integer formatting in its
   system library. Log capture now handles both kinds of SDK output streams;
   periodic input measurements help investigate stalls on the device.

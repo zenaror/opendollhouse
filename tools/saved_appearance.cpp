@@ -1,3 +1,4 @@
+#include "resource.hpp"
 #include "odh/host_filesystem.hpp"
 #include "saved_appearance.hpp"
 #include "odh/ts1_texture_name.hpp"
@@ -36,18 +37,18 @@ std::string basename(std::string name){
 }
 struct Archive {
     std::string path;
-    std::ifstream stream;
+    BufferedResourceFile stream;
     std::uint64_t size;
-    std::vector<odh::FarEntry> entries;
+    std::shared_ptr<const std::vector<odh::FarEntry>> entries;
     std::vector<std::size_t> full_name_order;
-    explicit Archive(const std::string& filename):path(filename),stream(filename,std::ios::binary),size(0) {
+    explicit Archive(const std::string& filename):path(filename),stream(filename),size(0) {
         bounded_name(path);if(!stream)throw odh::FormatError("saved appearance cannot open FAR");
         size=std::filesystem::file_size(path);odh::Limits lim;lim.far_entries=8192;lim.far_name_bytes=256*1024;
-        entries=odh::far1_index(odh::View(stream,size),lim);
-        full_name_order=odh_host::appearance_detail::index_full_names(entries);
+        entries=shared_far_manifest(path,odh::View(stream,size),lim);
+        full_name_order=odh_host::appearance_detail::index_full_names(*entries);
     }
     const odh::FarEntry& select(const std::string& name) const {
-        return odh_host::appearance_detail::select_full_name(entries,full_name_order,name);
+        return odh_host::appearance_detail::select_full_name(*entries,full_name_order,name);
     }
     odh::View view(const odh::FarEntry& e){return odh::View(stream,size).subview(e.offset,e.length);}
 };
@@ -96,7 +97,7 @@ struct SavedAppearanceResources::Impl {
     std::vector<std::string> file_order,appearance_order,skin_file_order;
     template<class Decode> auto decode(const Named& selected,Decode decoder){
         if(selected.archive)return decoder(selected.archive->view(selected.archive->select(selected.entry)));
-        std::ifstream input(selected.entry,std::ios::binary);if(!input)throw odh::FormatError("saved appearance loose resource unavailable");
+        BufferedResourceFile input(selected.entry);if(!input)throw odh::FormatError("saved appearance loose resource unavailable");
         return decoder(odh::View(input,std::filesystem::file_size(selected.entry)));
     }
     void note_metadata_failure(const std::string& source,const odh::FormatError& error){
@@ -128,7 +129,7 @@ struct SavedAppearanceResources::Impl {
         std::set<std::filesystem::path> admitted{odh::hostfs::canonical(a),odh::hostfs::canonical(t)};
         for(const auto& source:sources){bounded_name(source);if(!admitted.insert(odh::hostfs::canonical(source)).second)continue;
             extra_archives.push_back(std::make_unique<Archive>(source));archives.push_back(extra_archives.back().get());}
-        for(auto* archive:archives)for(const auto& entry:archive->entries){
+        for(auto* archive:archives)for(const auto& entry:*archive->entries){
             const auto key=basename(entry.name);
             if(key.size()<4)continue;const auto ext=key.substr(key.size()-4);
             if(ext!=".bcf"&&ext!=".cmx"&&ext!=".bmf"&&ext!=".bmp"&&ext!=".skn")continue;
@@ -159,7 +160,7 @@ struct SavedAppearanceResources::Impl {
             for(const auto& name:parsed_appearances)add(appearances,name,entry.name,&archive);
             for(const auto& name:parsed_animations)add(clips,name,entry.name,&archive);
         };
-        if(!catalog_mode)for(const auto& entry:animations.entries){const auto key=fold(entry.name);
+        if(!catalog_mode)for(const auto& entry:*animations.entries){const auto key=fold(entry.name);
             if(key.size()>=4&&key.substr(key.size()-4)==".bcf")scan_bcf(animations,entry);}
         std::vector<std::string> roots;if(!skins.empty())roots.push_back(skins);
         roots.insert(roots.end(),loose_roots.begin(),loose_roots.end());
@@ -184,7 +185,7 @@ struct SavedAppearanceResources::Impl {
                 if(ext==".cmx"){
                     if(catalog_mode){const auto key=basename(path.string());if(cmx_seen.insert(key).second)cmx_order.push_back(key);continue;}
                     odh::AppearanceCollection decoded;
-                    try{std::ifstream input(path,std::ios::binary);decoded=odh::read_cmx_appearances(odh::View(input,std::filesystem::file_size(path)));}
+                    try{BufferedResourceFile input(path);decoded=odh::read_cmx_appearances(odh::View(input,std::filesystem::file_size(path)));}
                     catch(const odh::FormatError& error){note_metadata_failure(path.string(),error);continue;}
                     for(const auto& appearance:decoded.appearances)add(loose_appearance_names,appearance.name,path.string());
                 }
@@ -240,7 +241,7 @@ struct SavedAppearanceResources::Impl {
                 // The explicit legacy archive has no cross-directory
                 // filename precedence. A stem must identify one entry.
                 bool matched=false;
-                for(const auto& entry:animations.entries)if(basename(entry.name)==bcf){
+                for(const auto& entry:*animations.entries)if(basename(entry.name)==bcf){
                     if(matched)throw odh::FormatError("saved appearance legacy suit host ambiguous: "+name);
                     host={entry.name,{},&animations};
                     matched=true;
@@ -288,11 +289,11 @@ struct SavedAppearanceResources::Impl {
         return found->second.front();
     }
     odh::AppearanceCollection loose_appearances(const std::string& path){
-        std::ifstream input(path,std::ios::binary);if(!input)throw odh::FormatError("saved appearance cannot open CMX: "+path);
+        BufferedResourceFile input(path);if(!input)throw odh::FormatError("saved appearance cannot open CMX: "+path);
         return odh::read_cmx_appearances(odh::View(input,std::filesystem::file_size(path)));
     }
     odh::Mesh loose_mesh(const std::string& path){
-        std::ifstream input(path,std::ios::binary);if(!input)throw odh::FormatError("saved appearance cannot open SKN: "+path);
+        BufferedResourceFile input(path);if(!input)throw odh::FormatError("saved appearance cannot open SKN: "+path);
         auto mesh=odh::read_skn(odh::View(input,std::filesystem::file_size(path)));
         if(mesh.remaining_bytes)throw odh::FormatError("saved appearance trailing SKN bytes");
         return mesh;

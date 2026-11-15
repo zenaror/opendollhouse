@@ -11,6 +11,7 @@
 #ifndef __3DS__
 #include "linux_pie_menu.hpp"
 #include "app/ui/OriginalPresentation.h"
+#include "app/ui/OriginalPiePresentation.h"
 #include "app/ui/OriginalTextEncoding.h"
 #include "app/ui/OriginalPCUI.h"
 #endif
@@ -346,26 +347,21 @@ PieMenu::Result PieMenu::Pointer(const AppInput& input,PieChoice& out,double dtM
 
 void PieMenu::DrawDesktop(Canvas& c) {
     if(OriginalCaptions.empty())return;
-    auto frame=original::Raster(c);
-    auto headLayout=OriginalLayout;headLayout.center={HeadX,HeadY};
-    odh_host::draw_linux_pie_menu_head(frame,headLayout,nullptr);
-    original::Copy(frame,c);
-    if(OriginalHead) {
-        const auto& head=OriginalPCUI::Get().RenderPieHead(OriginalHead,{HeadX,HeadY},HeadRenderTarget);
-        if(head.Width==200 && head.Height==200)c.Blit(head.Px.data(),head.Width,head.Height,HeadX-100,HeadY-100,true);
-    } else if(Head && Head->Valid()) {
-        float yaw=std::atan(float(HeadX-HeadRenderTarget[0])/100.f),pitch=std::atan(float(HeadY-HeadRenderTarget[1])/100.f);
-        Head->DrawPieHead(c,HeadX,HeadY,yaw,pitch);
-    }
-    frame=original::Raster(c);
     auto art=original::Bitmap(PieArt);
     std::optional<odh_host::PieMenuCaption> parent;
     if(Current && Current->Parent)parent=odh_host::PieMenuCaption{Current->Name,original::TextLanguage()};
     const size_t selected=Highlight>=0?size_t(Highlight):std::min(PageSelection,OriginalCaptions.size()-1);
-    odh_host::draw_linux_pie_menu(frame,OriginalLayout,OriginalCaptions,selected,parent,
-        PieArt.Width==201 && PieArt.Height==201?&art:nullptr,OriginalPointer.pressed(),
-        odh_host::PieMenuBackground::live_face,Highlight>=0);
-    original::Copy(frame,c);
+    original::DrawDesktopPie(c,OriginalFrame,OriginalLayout,{HeadX,HeadY},OriginalCaptions,selected,parent,
+        PieArt.Width==201 && PieArt.Height==201?&art:nullptr,OriginalPointer.pressed(),Highlight>=0,
+        [&](Canvas& target){
+            if(OriginalHead) {
+                const auto& head=OriginalPCUI::Get().RenderPieHead(OriginalHead,{HeadX,HeadY},HeadRenderTarget);
+                if(head.Width==200 && head.Height==200)target.Blit(head.Px.data(),head.Width,head.Height,HeadX-100,HeadY-100,true);
+            } else if(Head && Head->Valid()) {
+                float yaw=std::atan(float(HeadX-HeadRenderTarget[0])/100.f),pitch=std::atan(float(HeadY-HeadRenderTarget[1])/100.f);
+                Head->DrawPieHead(target,HeadX,HeadY,yaw,pitch);
+            }
+    });
 }
 
 #endif

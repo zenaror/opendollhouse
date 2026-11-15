@@ -24,7 +24,11 @@ target_compile_definitions(opendollhouse PRIVATE SDL_MAIN_HANDLED ODH_PLATFORM_V
 target_link_libraries(opendollhouse PRIVATE odh_engine SDL2::SDL2-static SceSysmem_stub)
 # The installed Vita newlib does not support the C99 z/j/t printf lengths.
 # Keep this ABI adapter local to this executable, including static dependencies.
+# vita-elf-create appends SCE metadata to the executable segment. Reserve a
+# 64 KiB-aligned gap before writable data using the SDK linker's own option;
+# otherwise a change in code size can leave insufficient room for packaging.
 target_link_options(opendollhouse PRIVATE
+  "-Wl,--defsym=__sce_headroom=0x10000"
   "-Wl,--wrap=printf,--wrap=fprintf,--wrap=sprintf,--wrap=snprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=vsprintf,--wrap=vsnprintf")
 vita_create_self(eboot.bin opendollhouse UNSAFE)
 set(odh_notices

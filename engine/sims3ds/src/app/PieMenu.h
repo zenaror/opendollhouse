@@ -74,6 +74,7 @@ private:
     original::DesktopPieHeadMotion HeadMotion;
     std::array<int,2> HeadRenderTarget{};
     odh::PieMenuLayout OriginalLayout{};
+    odh::RasterFrame OriginalFrame{};
     odh_host::PieMenuPointer OriginalPointer;
     std::vector<odh_host::PieMenuCaption> OriginalCaptions;
 #endif

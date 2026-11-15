@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "odh/host_filesystem.hpp"
 #include "original_ui_art.hpp"
+#include "resource.hpp"
 #include <algorithm>
 #include <fstream>
+#include <mutex>
+#include <chrono>
+#include <cstdio>
 
 namespace odh_host {
 namespace {
@@ -64,8 +68,15 @@ std::optional<odh::BitmapImage> read_object_catalog_icon(const odh::View& view,s
     return image;
 }
 
+struct OriginalUiArt::ArchiveCache {
+    std::uintmax_t size=0;
+    std::filesystem::file_time_type modified{};
+    std::map<std::string,odh::FarEntry> entries;
+    std::map<std::string,std::weak_ptr<const odh::BitmapImage>> images;
+    std::mutex mutex;
+};
 OriginalUiArt::OriginalUiArt(std::map<std::string,odh::BitmapImage> images){
-    for(auto& entry:images)if(!images_.emplace(folded(entry.first),std::move(entry.second)).second)
+    for(auto& entry:images)if(!images_.emplace(folded(entry.first),std::make_shared<const odh::BitmapImage>(std::move(entry.second))).second)
         throw odh::FormatError("ambiguous original UI image binding");
 }
 
@@ -76,23 +87,54 @@ OriginalUiArt::OriginalUiArt(const std::filesystem::path& game_root,const std::v
     const auto relative=path.lexically_relative(root);
     if(relative.empty()||odh::hostfs::is_absolute(relative)||std::any_of(relative.begin(),relative.end(),
         [](const auto& part){return part=="..";}))throw odh::FormatError("original UI archive is outside selected installation");
-    std::ifstream stream(path,std::ios::binary);
-    if(!stream)throw odh::FormatError("cannot open original UI archive");
-    odh::View file(stream,std::filesystem::file_size(path));
-    odh::Limits limits;limits.far_entries=16384;limits.far_name_bytes=1024*1024;
-    std::map<std::string,odh::FarEntry> entries;
-    for(auto& entry:odh::far1_index(file,limits)){
-        auto key=folded(entry.name);
-        if(!entries.emplace(std::move(key),std::move(entry)).second)
-            throw odh::FormatError("ambiguous original UI archive entry");
+    const auto started=std::chrono::steady_clock::now();
+    const auto size=std::filesystem::file_size(path);
+    std::error_code stamp_error;
+    const auto modified=std::filesystem::last_write_time(path,stamp_error);
+    // Weak owners share only live screens from this exact installation/source.
+    // A changed or unstamped source gets a fresh owner; nothing survives the
+    // last screen or changes source precedence in another installation.
+    static std::mutex pool_mutex;
+    static std::map<std::string,std::weak_ptr<ArchiveCache>> pool;
+    bool index_hit=false;
+    {
+        std::lock_guard<std::mutex> guard(pool_mutex);
+        for(auto it=pool.begin();it!=pool.end();)if(it->second.expired())it=pool.erase(it);else ++it;
+        auto found=pool.find(path.string());
+        if(!stamp_error&&found!=pool.end()){
+            auto candidate=found->second.lock();
+            if(candidate&&candidate->size==size&&candidate->modified==modified){archive_=std::move(candidate);index_hit=true;}
+        }
+        if(!archive_){
+            archive_=std::make_shared<ArchiveCache>();archive_->size=size;archive_->modified=modified;
+            BufferedResourceFile index_stream(path.string());
+            if(!index_stream)throw odh::FormatError("cannot open original UI archive");
+            odh::Limits limits;limits.far_entries=16384;limits.far_name_bytes=1024*1024;
+            for(auto& entry:odh::far1_index(odh::View(index_stream,size),limits)){
+                auto key=folded(entry.name);
+                if(!archive_->entries.emplace(std::move(key),std::move(entry)).second)
+                    throw odh::FormatError("ambiguous original UI archive entry");
+            }
+            if(!stamp_error&&(found!=pool.end()||pool.size()<16))pool[path.string()]=archive_;
+        }
     }
+    BufferedResourceFile stream(path.string());
+    if(!stream)throw odh::FormatError("cannot open original UI archive");
+    odh::View file(stream,size);
+    std::size_t decoded=0,reused=0;
+    std::lock_guard<std::mutex> guard(archive_->mutex);
     const auto load=[&](const std::string& name,bool needed){
         const auto key=folded(name);
         if(images_.count(key))return;
-        const auto found=entries.find(key);
-        if(found==entries.end()){
+        const auto found=archive_->entries.find(key);
+        if(found==archive_->entries.end()){
             if(needed)throw odh::FormatError("required original UI artwork absent: "+name);
             return;
+        }
+        auto cached=archive_->images[key].lock();
+        if(cached){
+            if(cached->pixels.size()>pixel_limit)throw odh::FormatError("original UI extent exceeds pixel budget");
+            pixel_limit-=cached->pixels.size();images_.emplace(key,std::move(cached));++reused;return;
         }
         odh::BitmapLimits decode;
         decode.pixels=static_cast<std::uint32_t>(std::min<std::size_t>(decode.pixels,pixel_limit));
@@ -101,15 +143,20 @@ OriginalUiArt::OriginalUiArt(const std::filesystem::path& game_root,const std::v
         auto image=key.size()>=4&&key.compare(key.size()-4,4,".tga")==0?
             read_ui_tga(payload,decode):odh::read_bmp(payload,decode);
         pixel_limit-=image.pixels.size();
-        images_.emplace(key,std::move(image));
+        auto owner=std::make_shared<const odh::BitmapImage>(std::move(image));
+        archive_->images[key]=owner;images_.emplace(key,std::move(owner));++decoded;
     };
     for(const auto& key:required)load(key,true);
     for(const auto& key:optional)load(key,false);
+    std::printf("[cold-ui] stage=art ms=%.3f index_hit=%u decoded=%zu reused=%zu reads=%llu bytes=%llu\n",
+        std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count(),
+        unsigned(index_hit),decoded,reused,static_cast<unsigned long long>(stream.physical_reads()),
+        static_cast<unsigned long long>(stream.physical_bytes()));
 }
 
 const odh::BitmapImage* OriginalUiArt::find(const std::string& name) const{
     const auto found=images_.find(folded(name));
-    return found==images_.end()?nullptr:&found->second;
+    return found==images_.end()?nullptr:found->second.get();
 }
 const odh::BitmapImage& OriginalUiArt::at(const std::string& name) const{
     const auto* image=find(name);
