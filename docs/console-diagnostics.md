@@ -13,7 +13,9 @@ an on-screen counter or pass any launch parameters.
 1. Install the current build, keeping the `game` and `saves` folders.
 2. Open the game. If it reaches the neighborhood, wait about 30 seconds.
 3. If possible, enter a house and observe it for another 30 seconds.
-4. Quit normally. Copy the log before opening the game again.
+4. On Vita, move the right stick and touch the front screen during the wait.
+   Mention which of those inputs responded and which stalled.
+5. Quit normally. Copy the log before opening the game again.
 
 If the game closes by itself or stops during loading, copy the log anyway.
 Report the device, package used, last screen displayed, roughly how long you

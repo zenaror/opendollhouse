@@ -523,6 +523,16 @@ if(BUILD_TESTING)
     target_compile_options(odh-residential-autonomy-flow PRIVATE -g0)
     target_link_options(odh-residential-autonomy-flow PRIVATE -Wl,--strip-debug)
   endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND NOT CMAKE_CROSSCOMPILING)
+    add_executable(odh-vita-printf-compat
+      platform/vita/PrintfFormatCompat.cpp tests/vita_printf_compat.cpp)
+    target_compile_features(odh-vita-printf-compat PRIVATE cxx_std_17)
+    target_compile_options(odh-vita-printf-compat PRIVATE
+      -fno-builtin -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0)
+    target_link_options(odh-vita-printf-compat PRIVATE
+      "-Wl,--wrap=printf,--wrap=fprintf,--wrap=sprintf,--wrap=snprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=vsprintf,--wrap=vsnprintf,--wrap=malloc")
+    add_test(NAME vita-printf-compat COMMAND odh-vita-printf-compat)
+  endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
     add_executable(odh-language-setup-contract
       ${PROJECT_SOURCE_DIR}/tests/language_setup.cpp

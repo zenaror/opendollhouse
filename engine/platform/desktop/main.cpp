@@ -24,6 +24,7 @@
 #endif
 #if defined(ODH_PLATFORM_VITA)
 #include <psp2/kernel/sysmem.h>
+#include "../vita/StdioCapture.h"
 #elif defined(ODH_PLATFORM_SWITCH)
 #include <switch.h>
 #endif
@@ -218,10 +219,8 @@ void Prepare(Options& o) {
 void OpenLog(const fs::path& path) {
     // Keep upstream printf diagnostics and platform errors together for crash reports.
 #if defined(ODH_PLATFORM_VITA)
-    // Vita newlib has stream reopening, but does not implement POSIX dup2.
-    if (!std::freopen(path.string().c_str(), "a", stdout) ||
-        !std::freopen(path.string().c_str(), "a", stderr))
-        throw std::runtime_error("Cannot redirect application log: " + path.string());
+    // SDK consumers use both legacy and thread-local newlib FILE objects.
+    odh::vita::CaptureStdio(path.string().c_str());
 #else
     FILE* log = std::fopen(path.string().c_str(), "a");
     if (!log) throw std::runtime_error("Cannot open log: " + path.string());
@@ -237,8 +236,10 @@ void OpenLog(const fs::path& path) {
     std::fclose(log);
     if (resultOut < 0 || resultErr < 0) throw std::runtime_error("Cannot redirect application log.");
 #endif
+#if !defined(ODH_PLATFORM_VITA)
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
+#endif
 }
 
 double NowMs() {
@@ -472,6 +473,14 @@ int Run(Options options) {
 #if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
     odh::desktop::ConsoleFrameWindow performance(NowMs());
     auto performanceIo = FSO::Files::FilePool::Stats;
+#if defined(ODH_PLATFORM_VITA)
+    struct {
+        unsigned long long Polls=0, Events=0, Axes=0, RightStick=0, Front=0, Rear=0, Delivered=0;
+        double LastPoll=0, MaxPollGap=0;
+        int TouchX=-1, TouchY=-1;
+        size_t Queued=0, QueuePeak=0;
+    } inputDiagnostics;
+#endif
     auto performanceReport = [&](const char* reason, bool force = false) {
         const double now = NowMs();
         if (!force && !performance.Due(now)) return;
@@ -503,6 +512,23 @@ int Run(Options options) {
             static_cast<unsigned long long>(delta(io.Opens, performanceIo.Opens)),
             static_cast<unsigned long long>(delta(io.Seeks, performanceIo.Seeks)), FSO::Files::FilePool::OpenCount(),
             audio ? audio->Name() : "off", audio ? audio->LatencyMs() : 0.0, memory);
+#if defined(ODH_PLATFORM_VITA)
+        // Read the already opened mapped controller without pumping SDL again.
+        auto* diagnosticPad = portable.HasController()
+            ? SDL_GameControllerFromInstanceID(portable.ControllerId()) : nullptr;
+        std::printf("[vita-input] phase=%s polls=%llu poll_gap_max_ms=%.2f events=%llu axis_events=%llu rightstick_events=%llu "
+            "front_events=%llu rear_events=%llu delivered=%llu controller=%d focus=%d right_raw_x=%d right_raw_y=%d "
+            "touch_x=%d touch_y=%d queued=%llu queue_peak=%llu\n", phase, inputDiagnostics.Polls, inputDiagnostics.MaxPollGap,
+            inputDiagnostics.Events, inputDiagnostics.Axes, inputDiagnostics.RightStick, inputDiagnostics.Front,
+            inputDiagnostics.Rear, inputDiagnostics.Delivered, int(diagnosticPad!=nullptr), int(portable.Focused()),
+            diagnosticPad ? int(SDL_GameControllerGetAxis(diagnosticPad,SDL_CONTROLLER_AXIS_RIGHTX)) : 0,
+            diagnosticPad ? int(SDL_GameControllerGetAxis(diagnosticPad,SDL_CONTROLLER_AXIS_RIGHTY)) : 0,
+            inputDiagnostics.TouchX, inputDiagnostics.TouchY, static_cast<unsigned long long>(inputDiagnostics.Queued),
+            static_cast<unsigned long long>(inputDiagnostics.QueuePeak));
+        inputDiagnostics.Polls=inputDiagnostics.Events=inputDiagnostics.Axes=inputDiagnostics.RightStick=0;
+        inputDiagnostics.Front=inputDiagnostics.Rear=inputDiagnostics.Delivered=0;
+        inputDiagnostics.MaxPollGap=0;inputDiagnostics.QueuePeak=inputDiagnostics.Queued;
+#endif
         std::fflush(stdout); // preserve the latest sample if the next step fails
         performance.Reset(now); performanceIo = io;
     };
@@ -609,10 +635,29 @@ int Run(Options options) {
     bool havePresented = false;
     while (!app.QuitRequested && !renderFailed) {
         const double begin = NowMs();
+#if defined(ODH_PLATFORM_VITA)
+        if(inputDiagnostics.LastPoll>0)
+            inputDiagnostics.MaxPollGap=std::max(inputDiagnostics.MaxPollGap,begin-inputDiagnostics.LastPoll);
+        inputDiagnostics.LastPoll=begin;++inputDiagnostics.Polls;
+#endif
         inputs.SetFocused(portable.Enabled()?portable.Focused():SDL_GetKeyboardFocus()==window.get());
         inputs.BeginPoll();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+#if defined(ODH_PLATFORM_VITA)
+            inputDiagnostics.QueuePeak=std::max(inputDiagnostics.QueuePeak,inputs.Pending());
+            ++inputDiagnostics.Events;
+            if(event.type==SDL_CONTROLLERAXISMOTION){
+                ++inputDiagnostics.Axes;
+                if(event.caxis.which==portable.ControllerId() &&
+                   (event.caxis.axis==SDL_CONTROLLER_AXIS_RIGHTX||event.caxis.axis==SDL_CONTROLLER_AXIS_RIGHTY))
+                    ++inputDiagnostics.RightStick;
+            }
+            if(event.type==SDL_FINGERDOWN||event.type==SDL_FINGERMOTION||event.type==SDL_FINGERUP){
+                if(event.tfinger.touchId==0)++inputDiagnostics.Front;
+                else if(event.tfinger.touchId==1)++inputDiagnostics.Rear;
+            }
+#endif
             if(traceInput && traceLines<256 && (event.type==SDL_MOUSEBUTTONDOWN || event.type==SDL_MOUSEBUTTONUP)) {
                 ++traceLines;
                 std::printf("[desktop-input] SDL %s button=%u window=%u expected=%u xy=%d,%d discard=%d suppress=%d queued=%zu\n",
@@ -758,7 +803,15 @@ int Run(Options options) {
             if(portable.Enabled())portable.Frame(begin-last,state,inputs,portable.Focused(),app.WantsTextInput());
             else inputs.Push(state,InputKind::State);
         }
+#if defined(ODH_PLATFORM_VITA)
+        inputDiagnostics.QueuePeak=std::max(inputDiagnostics.QueuePeak,inputs.Pending());
+#endif
         auto packet=inputs.Next();
+#if defined(ODH_PLATFORM_VITA)
+        ++inputDiagnostics.Delivered;
+        inputDiagnostics.TouchX=packet.Input.TouchX;inputDiagnostics.TouchY=packet.Input.TouchY;
+        inputDiagnostics.Queued=inputs.Pending();
+#endif
         if(traceInput && traceLines<256 && (packet.Input.TouchDown || packet.Input.TouchUp || !packet.Input.TextEvents.empty())) {
             ++traceLines;
             std::printf("[desktop-input] deliver frame=%d down=%d up=%d held=%d xy=%d,%d text=%zu pending=%zu\n",

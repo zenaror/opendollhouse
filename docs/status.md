@@ -41,8 +41,8 @@ prove performance on the real device.
 | macOS Intel and Apple Silicon | Packages include a first-run language choice and remember it; no fixed language. Compilation and package checks do not replace a Mac runtime test, which is still needed. |
 | Android ARM64 | An earlier build opened on a device. The current APK includes external controller support but still needs another device test. |
 | New Nintendo 3DS | Opened a house and responded to touch in the emulator. The emulator reported a warning at exit; exit behavior and performance on hardware still need confirmation. |
-| PlayStation Vita | An earlier build reached the neighborhood on hardware, with slow performance and choppy audio. The current update includes controls and a centered image; it opened and responded to front touch in Vita3K. Real performance still needs another device test. |
-| Nintendo Switch | An earlier build reached the neighborhood on hardware. The current update includes controls and a proportional image. The emulator exited before the map; this update's controls and performance still need hardware testing. |
+| PlayStation Vita | Hardware testing reported a house-loading crash, input stalls and choppy audio. The crash and empty-log fixes passed an occupied-house/log test in Vita3K. Performance and controls still need confirmation on the device with this update. |
+| Nintendo Switch | Device feedback reports reaching a lot, with very slow lot loading and delayed action menus. Optimization is still needed. The emulator exited before the map; controller support still needs focused device confirmation. |
 | Old Nintendo 3DS (desired) | No game package available to install; New 3DS results do not establish support. |
 
 Current packages are listed in [which package to use](testing-builds.md).
@@ -56,8 +56,9 @@ not prove that the devices' performance problems have been resolved.
   with the current packages.
 - Switch controllers have a limitation when physically disconnected. Release
   buttons before disconnecting; restart the game if an input remains active.
-- In Vita3K, the game's log file remained empty although the emulator displayed
-  diagnostics. An empty log alone does not mean the game did not start.
+- The updated Vita log worked in Vita3K. A physical-device log is still needed
+  to investigate input stalls and choppy audio; emulator speed is not a device
+  performance measurement.
 - Builds are specific to each system. A New 3DS package is not confirmation
   of Old 3DS compatibility.
 

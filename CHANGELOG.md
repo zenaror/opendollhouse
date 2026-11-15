@@ -45,10 +45,12 @@ There is no stable public release yet.
 
 ### Fixed
 
+- Vita house-loading crash caused by unsupported integer formatting in its
+  system library. Log capture now handles both kinds of SDK output streams;
+  periodic input measurements help investigate stalls on the device.
 - macOS packages no longer force Brazilian Portuguese. They offer the shared
   first-run language choice, remember it and include `ChooseLanguage.command`
   to select another language without command-line arguments.
-
 - Saved lot thumbnails preserve their proportions and reflect yard changes,
   avoiding dark grass bands, clipped trees and fragments of street objects.
 - House loading and character records corrected for expansion formats.

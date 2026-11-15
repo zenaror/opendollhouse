@@ -17,11 +17,15 @@ set(Iconv_IS_BUILT_IN FALSE CACHE BOOL "Use the Vita static conversion library" 
 set(Iconv_INCLUDE_DIR "${ODH_VITA_ICONV_ROOT}/include" CACHE PATH "Vita iconv header" FORCE)
 set(Iconv_LIBRARY "${ODH_VITA_ICONV_ROOT}/lib/libiconv.a" CACHE FILEPATH "Vita iconv library" FORCE)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../.." "${CMAKE_BINARY_DIR}/engine-root")
-add_executable(opendollhouse VitaMain.cpp ../desktop/SdlAudio.cpp
+add_executable(opendollhouse VitaMain.cpp StdioCapture.cpp PrintfFormatCompat.cpp ../desktop/SdlAudio.cpp
   "${CMAKE_CURRENT_LIST_DIR}/../../../tools/reference_patch_setup.cpp")
 target_compile_features(opendollhouse PRIVATE cxx_std_17)
 target_compile_definitions(opendollhouse PRIVATE SDL_MAIN_HANDLED ODH_PLATFORM_VITA)
 target_link_libraries(opendollhouse PRIVATE odh_engine SDL2::SDL2-static SceSysmem_stub)
+# The installed Vita newlib does not support the C99 z/j/t printf lengths.
+# Keep this ABI adapter local to this executable, including static dependencies.
+target_link_options(opendollhouse PRIVATE
+  "-Wl,--wrap=printf,--wrap=fprintf,--wrap=sprintf,--wrap=snprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=vsprintf,--wrap=vsnprintf")
 vita_create_self(eboot.bin opendollhouse UNSAFE)
 set(odh_notices
   FILE "${CMAKE_CURRENT_LIST_DIR}/../../sims3ds/LICENSE" "licenses/Sims3DS-MPL-2.0.txt"
