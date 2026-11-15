@@ -124,9 +124,38 @@ struct OriginalPCUI::Impl {
             const auto& bytes=strip->GetData();
             f.images=odh_host::read_character_ui_image(2002,odh::View(bytes.data(),bytes.size()));
         }
+        int sourceId = 2002;
+#if defined(__vita__) || defined(__SWITCH__)
+        // Expansion families may supply a small portrait but no three-frame
+        // strip. The 3DS uses that authored portrait before rendering a new one.
+        if (f.images.faces.empty() && iff && iff->Get<BMP>(2004)) {
+            const auto* thumb = avatar_icon(a);
+            if (thumb && thumb->width <= 35 && thumb->height <= 41) {
+                odh::BitmapImage cell{35,41,32,true,
+                    std::vector<std::array<uint8_t,4>>(35*41, {0,0,0,0}),0};
+                const auto x = (cell.width - thumb->width) / 2;
+                const auto y = (cell.height - thumb->height) / 2;
+                for (unsigned row = 0; row < thumb->height; ++row) {
+                    for (unsigned col = 0; col < thumb->width; ++col) {
+                        auto pixel = thumb->pixels[row * thumb->width + col];
+                        const bool blueKey = pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 248;
+                        const bool magentaKey = pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 255;
+                        if (blueKey || magentaKey) continue;
+                        if (thumb->bit_count != 32) pixel[3] = 255;
+                        cell.pixels[(row + y) * cell.width + col + x] = pixel;
+                    }
+                }
+                if (std::any_of(cell.pixels.begin(), cell.pixels.end(),
+                                [](const auto& pixel) { return pixel[3] != 0; })) {
+                    f.images.faces.push_back(std::move(cell));
+                    sourceId = 2004;
+                }
+            }
+        }
+#endif
         if(!f.images.faces.empty()){
             for(const auto& face:f.images.faces)f.canvases.push_back(canvas(face));
-            last_source="authored BMP2002 guid="+std::to_string(guid)+" resource="+a->Object->Resource->Name;
+            last_source="authored BMP"+std::to_string(sourceId)+" guid="+std::to_string(guid)+" resource="+a->Object->Resource->Name;
         }else{
             f.generated=*generated(body);f.canvases.push_back(canvas(*f.generated));
         }

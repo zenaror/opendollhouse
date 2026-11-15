@@ -22,6 +22,8 @@
 #include "app/front/SimDialogView.h"
 #include "app/front/SaveOverlay.h"
 #include "simantics/VM.h"
+#include "simantics/entities/VMAvatar.h"
+#include "vitaboy/SimAvatar.h"
 #include "world/World.h"
 #include "files/FilePool.h"
 #include "files/LoadProgress.h"
@@ -91,7 +93,22 @@ void App::CheckCacheVersion() {
 /// TS1(sims): memory between lots. The engine (like C#) keeps every object file it ever loaded; on the 3DS that
 /// is 10-40 MB per lot visited, so once the lot's VM and World are gone the object files are freed again (the
 /// controller objects every lot creates stay) together with the assembled BHAV routines keyed by their pointers.
-static void ReleaseLotContent(std::string& log) {
+void App::UnloadLot() {
+    std::vector<std::string> residentHeads;
+#if defined(__vita__) || defined(__SWITCH__)
+    if (_Session && _Session->VM()) {
+        const auto& live = _Session->VM()->Entities;
+        for (auto* member : _Session->Family) {
+            if (!member || std::find(live.begin(), live.end(), member) == live.end() ||
+                member->Dead || !member->Avatar) continue;
+            const auto* head = member->Avatar->Head.Value();
+            if (head && !head->TS1TextureID.empty()) residentHeads.push_back(head->TS1TextureID);
+        }
+    }
+#endif
+    _Lot.reset();
+    _Session.reset();
+    front::FrontLotUnloaded();
     auto c = FSO::Content::Content::Get();
     if (c == nullptr || !c->WorldObjects) return;
     if (!FSO::SimAntics::VM::ReleaseAssembled()) return; // a VM is still alive: keep everything
@@ -100,11 +117,11 @@ static void ReleaseLotContent(std::string& log) {
     FSO::Files::Formats::IFF::IffFile::DropDecodedFrames(); // FIX(sims) memory: decoded wall/floor/kept-object frames
     // FIX(sims) memory: caches only the lot uses (avatar meshes/textures/keyframes, lot UI art, catalogue details,
     // headline sprites): they were kept for the whole session (~15 MB back in the neighbourhood)
-    if (auto av = FSO::Content::TS1::TS1AvatarContent::Get()) av->ReleaseCaches();
+    if (auto av = FSO::Content::TS1::TS1AvatarContent::Get()) av->ReleaseCaches(residentHeads);
     UIGraphics::Get().ReleaseImages();
     UICatalog::Get().TrimDetails(0);
     UIHeadlineRenderer::Unload();
-    log += "released " + std::to_string(n) + " object files of the lot (" + std::to_string(c->WorldObjects->LoadedFileCount()) + " kept)\n";
+    Log += "released " + std::to_string(n) + " object files of the lot (" + std::to_string(c->WorldObjects->LoadedFileCount()) + " kept)\n";
 }
 
 /// The PC Free Will checkbox is the boolean preference in the pinned Alex
@@ -211,10 +228,7 @@ bool App::TravelFlow(const AppInput& in, double dtMs) {
             Log += "travel: saved house and neighbourhood before the trip\n";
         }
         _TravelFrom = _Session->HouseNumber;
-        _Lot.reset();
-        _Session.reset();
-        front::FrontLotUnloaded();
-        ReleaseLotContent(Log);
+        UnloadLot();
         _LoadHouse = house;
         _LoadFrames = 0;
         _LoadTravel = true;
@@ -570,10 +584,7 @@ void App::FinishLeave(bool save, bool quit) {
             }
         }
     }
-    _Lot.reset();
-    _Session.reset();
-    front::FrontLotUnloaded();
-    ReleaseLotContent(Log);
+    UnloadLot();
     FSO::Files::LoadProgress::Step("front: back to the neighbourhood"); // TS1(sims) hardware pass
     _Front->ReturnFromLot(family, budget, save, save);
     EndSaveOverlay(); // ADDED(sims) save progress

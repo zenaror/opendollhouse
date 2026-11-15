@@ -47,6 +47,7 @@ public:
     std::vector<std::string> ListNdx() const; // TS1(sims): all AnimationOut.ndx entries (one per EP folder)
     /// true when the file comes from a bare folder (not a FAR).
     bool IsLoose(const std::string& lowerName) const;
+    bool IsArchived(const std::string& lowerName) const;
     /// TS1(sims) hardware pass: the avatars.cache key of this index ("" = no cache); also keys bcfnames.cache.
     std::string IndexKey;
 
@@ -131,6 +132,7 @@ public:
     explicit TS1AvatarTextureProvider(TS1Provider* provider) : BaseProvider(provider) {}
     FSO::Vitaboy::Texture* Get(const std::string& name);
     size_t MemoryBytes() const;
+    size_t TrimForNextLot(const std::vector<std::string>& residentHeads);
     void Clear() { Cache.clear(); } // FIX(sims): see TS1AvatarContent::ReleaseCaches
 private:
     TS1Provider* BaseProvider;
@@ -173,7 +175,7 @@ public:
     /// loaded animation keyframes (all reload on demand).
     /// Only when no avatar exists (a lot was left: its VM is gone; not while Create-A-Sim shows Sims). They were
     /// kept for the whole session: ~11 MB still in use back in the neighbourhood after a long session.
-    size_t ReleaseCaches();
+    size_t ReleaseCaches(const std::vector<std::string>& residentHeads = {});
 
 private:
     TS1AvatarContent();

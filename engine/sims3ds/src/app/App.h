@@ -128,6 +128,7 @@ private:
     void FrontFrame(const AppInput& in, double dtMs);
     bool LotFlow(const AppInput& in);
     void FinishLeave(bool save, bool quit);
+    void UnloadLot();
     // expansion-pack travel (VMTS1Travel) + the TS1 dialog view (front/AppFlow.cpp, front/SimDialogView.h)
     std::unique_ptr<front::SimDialogView> _SimDialog;
     bool _LoadTravel = false;

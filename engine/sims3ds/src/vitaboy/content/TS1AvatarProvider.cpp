@@ -263,6 +263,11 @@ bool TS1Provider::IsLoose(const std::string& lowerName) const {
     return e != nullptr && e->Far < 0;
 }
 
+bool TS1Provider::IsArchived(const std::string& lowerName) const {
+    const auto* entry = Find(lowerName);
+    return entry && entry->Far >= 0;
+}
+
 bool TS1Provider::GetBytes(const std::string& name, std::vector<uint8_t>& out) {
     auto found = Find(Lower(name));
     if (found == nullptr) {
@@ -648,13 +653,32 @@ size_t TS1AvatarTextureProvider::MemoryBytes() const {
     return n;
 }
 
+size_t TS1AvatarTextureProvider::TrimForNextLot(const std::vector<std::string>& residentHeads) {
+    // Keep only textures actually used by the departing household. Loose BMPs can
+    // be changed between visits; a known name must never hide a changed skin.
+    constexpr size_t limit = 128 * 1024;
+    size_t kept = 0;
+    decltype(Cache) next;
+    for (const auto& name : residentHeads) {
+        const auto key = Lower(odh::ts1_bmp_filename(name));
+        auto entry = Cache.find(key);
+        if (entry == Cache.end() || !entry->second || !BaseProvider->IsArchived(key)) continue;
+        const auto bytes = entry->second->MemoryBytes();
+        if (bytes > limit - kept) continue;
+        kept += bytes;
+        next.insert(Cache.extract(entry));
+    }
+    const auto released = MemoryBytes();
+    Cache.swap(next);
+    return released;
+}
+
 // ---------------------------------------------------------------- TS1AvatarContent
 
-size_t TS1AvatarContent::ReleaseCaches() // FIX(sims): see TS1AvatarProvider.h
+size_t TS1AvatarContent::ReleaseCaches(const std::vector<std::string>& residentHeads)
 {
-    size_t bytes = AvatarTextures.MemoryBytes();
+    size_t bytes = AvatarTextures.TrimForNextLot(residentHeads);
     AvatarMeshes.Clear();
-    AvatarTextures.Clear();
     bytes += FSO::Vitaboy::Animation::UnloadAllKeyframes();
     BCF.TrimCache(); // after the keyframe list no longer points at its animations
     return bytes;
@@ -696,6 +720,7 @@ bool TS1AvatarContent::EnsureInit() {
     if (s_BasePath.empty()) return false;
     std::string base = s_BasePath;
     while (base.size() > 1 && (base.back() == '/' || base.back() == '\\')) base.pop_back();
+    AvatarTextures.Clear(); // A new installation can have different BMPs under the same names.
     TS1Global.Init(base);
     m_HaveData = BCF.Init();
     Animation::KeyframeLoader = &LoadKeyframesHook;
