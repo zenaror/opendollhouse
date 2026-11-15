@@ -18,6 +18,8 @@ There is no stable public release yet.
 - Touch and controller input in the Vita and Switch adapters; external Android
   controllers with touch input preserved. The Vita rear touchpad's left and right
   halves act as L2 and R2.
+- Optional Linux tool to prepare game indexes before copying them to a handheld,
+  including the selected language's Buy catalog.
 - Loading, performance and failure logs, including periodic performance
   measurements on Vita, Switch, Android and New 3DS in `opendollhouse.log`.
 - MPL-2.0 for authorized original contributions, with credits, notices and
@@ -49,6 +51,9 @@ There is no stable public release yet.
 
 ### Fixed
 
+- Vita and Switch reuse pixels already on screen when only part of the picture
+  changes. The engine also skips drawing triangles for parts of Sims that
+  are entirely outside the view.
 - Vita and Switch use the resident’s existing portrait in the action wheel.
   Moving the stick no longer checks each object for possible interactions.
 - Vita and Switch now use the 3DS limit on simulation time spent between input

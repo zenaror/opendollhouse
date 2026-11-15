@@ -271,6 +271,8 @@ AvatarDrawResult DrawAvatar(Framebuffer& color, ZBuffer& depth, const WorldCamer
         if (mesh == nullptr) continue;
         t.tex = binding->Texture;
         auto& vb = mesh->VertexBuffer;
+        if (vb.empty()) continue;
+        float meshMinX = 1e30f, meshMinY = 1e30f, meshMaxX = -1e30f, meshMaxY = -1e30f;
         sv.resize(vb.size());
         for (size_t i = 0; i < vb.size(); i++) {
             auto& v = vb[i];
@@ -285,16 +287,22 @@ AvatarDrawResult DrawAvatar(Framebuffer& color, ZBuffer& depth, const WorldCamer
                 p = p * (1.0f - w) + q * w;
             }
             sv[i] = ScreenVert{ p.X, p.Y, p.Z * dS + dO };
-            minX = std::min(minX, p.X); maxX = std::max(maxX, p.X);
-            minY = std::min(minY, p.Y); maxY = std::max(maxY, p.Y);
+            meshMinX = std::min(meshMinX, p.X); meshMaxX = std::max(meshMaxX, p.X);
+            meshMinY = std::min(meshMinY, p.Y); meshMaxY = std::max(meshMaxY, p.Y);
         }
+        minX = std::min(minX, meshMinX); maxX = std::max(maxX, meshMaxX);
+        minY = std::min(minY, meshMinY); maxY = std::max(maxY, meshMaxY);
+        // A posed binding entirely outside the viewport or pick rectangle cannot
+        // cover a pixel. Keep counting valid faces for the renderer's diagnostics.
+        const bool visible = meshMaxX >= t.cx0 && meshMinX < t.cx1 &&
+                             meshMaxY >= t.cy0 && meshMinY < t.cy1;
         auto& ib = mesh->IndexBuffer;
         int32_t nv = (int32_t)vb.size();
         for (size_t f = 0; f + 2 < ib.size(); f += 3) {
             int32_t i0 = ib[f], i1 = ib[f + 1], i2 = ib[f + 2];
             if (i0 < 0 || i1 < 0 || i2 < 0 || i0 >= nv || i1 >= nv || i2 >= nv) continue;
             result.Triangles++;
-            RasterTriangle(t, sv[i0], sv[i1], sv[i2], vb[i0].TextureCoordinate, vb[i1].TextureCoordinate, vb[i2].TextureCoordinate);
+            if (visible) RasterTriangle(t, sv[i0], sv[i1], sv[i2], vb[i0].TextureCoordinate, vb[i1].TextureCoordinate, vb[i2].TextureCoordinate);
         }
     }
     if (maxX >= minX) {

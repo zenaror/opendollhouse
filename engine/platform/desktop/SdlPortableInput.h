@@ -238,7 +238,8 @@ public:
     // Upload only the tiny cursor rectangle after the full canvas upload. The
     // engine canvas is immutable; CUR inversion complements its underlying RGB.
     static bool UploadCursor(SDL_Texture* texture,const std::vector<std::uint32_t>& canvas,int width,int height,
-            const simapp::AppInput& input,const odh::CursorImage* image, bool restoreBackground=false){
+            const simapp::AppInput& input,const odh::CursorImage* image, bool restoreBackground=false, SDL_Rect* drawn=nullptr){
+        if(drawn)*drawn={};
         if(!image||input.PointerCancelled||input.TouchX<0||input.TouchY<0)return true;
         const auto count=std::size_t(image->width)*image->height;
         if(!image->width||!image->height||image->pixels.size()!=count||image->invert.size()!=count||canvas.size()!=std::size_t(width)*height)return false;
@@ -255,7 +256,9 @@ public:
             else if(p[3])color=Uint32(p[0])|(Uint32(p[1])<<8)|(Uint32(p[2])<<16)|(Uint32(p[3])<<24);
             pixels[std::size_t(py)*w+px]=color;
         }
-        return SDL_UpdateTexture(texture,&rect,pixels.data(),w*sizeof(Uint32))==0;
+        if(SDL_UpdateTexture(texture,&rect,pixels.data(),w*sizeof(Uint32))!=0)return false;
+        if(drawn)*drawn=rect;
+        return true;
     }
 private:
     enum class Owner{None,Touch,Controller,Mouse,RearTrigger};

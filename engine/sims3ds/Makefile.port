@@ -54,6 +54,7 @@ build-port/simsave: $(OBJ) build-port/src/tools/simsave.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lz
 -include build-port/src/tools/simsave.d
 # TS1(sims): prebuilds the SD card's cache/ folder on a PC (src/tools/simcache.cpp, src/app/README.md)
+build-port/src/tools/simcache.o: CXXFLAGS += -I../../tools -I../../include
 build-port/simcache: $(OBJ) $(APP_OBJ) build-port/src/tools/simcache.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lz
 -include build-port/src/tools/simcache.d

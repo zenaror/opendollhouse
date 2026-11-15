@@ -42,6 +42,35 @@ installation. The engine does not run the original program or require an
 inserted CD. On first launch, it may prepare copies of the neighborhoods for
 its own saves and create cache files.
 
+### Optional faster first start on Vita and Switch
+
+A Linux PC can prepare the object, furniture and clothing indexes before you
+copy them to the card. This reduces work during the first start and first
+catalog visit. If you already play with the same files, the handheld may have
+built these indexes itself.
+
+1. Use the **same game installation** you copied to the handheld, including
+   its expansions and custom content. Keep the original folder and file names.
+2. From the folder containing the Linux `odh-prepare-cache` helper, run the
+   following command. Replace the game path and choose a new output folder
+   outside the installation.
+
+   ```sh
+   ./odh-prepare-cache "/path/to/The Sims" "$HOME/odh-card-indexes" en-US
+   ```
+
+   Use the handheld game's language. For Brazilian Portuguese, replace
+   `en-US` with `pt-BR`. The engine rebuilds localized catalog indexes when
+   the selected language changes.
+3. Close OpenDollhouse. Copy the **files inside** the new folder into
+   `ux0:/data/OpenDollhouse/cache/` on Vita or
+   `SD:/switch/OpenDollhouse/cache/` on Switch. Replace only matching index
+   files. Keep all other files, including your saves.
+4. Rebuild the indexes from the matching installation after replacing
+   archives or changing custom content. Each run takes a fresh output folder.
+
+To compile the helper on Linux, see [building](ai_agents/building.md#handheld-cache-helper).
+
 ## Linux
 
 Use the **Linux x86_64** package.

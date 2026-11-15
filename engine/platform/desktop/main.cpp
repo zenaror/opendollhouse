@@ -16,6 +16,9 @@
 #include "core/png.h"
 #include "SdlAudio.h"
 #include "InputSequence.h"
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#include "SdlCanvasUpload.h"
+#endif
 #include "SdlPortableInput.h"
 #include "SdlCanvasWindow.h"
 #if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH) || defined(__ANDROID__)
@@ -481,6 +484,9 @@ int Run(Options options) {
     }
 #endif
     simapp::App app;
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+    odh::desktop::SdlCanvasUpload canvasUpload;
+#endif
 #if defined(ODH_PORTABLE_DIAGNOSTICS)
     odh::desktop::ConsoleFrameWindow performance(NowMs());
     auto performanceIo = FSO::Files::FilePool::Stats;
@@ -551,6 +557,11 @@ int Run(Options options) {
         inputDiagnostics.Touches=inputDiagnostics.Front=inputDiagnostics.Rear=inputDiagnostics.Delivered=0;
         inputDiagnostics.MaxPollGap=0;inputDiagnostics.QueuePeak=inputDiagnostics.Queued;
 #endif
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+        std::printf("[portable-display] canvas_bytes=%llu presents=%llu\n",
+            static_cast<unsigned long long>(canvasUpload.bytes),static_cast<unsigned long long>(performance.Presents));
+        canvasUpload.bytes=0;
+#endif
         std::fflush(stdout); // preserve the latest sample if the next step fails
         performance.Reset(now); performanceIo = io;
     };
@@ -572,9 +583,16 @@ int Run(Options options) {
 #if defined(ODH_PORTABLE_DIAGNOSTICS)
         const double uploadStarted = NowMs();
 #endif
-        if (SDL_UpdateTexture(texture.get(), nullptr, canvas.Px.data(), canvas.Width * sizeof(uint32_t)) != 0
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+        const bool uploaded=canvasUpload.Upload(texture.get(),canvas.Px,canvas.Width,canvas.Height);
+        SDL_Rect* paintedCursor=&canvasUpload.paintedCursor;
+#else
+        const bool uploaded=SDL_UpdateTexture(texture.get(), nullptr, canvas.Px.data(), canvas.Width * sizeof(uint32_t))==0;
+        SDL_Rect* paintedCursor=nullptr;
+#endif
+        if (!uploaded
             || (portable.Enabled() && portable.Focused() && !odh::desktop::SdlPortableInput::UploadCursor(
-                texture.get(),canvas.Px,canvas.Width,canvas.Height,cursorInput,softwareCursor))
+                texture.get(),canvas.Px,canvas.Width,canvas.Height,cursorInput,softwareCursor,false,paintedCursor))
             || SDL_RenderClear(renderer.get()) != 0
             || SDL_RenderCopy(renderer.get(), texture.get(), nullptr, portable.Enabled()?&portableCanvas.Box:nullptr) != 0) {
             renderFailed = true;
@@ -672,6 +690,10 @@ int Run(Options options) {
         inputs.BeginPoll();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+            if(event.type==SDL_RENDER_DEVICE_RESET || event.type==SDL_RENDER_TARGETS_RESET)
+                canvasUpload.Invalidate();
+#endif
 #if defined(ODH_PLATFORM_VITA) || defined(__ANDROID__)
             inputDiagnostics.QueuePeak=std::max(inputDiagnostics.QueuePeak,inputs.Pending());
             ++inputDiagnostics.Events;
@@ -863,7 +885,7 @@ int Run(Options options) {
             const double uploadStarted=NowMs();
 #endif
             if(!Cursor::UploadCursor(texture.get(),previous.Px,previous.Width,previous.Height,cursorInput,softwareCursor,true) ||
-               !Cursor::UploadCursor(texture.get(),previous.Px,previous.Width,previous.Height,packet.Input,softwareCursor) ||
+               !Cursor::UploadCursor(texture.get(),previous.Px,previous.Width,previous.Height,packet.Input,softwareCursor,false,&canvasUpload.paintedCursor) ||
                SDL_RenderClear(renderer.get())!=0 || SDL_RenderCopy(renderer.get(),texture.get(),nullptr,&viewport.Box)!=0){
                 std::fprintf(stderr,"portable pointer presentation failed: %s\n",SDL_GetError());
                 renderFailed=true;

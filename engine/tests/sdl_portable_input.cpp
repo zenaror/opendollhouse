@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 #include "SdlPortableInput.h"
+#include "SdlCanvasUpload.h"
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -12,11 +13,46 @@ static SDL_Event Finger(Uint32 type,SDL_Window* w,SDL_FingerID id,float x,float 
  SDL_Event e{};e.type=type;e.tfinger.windowID=SDL_GetWindowID(w);e.tfinger.touchId=device;e.tfinger.fingerId=id;e.tfinger.x=x;e.tfinger.y=y;return e;
 }
 static SDL_Event Pad(Uint32 type,SDL_JoystickID id,Uint8 button){SDL_Event e{};e.type=type;e.cbutton.which=id;e.cbutton.button=button;e.cbutton.state=type==SDL_CONTROLLERBUTTONDOWN?SDL_PRESSED:SDL_RELEASED;return e;}
+static void CheckCanvasUpload() {
+    constexpr int w=800, h=600;
+    using Surface=std::unique_ptr<SDL_Surface,decltype(&SDL_FreeSurface)>;
+    using Renderer=std::unique_ptr<SDL_Renderer,decltype(&SDL_DestroyRenderer)>;
+    using Texture=std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)>;
+    Surface surface(SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ABGR8888), SDL_FreeSurface);
+    Renderer renderer(SDL_CreateSoftwareRenderer(surface.get()),SDL_DestroyRenderer);
+    Texture texture(SDL_CreateTexture(renderer.get(),SDL_PIXELFORMAT_ABGR8888,SDL_TEXTUREACCESS_STREAMING,w,h),SDL_DestroyTexture);
+    Check(bool(texture),"portable canvas texture");
+    SdlCanvasUpload upload;
+    std::vector<Uint32> pixels(w*h,0xff123456), readback(w*h);
+    auto verify=[&](std::size_t expectedBytes) {
+        upload.bytes=0;
+        Check(upload.Upload(texture.get(),pixels,w,h),"upload completed canvas");
+        Check(upload.bytes==expectedBytes,"expected canvas upload bytes");
+        Check(SDL_RenderCopy(renderer.get(),texture.get(),nullptr,nullptr)==0,"copy retained texture");
+        Check(SDL_RenderReadPixels(renderer.get(),nullptr,SDL_PIXELFORMAT_ABGR8888,readback.data(),w*4)==0 &&
+              readback==pixels,"every displayed pixel matches full upload");
+    };
+    verify(pixels.size()*4);
+    verify(0);
+    const SDL_Rect cursor{240,33,4,3};
+    Uint32 fakeCursor[12]{};
+    Check(SDL_UpdateTexture(texture.get(),&cursor,fakeCursor,4*4)==0,"paint previous cursor");
+    upload.paintedCursor=cursor;
+    pixels[180*w+50]^=0x12;
+    pixels.back()^=0x34;
+    verify((16+16+8)*w*4);
+    verify(0);
+    for(std::size_t i=0;i<pixels.size();++i) pixels[i]^=0x876543;
+    verify(pixels.size()*4);
+    upload.Invalidate();
+    verify(pixels.size()*4);
+}
 int main(){SDL_SetMainReady();try{
  SDL_setenv("SDL_VIDEODRIVER","dummy",1);SDL_setenv("SDL_AUDIODRIVER","dummy",1);
  SdlPortableInput::Configure(PortableInputProfile::Switch);
  Check(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMECONTROLLER|SDL_INIT_JOYSTICK|SDL_INIT_EVENTS)==0,SDL_GetError());
  struct End{~End(){SDL_Quit();}} end;
+ CheckCanvasUpload();
  std::unique_ptr<SDL_Window,decltype(&SDL_DestroyWindow)> window(SDL_CreateWindow("input fixture",0,0,1280,720,SDL_WINDOW_SHOWN),SDL_DestroyWindow);Check(bool(window),SDL_GetError());
  std::unique_ptr<SDL_Renderer,decltype(&SDL_DestroyRenderer)> renderer(SDL_CreateRenderer(window.get(),-1,SDL_RENDERER_SOFTWARE),SDL_DestroyRenderer);Check(bool(renderer),SDL_GetError());
  const auto box=PortableCanvas::Fit(1280,720,800,600);Check(box.Box.x==160&&box.Box.y==0&&box.Box.w==960&&box.Box.h==720,"uniform letterbox");

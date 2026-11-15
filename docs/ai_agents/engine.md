@@ -38,6 +38,22 @@ For saving, start with `app/front/LotSave`, the neighborhood model and the
 both the house file and the character and neighborhood records. A successful
 write does not prove that the save will restore correctly.
 
+## Handheld rendering and file access
+
+| When playing | What the engine reuses |
+| --- | --- |
+| The camera moves across a lot | The renderer keeps three layers of scenery and a 64-pixel margin. It draws newly exposed strips when possible. |
+| A Sim moves in front of furniture | Cached scenery supplies both color and depth. Depth determines which part of the Sim the furniture hides. |
+| A player enters a house | The engine uses archive indexes to find the residents' outfits and reads the portraits needed for the household panel. |
+| An action menu opens on Vita or Switch | The wheel shows the selected resident's cached portrait. The input and simulation loop yields between complete updates after a 14 ms budget. |
+| Part of the screen changes on Vita or Switch | The host can upload just the changed bands of pixels. Scrolling or a transition can trigger a full upload. The debug log records the bytes sent for the canvas. |
+
+The 3DS draws the lot at 400×240. Its lower screen can reuse that image on
+alternate frames. Vita and Switch currently draw a single 800×600 canvas.
+Changing the resolution of the lot independently of the interface requires the
+same coordinate conversion for touch, selecting objects, placing furniture and
+drawing the crystal over the selected Sim.
+
 ## Separating the product from previous tools
 
 The `src/`, `include/odh/`, `native/` and `tools/` directories also contain

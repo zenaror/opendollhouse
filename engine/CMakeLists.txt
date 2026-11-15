@@ -298,6 +298,12 @@ if(ODH_SANITIZERS)
   target_link_options(odh_engine PUBLIC -fsanitize=address,undefined)
 endif()
 
+# Prepare portable game indexes on a computer before copying them to a card.
+if(NOT CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Windows)$")
+  add_executable(odh-prepare-cache EXCLUDE_FROM_ALL sims3ds/src/tools/simcache.cpp)
+  target_link_libraries(odh-prepare-cache PRIVATE odh_engine)
+endif()
+
 option(ODH_BUILD_DESKTOP "Build the single-screen desktop application" ON)
 if(ODH_BUILD_DESKTOP)
   add_subdirectory(platform/desktop)

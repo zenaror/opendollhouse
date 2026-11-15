@@ -53,6 +53,20 @@ cmake --build build/core --target odh_engine --parallel 2
 This still requires the platform's data and text dependencies. It does not prove
 that windowing, audio or controls are available on another system.
 
+## Handheld cache helper
+
+Use the same Git revision as the handheld build. This host tool uses the
+engine's normal readers to prepare indexes from the player's own installation.
+
+```sh
+cmake -S . -B build/cache-tool -DCMAKE_BUILD_TYPE=Release -DODH_BUILD_DESKTOP=OFF -DBUILD_TESTING=OFF
+cmake --build build/cache-tool --target odh-prepare-cache --parallel 2
+```
+
+The Linux executable is `build/cache-tool/engine/odh-prepare-cache`. See the
+[installation instructions](../installation.md#optional-faster-first-start-on-vita-and-switch)
+for preparing and copying indexes.
+
 ## Other platforms and packages
 
 Each target needs its own compiler and libraries. Do not link a Linux library
