@@ -43,7 +43,7 @@ prove performance on the real device.
 | New Nintendo 3DS | Opened a house and responded to touch in the emulator. The emulator reported a warning at exit; exit behavior and performance on hardware still need confirmation. |
 | PlayStation Vita | An earlier build reached the neighborhood on hardware, with slow performance and choppy audio. The current update includes controls and a centered image; it opened and responded to front touch in Vita3K. Real performance still needs another device test. |
 | Nintendo Switch | An earlier build reached the neighborhood on hardware. The current update includes controls and a proportional image. The emulator exited before the map; this update's controls and performance still need hardware testing. |
-| Old Nintendo 3DS and Wii U | No game package available to install. |
+| Old Nintendo 3DS (desired) | No game package available to install; New 3DS results do not establish support. |
 
 Current packages are listed in [which package to use](testing-builds.md).
 Vita and Switch images were adjusted to keep a centered 4:3 aspect ratio.

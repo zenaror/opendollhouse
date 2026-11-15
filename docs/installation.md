@@ -297,9 +297,9 @@ See the [controls](controls.md#switch-vita-and-android-with-a-controller) and
 before disconnecting the controller. Docked mode, suspend and resume also need
 their own confirmation.
 
-## Old Nintendo 3DS and Wii U
+## Old Nintendo 3DS
 
-There is no game build with confirmed support for these devices yet.
+Old 3DS support is desired, but there is no game package for it yet.
 The New 3DS package does not prove compatibility with Old 3DS. Check the
 [platform status](status.md#other-platforms) before trying to install.
 

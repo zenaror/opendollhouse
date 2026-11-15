@@ -33,7 +33,7 @@ been confirmed.
 Experimental packages exist for Linux, Windows, macOS Intel/Apple Silicon,
 Android, New 3DS, Vita and Switch. Testing varies by platform; a package does
 not guarantee performance or every feature on that device. There is no stable
-public release yet, and no game package for Wii U or Old 3DS.
+public release yet. Old 3DS support is desired, but no package is available.
 See [which package to use](docs/testing-builds.md).
 
 ## Playing and getting help

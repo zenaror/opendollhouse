@@ -31,7 +31,7 @@ of the game to install.
 
 Each platform has been tested to a different extent. Check the
 [current status](status.md#other-platforms) before choosing a device to
-play on. Old 3DS and Wii U do not yet have a game package to install.
+play on. Old 3DS support is desired, but no game package is available yet.
 
 ## Install or update
 
