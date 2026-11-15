@@ -189,7 +189,7 @@ void World::PreDraw() {
     _2DWorld.PreDraw(State);
 }
 
-void World::Draw(Framebuffer& target) {
+void World::Draw(Framebuffer& target, bool retain) {
     if (target.Width != (int32_t)State.WorldSpace.WorldPxWidth || target.Height != (int32_t)State.WorldSpace.WorldPxHeight) {
         State.SetDimensions(st::Vector2((float)target.Width, (float)target.Height));
         InvalidateScroll();
@@ -198,14 +198,14 @@ void World::Draw(Framebuffer& target) {
     FrameCounter++;
     PreDraw();
     if (HasInit == false) { target.Clear(ClearColor); return; }
-    InternalDraw(target);
+    InternalDraw(target, retain && !AvatarDrawHook);
 }
 
-void World::InternalDraw(Framebuffer& target) {
+void World::InternalDraw(Framebuffer& target, bool retain) {
     State._2D->OutputDepth = true;
     // World2D fills the whole target from its composite of the static layers (FSO_CPP, see World2D.h)
     _2DWorld.ClearColor = ClearColor;
-    _2DWorld.Draw(State, target);
+    _2DWorld.Draw(State, target, retain);
     if (DrawAvatars) DrawAvatarComponents(target);
     if (AvatarDrawHook) AvatarDrawHook(*this, target);
     State._2D->OutputDepth = false;
@@ -264,6 +264,7 @@ void World::DrawAvatarComponents(Framebuffer& target) {
         if (State._2D->AmbientLight != nullptr) opt.Tint = State._2D->AmbientLight[ava->Room];
         if (opt.Tint.A == 0) opt.Tint = st::Color::White();
         auto r = FSO::Vitaboy::DrawAvatar(fb, zb, cam, *ava->Avatar, pos, ava->RadianDirection, opt);
+        if (r.Pixels > 0) _2DWorld.MarkDynamic(r.MinX, r.MinY, r.MaxX + 1, r.MaxY + 1);
         if (ava->CensorFlags != 0 && r.Pixels > 0) DrawCensor(target, ava, cam, r.MinX, r.MinY, r.MaxX, r.MaxY);
         if (getenv("WORLD_DEBUG")) printf("avatar #%d at %.2f,%.2f,%.2f: %d/%d tris, %d px, bounds %d,%d-%d,%d\n", ava->ObjectID, pos.X, pos.Y, pos.Z,
                                           r.TrianglesDrawn, r.Triangles, r.Pixels, r.MinX, r.MinY, r.MaxX, r.MaxY);
@@ -282,6 +283,7 @@ void World::DrawCensor(Framebuffer& target, Components::AvatarComponent* ava, co
     int block = std::max(2, (int)(tpw / 10.0f));             // mosaic cell: ~3 / 6 / 12 px at far / medium / near
     auto mosaic = [&](int x0, int y0, int x1, int y1) {
         x0 = std::max(0, x0); y0 = std::max(0, y0); x1 = std::min<int32_t>(target.Width - 1, x1); y1 = std::min<int32_t>(target.Height - 1, y1);
+        _2DWorld.MarkDynamic(x0, y0, x1 + 1, y1 + 1);
         // cells aligned to the box so they move with the Sim
         for (int by = y0; by <= y1; by += block) for (int bx = x0; bx <= x1; bx += block) {
             int ex = std::min(x1, bx + block - 1), ey = std::min(y1, by + block - 1);
@@ -336,6 +338,7 @@ void World::DrawAvatarShadow(Framebuffer& target, const st::Vector3& tilePos, fl
     float ddy = cam->Depth(WorldSpace::GetWorldFromTile(st::Vector3(ty.X, ty.Y, 0.0f)));
     int x0 = std::max(0, (int)std::floor(cx - ax)), x1 = std::min<int32_t>(target.Width - 1, (int)std::ceil(cx + ax));
     int y0 = std::max(0, (int)std::floor(cy - ay)), y1 = std::min<int32_t>(target.Height - 1, (int)std::ceil(cy + ay));
+    _2DWorld.MarkDynamic(x0, y0, x1 + 1, y1 + 1);
     const float maxA = 0.45f, eps = 0.6f;
     for (int y = y0; y <= y1; y++) {
         float fy = (y + 0.5f - cy) / ay;

@@ -232,7 +232,10 @@ std::vector<DirEntry> ListDirectory(const std::string& dir, bool* opened) {
         de.Name = e->d_name;
         if (de.Name == "." || de.Name == "..") continue;
         bool known = false;
-#if defined(DT_DIR) && defined(DT_REG)
+#if defined(__vita__)
+        if (SCE_S_ISDIR(e->d_stat.st_mode)) { de.IsDir = true; known = true; }
+        else if (SCE_S_ISREG(e->d_stat.st_mode)) known = true;
+#elif defined(DT_DIR) && defined(DT_REG)
         if (e->d_type == DT_DIR) { de.IsDir = true; known = true; }
         else if (e->d_type == DT_REG) known = true;
 #endif

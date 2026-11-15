@@ -87,6 +87,20 @@ void cases(){
         for(float angle:{0.f,.7f,1.9f})for(std::int16_t mood:{std::int16_t(-100),std::int16_t(0),std::int16_t(100)}){
             camera.rotation=static_cast<std::uint8_t>(rotation);camera.zoom=static_cast<std::uint8_t>(zoom);
             const auto frame=crystal.render(camera,{0,0,.5f},angle,mood,1,{0,0,1},{half_pi,0,0});
+            std::array<uint32_t,2> origin{};
+            const auto region=crystal.render(camera,{0,0,.5f},angle,mood,1,{0,0,1},{half_pi,0,0},{},&origin);
+            need(region.tested_samples==frame.tested_samples&&region.shaded_samples==frame.shaded_samples,
+                "compact crystal retains the original samples");
+            need(region.width*region.height<frame.width*frame.height,"compact crystal stores only projected sample boxes");
+            for(unsigned y=0;y<frame.height;++y)for(unsigned x=0;x<frame.width;++x){
+                const auto source=size_t(y)*frame.width+x;
+                if(x>=origin[0]&&x-origin[0]<region.width&&y>=origin[1]&&y-origin[1]<region.height){
+                    const auto local=size_t(y-origin[1])*region.width+(x-origin[0]);
+                    need(frame.pixels[source]==region.pixels[local]&&frame.depth[source]==region.depth[local],
+                        "compact crystal changed color or depth");
+                }else need(frame.pixels[source]==odh::RasterOptions{}.clear&&frame.depth[source]==std::numeric_limits<float>::infinity(),
+                    "omitted crystal pixel was not clear");
+            }
             need(frame.shaded_samples>0&&frame.owner_ids.empty(),"all views/rotations render original unowned crystal");
             for(unsigned i=0;i<frame.depth.size();++i)if(std::isfinite(frame.depth[i])){
                 const auto& pixel=frame.pixels[i];
@@ -97,6 +111,10 @@ void cases(){
             }
         }
     camera.rotation=0;camera.zoom=2;
+    std::array<uint32_t,2> offscreenOrigin{1,1};
+    const auto empty=crystal.render(camera,{999,999,.5f},.7f,100,1,{0,0,1},{half_pi,0,0},{},&offscreenOrigin);
+    need(empty.pixels.empty()&&empty.depth.empty()&&offscreenOrigin==std::array<uint32_t,2>{0,0},
+        "offscreen crystal has empty coverage");
     auto first=crystal.render(camera,{0,0,.5f},.7f,100,1,{0,0,1},{half_pi,0,0});
     auto second=crystal.render(camera,{0,0,1.f},.7f,100,1,{0,0,1},{half_pi,0,0});
     const auto centroid=[](const odh::RasterFrame& frame){double sum=0,count=0;

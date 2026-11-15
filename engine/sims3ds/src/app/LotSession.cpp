@@ -664,7 +664,11 @@ void LotSession::RespondDialog(int code, const std::string& text) {
 }
 
 void LotSession::Draw() {
+#if defined(__vita__) || defined(__SWITCH__)
+    _World->Draw(Frame, true);
+#else
     _World->Draw(Frame);
+#endif
 }
 
 void LotSession::Rotate(int dir) {

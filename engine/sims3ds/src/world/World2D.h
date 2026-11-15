@@ -52,7 +52,9 @@ public:
     /// Prep work before screen is painted
     void PreDraw(WorldState& state);
     /// Paint to screen. Fills the whole target (composite copy) and draws the dynamic objects.
-    void Draw(WorldState& state, Framebuffer& target);
+    void Draw(WorldState& state, Framebuffer& target, bool retain = false);
+    // Screen pixels painted over the static composite, with exclusive upper bounds.
+    void MarkDynamic(int x0, int y0, int x1, int y1);
 
     st::Vector2 GetScrollIncrement(const st::Vector2& pxOffset, WorldState& state);
     /// Forget every cached layer (next PreDraw renders everything).
@@ -71,6 +73,9 @@ private:
     ScrollBuffer StaticWall;
     Framebuffer Composite;
     bool CompositeValid = false;
+    const Framebuffer* RetainedTarget = nullptr;
+    st::Point RetainedOffset;
+    std::vector<st::Point> RestoreRows; // left/right limits of last frame's dynamic pixels
     st::Vector2 Origin;          // world pixel of buffer pixel (0,0), shared by all layers + composite
     bool HaveOrigin = false;
     int32_t TicksSinceLight = 0;

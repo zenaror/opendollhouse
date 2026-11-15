@@ -512,6 +512,18 @@ int main(int argc,char** argv){try{
        outfit_receipt.asset==alias_scene.parts.front().appearance_entry&&outfit_receipt.asset=="DifferentFilename.cmx.bcf"&&
        outfit_receipt.fingerprint==odh::sha256(alias_bytes.data(),alias_bytes.size()),
        "internal-name alias receipt authenticates exact renderer-selected later container");
+ // The SD schedule reads archive extents physically. The later declaration
+ // still wins across containers and cache generations.
+ for(int pass=0;pass<2;++pass){
+  SavedAppearanceResources grouped(a.string(),t.string(),"rig.bcf","adult",skins.string(),
+                                   alias_sources,{},nullptr,dir.path/"portrait-names.cache");
+  const auto part=grouped.resolve_body(expansion_body).parts.front();
+  check(part.appearance_entry==alias_scene.parts.front().appearance_entry &&
+        part.appearance_far==alias_scene.parts.front().appearance_far &&
+        part.texture_entry==alias_scene.parts.front().texture_entry &&
+        part.texture_far==alias_scene.parts.front().texture_far,
+        "physical declaration schedule changed logical appearance/texture selection");
+ }
  const auto texture_bytes=loose_bitmap();
  check((dir.path/texture_receipt.source).string()==alias_scene.parts.front().texture_far&&
        texture_receipt.asset==alias_scene.parts.front().texture_entry&&texture_receipt.asset=="Later/LOOSE-TEXTURE.BMP"&&

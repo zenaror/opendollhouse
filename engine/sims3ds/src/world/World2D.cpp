@@ -297,6 +297,7 @@ void World2D::TakeStaticBounds(WorldComponent* comp, std::vector<st::Rectangle>&
 void World2D::Invalidate() {
     StaticFloor.Valid = StaticWall.Valid = StaticObjects.Valid = false;
     CompositeValid = false;
+    RetainedTarget = nullptr;
     HaveOrigin = false;
 }
 
@@ -437,38 +438,70 @@ void World2D::MergeLayer(const Framebuffer& src, Framebuffer& dst, const st::Rec
 }
 
 void World2D::BuildComposite(const st::Rectangle& rect) {
+    RetainedTarget = nullptr;
     Composite.ClearRect(rect.X, rect.Y, rect.X + rect.Width, rect.Y + rect.Height, ClearColor);
     MergeLayer(StaticFloor.Buffer, Composite, rect);
     MergeLayer(StaticWall.Buffer, Composite, rect);
     MergeLayer(StaticObjects.Buffer, Composite, rect);
 }
 
-void World2D::Draw(WorldState& state, Framebuffer& target) {
-    if (Blueprint == nullptr || !CompositeValid) { target.Clear(ClearColor); return; }
+void World2D::MarkDynamic(int x0, int y0, int x1, int y1) {
+    if (!RetainedTarget) return;
+    x0 = std::max(0, x0);
+    x1 = std::min<int>(RetainedTarget->Width, x1);
+    if (x0 >= x1) return;
+    y1 = std::min<int>(RetainedTarget->Height, y1);
+    for (int y = std::max(0, y0); y < y1; ++y) {
+        auto& span = RestoreRows[y];
+        span.X = std::min(span.X, x0);
+        span.Y = std::max(span.Y, x1);
+    }
+}
+
+void World2D::Draw(WorldState& state, Framebuffer& target, bool retain) {
+    if (Blueprint == nullptr || !CompositeValid) { RetainedTarget = nullptr; target.Clear(ClearColor); return; }
     auto _2d = state._2D;
     auto pxOffset = state.WorldSpace.GetScreenOffset();
     pxOffset = st::Vector2(-pxOffset.X, -pxOffset.Y);
 
-    /**
-     * Draw static layers: one row copy of the composite (the view is always inside it).
-     */
-    int32_t ox = (int32_t)(pxOffset.X - Origin.X), oy = (int32_t)(pxOffset.Y - Origin.Y);
-    for (int32_t y = 0; y < target.Height; y++) {
-        int32_t sy = y + oy;
-        uint32_t* tc = &target.Color[(size_t)y * target.Width];
-        float* td = &target.Depth[(size_t)y * target.Width];
+    const int ox = (int)(pxOffset.X - Origin.X), oy = (int)(pxOffset.Y - Origin.Y);
+    const st::Point offset(ox, oy);
+    // The lot owns its frame across draws. With an unchanged view and composite,
+    // only pixels touched by last frame's sprites, Sims or effects need restoring.
+    const bool partial = retain && RetainedTarget == &target && RetainedOffset == offset;
+    RetainedTarget = nullptr;
+    for (int y = 0; y < target.Height; ++y) {
+        const int left = partial ? RestoreRows[y].X : 0;
+        const int right = partial ? RestoreRows[y].Y : target.Width;
+        if (left >= right) continue;
+        int sy = y + oy;
+        uint32_t* tc = target.Color.data() + (size_t)y * target.Width;
+        float* td = target.Depth.data() + (size_t)y * target.Width;
+        const int x0 = std::clamp(-ox, left, right);
+        const int x1 = std::clamp(Composite.Width - ox, left, right);
         if (sy < 0 || sy >= Composite.Height) {
-            std::fill(tc, tc + target.Width, ClearColor);
-            std::fill(td, td + target.Width, std::numeric_limits<float>::infinity());
+            std::fill(tc + left, tc + right, ClearColor);
+            std::fill(td + left, td + right, std::numeric_limits<float>::infinity());
             continue;
         }
-        int32_t x0 = std::max<int32_t>(0, -ox), x1 = std::min(target.Width, Composite.Width - ox);
-        if (x0 > 0) { std::fill(tc, tc + x0, ClearColor); std::fill(td, td + x0, std::numeric_limits<float>::infinity()); }
-        if (x1 < target.Width) { std::fill(tc + std::max<int32_t>(0, x1), tc + target.Width, ClearColor); std::fill(td + std::max<int32_t>(0, x1), td + target.Width, std::numeric_limits<float>::infinity()); }
-        if (x1 > x0) {
-            std::memcpy(tc + x0, &Composite.Color[(size_t)sy * Composite.Width + x0 + ox], (size_t)(x1 - x0) * sizeof(uint32_t));
-            std::memcpy(td + x0, &Composite.Depth[(size_t)sy * Composite.Width + x0 + ox], (size_t)(x1 - x0) * sizeof(float));
+        if (left < x0) {
+            std::fill(tc + left, tc + x0, ClearColor);
+            std::fill(td + left, td + x0, std::numeric_limits<float>::infinity());
         }
+        if (x1 < right) {
+            std::fill(tc + x1, tc + right, ClearColor);
+            std::fill(td + x1, td + right, std::numeric_limits<float>::infinity());
+        }
+        if (x0 < x1) {
+            const size_t src = (size_t)sy * Composite.Width + (x0 + ox);
+            std::memcpy(tc + x0, Composite.Color.data() + src, (size_t)(x1 - x0) * sizeof(*tc));
+            std::memcpy(td + x0, Composite.Depth.data() + src, (size_t)(x1 - x0) * sizeof(*td));
+        }
+    }
+    if (retain) {
+        RestoreRows.assign(target.Height, st::Point(target.Width, 0));
+        RetainedOffset = offset;
+        RetainedTarget = &target;
     }
 
     /**
@@ -490,6 +523,9 @@ void World2D::Draw(WorldState& state, Framebuffer& target) {
             st::Rectangle offBound(b.X + (int32_t)oPx.X, b.Y + (int32_t)oPx.Y, b.Width, b.Height);
             if (!(offBound.X < worldBounds.Right() && worldBounds.X < offBound.Right() &&
                   offBound.Y < worldBounds.Bottom() && worldBounds.Y < offBound.Bottom())) continue;
+            // Sprite placement truncates after adding its fractional tile offset.
+            if (retain) MarkDynamic(offBound.Left() - worldBounds.X - 1, offBound.Top() - worldBounds.Y - 1,
+                                    offBound.Right() - worldBounds.X + 1, offBound.Bottom() - worldBounds.Y + 1);
             _2d->OffsetPixel(oPx);
             _2d->OffsetTile(tilePosition);
             _2d->SetObjID(obj->ObjectID);

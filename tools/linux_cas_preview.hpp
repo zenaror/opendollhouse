@@ -18,7 +18,8 @@ struct LiveAvatarPortraitInput {
 };
 class LinuxCasPreview {
 public:
-    explicit LinuxCasPreview(const std::filesystem::path& game_root);
+    explicit LinuxCasPreview(const std::filesystem::path& game_root,
+                             const std::filesystem::path& cache_root = {});
     ~LinuxCasPreview();
     // Actual selected assets, magenta outside their rasterized silhouette.
     // portrait selects the same frontal face profile used by the live HUD.

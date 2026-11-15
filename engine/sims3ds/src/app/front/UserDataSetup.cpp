@@ -46,9 +46,9 @@ static std::string ReadText(const std::string& path) {
 }
 bool UserDataSetup::PreparationPending(int index) const {
     const auto dir = NeighbourhoodDir(index);
+    if (FileExists(dir + "/" + MARKER)) return false;
     const auto intent = ReadText(dir + "/" + BOOTSTRAP);
-    return !FileExists(dir + "/" + MARKER) &&
-        (intent == "OpenDollhouse bootstrap v2: new\n" || intent == "OpenDollhouse bootstrap v2: import\n");
+    return intent == "OpenDollhouse bootstrap v2: new\n" || intent == "OpenDollhouse bootstrap v2: import\n";
 }
 bool UserDataSetup::TemplateFamiliesPending(int index) const {
     return ReadText(NeighbourhoodDir(index) + "/" + MARKER) == NEW_PENDING;
@@ -273,6 +273,9 @@ void UserDataSetup::Plan(int index, const std::string& source, bool fresh) {
 void UserDataSetup::PlanAll() {
     for (int i = 0; i < MaxNeighbourhoods; i++) {
         const auto dst = NeighbourhoodDir(i);
+        // Completed destinations belong to the player. No install lookup or
+        // interrupted-copy probe is needed for them on subsequent launches.
+        if (FileExists(dst + "/" + MARKER)) continue;
         const auto pending = ReadText(dst + "/" + BOOTSTRAP);
         if (pending == "OpenDollhouse bootstrap v2: new\n") Plan(i, _Data + "/TemplateUserData", true);
         else if (FileExists(_Data + "/" + FolderName(i) + "/Neighborhood.iff")) Plan(i, _Data + "/" + FolderName(i), false);

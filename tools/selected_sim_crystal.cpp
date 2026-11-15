@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "selected_sim_crystal.hpp"
 #include "odh/compositor.hpp"
+#include "odh/raster_region.hpp"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -94,6 +95,11 @@ SelectedSimCrystal::SelectedSimCrystal(const std::string& animations,const std::
 odh::RasterFrame SelectedSimCrystal::render(const odh::WorldProjection& camera,std::array<float,3> head,
         float rotation,std::int16_t mood,float scale,std::array<float,3> offset,
         std::array<float,3> basis,odh::RasterLimits limits) const{
+    return render(camera,head,rotation,mood,scale,offset,basis,limits,nullptr);
+}
+odh::RasterFrame SelectedSimCrystal::render(const odh::WorldProjection& camera,std::array<float,3> head,
+        float rotation,std::int16_t mood,float scale,std::array<float,3> offset,
+        std::array<float,3> basis,odh::RasterLimits limits,std::array<std::uint32_t,2>* origin) const{
     if(!std::isfinite(rotation)||!std::isfinite(scale)||scale<=0||scale>1024)
         throw odh::FormatError("selected Sim crystal scale/rotation invalid");
     for(unsigned i=0;i<3;++i){
@@ -130,7 +136,7 @@ odh::RasterFrame SelectedSimCrystal::render(const odh::WorldProjection& camera,s
     std::vector<odh::RasterTriangle> triangles;triangles.reserve(mesh_.faces.size());
     for(const auto& face:mesh_.faces)triangles.push_back({{vertices[face[0]],vertices[face[1]],vertices[face[2]]},0,0});
     odh::RasterOptions options;options.vertex_colors=true;options.lighting=false;
-    return odh::rasterize(camera.width,camera.height,triangles,textures_,options,limits);
+    return odh::rasterize(camera.width,camera.height,triangles,textures_,options,limits,origin);
 }
 std::array<std::array<float,3>,2> SelectedSimCrystal::asset_bounds() const{
     auto low=mesh_.vertices.front().position,high=low;

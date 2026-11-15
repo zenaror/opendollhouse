@@ -45,6 +45,14 @@ There is no stable public release yet.
 
 ### Fixed
 
+- Vita and Switch reuse unchanged parts of the lot while Sims move. The
+  neighborhood map keeps its roof fades and animated water while drawing
+  fewer pixels. New Vita and Switch profiles start with Sim shadows off;
+  players can enable them in the graphics options.
+- Loading the original cursor art reads each small file once. The family
+  selector and control panel reuse prepared artwork, and the handheld portrait
+  reader caches appearance names in the private cache directory.
+
 - Portable resource readers keep a limited number of files open during previews.
   File-open failures now include the path and system error in the log. Preview
   discovery avoids unnecessary file checks while retaining deep custom content.

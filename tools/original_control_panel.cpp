@@ -82,7 +82,59 @@ std::vector<std::string> optional_panel_art(){
 }
 }
 OriginalControlPanelArt::OriginalControlPanelArt(const std::filesystem::path& root)
-    :art_(root,required_panel_art(),optional_panel_art()){}
+    :art_(root,required_panel_art(),optional_panel_art()){
+    for(const auto* key:{"cpanel\\backgrounds\\backpatch.bmp","cpanel\\backgrounds\\panelback.bmp",
+            "cpanel\\backgrounds\\universalback.tga","cpanel\\backgrounds\\livepatch.bmp",
+            "cpanel\\backgrounds\\buypatch.bmp","cpanel\\backgrounds\\buildpatch.bmp"})
+        if(const auto* image=find(key))prepare_backdrop(*image);
+}
+void OriginalControlPanelArt::prepare_backdrop(const BitmapImage& image){
+    if(image.width>UINT16_MAX || image.height>UINT16_MAX)return;
+    std::vector<BackdropRun> runs;
+    const auto opacity=[&](const std::array<std::uint8_t,4>& p){
+        if(p[0]==255 && !p[1] && p[2]==255)return 0;
+        return image.bit_count==32?int(p[3]):255;
+    };
+    for(unsigned y=0;y<image.height;++y){
+        const auto* row=image.pixels.data()+size_t(y)*image.width;
+        for(unsigned x=0;x<image.width;){
+            const auto alpha=opacity(row[x]);
+            if(!alpha){++x;continue;}
+            const bool translucent=alpha!=255;
+            const auto start=x++;
+            while(x<image.width){
+                const auto next=opacity(row[x]);
+                if(!next || (next!=255)!=translucent)break;
+                ++x;
+            }
+            runs.push_back({uint16_t(start),uint16_t(y),uint16_t(x-start),translucent});
+            // Highly fragmented artwork costs less to paint directly.
+            if(runs.size()*sizeof(BackdropRun)>image.pixels.size())return;
+        }
+    }
+    backdrop_runs_.emplace(&image,std::move(runs));
+}
+void OriginalControlPanelArt::draw_backdrop(RasterFrame& frame,const BitmapImage& image,BuyUiRect box) const{
+    const auto found=backdrop_runs_.find(&image);
+    if(found==backdrop_runs_.end() || box.width!=int(image.width) || box.height!=int(image.height)){
+        blit(frame,image,box);return;
+    }
+    for(const auto& run:found->second){
+        const int y=box.y+run.y;
+        if(y<0 || y>=int(frame.height))continue;
+        const int left=std::max(0,box.x+run.x),right=std::min(int(frame.width),box.x+run.x+run.width);
+        if(left>=right)continue;
+        const auto* src=image.pixels.data()+size_t(run.y)*image.width+size_t(left-box.x);
+        auto* dst=frame.pixels.data()+size_t(y)*frame.width+left;
+        if(!run.translucent){std::copy_n(src,right-left,dst);continue;}
+        for(int x=left;x<right;++x,++src,++dst){
+            const unsigned alpha=(*src)[3];
+            for(unsigned c=0;c<3;++c)
+                (*dst)[c]=uint8_t(((*src)[c]*alpha+(*dst)[c]*(255-alpha)+127)/255);
+            (*dst)[3]=255;
+        }
+    }
+}
 const BitmapImage& OriginalControlPanelArt::at(const std::string& key)const{return art_.at(key);}
 const BitmapImage* OriginalControlPanelArt::find(const std::string& key)const{return art_.find(key);}
 void OriginalControlPanelArt::draw_button(RasterFrame& frame,const std::string& key,const BuyUiRect& box,unsigned state)const{
@@ -170,16 +222,18 @@ OriginalPanelAction OriginalControlPanelArt::hit(const OriginalControlPanelLayou
 }
 void OriginalControlPanelArt::draw(RasterFrame& frame,OriginalPanelMode mode,OriginalPanelState state)const{
     const auto l=original_control_panel_layout(frame.width,frame.height);
+    if(frame.pixels.size()!=std::uint64_t(frame.width)*frame.height)
+        throw FormatError("UI bitmap destination frame is malformed");
     // Opaque backing under the transparent edge of UniversalBack. It ends
     // at authored x220, adjoining PanelBack at its original pixel size. Draw it first
     // so it cannot cover UniversalBack's teal curve and button surrounds.
     if(const auto* backing=art_.find("cpanel\\backgrounds\\backpatch.bmp"))
-        blit(frame,*backing,{static_cast<int>(std::lround(168*l.scale)),l.base.y,
+        draw_backdrop(frame,*backing,{static_cast<int>(std::lround(168*l.scale)),l.base.y,
             static_cast<int>(std::lround(52*l.scale)),l.base.height});
     // PanelBack's authored rounded corner must cover the backing overlap.
     // Reversing these layers exposes BackPatch's straight right edge as a tip.
     const auto& panel_back=at("cpanel\\backgrounds\\panelback.bmp");
-    blit(frame,panel_back,l.panel_background);
+    draw_backdrop(frame,panel_back,l.panel_background);
     // Larger desktop canvases retain authored UI pixels. Continue the actual
     // background's right edge across the additional panel area, rather than
     // exposing the world behind a bitmap authored for a 1024px display.
@@ -188,9 +242,9 @@ void OriginalControlPanelArt::draw(RasterFrame& frame,OriginalPanelMode mode,Ori
         {right,l.panel_background.y,int(frame.width)-right,l.panel_background.height},
         {int(panel_back.width)-1,0,1,int(panel_back.height)});
     const auto baseline=static_cast<float>(frame.height)-600*l.scale;
-    const auto patch=[&](const char* key,int h,int inset=0){const auto& image=at(key);blit(frame,image,{static_cast<std::int32_t>(std::lround(inset*l.scale)),static_cast<std::int32_t>(std::lround(baseline+(600-h)*l.scale)),static_cast<std::int32_t>(std::lround(image.width*l.scale)),static_cast<std::int32_t>(std::lround(h*l.scale))});};
+    const auto patch=[&](const char* key,int h,int inset=0){const auto& image=at(key);draw_backdrop(frame,image,{static_cast<std::int32_t>(std::lround(inset*l.scale)),static_cast<std::int32_t>(std::lround(baseline+(600-h)*l.scale)),static_cast<std::int32_t>(std::lround(image.width*l.scale)),static_cast<std::int32_t>(std::lround(h*l.scale))});};
     const auto* universal=art_.find("cpanel\\backgrounds\\universalback.tga");
-    if(universal)blit(frame,*universal,l.left_patch);
+    if(universal)draw_backdrop(frame,*universal,l.left_patch);
     // UniversalBack supplies the base, not LivePatch's white curve and grey
     // connector. The authored live overlay starts seven pixels to its right.
     if(mode==OriginalPanelMode::live||mode==OriginalPanelMode::options)patch("cpanel\\backgrounds\\livepatch.bmp",153,7);

@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -60,6 +61,14 @@ public:
     void draw_portrait_state(odh::RasterFrame&,BuyUiRect,unsigned frame,const odh::BitmapImage* head,bool authored_icon=false) const;
     void draw_button(odh::RasterFrame&,const std::string& archive_key,const BuyUiRect&,unsigned state=0)const;
 private:
+    struct BackdropRun {
+        std::uint16_t x,y,width;
+        bool translucent;
+    };
+    // Decoded panel artwork is immutable for this owner's lifetime.
+    std::map<const odh::BitmapImage*,std::vector<BackdropRun>> backdrop_runs_;
+    void prepare_backdrop(const odh::BitmapImage&);
+    void draw_backdrop(odh::RasterFrame&,const odh::BitmapImage&,BuyUiRect) const;
     OriginalUiArt art_;
 };
 // Shared colour-keyed drawing edge retained from the original panel consumer.

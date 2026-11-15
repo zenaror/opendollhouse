@@ -25,8 +25,20 @@ struct NeighborhoodHouseArt {
 struct NeighborhoodHoverText {std::string address,family_summary;};
 using NeighborhoodHoverTextProvider=std::function<NeighborhoodHoverText(std::uint16_t house)>;
 using NeighborhoodPortraitProvider=std::function<const odh::BitmapImage*(std::uint32_t)>;
+// Map water, trees and foregrounds are mostly empty mask pixels. Keep the
+// visible horizontal runs once, as in the two-screen map renderer.
+class NeighborhoodOverlay {
+public:
+    NeighborhoodOverlay(odh::BitmapImage image);
+    void draw(odh::RasterFrame& target,int x,int y,float opacity) const;
+private:
+    struct Run {int x,y,length;};
+    odh::BitmapImage image_;
+    std::vector<Run> runs_;
+    bool packed_ = false;
+};
 struct NeighborhoodMapAnimation {
-    std::vector<odh::BitmapImage> frames;
+    std::vector<NeighborhoodOverlay> frames;
     int x=0,y=0;
     bool pulsates=true;
     unsigned frame_ms=250;
@@ -47,7 +59,7 @@ struct PreparedNeighborhoodMap {
     std::map<std::uint32_t,bool> unique_neighbors;
     std::filesystem::path installed_characters;
     unsigned visual_mode=1;
-    std::vector<odh::BitmapImage> foreground;
+    std::vector<NeighborhoodOverlay> foreground;
     std::vector<NeighborhoodMapAnimation> animations;
 
 };

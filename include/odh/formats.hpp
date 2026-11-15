@@ -21,6 +21,9 @@ public:
 class View {
 public:
     View(std::istream& input, std::uint64_t size);
+    // The caller owns the bytes for the lifetime of this view and its subviews.
+    View(const std::uint8_t* bytes, std::size_t size);
+    const std::uint8_t* memory_data() const { return bytes_; }
     std::uint64_t size() const { return size_; }
     View subview(std::uint64_t offset, std::uint64_t length) const;
     void read(std::uint64_t offset, void* destination, std::size_t length) const;
@@ -32,7 +35,8 @@ public:
 private:
     View(std::istream& input, std::uint64_t base, std::uint64_t size);
     void check(std::uint64_t offset, std::uint64_t length) const;
-    std::istream* input_;
+    std::istream* input_ = nullptr;
+    const std::uint8_t* bytes_ = nullptr;
     std::uint64_t base_;
     std::uint64_t size_;
 };

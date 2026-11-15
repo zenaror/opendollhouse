@@ -81,6 +81,11 @@ bool FrontEnd::Init(const Config& cfg) {
     if (!ui.IsOpen()) printf("[front] UIGraphics/UIGraphics.far not found: plain look (copy UIGraphics/ next to GameData/)\n");
     LoadTS1Fonts();
     FrontArt::Get().Load(ui);
+#if defined(__vita__) || defined(__SWITCH__)
+    // Give new handheld profiles the inexpensive setting. An explicit player
+    // preference, including an existing save's setting, still wins below.
+    _Settings.Shadows = false;
+#endif
     _Settings.Load(_Cfg.SaveRoot + "/sims_options.txt");
     _Setup.Configure(_Cfg.DataRoot, _Cfg.SaveRoot);
     _Nhood.reset(new NeighbourhoodScreen(this));

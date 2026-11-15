@@ -33,6 +33,11 @@ public:
         float rotation_radians,std::int16_t mood,float scale,
         std::array<float,3> offset_tile,std::array<float,3> basis_radians={0,0,0},
         odh::RasterLimits={}) const;
+    // Integrated HUD keeps only the projected coverage. The origin is in the
+    // supplied viewport and pixels outside the returned frame are clear.
+    odh::RasterFrame render(const odh::WorldProjection&,std::array<float,3> head_tile,
+        float rotation_radians,std::int16_t mood,float scale,std::array<float,3> offset_tile,
+        std::array<float,3> basis_radians,odh::RasterLimits,std::array<std::uint32_t,2>* origin) const;
     std::array<std::array<float,3>,2> asset_bounds() const;
 private:
     odh::SkinnedMesh mesh_;

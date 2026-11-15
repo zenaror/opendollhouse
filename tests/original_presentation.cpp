@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "app/ui/OriginalNeedsPresentation.h"
+#include "app/ui/OriginalHover.h"
 #include "original_control_panel.hpp"
 #include "original_queue_view.hpp"
 #include "original_tooltip_view.hpp"
@@ -14,6 +15,7 @@
 #include <limits>
 #include <random>
 #include <stdexcept>
+#include <thread>
 
 namespace {
 using namespace simapp;
@@ -84,6 +86,37 @@ void transfers(){
             exact=exact&&target.Px[i]==(clip.Contains(x,y)?RGBA(1,2,3,4):c.Px[i]);}
         check(exact,"clipped transfer changes only requested pixels");
     }
+}
+void retained_tooltip(){
+    // The hover clock still owns visibility. Once it is shown, move the same
+    // target, change its ink, resize its viewport, and replace its backdrop.
+    OriginalHover hover;
+    AppInput in;in.DesktopPointer=true;in.TouchX=40;in.TouchY=80;
+    const std::string label="A long tooltip for the control panel that wraps on a narrow viewport";
+    const Rect target{0,0,800,600};
+    auto draw=[&](Canvas& canvas,uint32_t ink){
+        hover.Draw(canvas,in,label,1,2,3,target,false,true,true,ink);
+    };
+    auto initial=background(320,200,3);
+    const auto untouched=initial.Px;
+    draw(initial,RGBA(0,0,0));
+    check(initial.Px==untouched,"dwell time hides the initial tooltip");
+    std::this_thread::sleep_for(std::chrono::milliseconds(510));
+    for(unsigned i=0;i<5;++i){
+        const int w=i>=3?160:320;
+        auto canvas=background(w,200,i+10);
+        const auto ink=i>1?RGBA(215,26,9):RGBA(0,0,0);
+        in.TouchX=i==0?40:w-1;in.TouchY=i%2?1:199;
+        auto expected=original::Raster(canvas);
+        const auto box=odh_host::draw_original_tooltip(expected,label,original::TextLanguage(),{in.TouchX,in.TouchY},1,
+            {uint8_t(ink),uint8_t(ink>>8),uint8_t(ink>>16),uint8_t(ink>>24)});
+        check(bool(box),"reference tooltip fits");
+        draw(canvas,ink);
+        check(original::Raster(canvas).pixels==expected.pixels,"retained tooltip matches the original painter at the current pointer");
+    }
+    in.PointerCancelled=true;
+    auto cancelled=initial;draw(cancelled,RGBA(0,0,0));
+    check(cancelled.Px==untouched,"focus loss dismisses a retained tooltip");
 }
 void needs(){
     odh::BitmapImage art{600,150,32,true,std::vector<Pixel>(600*150),0};
@@ -165,5 +198,5 @@ int main(int argc,char**){try{
 #else
     std::cout<<"backend=existing-host-text\n";
 #endif
-    transfers();needs();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
+    transfers();retained_tooltip();needs();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

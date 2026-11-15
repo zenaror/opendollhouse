@@ -82,13 +82,16 @@ struct OriginalPCUI::Impl {
     std::map<uint32_t,AvatarIcon> avatar_icons;
     std::map<uint32_t,AvatarIcon> queue_faces;
     explicit Impl(const std::string& r):root(r),panel(r),queue(r),catalog(r){}
+    odh_host::LinuxCasPreview& preview(){
+        if (!portraits) portraits = std::make_unique<odh_host::LinuxCasPreview>(root, FSO::Content::Content::Get()->CacheDir);
+        return *portraits;
+    }
     void copy_in(const Canvas& c,int y,int h){
         original::Raster(c,surface,Rect{0,y,c.Width,h});
     }
     void copy_out(Canvas& c,int y,int h){original::Copy(surface,c,Rect{0,y,c.Width,h});}
     const odh::BitmapImage* generated(const odh::AvatarBodyStrings& body){
-        if(!portraits)portraits.reset(new odh_host::LinuxCasPreview(root));
-        auto image=portraits->hud_portrait(body);
+        auto image=preview().hud_portrait(body);
         last_source=portraits->portrait_source();
         if(!image)throw odh::FormatError("original HUD portrait: "+portraits->diagnostic());
         return image;
@@ -194,8 +197,7 @@ struct OriginalPCUI::Impl {
             if(input.head.empty() && input.body.empty())return nullptr;
             input.accessories.assign(avatar->BoundAppearances.begin(),avatar->BoundAppearances.end());
             std::sort(input.accessories.begin(),input.accessories.end());
-            if(!portraits)portraits.reset(new odh_host::LinuxCasPreview(root));
-            return portraits->live_portrait(input);
+            return preview().live_portrait(input);
         }catch(const odh::FormatError&){return nullptr;}
     }
     const odh::BitmapImage* icon(Entity* e){
@@ -295,16 +297,14 @@ void OriginalPCUI::DrawPauseLabel(Canvas& target,const std::string& rawCaption) 
 
 const Canvas& OriginalPCUI::RenderPieHead(Avatar* a,std::array<std::int32_t,2> center,std::array<std::int32_t,2> target){
     if(!a)throw odh::FormatError("pie portrait requires an avatar");
-    if(!P->portraits)P->portraits.reset(new odh_host::LinuxCasPreview(P->root));
-    const auto* image=P->portraits->pie_portrait(body_input(a),center,target);
+    const auto* image=P->preview().pie_portrait(body_input(a),center,target);
     if(!image)throw odh::FormatError("original pie portrait: "+P->portraits->diagnostic());
     P->pie_head=canvas(*image);return P->pie_head;
 }
 Canvas OriginalPCUI::PetBody(Avatar* pet, const std::string& outfit) {
     auto body = body_input(pet);
     body.body = outfit;
-    if (!P->portraits) P->portraits = std::make_unique<odh_host::LinuxCasPreview>(P->root);
-    auto image = P->portraits->pet_body(body);
+    auto image = P->preview().pet_body(body);
     return canvas(image);
 }
 bool OriginalPCUI::GenerateFaces(FSO::Content::GameObject* object,Canvas& faces){

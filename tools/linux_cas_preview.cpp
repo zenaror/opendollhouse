@@ -15,7 +15,8 @@
 
 namespace odh_host {
 struct LinuxCasPreview::Impl {
-    std::filesystem::path root;
+    std::filesystem::path root, name_cache;
+    std::optional<std::vector<std::vector<std::filesystem::path>>> installed_skins;
     std::string animations,textures,skins;
     std::vector<std::string> archives,extra_skins;
     std::unique_ptr<SavedAppearanceResources> resources;
@@ -23,7 +24,9 @@ struct LinuxCasPreview::Impl {
         if(!resources){
             ColdResourceStage stage("portrait-metadata");
             resources=std::make_unique<SavedAppearanceResources>(animations,textures,
-                "adult-skeleton.cmx.bcf","adult",skins,archives,extra_skins);
+                "adult-skeleton.cmx.bcf","adult",skins,archives,extra_skins,
+                installed_skins ? &*installed_skins : nullptr, name_cache);
+            installed_skins.reset();
         }
         return *resources;
     }
@@ -65,7 +68,7 @@ struct LinuxCasPreview::Impl {
         return *cached;
     }
 
-    explicit Impl(const std::filesystem::path& path):root(odh::hostfs::canonical(path)) {
+    Impl(const std::filesystem::path& path, const std::filesystem::path& cache_root):root(odh::hostfs::canonical(path)) {
         const auto started=std::chrono::steady_clock::now();
         const auto admit=[&](const std::filesystem::path& candidate){
             const auto full=odh::hostfs::canonical(candidate);
@@ -77,8 +80,7 @@ struct LinuxCasPreview::Impl {
         animations=admit(root/"GameData/Animation/Animation.far");
         textures=admit(root/"GameData/Textures/Textures.far");
         skins=admit(root/"GameData/Skins");
-        const auto inventory=preview_detail::discover_archives(root);
-        archives=inventory.archives;
+
         for(const auto& entry:std::filesystem::directory_iterator(root))if(entry.is_directory()){
             const auto name=entry.path().filename().string();
             if(name=="Downloads")extra_skins.push_back(admit(entry.path()));
@@ -87,6 +89,20 @@ struct LinuxCasPreview::Impl {
                     if(std::filesystem::is_directory(entry.path()/leaf))extra_skins.push_back(admit(entry.path()/leaf));
             }
         }
+#if defined(__vita__) || defined(__SWITCH__)
+        std::vector<std::string> roots{skins};
+        roots.insert(roots.end(), extra_skins.begin(), extra_skins.end());
+        auto inventory = preview_detail::discover_device_archives(root, roots, installed_skins.emplace());
+        if (!cache_root.empty()) {
+            const auto cache = odh::hostfs::absolute(cache_root);
+            const auto relative = cache.lexically_relative(root);
+            if (!relative.empty() && *relative.begin() == "..") name_cache = cache / "portrait-names-v1.cache";
+        }
+#else
+        (void)cache_root;
+        auto inventory = preview_detail::discover_archives(root);
+#endif
+        archives = std::move(inventory.archives);
         std::printf("[cold-ui] stage=portrait-sources ms=%.3f filesystem_entries=%zu archives=%zu loose_roots=%zu regular_checks=%zu\n",
             std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count(),
             inventory.filesystem_entries,archives.size(),extra_skins.size(),inventory.regular_checks);
@@ -181,7 +197,8 @@ struct LinuxCasPreview::Impl {
         return image;
     }
 };
-LinuxCasPreview::LinuxCasPreview(const std::filesystem::path& root):impl_(std::make_unique<Impl>(root)){}
+LinuxCasPreview::LinuxCasPreview(const std::filesystem::path& root, const std::filesystem::path& cache_root)
+    : impl_(std::make_unique<Impl>(root,cache_root)) {}
 LinuxCasPreview::~LinuxCasPreview()=default;
 const odh::BitmapImage* LinuxCasPreview::image(const SimitoneCasPersonInput& p,bool portrait){
     std::string key(1,portrait?'p':'f');key+=p.child?'c':'a';key+=p.female?'f':'m';

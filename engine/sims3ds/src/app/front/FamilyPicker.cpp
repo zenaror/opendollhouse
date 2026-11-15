@@ -26,7 +26,7 @@ namespace simapp { namespace front {
 struct FamilyPicker::DesktopPresentation {
     odh_host::FamilyPickerPresentation View;
     std::vector<odh::FamilyEntry> Families;
-    std::map<std::pair<size_t,uint32_t>,odh::BitmapImage> Faces;
+    odh::BitmapImage Portrait{};
     std::unique_ptr<odh_host::OriginalUiArt> Art;
 };
 void FamilyPicker::SyncDesktopPresentation() {
@@ -38,21 +38,31 @@ void FamilyPicker::SyncDesktopPresentation() {
             "Nbhd/PAFDeleteFamily.bmp","Nbhd/PAFMoveIn.bmp","Nbhd/NbhdTileBtn.bmp","CPanel/People/PeopleTemplate.bmp",
             "NghUI/Previous.bmp","NghUI/Next.bmp"},std::vector<std::string>{"Nbhd/PickBkgMagic.bmp"});
     }
-    p.Families.clear();p.Faces.clear();v.choices.clear();
+    p.Families.clear();v.choices.clear();
     for(const auto* family:_List){
         odh::FamilyEntry entry{};entry.chunk_id=family->ChunkID;entry.display_name=original::PersonalLabelUTF8(family->Name,family->SourceLanguage,family->TextUTF8,family->TextAmbiguous);
         entry.family.budget=family->Budget;entry.family.value_in_arch=family->NetWorth;
         entry.family.family_friends=family->Friends;
         for(const auto& member:family->Members){
             entry.family.member_guids.push_back(member.GUID);
-            if(member.Face.Width)p.Faces.emplace(std::make_pair(p.Families.size(),member.GUID),original::Bitmap(member.Face));
         }
         p.Families.push_back(std::move(entry));
     }
     for(const auto& entry:p.Families)v.choices.push_back(&entry);
-    v.scoped_portraits=[&p](const odh::FamilyEntry& family,uint32_t guid)->const odh::BitmapImage*{
+    v.scoped_portraits=[this,&p](const odh::FamilyEntry& family,uint32_t guid)->const odh::BitmapImage*{
         const auto row=size_t(&family-p.Families.data());
-        auto it=p.Faces.find({row,guid});return it==p.Faces.end()?nullptr:&it->second;
+        // The painter consumes this image before asking for the next portrait.
+        // Read only visible rows, including exports that reuse a resident GUID.
+        for(const auto& member:_List[row]->Members){
+            if(member.GUID!=guid || !member.Face.Width)continue;
+            const auto& face=member.Face;
+            p.Portrait.width=face.Width;p.Portrait.height=face.Height;
+            p.Portrait.bit_count=32;p.Portrait.top_down=true;
+            p.Portrait.pixels.resize(face.Px.size());
+            original::detail::Import(face.Px.data(),p.Portrait.pixels.data(),face.Px.size());
+            return &p.Portrait;
+        }
+        return nullptr;
     };
     v.selected=_Sel>=0&&_Sel<int(_List.size())?std::optional<size_t>{size_t(_Sel)}:std::nullopt;
     v.first=std::max(0,_Scroll);v.creating=!ImportMode;v.rename=false;
@@ -65,7 +75,14 @@ void FamilyPicker::SyncDesktopPresentation() {
     v.can_archive=[this](const odh::FamilyEntry& e){auto* f=_M?_M->Family(e.chunk_id):nullptr;return !ImportMode&&f&&f->House==0&&!_M->FamilyAway(e.chunk_id);};
 }
 void FamilyPicker::UpdateDesktop(const AppInput& in){
-    _List=Families();SyncDesktopPresentation();auto& v=_Original->View;
+    // Motion updates hover and focus loss cancels capture. Only a command
+    // or button edge needs the current family list for selection or dispatch.
+    if(!_Original || in.TouchDown || in.TouchUp || in.WheelY ||
+            (in.Down & (BTN_A|BTN_B|BTN_UP|BTN_DOWN))){
+        _List=Families();
+        SyncDesktopPresentation();
+    }
+    auto& v=_Original->View;
     auto input=original::PointerInput(in,_OriginX,_OriginY);
     v.pointer=input.pointer_position;
     if(in.Down&(BTN_UP|BTN_DOWN)){
@@ -242,6 +259,7 @@ void FamilyPicker::DrawBottom(Canvas& c) {
     LoadArt();
     if(!Desktop) { _OriginX=_OriginY=0; DrawPanel(c); return; }
     _OriginX=std::max(0,(c.Width-800)/2); _OriginY=std::max(0,(c.Height-600)/2);
+    if(c.Width==800 && c.Height==600){DrawPanel(c);return;}
     if(_DesktopCanvas.Width!=800) _DesktopCanvas.Resize(800,600);
     DrawPanel(_DesktopCanvas);
     c.Blit(_DesktopCanvas.Px.data(),800,600,_OriginX,_OriginY,false);
@@ -257,8 +275,6 @@ void FamilyPicker::DrawPanel(Canvas& c) {
     if (!Open) return;
     _List = Families(); // the families may have changed since Update (delete, CAS): never keep stale pointers
     auto& T = FrontStrings::Get();
-    if (_Bkg.Width > 0) c.Blit(_Bkg.Px.data(), _Bkg.Width, _Bkg.Height, 0, 0, false);
-    else c.GradientV(0, 0, c.Width, c.Height, RGBA(10, 30, 120), RGBA(5, 10, 60));
 #ifndef __3DS__
     if(Desktop){
         SyncDesktopPresentation();auto& p=*_Original;auto& v=p.View;
@@ -269,6 +285,8 @@ void FamilyPicker::DrawPanel(Canvas& c) {
         original::Copy(frame,c);return;
     }
 #endif
+    if (_Bkg.Width > 0) c.Blit(_Bkg.Px.data(), _Bkg.Width, _Bkg.Height, 0, 0, false);
+    else c.GradientV(0, 0, c.Width, c.Height, RGBA(10, 30, 120), RGBA(5, 10, 60));
     Text(c, Desktop?TS1Size::S20:TS1Size::S12, px(12), px(7), ImportMode ? T.Get(151, 6, "Import Family") : T.Get(128, 8, "SELECT A FAMILY"), RGBA(255, 255, 255), RGBA(0, 0, 40, 200));
     int n = (int)_List.size();
     if (n == 0 && ImportMode) {

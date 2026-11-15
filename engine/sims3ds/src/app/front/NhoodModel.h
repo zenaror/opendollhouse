@@ -107,7 +107,7 @@ public:
     // The PC presentation can supply the authenticated original map's points.
     // Only lot facts/resources are read here; family and save authority stays
     // in this model. Handheld callers retain their existing default reader.
-    void LoadArea(Area a, const std::map<int,std::pair<int,int>>* mapPositions = nullptr);
+    void LoadArea(Area a, const std::map<int,std::pair<int,int>>* mapPositions = nullptr, bool loadThumbnail = true);
     bool AreaAvailable(Area a) const; // the area's lots exist in this neighbourhood (expansion pack installed)
     bool Unleashed() const;           // Old Town lots present: the Unleashed map
     LotInfo* Lot(int house);

@@ -40,7 +40,9 @@ public:
                              const std::string& skeleton_entry, const std::string& skeleton_name,
                              const std::string& skins_directory = {},
                              const std::vector<std::string>& far_sources = {},
-                             const std::vector<std::string>& extra_skin_directories = {});
+                             const std::vector<std::string>& extra_skin_directories = {},
+                             const std::vector<std::vector<std::filesystem::path>>* installed_skins = nullptr,
+                             const std::filesystem::path& name_cache = {});
     ~SavedAppearanceResources();
     SavedAppearanceResources(SavedAppearanceResources&&) noexcept;
     SavedAppearanceResources& operator=(SavedAppearanceResources&&) noexcept;

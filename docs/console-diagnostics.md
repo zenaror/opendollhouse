@@ -43,7 +43,10 @@ cropped. A photo can help show whether the whole lower panel is visible.
 
 New Vita and Switch builds also record `[cold-ui]` lines when preparing interface
 artwork or portraits. These include elapsed time and file-read counts, helping
-separate a slow first menu opening from slow drawing afterward.
+separate a slow first menu opening from slow drawing afterward. On Vita and
+Switch, keep the existing `cache` folder when updating. To report a slow action
+menu, open it twice in the same house, then try it once after restarting the
+game. These steps show which work the engine repeats.
 
 `[lot-entry]` lines separate the first house frame into preparation, input,
 simulation, drawing and audio. They appear once per house entry, helping locate

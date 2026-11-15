@@ -414,9 +414,8 @@ void NhoodModel::LoadPositions(int table) {
     }
 }
 
-std::string NhoodModel::StreetAddress(const std::string& userDir, int house) {
+static std::string FormatStreetAddress(IffFile* iff, int house) {
     auto& S = FrontStrings::Get();
-    auto iff = OpenIff(ReadNeighbourhoodPath(userDir, "StreetNames.iff"));
     std::string fmt;
     if (iff) {
         auto names = iff->Get<STR>(2000), assign = iff->Get<STR>(2001);
@@ -435,6 +434,11 @@ std::string NhoodModel::StreetAddress(const std::string& userDir, int house) {
         else fmt = S.Get(134, 7, "%s Sim Lane");
     }
     return Format(fmt, { std::to_string(house) });
+}
+
+std::string NhoodModel::StreetAddress(const std::string& userDir, int house) {
+    const auto streets = OpenIff(ReadNeighbourhoodPath(userDir, "StreetNames.iff"));
+    return FormatStreetAddress(streets.get(), house);
 }
 
 bool NhoodModel::HousePicture(const std::string& userDir, int house, Canvas& out) {
@@ -474,11 +478,13 @@ LotInfo* NhoodModel::Lot(int house) {
     return nullptr;
 }
 
-void NhoodModel::LoadArea(Area a, const std::map<int,std::pair<int,int>>* mapPositions) {
+void NhoodModel::LoadArea(Area a, const std::map<int,std::pair<int,int>>* mapPositions, bool loadThumbnail) {
     CurrentArea = a;
     Lots.clear();
     auto prov = Prov();
-    const AreaDef& def = GetAreaDef(a, Unleashed());
+    const bool unleashed = Unleashed();
+    const auto streets = OpenIff(ReadNeighbourhoodPath(UserDir, "StreetNames.iff"));
+    const AreaDef& def = GetAreaDef(a, unleashed);
     if(mapPositions)_Positions=*mapPositions;else LoadPositions(def.LotTable);
     for (auto& kv : _Positions) {
         FSO::Files::LoadProgress::Progress("front: neighbourhood map", 0, 0); // ADDED(sims): ~40 ms per lot on the 3DS
@@ -495,7 +501,7 @@ void NhoodModel::LoadArea(Area a, const std::map<int,std::pair<int,int>>* mapPos
         if (a == Area::MagicTown) lot.Community = prov == nullptr || prov->GetZoning((int16_t)h) != 0;
         auto d = _Desc.find(h);
         if (d != _Desc.end()) { lot.Name = d->second.first; lot.Desc = d->second.second; }
-        lot.Address = StreetAddress(UserDir, h);
+        lot.Address = FormatStreetAddress(streets.get(), h);
         auto fam = FamilyInHouse(h);
         lot.Family = fam ? fam->ChunkID : -1;
         // FIX(sims) FB1: the house picture as the game places it (FreeSO UINeighborhoodHouseButton, which matches the
@@ -504,28 +510,35 @@ void NhoodModel::LoadArea(Area a, const std::map<int,std::pair<int,int>>* mapPos
         // moved by THMB 512 (base y offset, x offset) / (2 x scale). Before, the point was taken as the top-left of the
         // half-size open picture (BMP_ 1024) on every map: the EP towns' houses were drawn at half size, off their plots
         // (over the roads), and houses saved by the port showed BMP_ 512, which it wrote as an unkeyed night rectangle.
-        lot.Scale = (a == Area::Neighbourhood && Unleashed()) ? 2 : 1;
-        auto chunks = ReadChunks(path, { { "BMP_", 513 }, { "BMP_", 512 }, { "BMP_", 1025 }, { "THMB", 512 }, { "SIMI", 1 } });
-        auto bmp = [&](int id) { auto it = chunks.find(std::make_pair(std::string("BMP_"), id)); return it == chunks.end() ? (const std::vector<uint8_t>*)nullptr : &it->second; };
-        Canvas full;
-        int fullW = 0, fullH = 0;
-        for (int id : { 513, 512 }) if (auto b = bmp(id)) if (DecodeImage(*b, full)) { fullW = full.Width; fullH = full.Height; break; }
-        if (lot.Scale == 1) lot.Thumb = std::move(full);
-        else {
-            Canvas half;
-            if (auto b = bmp(1025)) if (DecodeImage(*b, half) && fullW > 0 && std::abs(half.Width - fullW / 2) <= 2) lot.Thumb = std::move(half);
-            if (lot.Thumb.Width == 0 && fullW > 0) Resample(full, lot.Thumb, std::max(1, fullW / 2), std::max(1, fullH / 2));
+        lot.Scale = (a == Area::Neighbourhood && unleashed) ? 2 : 1;
+        // The one-screen presentation has already decoded its map thumbnails.
+        // Lot value, zoning and magic-house rules still come from the saved lot.
+        static const std::vector<std::pair<std::string,int>> facts{{"SIMI",1}};
+        static const std::vector<std::pair<std::string,int>> factsAndArt{
+            {"SIMI",1},{"BMP_",513},{"BMP_",512},{"BMP_",1025},{"THMB",512}};
+        auto chunks = ReadChunks(path,loadThumbnail ? factsAndArt : facts);
+        if (loadThumbnail) {
+            auto bmp = [&](int id) { auto it = chunks.find(std::make_pair(std::string("BMP_"), id)); return it == chunks.end() ? (const std::vector<uint8_t>*)nullptr : &it->second; };
+            Canvas full;
+            int fullW = 0, fullH = 0;
+            for (int id : { 513, 512 }) if (auto b = bmp(id)) if (DecodeImage(*b, full)) { fullW = full.Width; fullH = full.Height; break; }
+            if (lot.Scale == 1) lot.Thumb = std::move(full);
+            else {
+                Canvas half;
+                if (auto b = bmp(1025)) if (DecodeImage(*b, half) && fullW > 0 && std::abs(half.Width - fullW / 2) <= 2) lot.Thumb = std::move(half);
+                if (lot.Thumb.Width == 0 && fullW > 0) Resample(full, lot.Thumb, std::max(1, fullW / 2), std::max(1, fullH / 2));
+            }
+            int baseY = 0, offX = 0, addY = 0;
+            auto th = chunks.find(std::make_pair(std::string("THMB"), 512));
+            if (th != chunks.end() && th->second.size() >= 20) {
+                auto le = [&](size_t o) { const uint8_t* q = th->second.data() + o; return (int)(int32_t)((uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24)); };
+                baseY = le(8); offX = le(12); addY = le(16);
+            }
+            int sc = lot.Scale;
+            lot.X = lot.CX - (fullW > 0 ? fullW : lot.Thumb.Width * sc) / (2 * sc) + offX / (2 * sc);
+            lot.Y = lot.CY - (fullH > 0 ? fullH : lot.Thumb.Height * sc) / (2 * sc) + baseY / (2 * sc);
+            lot.OpenDY = -addY / sc;
         }
-        int baseY = 0, offX = 0, addY = 0;
-        auto th = chunks.find(std::make_pair(std::string("THMB"), 512));
-        if (th != chunks.end() && th->second.size() >= 20) {
-            auto le = [&](size_t o) { const uint8_t* q = th->second.data() + o; return (int)(int32_t)((uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24)); };
-            baseY = le(8); offX = le(12); addY = le(16);
-        }
-        int sc = lot.Scale;
-        lot.X = lot.CX - (fullW > 0 ? fullW : lot.Thumb.Width * sc) / (2 * sc) + offX / (2 * sc);
-        lot.Y = lot.CY - (fullH > 0 ? fullH : lot.Thumb.Height * sc) / (2 * sc) + baseY / (2 * sc);
-        lot.OpenDY = -addY / sc;
         auto si = chunks.find(std::make_pair(std::string("SIMI"), 1));
         if (si != chunks.end() && !si->second.empty()) {
             SIMI simi;

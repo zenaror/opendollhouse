@@ -1,4 +1,4 @@
-#include "odh/raster.hpp"
+#include "odh/raster_region.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -94,6 +94,12 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                       const std::vector<RasterTriangle>& triangles,
                       const std::vector<BitmapImage>& textures,
                       RasterOptions options, RasterLimits limits) {
+    return rasterize(width,height,triangles,textures,options,limits,nullptr);
+}
+
+RasterFrame rasterize(std::uint32_t width,std::uint32_t height,
+        const std::vector<RasterTriangle>& triangles,const std::vector<BitmapImage>& textures,
+        RasterOptions options,RasterLimits limits,std::array<std::uint32_t,2>* origin) {
     if(width==0 || height==0 || width>limits.width || height>limits.height)
         throw FormatError("raster dimensions exceed limits or are zero");
     const std::uint64_t pixels=std::uint64_t(width)*height;
@@ -119,6 +125,8 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
             throw FormatError("raster texture must be opaque");
     }
     std::uint64_t tested_samples=0;
+    std::uint32_t left=origin?width:0,top=origin?height:0;
+    std::uint32_t right=origin?0:width,bottom=origin?0:height;
     for(const auto& triangle:triangles) {
         if(triangle.texture>=textures.size())throw FormatError("raster texture index out of range");
         for(const auto& vertex:triangle.vertices) {
@@ -133,15 +141,21 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
             if(options.perspective_correct&&vertex.position[2]<=0)
                 throw FormatError("perspective raster depth must be positive");
         }
-        const auto candidates=bounds(triangle,width,height).samples;
+        const auto box=bounds(triangle,width,height);
+        const auto candidates=box.samples;
+        if(origin && candidates){
+            left=std::min(left,box.x0);top=std::min(top,box.y0);
+            right=std::max(right,box.x1+1);bottom=std::max(bottom,box.y1+1);
+        }
         if(candidates>limits.samples-tested_samples)
             throw FormatError("raster sample budget exceeded");
         tested_samples+=candidates;
     }
-    RasterFrame frame{width,height,std::vector<Pixel>(static_cast<std::size_t>(pixels),options.clear),
-                      std::vector<float>(static_cast<std::size_t>(pixels),
-                                         std::numeric_limits<float>::infinity()),tested_samples,0,{}};
-    if(options.record_owner_ids)frame.owner_ids.assign(static_cast<std::size_t>(pixels),0);
+    if(origin && !tested_samples){*origin={0,0};return {};}
+    const auto stored_pixels=std::size_t(right-left)*(bottom-top);
+    RasterFrame frame{right-left,bottom-top,std::vector<Pixel>(stored_pixels,options.clear),
+                      std::vector<float>(stored_pixels,std::numeric_limits<float>::infinity()),tested_samples,0,{}};
+    if(options.record_owner_ids)frame.owner_ids.assign(stored_pixels,0);
     for(const auto& triangle:triangles) {
         const auto box=bounds(triangle,width,height);
         if(box.samples==0)continue;
@@ -177,7 +191,7 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                 const float depth=static_cast<float>(std::clamp(z,
                     double(std::min({vertices[0].position[2],vertices[1].position[2],vertices[2].position[2]})),
                     double(std::max({vertices[0].position[2],vertices[1].position[2],vertices[2].position[2]}))));
-                const auto index=static_cast<std::size_t>(y*width+x);
+                const auto index=static_cast<std::size_t>((y-top)*frame.width+(x-left));
                 if(!(depth<frame.depth[index]))continue;
                 const double u=blend(vertices,varying_weights,0,false,true);
                 const double v=blend(vertices,varying_weights,1,false,true);
@@ -206,6 +220,7 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                 ++frame.shaded_samples;
             }
     }
+    if(origin)*origin={left,top};
     return frame;
 }
 } // namespace odh

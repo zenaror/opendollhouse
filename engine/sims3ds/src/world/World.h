@@ -69,7 +69,8 @@ public:
     /// Pre-Draw: bounds the scroll, updates objects, re-renders damaged static layers.
     void PreDraw();
     /// Paints the world into target (resizing the view to the framebuffer's size if needed).
-    void Draw(Framebuffer& target);
+    // Set retain only when the caller preserves this target's colour and depth between draws.
+    void Draw(Framebuffer& target, bool retain = false);
 
     /// Static layer re-render scroll margin (pixels, see World2D::SCROLL_BUFFER).
     void SetScrollBuffer(int32_t px) { _2DWorld.SCROLL_BUFFER = px; }
@@ -87,7 +88,7 @@ private:
     World2D _2DWorld;
     Utils::_2DWorldBatch _2DBatch;
 
-    void InternalDraw(Framebuffer& target);
+    void InternalDraw(Framebuffer& target, bool retain);
     void DrawAvatarComponents(Framebuffer& target);
     void DrawAvatarShadow(Framebuffer& target, const st::Vector3& tilePos, float radius);
     void DrawCensor(Framebuffer& target, Components::AvatarComponent* ava, const FSO::Vitaboy::WorldCamera& cam, int minX, int minY, int maxX, int maxY);

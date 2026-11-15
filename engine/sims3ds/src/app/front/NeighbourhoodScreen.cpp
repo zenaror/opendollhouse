@@ -95,6 +95,7 @@ struct NeighbourhoodScreen::DesktopPresentation {
     std::map<uint32_t,odh::BitmapImage> Faces, Thumbnails;
     std::vector<FamilyPicker::ImportEntry> Imports;
     std::unique_ptr<odh_host::OriginalUiArt> Art;
+    bool Unleashed = false;
     std::tuple<int,int,int,int> Context{-1,-1,0,0};
 };
 void NeighbourhoodScreen::PrepareDesktopPresentation(){
@@ -106,9 +107,12 @@ void NeighbourhoodScreen::PrepareDesktopPresentation(){
     if(!provider)throw odh::FormatError("no neighborhood provider for PC map");
     map=original::PrepareNeighborhoodMapResources(M,_FE->_Cfg.DataRoot+"/UIGraphics/UIGraphics.far",mode,
         original::TextLanguage(),*provider);
+    // This canvas only displays colors. Map layers are already in paint order.
+    std::vector<float>().swap(map.frame.depth);
     std::map<int,std::pair<int,int>> points;
     for(const auto& marker:map.markers)points.emplace(marker.location.house,std::make_pair(marker.location.x,marker.location.y));
-    M.LoadArea(_Area,&points);
+    M.LoadArea(_Area,&points,false);
+    p.Unleashed=M.Unleashed();
     for(const auto& family:M.Families){
         odh::FamilyEntry entry{};entry.chunk_id=family.ChunkID;entry.display_name=original::PersonalLabelUTF8(family.Name,family.SourceLanguage,family.TextUTF8,family.TextAmbiguous);
         entry.family.house_number=family.House;entry.family.budget=family.Budget;
@@ -137,7 +141,7 @@ void NeighbourhoodScreen::FrameDesktop(const AppInput& in,Canvas& top,double dtM
 
     view.managing=_Mode==Mode::Evict;
     view.rezoning=_Mode==Mode::Rezone;
-    view.can_rezone=!_PickDone&&_Area==Area::Neighbourhood&&M.Unleashed();
+    view.can_rezone=!_PickDone&&_Area==Area::Neighbourhood&&p.Unleashed;
     view.community.clear();for(const auto& lot:M.Lots)view.community[lot.House]=lot.Community;
     auto input=original::PointerInput(in);view.pointer=input.pointer_position;
     if(input.pointer_cancelled||input.pointer_overflow)view.pointer.reset();
@@ -171,6 +175,11 @@ void NeighbourhoodScreen::FrameDesktop(const AppInput& in,Canvas& top,double dtM
     auto context=std::make_tuple(int(_Mode),int(_MovingFamily),moving_family?moving_family->Budget:0,
                                  moving_family?moving_family->MagiCoins:0);if(p.Context!=context){view.hover_cache.clear();p.Context=context;}
     view.advance(map,dtMs);
+    if(Picker.Open && top.Width==MAP_W && top.Height==MAP_H){
+        Picker.DrawBottom(top);
+        RecordDrawnFrame(Dialog.Draw(top));
+        return;
+    }
     auto frame=view.draw(map,p.Art.get(),original::LegacyToUTF8(FrontStrings::Get().Get(152,1,"Cancel")),original::TextLanguage(),M.Current+1,
         [&](uint16_t house){odh_host::NeighborhoodHoverText text;auto* lot=M.Lot(house);if(lot){text.address=original::LegacyToUTF8(lot->Address);auto* moving=_Mode==Mode::MoveIn?M.Family(_MovingFamily):nullptr;text.family_summary=M.Rollover(*lot,moving);
                 if(_Mode==Mode::Rezone){
@@ -182,7 +191,14 @@ void NeighbourhoodScreen::FrameDesktop(const AppInput& in,Canvas& top,double dtM
         [&](uint32_t guid)->const odh::BitmapImage*{
             auto miniature=p.Thumbnails.find(guid);if(miniature!=p.Thumbnails.end())return &miniature->second;
             auto face=p.Faces.find(guid);return face==p.Faces.end()?nullptr:&face->second;});
-    top.Clear(RGBA(0,0,45));Canvas surface(800,600);original::Copy(frame,surface);top.Blit(surface.Px.data(),800,600,0,0,false);
+    if(top.Width==MAP_W && top.Height==MAP_H){
+        original::Copy(frame,top);
+    } else {
+        top.Clear(RGBA(0,0,45));
+        Canvas surface(MAP_W,MAP_H);
+        original::Copy(frame,surface);
+        top.Blit(surface.Px.data(),MAP_W,MAP_H,0,0,false);
+    }
     if(Picker.Open)Picker.DrawBottom(top);
     const bool modalDrawn = Dialog.Draw(top);
     RecordDrawnFrame(modalDrawn);
@@ -279,7 +295,7 @@ void NeighbourhoodScreen::Enter(Area a) {
     // start on the first occupied lot (or the first lot)
     for (size_t i = 0; i < M.Lots.size(); i++) if (M.Lots[i].Family >= 0) { _Sel = (int)i; break; }
     if (_Sel < 0 && !M.Lots.empty()) _Sel = 0;
-    if (_Sel >= 0) {
+    if (_Sel >= 0 && !_FE->IsDesktop()) {
         auto& l = M.Lots[(size_t)_Sel];
         _CamX = (float)(l.X + l.Thumb.Width / 2 - 96); _CamY = (float)(l.Y + l.Thumb.Height / 2 - 122);
     }

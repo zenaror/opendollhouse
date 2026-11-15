@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <cstring>
 
 namespace odh {
 
@@ -25,6 +26,10 @@ View::View(std::istream& input, std::uint64_t base, std::uint64_t size)
         throw FormatError("view exceeds seekable stream range");
 }
 
+View::View(const std::uint8_t* bytes, std::size_t size) : bytes_(bytes), base_(0), size_(size) {
+    if (!bytes && size) throw FormatError("missing memory view");
+}
+
 void View::check(std::uint64_t offset, std::uint64_t length) const {
     if (offset > size_ || length > size_ - offset)
         throw FormatError("read outside resource at offset " + std::to_string(offset));
@@ -32,11 +37,16 @@ void View::check(std::uint64_t offset, std::uint64_t length) const {
 
 View View::subview(std::uint64_t offset, std::uint64_t length) const {
     check(offset, length);
+    if (!input_) return View(bytes_ ? bytes_ + offset : nullptr, static_cast<std::size_t>(length));
     return View(*input_, base_ + offset, length);
 }
 
 void View::read(std::uint64_t offset, void* destination, std::size_t length) const {
     check(offset, length);
+    if (!input_) {
+        if (length) std::memcpy(destination, bytes_ + offset, length);
+        return;
+    }
     if (length > static_cast<std::uint64_t>(std::numeric_limits<std::streamsize>::max()))
         throw FormatError("read exceeds streamsize range");
     input_->clear();

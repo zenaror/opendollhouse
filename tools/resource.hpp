@@ -18,7 +18,7 @@
 #include <sys/stat.h>
 
 struct ResourceIoCounters {
-    std::atomic<std::uint64_t> opens{0},reads{0},bytes{0},manifest_reads{0},manifest_hits{0};
+    std::atomic<std::uint64_t> opens{0},reads{0},seeks{0},bytes{0},manifest_reads{0},manifest_hits{0};
     std::atomic<std::uint64_t> open_failures{0},reopens{0},evictions{0},live_handles{0},peak_handles{0},owners{0},weak_identity_opens{0};
 };
 // Readers can be destroyed by other translation units during process shutdown.
@@ -26,15 +26,15 @@ inline ResourceIoCounters& resource_io_counters(){static auto* value=new Resourc
 class ColdResourceStage {
 public:
     explicit ColdResourceStage(const char* stage):stage_(stage),started_(std::chrono::steady_clock::now()),
-        opens_(resource_io_counters().opens),reads_(resource_io_counters().reads),bytes_(resource_io_counters().bytes),
+        opens_(resource_io_counters().opens),reads_(resource_io_counters().reads),seeks_(resource_io_counters().seeks),bytes_(resource_io_counters().bytes),
         manifests_(resource_io_counters().manifest_reads),hits_(resource_io_counters().manifest_hits),
         failures_(resource_io_counters().open_failures),reopens_(resource_io_counters().reopens),evictions_(resource_io_counters().evictions){}
     ~ColdResourceStage(){
         const auto& io=resource_io_counters();
-        std::printf("[cold-ui] stage=%s ms=%.3f opens=%llu reads=%llu bytes=%llu manifest_reads=%llu manifest_hits=%llu open_failures=%llu reopens=%llu evictions=%llu resource_live=%llu resource_peak=%llu resource_cap=4 identity_weak_opens=%llu\n",
+        std::printf("[cold-ui] stage=%s ms=%.3f opens=%llu reads=%llu seeks=%llu bytes=%llu manifest_reads=%llu manifest_hits=%llu open_failures=%llu reopens=%llu evictions=%llu resource_live=%llu resource_peak=%llu resource_cap=4 identity_weak_opens=%llu\n",
             stage_,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started_).count(),
             static_cast<unsigned long long>(io.opens-opens_),static_cast<unsigned long long>(io.reads-reads_),
-            static_cast<unsigned long long>(io.bytes-bytes_),static_cast<unsigned long long>(io.manifest_reads-manifests_),
+            static_cast<unsigned long long>(io.seeks-seeks_),static_cast<unsigned long long>(io.bytes-bytes_),static_cast<unsigned long long>(io.manifest_reads-manifests_),
             static_cast<unsigned long long>(io.manifest_hits-hits_),
             static_cast<unsigned long long>(io.open_failures-failures_),static_cast<unsigned long long>(io.reopens-reopens_),
             static_cast<unsigned long long>(io.evictions-evictions_),static_cast<unsigned long long>(io.live_handles.load()),
@@ -43,7 +43,7 @@ public:
 private:
     const char* stage_;
     std::chrono::steady_clock::time_point started_;
-    std::uint64_t opens_,reads_,bytes_,manifests_,hits_,failures_,reopens_,evictions_;
+    std::uint64_t opens_,reads_,seeks_,bytes_,manifests_,hits_,failures_,reopens_,evictions_;
 };
 // Each owner keeps its own window and logical cursor. Only backing handles
 // are evicted; a process-lifetime registry bounds this service independently
@@ -53,8 +53,10 @@ private:
 class BufferedResourceFile : private std::streambuf, public std::istream {
 public:
     static constexpr std::size_t HandleLimit=4;
-    explicit BufferedResourceFile(const std::string& path)
-        :std::istream(static_cast<std::streambuf*>(this)),path_(path) {
+    enum class Window { Full, Metadata };
+    explicit BufferedResourceFile(const std::string& path,Window window=Window::Full)
+        :std::istream(static_cast<std::streambuf*>(this)),path_(path),
+         window_(window==Window::Metadata ? 16*1024 : 64*1024),far_metadata_(window==Window::Metadata) {
         setg(window_.data(),window_.data(),window_.data());
         auto& handles=pool();std::lock_guard<std::mutex> lock(handles.mutex);
         if(!acquire_locked(true))setstate(std::ios::failbit);
@@ -68,9 +70,18 @@ public:
     BufferedResourceFile& operator=(const BufferedResourceFile&)=delete;
     BufferedResourceFile(BufferedResourceFile&&)=delete;
     BufferedResourceFile& operator=(BufferedResourceFile&&)=delete;
+    std::uint64_t size() const {return static_cast<std::uint64_t>(identity_.size);}
     std::uint64_t physical_reads() const {return reads_;}
     std::uint64_t physical_bytes() const {return bytes_;}
     const std::string& diagnostic() const {return diagnostic_;}
+    // Read one coalesced metadata extent without disturbing this consumer's
+    // logical cursor or cached bytes. Reopens use the usual identity checks.
+    void read_range(std::uint32_t offset, std::uint8_t* out, std::size_t size) {
+        auto& handles=pool();std::lock_guard<std::mutex> lock(handles.mutex);
+        const auto count=read_backing_locked(offset,reinterpret_cast<char*>(out),size);
+        if(count<0 || static_cast<std::size_t>(count)!=size)
+            throw odh::FormatError("short metadata extent in " + path_);
+    }
 private:
     using traits_type=std::streambuf::traits_type;
     using int_type=traits_type::int_type;
@@ -88,11 +99,11 @@ private:
     static Handles& pool(){static auto* handles=new Handles;return *handles;}
     std::string path_,diagnostic_;
     std::ifstream file_;
-    std::vector<char> window_=std::vector<char>(64*1024);
+    std::vector<char> window_;
     Identity identity_;
-    std::streamoff start_=0;
+    std::streamoff start_=0, next_backing_offset_=0;
     std::uint64_t reads_=0,bytes_=0,last_use_=0;
-    bool failed_=false;
+    bool far_metadata_=false, failed_=false;
     bool identity(Identity& out,int& error) const {
 #if defined(_WIN32)
         struct _stat64 info{};errno=0;const auto result=::_stat64(path_.c_str(),&info);error=errno;
@@ -155,24 +166,36 @@ private:
             close_locked();return failure_locked(initial?"initial-identity":"reopen-identity",known?after_error:metadata_error,
                 !known||!verified?"cannot verify source identity":"source changed during open");
         }
+        next_backing_offset_=0;
         if(initial)identity_=after;
         if(!after.inode)++resource_io_counters().weak_identity_opens;
         return true;
+    }
+    std::streamsize read_backing_locked(std::streamoff offset,char* out,std::size_t size) {
+        if(!acquire_locked())return -1;
+        errno=0;file_.clear();
+        if(offset!=next_backing_offset_){file_.seekg(offset);++resource_io_counters().seeks;}
+        const int seek_error=errno;
+        if(!file_){close_locked();failure_locked("seek",seek_error,"cannot seek source");return -1;}
+        errno=0;file_.read(out,static_cast<std::streamsize>(size));const int read_error=errno;
+        const auto count=file_.gcount();++reads_;bytes_+=static_cast<std::uint64_t>(count);
+        ++resource_io_counters().reads;resource_io_counters().bytes+=static_cast<std::uint64_t>(count);
+        if(file_.bad()||(file_.fail()&&!file_.eof())){
+            close_locked();failure_locked("read",read_error,"cannot read source");return -1;
+        }
+        next_backing_offset_=offset+count;
+        return count;
     }
     int_type underflow() override {
         if(failed_)return traits_type::eof();
         if(gptr()<egptr())return traits_type::to_int_type(*gptr());
         auto& handles=pool();std::lock_guard<std::mutex> lock(handles.mutex);
         start_+=egptr()-eback();
-        if(!acquire_locked())return traits_type::eof();
-        errno=0;file_.clear();file_.seekg(start_);const int seek_error=errno;
-        if(!file_){close_locked();failure_locked("seek",seek_error,"cannot seek source");return traits_type::eof();}
-        errno=0;file_.read(window_.data(),static_cast<std::streamsize>(window_.size()));const int read_error=errno;
-        const auto count=file_.gcount();++reads_;bytes_+=static_cast<std::uint64_t>(count);
-        ++resource_io_counters().reads;resource_io_counters().bytes+=static_cast<std::uint64_t>(count);
-        if(file_.bad()||(file_.fail()&&!file_.eof())){
-            close_locked();failure_locked("read",read_error,"cannot read source");return traits_type::eof();
-        }
+        // The FAR header points to the trailing manifest; adjacent payload
+        // bytes have no use on the first metadata read.
+        const auto size=far_metadata_ && !reads_ && start_==0 ? 16u : window_.size();
+        const auto count=read_backing_locked(start_,window_.data(),size);
+        if(count<0)return traits_type::eof();
         setg(window_.data(),window_.data(),window_.data()+count);
         return count?traits_type::to_int_type(*gptr()):traits_type::eof();
     }
@@ -195,6 +218,8 @@ private:
             errno=0;file_.clear();file_.seekg(0,std::ios::end);const auto end=file_.tellg();const int error=errno;
             if(end==pos_type(off_type(-1))){close_locked();failure_locked("end-seek",error,"cannot inspect source size");return pos_type(off_type(-1));}
             base=static_cast<off_type>(end);
+            next_backing_offset_=base;
+            ++resource_io_counters().seeks;
         }else if(direction!=std::ios::beg)return pos_type(off_type(-1));
         if(base<0||(offset>0&&base>std::numeric_limits<off_type>::max()-offset)||
            (offset<0&&offset < -base))return pos_type(off_type(-1));

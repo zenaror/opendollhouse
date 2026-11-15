@@ -25,6 +25,13 @@ std::optional<odh::UiBitmapRect> original_tooltip_layout(std::uint32_t width,std
     const auto extent=measure_text_overlay(name,language,font_size(scale),box_width-pad*2);
     const auto box_height=extent.height+edge*2;
     if(box_height>int(height)||box_width-pad*2<2||extent.height<2)return {};
+    return position_original_tooltip(width,height,box_width,box_height,pointer,scale);
+}
+odh::UiBitmapRect position_original_tooltip(std::uint32_t width,std::uint32_t height,
+        int box_width,int box_height,std::array<std::int32_t,2> pointer,float scale){
+    if(box_width<1||box_height<1||std::uint32_t(box_width)>width||std::uint32_t(box_height)>height||
+       width>8192||height>8192||!std::isfinite(scale)||scale<=0||scale>4)
+        throw std::invalid_argument("original tooltip box outside viewport");
     const auto gap=std::max(1,int(std::lround(14*scale)));
     const auto x=std::clamp<std::int64_t>(pointer[0],0,std::int64_t(width)-box_width);
     const auto y=std::clamp<std::int64_t>(std::int64_t(pointer[1])-gap-box_height,0,std::int64_t(height)-box_height);

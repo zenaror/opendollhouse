@@ -3,6 +3,7 @@
 #include "original_cursors.hpp"
 #include <algorithm>
 #include <fstream>
+#include <limits>
 
 namespace odh_host {
 namespace {
@@ -48,8 +49,16 @@ OriginalCursors::OriginalCursors(const std::filesystem::path& game_root,Original
         auto budget=limits.cursor;budget.pixels=static_cast<std::uint32_t>(std::min<std::uint64_t>(budget.pixels,limits.pixels-pixels));
         std::ifstream input(*paths[i],std::ios::binary);
         if(!input)throw odh::FormatError("cannot open original cursor asset");
-        const odh::View view(input,std::filesystem::file_size(*paths[i]));
-        if(view.size()>budget.bytes)throw odh::FormatError("original cursor exceeds byte budget");
+        const auto size=std::filesystem::file_size(*paths[i]);
+        if(size>budget.bytes || size>std::numeric_limits<std::size_t>::max() ||
+           size>std::uint64_t(std::numeric_limits<std::streamsize>::max()))
+            throw odh::FormatError("original cursor exceeds byte budget");
+        // The CUR decoder reads individual mask bits. Keep these seeks in RAM,
+        // especially on SD, and release the encoded bytes after each cursor.
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+        if(size && !input.read(reinterpret_cast<char*>(bytes.data()),std::streamsize(size)))
+            throw odh::FormatError("cannot read original cursor asset");
+        const odh::View view(bytes.data(),bytes.size());
         if(i==static_cast<std::size_t>(OriginalCursorAsset::MOVEIN)&&view.size()>=6&&view.le16(0)==0&&view.le16(2)==1){
             // Recognition only, not icon decoding. ICO directory words4/6 are
             // planes/bit depth, never cursor hotspot coordinates. No native

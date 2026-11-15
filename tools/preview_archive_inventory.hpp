@@ -6,6 +6,10 @@
 #include <cctype>
 #include <set>
 #include <vector>
+#include <memory>
+#if defined(__vita__) || defined(__SWITCH__) || defined(__linux__)
+#include <dirent.h>
+#endif
 
 // Internal preview discovery shared with its inventory contract tests. The
 // iterator still visits every entry, including unrelated custom-content trees.
@@ -38,3 +42,83 @@ inline ArchiveInventory discover_archives(const std::filesystem::path& root,
     return result;
 }
 }
+
+#if defined(__vita__) || defined(__SWITCH__) || defined(__linux__)
+namespace odh_host::preview_detail {
+using SkinPaths = std::vector<std::vector<std::filesystem::path>>;
+
+// Device mounts have no symlinks. Their directory records already contain the
+// file type (Vita's newlib exposes d_stat rather than d_type). Keep just one
+// directory open, including on deeply nested custom-content installations.
+inline ArchiveInventory discover_device_archives(const std::filesystem::path& root,
+        const std::vector<std::string>& skin_roots, SkinPaths& skins,
+        std::size_t entry_limit=200000, std::size_t archive_limit=256) {
+    struct Directory { std::filesystem::path path; std::size_t skin_root; };
+    const auto none = skin_roots.size();
+    std::vector<Directory> pending{{root, none}};
+    skins.assign(none, {});
+    ArchiveInventory inventory;
+    std::size_t loose_files = 0, loose_path_bytes = 0;
+    while (!pending.empty()) {
+        auto current = std::move(pending.back());
+        pending.pop_back();
+        // The portable source roots do not overlap.
+        if (current.skin_root == none) {
+            const auto current_name = current.path.string();
+            const auto found = std::find_if(skin_roots.begin(), skin_roots.end(), [&](const auto& path) {
+                return path.size() == current_name.size() && std::equal(path.begin(), path.end(), current_name.begin(),
+                    [](unsigned char a, unsigned char b){return std::tolower(a) == std::tolower(b);});
+            });
+            current.skin_root = static_cast<std::size_t>(found - skin_roots.begin());
+        }
+        const auto close_dir=[](DIR* dir){closedir(dir);};
+        std::unique_ptr<DIR, decltype(close_dir)> directory(opendir(current.path.c_str()), close_dir);
+        if (!directory) throw odh::FormatError("cannot list preview directory: " + current.path.string());
+        while (true) {
+            errno = 0;
+            const auto* entry = readdir(directory.get());
+            if (!entry) {
+                if (errno) throw odh::FormatError("cannot read preview directory: " + current.path.string());
+                break;
+            }
+            const std::string_view name(entry->d_name);
+            if (name == "." || name == "..") continue;
+            if (++inventory.filesystem_entries > entry_limit)
+                throw odh::FormatError("CAS preview installation index exceeds limit");
+            const auto path = current.path / entry->d_name;
+#ifdef __vita__
+            const bool is_directory = SCE_S_ISDIR(entry->d_stat.st_mode);
+            const bool regular = SCE_S_ISREG(entry->d_stat.st_mode);
+#else
+            bool is_directory = entry->d_type == DT_DIR, regular = entry->d_type == DT_REG;
+            if (entry->d_type == DT_UNKNOWN) {
+                const auto status = std::filesystem::symlink_status(path);
+                is_directory = std::filesystem::is_directory(status);
+                regular = std::filesystem::is_regular_file(status);
+                ++inventory.regular_checks;
+            }
+#endif
+            if (is_directory) {
+                pending.push_back({path, current.skin_root});
+                continue;
+            }
+            if (!regular) continue;
+            auto ext = path.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){return char(std::tolower(c));});
+            if (ext == ".far") {
+                if (inventory.archives.size() >= archive_limit)
+                    throw odh::FormatError("CAS preview archive count exceeds limit");
+                inventory.archives.push_back(path.string());
+            } else if (current.skin_root != none && (ext == ".cmx" || ext == ".skn" || ext == ".bmp")) {
+                if (++loose_files > 65536 || (loose_path_bytes += path.native().size()) > 4u * 1024u * 1024u)
+                    throw odh::FormatError("saved appearance loose skin index budget exceeded");
+                skins[current.skin_root].push_back(path);
+            }
+        }
+    }
+    std::sort(inventory.archives.begin(), inventory.archives.end());
+    for(auto& group:skins) std::sort(group.begin(),group.end());
+    return inventory;
+}
+}
+#endif

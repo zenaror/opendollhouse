@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "resource.hpp"
 #include "preview_archive_inventory.hpp"
+#include "portrait_name_cache.hpp"
 #include <thread>
 #include <atomic>
 #if defined(__linux__)
@@ -159,5 +160,48 @@ void preview_inventory(const std::filesystem::path& root){
  if(!symlink_error){save(root/"outside.far","outside");std::filesystem::create_symlink(root/"outside.far",tree/"escaped.far");rejects([&]{(void)odh_host::preview_detail::discover_archives(canonical);});}
 }
 
+void portrait_names(const std::filesystem::path& root) {
+ using namespace odh_host::preview_detail;
+ const auto cache=root/"test-names.cache";
+ int parsed=0;
+ auto read=[&](PortraitNameCache& index,const std::string& data,char kind='T'){
+  const odh::View view(reinterpret_cast<const std::uint8_t*>(data.data()),data.size());
+  return index.read(view,kind,[&](const odh::View& src){
+   ++parsed; std::string name(src.size(),' ');
+   src.subview(0,src.size()).read(0,name.data(),name.size());
+   return PortraitNames{{'A',name}};
+  });
+ };
+ {
+  PortraitNameCache cold(cache);
+  check(read(cold,"suit")[0].second=="suit" && parsed==1,"cold portrait declaration");
+  cold.save();
+ }
+ {
+  PortraitNameCache warm(cache);
+  check(read(warm,"suit")[0].second=="suit" && parsed==1,"warm portrait index reparsed source");
+  check(read(warm,"sIut")[0].second=="sIut" && parsed==2,"same-size content change retained old declaration");
+  check(read(warm,"suit",'E')[0].second=="suit" && parsed==3,"archive/CMX cache domains collided");
+ }
+ { std::fstream damage(cache,std::ios::in|std::ios::out|std::ios::binary);damage.seekp(-1,std::ios::end);damage.put('X'); }
+ PortraitNameCache repaired(cache);
+ check(read(repaired,"suit")[0].second=="suit" && parsed==4,"damaged index bypassed parser");
+#if defined(__linux__)
+ const auto tree=root/"native";
+ std::filesystem::create_directories(tree/"Downloads/Nested");
+ std::filesystem::create_directories(tree/"Other");
+ save(tree/"Other/outside.cmx","x");save(tree/"Other/mod.Far","x");
+ save(tree/"Downloads/Nested/loose.CmX","x");save(tree/"Downloads/texture.bmp","x");
+ SkinPaths skins;
+ const auto files=discover_device_archives(tree,{(tree/"Downloads").string()},skins);
+ check(files.archives==discover_archives(tree).archives && skins.size()==1 && skins.front().size()==2,
+       "single-pass device and full archive discovery disagree");
+ std::sort(skins[0].begin(),skins[0].end());
+ check(skins[0][0]==tree/"Downloads/Nested/loose.CmX" && skins[0][1]==tree/"Downloads/texture.bmp",
+       "device loose skin inventory escaped its selected root");
+ rejects([&]{(void)discover_device_archives(tree,{},skins,1);});
+#endif
 }
-int main(){try{Temp temp;buffered_reads(temp.root);entry_lifetime(temp.root);manifest_identity(temp.root);make_sources(temp.root);descriptor_limit(temp.root);many_owners(temp.root);concurrent_owners(temp.root);changed_reopen(temp.root);preview_inventory(temp.root);check(resource_io_counters().live_handles==0&&resource_io_counters().owners==0,"final resource lifetime leak");std::cout<<"Buffered resource reads, handle budget, lifetime, identity and complete preview inventory passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+
+}
+int main(){try{Temp temp;buffered_reads(temp.root);entry_lifetime(temp.root);manifest_identity(temp.root);make_sources(temp.root);descriptor_limit(temp.root);many_owners(temp.root);concurrent_owners(temp.root);changed_reopen(temp.root);preview_inventory(temp.root);portrait_names(temp.root);check(resource_io_counters().live_handles==0&&resource_io_counters().owners==0,"final resource lifetime leak");std::cout<<"Buffered resource reads, handle budget, lifetime, identity and complete preview inventory passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

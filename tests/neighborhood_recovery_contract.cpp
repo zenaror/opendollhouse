@@ -1,9 +1,33 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "neighborhood_presentation.hpp"
 #include <stdexcept>
+#include <cmath>
 #include <iostream>
 void require(bool b,const char* m){if(!b)throw std::runtime_error(m);}
+// Compare the sparse renderer with the original keyed bitmap operation on
+// transparent gaps, clipped runs, and both opaque and blended animation steps.
+static void check_overlay() {
+    odh::BitmapImage image{11,7,24,true,{},0};
+    for(unsigned i=0;i<77;++i)
+        image.pixels.push_back(i%7<2 ? std::array<std::uint8_t,4>{255,0,255,255}
+            : std::array<std::uint8_t,4>{std::uint8_t(i),97,120,255});
+    const odh_host::NeighborhoodOverlay overlay(image);
+    for(int x : {-15,-3,0,4,12}) for(int y : {-2,0,4}) for(float opacity : {0.f,.27f,.5f,1.f}){
+        odh::RasterFrame actual{};actual.width=12;actual.height=8;
+        actual.pixels.assign(96,{80,81,83,91});
+        auto expected=actual;
+        auto source=image;
+        if(opacity<1.f){
+            source.bit_count=32;
+            for(auto& pixel:source.pixels)pixel[3]=std::uint8_t(std::lround(opacity*255));
+        }
+        odh::blit_color_keyed_bitmap(expected,source,x,y,{255,0,255});
+        overlay.draw(actual,x,y,opacity);
+        require(actual.pixels==expected.pixels,"clipped overlay or fade changed pixels");
+    }
+}
 int main(){
+ check_overlay();
  using namespace odh_host;
  odh::FamilyEntry a{},b{};a.family.member_guids={42};b.family.member_guids={42};
  FamilyPickerPresentation p;p.choices={&a,&b};p.can_move=[](const auto&){return true;};p.can_archive=[](const auto&){return true;};
@@ -18,6 +42,8 @@ int main(){
  odh::BitmapImage closed{1,1,24,true,{{200,0,0,255}},0},open{1,1,24,true,{{0,200,0,255}},0};
  map.houses.push_back(prepare_house_presentation(68,{68,320,300},{300,280,40,40},{300,280,40,40},closed,open));
  odh::BitmapImage foreground{800,600,24,true,{},0};foreground.pixels.assign(800*600,{255,0,255,255});foreground.pixels[300*800+315]={0,0,200,255};map.foreground.push_back(foreground);
+ // Production preparation bakes the closed houses into the map.
+ draw_map_houses(map.frame,map,std::nullopt);
  NeighborhoodMapPresentation view;view.pointer=std::array<int32_t,2>{320,300};view.can_manage=true;
  const auto render=[&]{return view.draw(map,nullptr,"Cancel",1,1,{}, {}, {});};
  view.advance(map,0);auto before=render();require(before.pixels[300*800+320][0]==200,"closed roof missing before elapsed time");

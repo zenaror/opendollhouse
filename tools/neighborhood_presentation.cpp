@@ -65,6 +65,69 @@ void fade_keyed(odh::RasterFrame& frame,const odh::BitmapImage& image,odh::UiBit
     odh::blit_color_keyed_bitmap(frame,faded,box,std::nullopt,{255,0,255});
 }
 }
+NeighborhoodOverlay::NeighborhoodOverlay(odh::BitmapImage image):image_(std::move(image)){
+    // Other images retain the checked general compositor.
+    if(image_.bit_count==32 || image_.width>800 || image_.height>600 ||
+       !image_.width || !image_.height ||
+       image_.pixels.size()!=std::size_t(image_.width)*image_.height)return;
+    std::vector<Run> runs;
+    std::size_t count=0;
+    for(unsigned y=0;y<image_.height;++y){
+        const auto* row=image_.pixels.data()+std::size_t(y)*image_.width;
+        unsigned start=0;
+        for(unsigned x=0;x<=image_.width;++x){
+            if(x<image_.width && !(row[x][0]==255 && row[x][1]==0 && row[x][2]==255)){
+                if(row[x][3]!=255)return; // Preserve the source's authored fade.
+                continue;
+            }
+            if(x>start){
+                if(runs.size()==4096)return;
+                runs.push_back({int(start),int(y),int(x-start)});
+                count+=x-start;
+            }
+            start=x+1;
+        }
+    }
+    decltype(image_.pixels) visible;
+    visible.reserve(count);
+    for(const auto& run:runs){
+        const auto first=image_.pixels.begin()+std::size_t(run.y)*image_.width+run.x;
+        visible.insert(visible.end(),first,first+run.length);
+    }
+    runs_=std::move(runs);
+    image_.pixels=std::move(visible);
+    packed_=true;
+}
+
+void NeighborhoodOverlay::draw(odh::RasterFrame& target,int x,int y,float opacity) const{
+    if(!packed_){
+        fade_keyed(target,image_,{x,y,int(image_.width),int(image_.height)},opacity);
+        return;
+    }
+    if(!target.width || !target.height ||
+       std::uint64_t(target.width)*target.height!=target.pixels.size())
+        throw odh::FormatError("UI bitmap destination frame is malformed");
+    const unsigned alpha=unsigned(std::lround(std::clamp(opacity,0.0f,1.0f)*255));
+    if(!alpha)return;
+    std::size_t offset=0;
+    for(const auto& run:runs_){
+        const auto* source=image_.pixels.data()+offset;
+        offset+=run.length;
+        const std::int64_t left=std::int64_t(x)+run.x, row=std::int64_t(y)+run.y;
+        if(row<0 || row>=target.height)continue;
+        const auto begin=std::max<std::int64_t>(0,left);
+        const auto end=std::min<std::int64_t>(target.width,left+run.length);
+        if(end<=begin)continue;
+        source+=begin-left;
+        auto* dest=target.pixels.data()+std::size_t(row)*target.width+begin;
+        if(alpha==255)std::copy_n(source,end-begin,dest);
+        else for(auto i=begin;i<end;++i,++source,++dest){
+            for(unsigned channel=0;channel<3;++channel)
+                (*dest)[channel]=std::uint8_t(((*source)[channel]*alpha+(*dest)[channel]*(255-alpha)+127)/255);
+            (*dest)[3]=255;
+        }
+    }
+}
 void draw_map_houses(odh::RasterFrame& frame,const PreparedNeighborhoodMap& map,std::optional<std::uint16_t> hovered,
                      const std::map<std::uint16_t,float>* roof_openness){
     for(const auto& house:map.houses){
@@ -357,7 +420,9 @@ odh::RasterFrame NeighborhoodMapPresentation::draw(const PreparedNeighborhoodMap
     const NeighborhoodPortraitProvider& known_portraits,const std::function<std::string(std::uint32_t)>& resident_name){
         auto frame=map.frame;
         const auto hovered_lot=pointer?pick_map_lot(map,(*pointer)[0],(*pointer)[1]):std::nullopt;
-        if((hovered_lot||!roofs.empty())&&!map.background.empty()){
+        const bool opening=roofs.empty()?hovered_lot.has_value():
+            std::any_of(roofs.begin(),roofs.end(),[](const auto& roof){return roof.second.value>0;});
+        if(opening&&!map.background.empty()){
             frame.pixels=map.background;
             std::map<std::uint16_t,float> openness;
             for(const auto& entry:roofs)openness.emplace(entry.first,entry.second.value);
@@ -369,11 +434,10 @@ odh::RasterFrame NeighborhoodMapPresentation::draw(const PreparedNeighborhoodMap
             const auto cycle=std::fmod(time_ms/double(animation.frame_ms),double(total));
             const auto step=size_t(cycle);
             const auto index=[&](size_t n){n%=total;return n<count?n:total-n;};
-            const auto paint=[&](size_t n,float opacity){const auto& image=animation.frames[index(n)];
-                fade_keyed(frame,image,{animation.x,animation.y,int(image.width),int(image.height)},opacity);};
+            const auto paint=[&](size_t n,float opacity){animation.frames[index(n)].draw(frame,animation.x,animation.y,opacity);};
             paint(step,1);paint(step+1,float(cycle-step));
         }
-        for(const auto& image:map.foreground)odh::blit_color_keyed_bitmap(frame,image,0,0,{255,0,255});
+        for(const auto& image:map.foreground)image.draw(frame,0,0,1);
         if(rezoning)for(const auto& house:map.houses){
             const auto marker=std::find_if(map.markers.begin(),map.markers.end(),[&](const auto& m){return m.location.house==house.house;});
             if(marker==map.markers.end()||!marker->file_exists)continue;

@@ -12,6 +12,9 @@ namespace odh_host {
 // Invalid UTF8/language/scale/frame bounds throw before painting.
 std::optional<odh::UiBitmapRect> original_tooltip_layout(std::uint32_t width,std::uint32_t height,
     std::string_view name,std::uint8_t language,std::array<std::int32_t,2> pointer,float scale=1);
+// Reposition a previously measured box in the same viewport.
+odh::UiBitmapRect position_original_tooltip(std::uint32_t width,std::uint32_t height,int box_width,int box_height,
+    std::array<std::int32_t,2> pointer,float scale=1);
 // Only RGB pixels change: depth, owners and raster counters remain untouched.
 std::optional<odh::UiBitmapRect> draw_original_tooltip(odh::RasterFrame&,std::string_view name,
     std::uint8_t language,std::array<std::int32_t,2> pointer,float scale=1,

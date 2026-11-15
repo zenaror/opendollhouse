@@ -2,6 +2,7 @@
 #ifndef __3DS__
 #include "app/ui/OriginalSelectedCrystal.h"
 #include "app/ui/OriginalCrystalProjection.h"
+#include "app/ui/OriginalCrystalOverlay.h"
 #include "app/Canvas.h"
 #include "app/WorldPicking.h"
 #include "content/ContentManager.h"
@@ -61,18 +62,11 @@ void DrawOriginalSelectedCrystal(Canvas& canvas, FSO::LotView::World& world,
     if(!crystal)return;
     // These are the preserved person.cpp rules: local ROOT Y=3 (one tile),
     // X basis pi/2, authored scale 1, mood index 3, one revolution per 2s.
-    const auto layer=crystal->render(camera,head,float(std::fmod(milliseconds*pi/1000.,2*pi)),
-        selected->GetMotiveData(FSO::SimAntics::Model::VMMotive::Mood),1,{0,0,1},{float(pi/2),0,0});
     if(scene.Width!=canvas.Width || scene.Height!=canvas.Height || scene.Depth.size()!=canvas.Px.size())return;
-    for(int y=0;y<extent;++y)for(int x=0;x<extent;++x){
-        const int sx=originX+x,sy=originY+y;
-        if(sx<0||sy<0||sx>=canvas.Width||sy>=canvas.Height)continue;
-        const auto local=size_t(y)*extent+x;const auto& pixel=layer.pixels[local];
-        if(!pixel[3])continue;
-        const auto target=size_t(sy)*canvas.Width+sx;
-        if(layer.depth[local]+depthOrigin<=scene.Depth[target])
-            canvas.Blend(sx,sy,RGBA(pixel[0],pixel[1],pixel[2],pixel[3]));
-    }
+    std::array<uint32_t,2> origin{};
+    const auto layer=crystal->render(camera,head,float(std::fmod(milliseconds*pi/1000.,2*pi)),
+        selected->GetMotiveData(FSO::SimAntics::Model::VMMotive::Mood),1,{0,0,1},{float(pi/2),0,0},{},&origin);
+    ComposeCrystal(canvas,scene.Depth,{originX,originY,extent,extent},layer,origin,depthOrigin);
     // Decorative pixels never alter the engine's depth or object picking data.
 }
 }
