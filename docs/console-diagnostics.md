@@ -46,7 +46,9 @@ artwork or portraits. These include elapsed time and file-read counts, helping
 separate a slow first menu opening from slow drawing afterward. On Vita and
 Switch, keep the existing `cache` folder when updating. To report a slow action
 menu, open it twice in the same house, then try it once after restarting the
-game. These steps show which work the engine repeats.
+game. These steps show which work the engine repeats. In the portrait-loading
+entry, `live_dirs_reused` counts folders the game could reuse from memory
+instead of reading them again from the card.
 
 `[lot-entry]` lines separate the first house frame into preparation, input,
 simulation, drawing and audio. They appear once per house entry, helping locate

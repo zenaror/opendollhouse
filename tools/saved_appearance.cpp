@@ -46,7 +46,7 @@ struct Archive {
         stream(filename,preview ? BufferedResourceFile::Window::Metadata : BufferedResourceFile::Window::Full),size(0) {
         bounded_name(path);if(!stream)throw odh::FormatError("saved appearance cannot open FAR");
         size=stream.size();odh::Limits lim;lim.far_entries=8192;lim.far_name_bytes=256*1024;
-        entries=shared_far_manifest(path,odh::View(stream,size),lim);
+        entries=shared_far_manifest(stream,lim);
         full_name_order=odh_host::appearance_detail::index_full_names(*entries);
     }
     const odh::FarEntry& select(const std::string& name) const {

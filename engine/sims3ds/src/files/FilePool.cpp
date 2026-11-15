@@ -6,6 +6,7 @@
 // sims — see FilePool.h
 #include "files/SafeFile.h" // FIX(sims) SAVE
 #include "files/FilePool.h"
+#include "odh/installed_directory.hpp"
 #include "core/io.h"
 #include "files/LoadProgress.h"
 #include <cerrno>
@@ -91,7 +92,7 @@ Slot* Acquire(const std::string& path, std::string* err) {
     }
     errno = 0;
     FILE* f = OpenBuffered(path.c_str(), "rb");
-    if (f == nullptr && !g_Slots.empty()) {
+    if (f == nullptr && st::RetryAfterReleasingFileHandles(errno) && !g_Slots.empty()) {
         // out of handles (other readers hold files open): give back everything the pool holds and retry once
         int e = errno;
         while (!g_Slots.empty()) CloseSlot(g_Slots.size() - 1);
@@ -178,7 +179,7 @@ bool ReadWholeFile(const std::string& path, std::vector<uint8_t>& out, std::stri
     errno = 0;
     FILE* f = std::fopen(path.c_str(), "rb");
     FilePool::Stats.Opens++;
-    if (f == nullptr && FilePool::OpenCount() > 0) {
+    if (f == nullptr && st::RetryAfterReleasingFileHandles(errno) && FilePool::OpenCount() > 0) {
         // out of handles: release the pool's and retry once
         FilePool::CloseAll();
         errno = 0;
@@ -220,14 +221,22 @@ bool ReadWholeFile(const std::string& path, std::vector<uint8_t>& out, std::stri
 
 // ---------------------------------------------------------------- directory listings (TS1(sims) hardware pass)
 
-std::vector<DirEntry> ListDirectory(const std::string& dir, bool* opened) {
+static std::vector<DirEntry> ReadDirectory(const std::string& dir, bool* opened, bool* reusable) {
+    if (reusable) *reusable = false;
     std::vector<DirEntry> r;
     if (opened) *opened = false;
 #ifdef ST_POOL_DIRENT
     DIR* d = opendir(dir.c_str());
     if (!d) return r;
     if (opened) *opened = true;
-    while (struct dirent* e = readdir(d)) {
+    if (reusable) *reusable = true;
+    for (;;) {
+        if (reusable) errno = 0;
+        const auto* e = readdir(d);
+        if (!e) {
+            if (reusable && errno != 0) *reusable = false;
+            break;
+        }
         DirEntry de;
         de.Name = e->d_name;
         if (de.Name == "." || de.Name == "..") continue;
@@ -239,7 +248,13 @@ std::vector<DirEntry> ListDirectory(const std::string& dir, bool* opened) {
         if (e->d_type == DT_DIR) { de.IsDir = true; known = true; }
         else if (e->d_type == DT_REG) known = true;
 #endif
-        if (!known) { struct stat st; de.IsDir = stat((dir + "/" + de.Name).c_str(), &st) == 0 && S_ISDIR(st.st_mode); }
+        if (!known) {
+            // DirEntry cannot distinguish links or unreadable entries from
+            // regular files. Let strict consumers enumerate those folders.
+            if (reusable) *reusable = false;
+            struct stat st;
+            de.IsDir = stat((dir + "/" + de.Name).c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+        }
         r.push_back(de);
     }
     closedir(d);
@@ -250,10 +265,14 @@ std::vector<DirEntry> ListDirectory(const std::string& dir, bool* opened) {
     return r;
 }
 
+std::vector<DirEntry> ListDirectory(const std::string& dir, bool* opened) {
+    return ReadDirectory(dir, opened, nullptr);
+}
+
 std::string InstallDirCache::File;
 std::string InstallDirCache::Root;
 namespace {
-struct Listing { std::vector<DirEntry> Entries; bool Exists = false; };
+struct Listing { std::vector<DirEntry> Entries; bool Exists = false, LiveComplete = false; };
 std::map<std::string, Listing> g_DirMemo;      // this run
 std::map<std::string, Listing> g_DirPersisted; // dirs.cache
 std::unordered_set<std::string> g_DirVerified; // listed live in this run and equal to dirs.cache
@@ -312,11 +331,18 @@ std::vector<DirEntry> ListInstallDirectory(const std::string& dirIn, bool live) 
         return p->second.Entries;
     }
     Listing l;
-    l.Entries = ListDirectory(dir, &l.Exists);
+    l.Entries = ReadDirectory(dir, &l.Exists, &l.LiveComplete);
     if (p != g_DirPersisted.end() && p->second.Exists == l.Exists && p->second.Entries == l.Entries) g_DirVerified.insert(dir);
     else { g_DirPersisted[dir] = l; g_DirDirty = true; } // new / changed: its children are listed live too
     g_DirMemo[dir] = l;
     return l.Entries;
+}
+
+bool VisitLiveInstallDirectory(const std::string& path, const odh::InstallEntryVisitor& visit) {
+    const auto it = g_DirMemo.find(path);
+    if (it == g_DirMemo.end() || !it->second.LiveComplete) return false;
+    for (const auto& entry : it->second.Entries) visit(entry.Name, entry.IsDir);
+    return true;
 }
 
 static bool InstallLookup(const std::string& path, bool wantDir) {

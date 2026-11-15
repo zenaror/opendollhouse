@@ -104,32 +104,28 @@ void VMArchitecture::SetTimeOfDay(double time) {
     if (WorldUI != nullptr) WorldUI->OutsideColor = st::Color::Lerp(col1, col2, (float)Progress); //linearly interpolate between the two colours for this specific time.
 }
 
-void VMArchitecture::SetObjectSupported(int16_t x, int16_t y, int8_t level, bool support) {
-    ObjectSupport[level - 1][y * Width + x] = support;
-    RegenerateSupported(level + 1);
-}
-
-void VMArchitecture::RegenerateSupported(int32_t level) {
-    if (level < 2 || level > Stories) return;
-    auto& objSup = ObjectSupport[level - 2];
-    auto& sup = Supported[level - 2];
-    auto& floors = Floors[level - 1];
-    auto& rooms = Rooms[level - 2];
+static void UpdateSupported(VMArchitecture& arch, int32_t level, int left, int top, int right, int bottom, const st::Point (&spread)[4]) {
+    if (level < 2 || level > arch.Stories) return;
+    const int width = arch.Width, height = arch.Height;
+    auto& objSup = arch.ObjectSupport[level - 2];
+    auto& sup = arch.Supported[level - 2];
+    auto& floors = arch.Floors[level - 1];
+    auto& rooms = arch.Rooms[level - 2];
     if (rooms.Map.empty()) return;
 
-    int offset = 0;
-    for (int y = 0; y < Height; y++) {
-        for (int x = 0; x < Width; x++) {
+    for (int y = top; y < bottom; y++) {
+        for (int x = left; x < right; x++) {
+            const int offset = y * width + x;
             //if we are an object support or are above a room that is not outside, we're supported.
-            if (objSup[offset] || !RoomData[(uint16_t)(rooms.Map[offset])].IsOutside) sup[offset] = true;
+            if (objSup[offset] || !arch.RoomData[(uint16_t)(rooms.Map[offset])].IsOutside) sup[offset] = true;
             else {
                 //if we are a floor tile or are next to the floor tile, do the full 5x5 check.
                 bool step1 = false;
                 for (int i = 0; i < 4; i++) {
-                    int newX = x + SupportSpread[i].X;
-                    int newY = y + SupportSpread[i].Y;
-                    if (newX < 0 || newX >= Width || newY < 0 || newY >= Height) continue;
-                    int newOff = newY * Width + newX;
+                    int newX = x + spread[i].X;
+                    int newY = y + spread[i].Y;
+                    if (newX < 0 || newX >= width || newY < 0 || newY >= height) continue;
+                    int newOff = newY * width + newX;
                     if (floors[newOff].Pattern != 0) {
                         step1 = true;
                         break;
@@ -142,9 +138,9 @@ void VMArchitecture::RegenerateSupported(int32_t level) {
                         for (int x2 = -2; x2 < 3; x2++) {
                             int newX = x + x2;
                             int newY = y + y2;
-                            if (newX < 0 || newX >= Width || newY < 0 || newY >= Height) continue;
-                            int newOff = newY * Width + newX;
-                            if (!RoomData[(uint16_t)rooms.Map[newOff]].IsOutside || (objSup[newOff] && (std::abs(x2) < 2 && std::abs(y2) < 2))) {
+                            if (newX < 0 || newX >= width || newY < 0 || newY >= height) continue;
+                            int newOff = newY * width + newX;
+                            if (!arch.RoomData[(uint16_t)rooms.Map[newOff]].IsOutside || (objSup[newOff] && (std::abs(x2) < 2 && std::abs(y2) < 2))) {
                                 step2 = true;
                                 break;
                             }
@@ -155,9 +151,25 @@ void VMArchitecture::RegenerateSupported(int32_t level) {
                 }
                 else sup[offset] = false;
             }
-            offset++;
         }
     }
+}
+
+void VMArchitecture::SetObjectSupported(int16_t x, int16_t y, int8_t level, bool support) {
+    ObjectSupport[level - 1][y * Width + x] = support;
+    // The next full pass may still owe other tiles a floor edit.
+    if (FloorsDirty || !RealMode) {
+        RegenerateSupported(level + 1);
+        return;
+    }
+    // A column can only support its own tile and the eight adjacent tiles
+    // above. Changing walls or floors still rebuilds the full support map.
+    UpdateSupported(*this, level + 1, std::max(0, x - 1), std::max(0, y - 1),
+                        std::min(Width, x + 2), std::min(Height, y + 2), SupportSpread);
+}
+
+void VMArchitecture::RegenerateSupported(int32_t level) {
+    UpdateSupported(*this, level, 0, 0, Width, Height, SupportSpread);
 }
 
 void VMArchitecture::SignalRedraw() {

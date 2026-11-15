@@ -48,6 +48,20 @@ inline Rect Clip(const Canvas& c,const Rect& region){
     const auto bottom=std::clamp<std::int64_t>(std::int64_t(region.Y)+std::max(0,region.H),y,c.Height);
     return {x,y,int(right-x),int(bottom-y)};
 }
+// Blend a generated portrait directly into the visible part of the canvas.
+inline void DrawPortraitBitmap(Canvas& canvas,const odh::BitmapImage& image,int x,int y){
+    const auto area=Clip(canvas,{x,y,int(image.width),int(image.height)});
+    if (!area.W || !area.H) return;
+    for (int row=0;row<area.H;++row){
+        const auto* src=image.pixels.data()+size_t(area.Y-y+row)*image.width+(area.X-x);
+        auto* dst=canvas.Px.data()+size_t(area.Y+row)*canvas.Width+area.X;
+        for (int col=0;col<area.W;++col){
+            const auto& p=src[col];
+            if (p[3] && !(p[0]==255 && p[1]==0 && p[2]==255))
+                Canvas::BlendPx(dst[col],RGBA(p[0],p[1],p[2],p[3]));
+        }
+    }
+}
 // Keep full-display coordinates while synchronizing only the pixels touched by
 // this draw. The scratch frame can retain its allocation between UI frames.
 inline void Raster(const Canvas& c,odh::RasterFrame& f,const Rect& region){

@@ -68,7 +68,7 @@ struct LinuxCasPreview::Impl {
         return *cached;
     }
 
-    Impl(const std::filesystem::path& path, const std::filesystem::path& cache_root):root(odh::hostfs::canonical(path)) {
+    Impl(const std::filesystem::path& path, const std::filesystem::path& cache_root, odh::LiveInstallDirectory cached_directory):root(odh::hostfs::canonical(path)) {
         const auto started=std::chrono::steady_clock::now();
         const auto admit=[&](const std::filesystem::path& candidate){
             const auto full=odh::hostfs::canonical(candidate);
@@ -92,7 +92,7 @@ struct LinuxCasPreview::Impl {
 #if defined(__vita__) || defined(__SWITCH__)
         std::vector<std::string> roots{skins};
         roots.insert(roots.end(), extra_skins.begin(), extra_skins.end());
-        auto inventory = preview_detail::discover_device_archives(root, roots, installed_skins.emplace());
+        auto inventory = preview_detail::discover_device_archives(root, roots, installed_skins.emplace(), cached_directory);
         if (!cache_root.empty()) {
             const auto cache = odh::hostfs::absolute(cache_root);
             const auto relative = cache.lexically_relative(root);
@@ -100,12 +100,13 @@ struct LinuxCasPreview::Impl {
         }
 #else
         (void)cache_root;
+        (void)cached_directory;
         auto inventory = preview_detail::discover_archives(root);
 #endif
         archives = std::move(inventory.archives);
-        std::printf("[cold-ui] stage=portrait-sources ms=%.3f filesystem_entries=%zu archives=%zu loose_roots=%zu regular_checks=%zu\n",
+        std::printf("[cold-ui] stage=portrait-sources ms=%.3f filesystem_entries=%zu archives=%zu loose_roots=%zu regular_checks=%zu live_dirs_reused=%zu\n",
             std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count(),
-            inventory.filesystem_entries,archives.size(),extra_skins.size(),inventory.regular_checks);
+            inventory.filesystem_entries,archives.size(),extra_skins.size(),inventory.regular_checks,inventory.live_directories_reused);
     }
     odh::BitmapImage render(const SimitoneCasPersonInput& person,bool portrait){
         odh::AvatarBodyStrings body;
@@ -197,8 +198,8 @@ struct LinuxCasPreview::Impl {
         return image;
     }
 };
-LinuxCasPreview::LinuxCasPreview(const std::filesystem::path& root, const std::filesystem::path& cache_root)
-    : impl_(std::make_unique<Impl>(root,cache_root)) {}
+LinuxCasPreview::LinuxCasPreview(const std::filesystem::path& root, const std::filesystem::path& cache_root, odh::LiveInstallDirectory cached_directory)
+    : impl_(std::make_unique<Impl>(root,cache_root,cached_directory)) {}
 LinuxCasPreview::~LinuxCasPreview()=default;
 const odh::BitmapImage* LinuxCasPreview::image(const SimitoneCasPersonInput& p,bool portrait){
     std::string key(1,portrait?'p':'f');key+=p.child?'c':'a';key+=p.female?'f':'m';

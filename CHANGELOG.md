@@ -25,6 +25,7 @@ There is no stable public release yet.
 
 ### Changed
 
+- Reduced repeated drawing and file access when playing a lot on Vita and Switch.
 - Documentation organized for milestone 1 players: installation, controls,
   saves, help and limitations. Public contribution instructions are separate
   in `docs/ai_agents/`.

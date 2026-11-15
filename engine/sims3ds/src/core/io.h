@@ -319,13 +319,18 @@ private:
 /// fopen fails, e.g. out of handles on the 3DS), and the reason of the last ReadAllBytes failure ("path: strerror").
 inline void (*ReleaseFileHandles)() = nullptr;
 inline std::string LastFileError;
+// Missing optional content is common. Releasing live archive handles cannot
+// make an absent path appear. Keep the fallback for opaque device errors.
+inline bool RetryAfterReleasingFileHandles(int error) {
+    return error != ENOENT && error != ENOTDIR;
+}
 
 /// File.ReadAllBytes equivalent (fopen works on the 3DS sdmc). Returns false when the
 /// file cannot be opened (st::LastFileError says why).
 inline bool ReadAllBytes(const std::string& path, std::vector<uint8_t>& out) {
     errno = 0;
     FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f && ReleaseFileHandles) { ReleaseFileHandles(); errno = 0; f = std::fopen(path.c_str(), "rb"); }
+    if (!f && RetryAfterReleasingFileHandles(errno) && ReleaseFileHandles) { ReleaseFileHandles(); errno = 0; f = std::fopen(path.c_str(), "rb"); }
     if (!f) { LastFileError = path + ": " + (errno ? std::strerror(errno) : "cannot open"); return false; }
     std::setvbuf(f, nullptr, _IONBF, 0); // one big fread
     std::fseek(f, 0, SEEK_END);

@@ -72,7 +72,13 @@ void PieMenu::Open(const std::vector<PieChoice>& pie, const std::string& title, 
 #endif
     AnchorX=anchorX>=0?anchorX:area.X+area.W/2;
     AnchorY=anchorY>=0?anchorY:area.Y+area.H/2;
-    if(Desktop) front::ResGraphics::Get().Load("CPanel/PieFace1.bmp",PieArt);
+#ifndef __3DS__
+    if (Desktop) {
+        Canvas disc;
+        front::ResGraphics::Get().Load("CPanel/PieFace1.bmp", disc);
+        PieArt = original::Bitmap(disc);
+    }
+#endif
     Layout();
 #ifndef __3DS__
     HeadMotion.Reset();HeadRenderTarget={HeadX,HeadY};
@@ -347,16 +353,14 @@ PieMenu::Result PieMenu::Pointer(const AppInput& input,PieChoice& out,double dtM
 
 void PieMenu::DrawDesktop(Canvas& c) {
     if(OriginalCaptions.empty())return;
-    auto art=original::Bitmap(PieArt);
     std::optional<odh_host::PieMenuCaption> parent;
     if(Current && Current->Parent)parent=odh_host::PieMenuCaption{Current->Name,original::TextLanguage()};
     const size_t selected=Highlight>=0?size_t(Highlight):std::min(PageSelection,OriginalCaptions.size()-1);
     original::DrawDesktopPie(c,OriginalFrame,OriginalLayout,{HeadX,HeadY},OriginalCaptions,selected,parent,
-        PieArt.Width==201 && PieArt.Height==201?&art:nullptr,OriginalPointer.pressed(),Highlight>=0,
+        PieArt.width==201 && PieArt.height==201?&PieArt:nullptr,OriginalPointer.pressed(),Highlight>=0,
         [&](Canvas& target){
             if(OriginalHead) {
-                const auto& head=OriginalPCUI::Get().RenderPieHead(OriginalHead,{HeadX,HeadY},HeadRenderTarget);
-                if(head.Width==200 && head.Height==200)target.Blit(head.Px.data(),head.Width,head.Height,HeadX-100,HeadY-100,true);
+                OriginalPCUI::Get().DrawPieHead(target,OriginalHead,{HeadX,HeadY},HeadRenderTarget);
             } else if(Head && Head->Valid()) {
                 float yaw=std::atan(float(HeadX-HeadRenderTarget[0])/100.f),pitch=std::atan(float(HeadY-HeadRenderTarget[1])/100.f);
                 Head->DrawPieHead(target,HeadX,HeadY,yaw,pitch);

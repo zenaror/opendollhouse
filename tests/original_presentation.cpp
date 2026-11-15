@@ -67,6 +67,19 @@ struct Fixture {
     }
     ~Fixture(){std::error_code e;std::filesystem::remove_all(path,e);}
 };
+void portrait_blend(){
+    auto source=background(32,32,234);
+    source.Px[0]=RGBA(255,0,255,255);
+    source.Px[1]=RGBA(255,0,255,73);
+    const auto image=simapp::original::Bitmap(source);
+    source.Px[0]=source.Px[1]=0;
+    for(int y:{-40,-8,3,28})for(int x:{-40,-13,2,31}){
+        auto expected=background(41,33,710),actual=expected;
+        expected.Blit(source.Px.data(),32,32,x,y,true);
+        simapp::original::DrawPortraitBitmap(actual,image,x,y);
+        check(expected.Px==actual.Px,"direct portrait blit differs from the original keyed canvas");
+    }
+}
 void transfers(){
     Canvas c=background(800,600,17);const auto expected=old_raster(c);
     check(original::Raster(c).pixels==expected.pixels,"bulk import equals original numeric unpack including alpha");
@@ -162,11 +175,16 @@ void portraits_and_queue(){
     }
     for(unsigned count:{1U,8U,25U})for(bool cancel:{false,true}){
         auto full=background(800,600,count),bounded=full;auto frame=old_raster(full);
-        const Rect strip{0,32,800,45};original::Raster(bounded,scratch,strip);
         for(unsigned i=0;i<count;++i){odh_host::QueueTile tile{};tile.box={32+int(i)*50,32,45,45};tile.active=i==0;tile.cancelled=cancel;
             queue.draw_tile(frame,tile,&head,odh_host::QueueIconKind::authored_avatar);
-            queue.draw_tile(scratch,tile,&head,odh_host::QueueIconKind::authored_avatar);}
-        old_copy(frame,full);original::Copy(scratch,bounded,strip);check(full.Px==bounded.Px,"queue retains complete existing strip including long clipped queues");
+            const auto rect=original::Clip(bounded,{tile.box.x,tile.box.y,tile.box.width,tile.box.height});
+            if (!rect.W || !rect.H) continue;
+            original::Raster(bounded,scratch,rect);
+            queue.draw_tile(scratch,tile,&head,odh_host::QueueIconKind::authored_avatar);
+            original::Copy(scratch,bounded,rect);
+        }
+        old_copy(frame,full);
+        check(full.Px==bounded.Px,"visible queue tiles match the complete strip including clipped queues");
     }
 }
 volatile uint64_t sink=0;
@@ -198,5 +216,5 @@ int main(int argc,char**){try{
 #else
     std::cout<<"backend=existing-host-text\n";
 #endif
-    transfers();retained_tooltip();needs();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
+    portrait_blend();transfers();retained_tooltip();needs();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

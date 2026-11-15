@@ -22,8 +22,7 @@ public:
     const Canvas* Face(FSO::SimAntics::VMAvatar*,int frame=0);
     std::vector<odh_host::QueueTile> QueueTiles(FSO::SimAntics::VMAvatar*,int width,int height);
     void DrawQueue(Canvas&,FSO::SimAntics::VMAvatar*);
-    // Owned 200px transparent 3D head, valid until the next RenderPieHead.
-    const Canvas& RenderPieHead(FSO::SimAntics::VMAvatar*,
+    void DrawPieHead(Canvas&,FSO::SimAntics::VMAvatar*,
         std::array<std::int32_t,2> center,std::array<std::int32_t,2> target);
     // Same portrait provider and complete-cell composition as the HUD.
     // Callers retain authored faces; generated fallbacks live only in memory.

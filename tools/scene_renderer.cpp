@@ -150,8 +150,8 @@ class Archive {
 public:
     explicit Archive(const std::string& path) : input_(path) {
         if (!input_) throw odh::FormatError("scene renderer cannot open archive: " + path);
-        size_ = std::filesystem::file_size(path);
-        entries_ = shared_far_manifest(path,odh::View(input_, size_));
+        size_ = input_.size();
+        entries_ = shared_far_manifest(input_);
     }
     odh::View exact(const std::string& name) {
         return view(select(name, false));

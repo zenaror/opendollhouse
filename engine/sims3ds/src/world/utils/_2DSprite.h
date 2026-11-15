@@ -30,6 +30,10 @@ struct Texture2D {
     const uint8_t* Index = nullptr;
     const uint8_t* Alpha = nullptr;
     const st::Color* Palette = nullptr;
+    struct Coverage { uint16_t left, right; };
+    // Only immutable frame textures from this batch opt into row clipping.
+    const Coverage* coveredRows = nullptr;
+    uint8_t drawsUntilCoverage = 0;
     bool HasColor() const { return Data != nullptr || (Index != nullptr && Palette != nullptr); }
 };
 

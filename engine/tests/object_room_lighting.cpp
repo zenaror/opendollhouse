@@ -54,6 +54,17 @@ void Run(bool palette, bool deferred, uint16_t room, bool rejected = false) {
         sprite.ObjectOffset = {0, 0, 0};
     }
 
+    // Another animation state uses a separate SPR2 chunk. It should stay
+    // unopened until its flag actually turns on. This valid v1001 chunk
+    // contains zero frames, so opening it cannot add pixels to the fixture.
+    SPR2 inactive;
+    inactive.ChunkID = 170;
+    inactive.ChunkProcessed = false;
+    inactive.ChunkData = {0xe9,0x03,0,0, 0,0,0,0, 0,0,0,0};
+    iff.AddChunk(&inactive);
+    image.Sprites.emplace_back(&group);
+    image.Sprites.back().SpriteID = inactive.ChunkID;
+
     WorldState state(20, 4, nullptr);
     _2DWorldBatch batch;
     state._2D = &batch;
@@ -71,6 +82,8 @@ void Run(bool palette, bool deferred, uint16_t room, bool rejected = false) {
     batch.AmbientLight = ambient.data();
     DGRPRenderer renderer(&group);
     renderer.Room = room;
+    renderer.DynamicSpriteBaseID = 102;
+    renderer.NumDynamicSprites = 69;
     const auto draw = [&](bool invalid) {
         renderer.PlacementRejected = invalid;
         target.Clear(0);
@@ -117,6 +130,12 @@ void Run(bool palette, bool deferred, uint16_t room, bool rejected = false) {
     draw(false);
     Check(target.Color == normalColor && target.Depth == normalDepth && target.Room == normalRoom,
         "valid placement did not restore the exact normal frame on cached DGRP sprites");
+    Check(!inactive.ChunkProcessed, "hidden animation state read its sprite chunk");
+    renderer.DynamicSpriteFlags2 = uint64_t{1} << 4; // sprite 170 is bit 68
+    renderer.InvalidateTextures();
+    draw(false);
+    Check(inactive.ChunkProcessed && target.Color == normalColor,
+        "newly enabled animation state was not resolved");
     auto* pooled = batch.NewSprite(_2DBatchRenderMode::Z_BUFFER);
     pooled->PlacementRejected = true;
     batch.Begin(state.Camera());
@@ -125,9 +144,65 @@ void Run(bool palette, bool deferred, uint16_t room, bool rejected = false) {
     std::cout << (palette ? "palette" : "RGBA") << '/' << (deferred ? "deferred" : "direct")
               << "/room=" << room << ": six normal/mirrored/luminous/unknown flag cases passed\n";
 }
+// The ordinary sampler remains the oracle. The scene draws a cached frame with
+// empty rows, narrow borders, partially transparent pixels and an opaque wall
+// mask that can expose colour texels outside the frame's own alpha coverage.
+void CheckSpriteCoverage(bool palette) {
+    constexpr int width = 32, height = 6;
+    SPR2 source;
+    SPR2Frame frame(&source);
+    frame.Width = width; frame.Height = height;
+    const std::array<st::Color,2> colors{{{19,57,99}, {82,78,74}}};
+    std::vector<st::Color> maskPixels(width * height, st::Color::White());
+    std::vector<uint8_t> depths(width * height);
+    frame.PalColors = colors.data();
+    for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+        const auto index = size_t(y * width + x);
+        const auto a = uint8_t(y == 1 || x < y + 7 || x > 24 - y ? 0 : 17 + x * 7);
+        auto c = colors[x % 2]; c.A = a;
+        if (palette) {
+            frame.PalData.push_back(x % 2);
+            frame.AlphaData.push_back(a);
+        } else frame.PixelData.push_back(c);
+        depths[index] = uint8_t(index);
+    }
+    WorldState state(28, 7, nullptr);
+    _2DWorldBatch batch;
+    auto* cached = batch.GetTexture(&frame);
+    Texture2D ordinary = *cached;
+    ordinary.drawsUntilCoverage = 0;
+    Texture2D depth, mask;
+    depth.Width = mask.Width = width; depth.Height = mask.Height = height;
+    depth.Alpha8 = depths.data(); mask.Data = maskPixels.data();
+    auto draw = [&](Texture2D& tex, bool h, bool v, bool wall, bool scaled) {
+        Framebuffer fb(28, 7);
+        fb.EnableRoom(true);
+        fb.SetClip(2, 1, 23, 6);
+        batch.Target = &fb;
+        batch.Begin(state.Camera());
+        auto* sprite = batch.NewSprite(wall ? _2DBatchRenderMode::WALL : _2DBatchRenderMode::Z_BUFFER);
+        sprite->Pixel = &tex; sprite->Depth = &depth; sprite->Mask = wall ? &mask : nullptr;
+        sprite->SrcRect = st::Rectangle(3, 0, 27, 6);
+        sprite->DestRect = st::Rectangle(-2, 0, scaled ? 24 : 27, 7);
+        sprite->FlipHorizontally = h; sprite->FlipVertically = v; sprite->Room = 17;
+        batch.Draw(sprite); batch.End();
+        return fb;
+    };
+    draw(*cached, false, false, false, false);
+    draw(*cached, false, false, false, false);
+    Check(cached->coveredRows != nullptr, "reused sparse sprite did not acquire row bounds");
+    for (bool h : {false,true}) for (bool v : {false,true}) for (bool wall : {false,true})
+        for (bool scaled : {false,true}) {
+            const auto clipped = draw(*cached,h,v,wall,scaled);
+            const auto reference = draw(ordinary,h,v,wall,scaled);
+            Check(clipped.Color == reference.Color && clipped.Room == reference.Room &&
+                clipped.Depth == reference.Depth, "sprite row clipping changed output");
+        }
+}
 }
 int main() {
     try {
+        for (bool palette : {false,true}) CheckSpriteCoverage(palette);
         for (bool palette : {false, true}) for (bool deferred : {false, true})
             for (uint16_t room : {uint16_t(7), uint16_t(65534), uint16_t(65533)})
                 for (bool rejected : {false,true}) Run(palette, deferred, room, rejected);

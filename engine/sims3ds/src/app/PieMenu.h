@@ -68,8 +68,8 @@ private:
     Rect PressedRect, BackRect, PreviousRect, NextRect;
     size_t PageFirst=0,PageSize=0,PageSelection=0;
     std::unique_ptr<cas::CASSimPreview> Head;
-    Canvas PieArt;
 #ifndef __3DS__
+    odh::BitmapImage PieArt;
     FSO::SimAntics::VMAvatar* OriginalHead=nullptr;
     original::DesktopPieHeadMotion HeadMotion;
     std::array<int,2> HeadRenderTarget{};

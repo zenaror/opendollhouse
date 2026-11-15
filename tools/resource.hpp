@@ -52,6 +52,16 @@ private:
 // can only check size and available timestamps, not every same-size rewrite.
 class BufferedResourceFile : private std::streambuf, public std::istream {
 public:
+    struct Identity {
+        std::uintmax_t device=0,inode=0;
+        std::intmax_t size=0,modified=0,subsecond=0;
+        bool operator==(const Identity& other) const {
+            return device==other.device&&inode==other.inode&&size==other.size&&
+                modified==other.modified&&subsecond==other.subsecond;
+        }
+    };
+    const Identity& source_identity() const { return identity_; }
+    const std::string& path() const { return path_; }
     static constexpr std::size_t HandleLimit=4;
     enum class Window { Full, Metadata };
     explicit BufferedResourceFile(const std::string& path,Window window=Window::Full)
@@ -87,14 +97,6 @@ private:
     using int_type=traits_type::int_type;
     using pos_type=traits_type::pos_type;
     using off_type=traits_type::off_type;
-    struct Identity {
-        std::uintmax_t device=0,inode=0;
-        std::intmax_t size=0,modified=0,subsecond=0;
-        bool operator==(const Identity& other) const {
-            return device==other.device&&inode==other.inode&&size==other.size&&
-                modified==other.modified&&subsecond==other.subsecond;
-        }
-    };
     struct Handles {std::mutex mutex;std::vector<BufferedResourceFile*> open;std::uint64_t clock=0;};
     static Handles& pool(){static auto* handles=new Handles;return *handles;}
     std::string path_,diagnostic_;
@@ -232,25 +234,35 @@ private:
 // Mutable input cursors remain per consumer. Weak registration is bounded and
 // keyed by physical root identity plus source size and modification time.
 inline std::shared_ptr<const std::vector<odh::FarEntry>> shared_far_manifest(
-        const std::string& path,const odh::View& view,const odh::Limits& limits={}) {
+        BufferedResourceFile& source,const odh::Limits& limits={}) {
     struct Cached {
-        std::uintmax_t size=0;
+        BufferedResourceFile::Identity source_identity;
         std::filesystem::file_time_type modified{};
         std::weak_ptr<const std::vector<odh::FarEntry>> entries;
     };
     static std::map<std::string,Cached> cache;
     static std::mutex mutex;
     std::error_code error;
-    const auto canonical=odh::hostfs::canonical(path,error);
+#if defined(__vita__) || defined(__SWITCH__)
+    // The mount has no symlinks. Opening the stream already verified the
+    // source's existence, type, size and timestamps before and after fopen.
+    const auto canonical=odh::hostfs::absolute(source.path(),error);
+#else
+    const auto canonical=odh::hostfs::canonical(source.path(),error);
+#endif
     const auto identity=error?std::string{}:canonical.string();
-    const auto size=std::filesystem::file_size(path,error);
-    const bool sized=!error;
-    const auto modified=std::filesystem::last_write_time(path,error);
-    const bool cacheable=!identity.empty()&&sized&&!error;
+    Cached current;
+    current.source_identity=source.source_identity();
+#if defined(_WIN32)
+    // _stat64 reports only whole seconds. Retain the native timestamp precision.
+    current.modified=std::filesystem::last_write_time(source.path(),error);
+#endif
+    const bool cacheable=!identity.empty()&&!error;
     std::lock_guard<std::mutex> guard(mutex);
     for(auto it=cache.begin();it!=cache.end();)if(it->second.entries.expired())it=cache.erase(it);else ++it;
     auto found=cache.find(identity);
-    if(cacheable&&found!=cache.end()&&found->second.size==size&&found->second.modified==modified){
+    if(cacheable&&found!=cache.end()&&found->second.source_identity==current.source_identity&&
+       found->second.modified==current.modified){
         if(auto entries=found->second.entries.lock()){
             if(entries->size()>limits.far_entries)throw odh::FormatError("FAR entry count exceeds configured limit");
             std::uint64_t names=0;
@@ -263,8 +275,11 @@ inline std::shared_ptr<const std::vector<odh::FarEntry>> shared_far_manifest(
         }
     }
     ++resource_io_counters().manifest_reads;
-    auto entries=std::make_shared<const std::vector<odh::FarEntry>>(odh::far1_index(view,limits));
-    if(cacheable&&(found!=cache.end()||cache.size()<256))cache[identity]={size,modified,entries};
+    auto entries=std::make_shared<const std::vector<odh::FarEntry>>(odh::far1_index(odh::View(source,source.size()),limits));
+    if(cacheable&&(found!=cache.end()||cache.size()<256)){
+        current.entries=entries;
+        cache[identity]=std::move(current);
+    }
     return entries;
 }
 
@@ -275,15 +290,15 @@ public:
 
 template<class F> void with_iff_file(const std::string& path,F read) {
     BufferedResourceFile stream(path);if(!stream)throw odh::FormatError("cannot open IFF file");
-    read(odh::View(stream,std::filesystem::file_size(path)));
+    read(odh::View(stream,stream.size()));
 }
 template<class F> void with_far_entry(const std::string& path,const std::string& name,F read,
                                       const odh::Limits& limits = {}) {
     BufferedResourceFile stream(path);if(!stream)throw odh::FormatError("cannot open archive");
-    const odh::View archive(stream,std::filesystem::file_size(path));std::optional<odh::FarEntry> selected;
+    const odh::View archive(stream,stream.size());std::optional<odh::FarEntry> selected;
     // Retain the owner throughout iteration: dereferencing a temporary
     // shared_ptr does not extend the pointee's lifetime in a C++17 range-for.
-    const auto entries=shared_far_manifest(path,archive,limits);
+    const auto entries=shared_far_manifest(stream,limits);
     for(const auto& entry:*entries){if(entry.name!=name)continue;
         if(selected)throw odh::FormatError("ambiguous archive entry");
         selected=entry;}

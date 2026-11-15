@@ -52,16 +52,24 @@ void entry_lifetime(const std::filesystem::path& root){
 void manifest_identity(const std::filesystem::path& root){
  const auto one=root/"one.far",two=root/"two.far";save(one,far("First"));save(two,far("Other"));
  BufferedResourceFile a(one.string()),b(one.string()),c(two.string());
- auto first=shared_far_manifest(one.string(),odh::View(a,std::filesystem::file_size(one)));
- auto again=shared_far_manifest(one.string(),odh::View(b,std::filesystem::file_size(one)));
+ auto first=shared_far_manifest(a);
+ auto again=shared_far_manifest(b);
  check(first==again,"live manifest not shared");check(b.physical_reads()==0,"manifest hit reread source");
- auto other=shared_far_manifest(two.string(),odh::View(c,std::filesystem::file_size(two)));check(first!=other&&other->at(0).name=="Other","separate source reused manifest");
- odh::Limits limits;limits.far_entries=0;rejects([&]{shared_far_manifest(one.string(),odh::View(b,std::filesystem::file_size(one)),limits);});
- limits={};limits.far_name_length=4;rejects([&]{shared_far_manifest(one.string(),odh::View(b,std::filesystem::file_size(one)),limits);});
- limits={};limits.far_name_bytes=4;rejects([&]{shared_far_manifest(one.string(),odh::View(b,std::filesystem::file_size(one)),limits);});
+ auto other=shared_far_manifest(c);check(first!=other&&other->at(0).name=="Other","separate source reused manifest");
+ odh::Limits limits;limits.far_entries=0;rejects([&]{shared_far_manifest(b,limits);});
+ limits={};limits.far_name_length=4;rejects([&]{shared_far_manifest(b,limits);});
+ limits={};limits.far_name_bytes=4;rejects([&]{shared_far_manifest(b,limits);});
  const auto original_time=std::filesystem::last_write_time(one);save(one,far("Later"));std::filesystem::last_write_time(one,original_time+std::chrono::seconds(4));
- BufferedResourceFile changed(one.string());auto replaced=shared_far_manifest(one.string(),odh::View(changed,std::filesystem::file_size(one)));check(first!=replaced&&replaced->at(0).name=="Later","modified source reused stale index");check(first->at(0).name=="First","immutable old owner changed");
- save(one,far("LongerName"));BufferedResourceFile resized(one.string());auto grown=shared_far_manifest(one.string(),odh::View(resized,std::filesystem::file_size(one)));check(grown->at(0).name=="LongerName","resized source reused stale index");
+ BufferedResourceFile changed(one.string());auto replaced=shared_far_manifest(changed);check(first!=replaced&&replaced->at(0).name=="Later","modified source reused stale index");check(first->at(0).name=="First","immutable old owner changed");
+#if defined(__linux__) || defined(__APPLE__)
+ const auto previous_time=std::filesystem::last_write_time(one);
+ const auto replacement=root/"replacement.far";
+ save(replacement,far("Moved"));std::filesystem::last_write_time(replacement,previous_time);
+ std::filesystem::rename(replacement,one);
+ BufferedResourceFile moved(one.string());auto moved_index=shared_far_manifest(moved);
+ check(moved_index!=replaced&&moved_index->at(0).name=="Moved","different inode reused same-size and same-time manifest");
+#endif
+ save(one,far("LongerName"));BufferedResourceFile resized(one.string());auto grown=shared_far_manifest(resized);check(grown->at(0).name=="LongerName","resized source reused stale index");
 }
 constexpr std::size_t SourceBytes=196731;
 char source_byte(std::size_t owner,std::size_t offset){return static_cast<char>((owner*29+offset*71+9)%256);}
@@ -199,7 +207,16 @@ void portrait_names(const std::filesystem::path& root) {
  std::sort(skins[0].begin(),skins[0].end());
  check(skins[0][0]==tree/"Downloads/Nested/loose.CmX" && skins[0][1]==tree/"Downloads/texture.bmp",
        "device loose skin inventory escaped its selected root");
- rejects([&]{(void)discover_device_archives(tree,{},skins,1);});
+ const auto cached=[](const std::string& path,const odh::InstallEntryVisitor& visit) {
+  if(std::filesystem::path(path).filename()!="Nested")return false;
+  visit("loose.CmX",false);return true;
+ };
+ SkinPaths reused_skins;
+ const auto reused=discover_device_archives(tree,{(tree/"Downloads").string()},reused_skins,cached);
+ check(reused.live_directories_reused==1 && reused.filesystem_entries==files.filesystem_entries &&
+       reused.archives==files.archives && reused_skins==skins,"live directory reuse changed the full inventory");
+ rejects([&]{(void)discover_device_archives(tree,{},skins,cached,1);});
+ rejects([&]{(void)discover_device_archives(tree,{},skins,cached,200000,0);});
 #endif
 }
 

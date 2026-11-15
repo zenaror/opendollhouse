@@ -69,7 +69,6 @@ struct OriginalPCUI::Impl {
     odh_host::CatalogObjectThumbnailResult thumbnail;
     std::unique_ptr<odh_host::LinuxCasPreview> portraits;
     odh::RasterFrame surface{};
-    Canvas pie_head;
     front::TS1Font pause_font;
     bool pause_font_prepared=false;
     std::string pause_key;
@@ -83,7 +82,13 @@ struct OriginalPCUI::Impl {
     std::map<uint32_t,AvatarIcon> queue_faces;
     explicit Impl(const std::string& r):root(r),panel(r),queue(r),catalog(r){}
     odh_host::LinuxCasPreview& preview(){
-        if (!portraits) portraits = std::make_unique<odh_host::LinuxCasPreview>(root, FSO::Content::Content::Get()->CacheDir);
+        if (!portraits) {
+            odh::LiveInstallDirectory cached_directory = nullptr;
+#if defined(__vita__) || defined(__SWITCH__)
+            cached_directory = FSO::Files::VisitLiveInstallDirectory;
+#endif
+            portraits = std::make_unique<odh_host::LinuxCasPreview>(root, FSO::Content::Content::Get()->CacheDir, cached_directory);
+        }
         return *portraits;
     }
     void copy_in(const Canvas& c,int y,int h){
@@ -240,21 +245,21 @@ void OriginalPCUI::DrawQueue(Canvas& c,Avatar* a){
     if(!a||!a->Thread)return;
     auto tiles=QueueTiles(a,c.Width,c.Height);
     if(tiles.empty())return;
-    const auto top=tiles.front().box.y;
-    const auto bottom=tiles.back().box.y+tiles.back().box.height;
-    P->copy_in(c,top,bottom-top);
     // The current engine marks cancellation synchronously on the selected
     // actor's action. A bare UID from another actor must never add a red X.
     for(const auto& tile:tiles){
+        const Rect bounds=original::Clip(c,{tile.box.x,tile.box.y,tile.box.width,tile.box.height});
+        if (!bounds.W || !bounds.H) continue;
         const auto& action=a->Thread->Queue[tile.action_index];
         auto owner=action->IconOwner();
         const auto avatar=dynamic_cast<Avatar*>(owner);
         const auto face=avatar&&avatar->Object&&avatar->Object->Resource?P->queue_face(avatar):nullptr;
         const auto kind=avatar?(face?odh_host::QueueIconKind::authored_avatar:odh_host::QueueIconKind::avatar_thumbnail):
             odh_host::QueueIconKind::object;
+        original::Raster(c,P->surface,bounds);
         P->queue.draw_tile(P->surface,tile,face?face:P->icon(owner),kind);
+        original::Copy(P->surface,c,bounds);
     }
-    P->copy_out(c,top,bottom-top);
 }
 void OriginalPCUI::DrawPauseLabel(Canvas& target,const std::string& rawCaption) {
     if(!P->pause_font_prepared){
@@ -295,11 +300,12 @@ void OriginalPCUI::DrawPauseLabel(Canvas& target,const std::string& rawCaption) 
     target.Blit(label.Px.data(),label.Width,label.Height,(target.Width-label.Width)/2,20,true);
 }
 
-const Canvas& OriginalPCUI::RenderPieHead(Avatar* a,std::array<std::int32_t,2> center,std::array<std::int32_t,2> target){
+void OriginalPCUI::DrawPieHead(Canvas& canvas,Avatar* a,std::array<std::int32_t,2> center,std::array<std::int32_t,2> target){
     if(!a)throw odh::FormatError("pie portrait requires an avatar");
     const auto* image=P->preview().pie_portrait(body_input(a),center,target);
     if(!image)throw odh::FormatError("original pie portrait: "+P->portraits->diagnostic());
-    P->pie_head=canvas(*image);return P->pie_head;
+    if (image->width==200 && image->height==200)
+        original::DrawPortraitBitmap(canvas,*image,center[0]-100,center[1]-100);
 }
 Canvas OriginalPCUI::PetBody(Avatar* pet, const std::string& outfit) {
     auto body = body_input(pet);

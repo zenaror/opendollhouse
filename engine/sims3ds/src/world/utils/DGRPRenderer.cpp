@@ -39,6 +39,14 @@ void DGRPRenderer::ValidateSprite(WorldState& world) {
             auto image = DrawGroup->GetImage(direction, (uint32_t)world.Zoom(), (uint32_t)world.Rotation());
             if (image != nullptr) {
                 for (auto& sprite : image->Sprites) {
+                    // Inactive animation layers need no IFF read or decoded colour/depth planes.
+                    // Changing either visibility mask invalidates Items in ObjectComponent.
+                    if (sprite.SpriteID >= DynamicSpriteBaseID &&
+                        sprite.SpriteID < uint32_t(DynamicSpriteBaseID) + NumDynamicSprites) {
+                        const auto bit = sprite.SpriteID - DynamicSpriteBaseID;
+                        const uint64_t mask = bit < 64 ? DynamicSpriteFlags : DynamicSpriteFlags2;
+                        if ((mask & (uint64_t{1} << (bit & 63))) == 0) continue;
+                    }
                     // C#: world._2D.GetWorldTexture(sprite) -> DGRPSprite.GetWorldTexture, which looks the SPR2 up in
                     // the DGRP's own iff (an SPR# yields no z-buffer and is skipped below, as in C#).
                     SPR2* spr2 = (DrawGroup->ChunkParent != nullptr) ? DrawGroup->ChunkParent->Get<SPR2>((uint16_t)sprite.SpriteID) : nullptr;
@@ -46,16 +54,6 @@ void DGRPRenderer::ValidateSprite(WorldState& world) {
                     auto texture = world._2D->GetWorldTexture(spr2->Frames[sprite.SpriteFrameIndex].get());
                     if (texture.Pixel == nullptr || texture.ZBuffer == nullptr) { continue; }
 
-                    auto isDynamic = sprite.SpriteID >= DynamicSpriteBaseID && sprite.SpriteID < (uint32_t)(DynamicSpriteBaseID + NumDynamicSprites);
-                    if (isDynamic) {
-                        auto dynamicIndex = (uint16_t)(sprite.SpriteID - DynamicSpriteBaseID);
-
-                        auto isVisible = (dynamicIndex > 63) ? ((DynamicSpriteFlags2 & ((uint64_t)0x1 << (dynamicIndex - 64))) > 0) :
-                            ((DynamicSpriteFlags & ((uint64_t)0x1 << dynamicIndex)) > 0);
-                        if (!isVisible) {
-                            continue;
-                        }
-                    }
                     DGRPRendererItem entry; //do not use sprite pool for DGRP, since we can reliably remember our own sprites.
                     auto& item = entry.Sprite;
                     item.Pixel = texture.Pixel;

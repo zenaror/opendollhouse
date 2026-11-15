@@ -141,6 +141,31 @@ static void BuildLookup(std::vector<int32_t>& outPx, std::vector<int32_t>& outOt
     }
 }
 
+// Pixel tests in the rasterizer discard zero-alpha texels. For a frame drawn
+// repeatedly, remember the first and last nontransparent texels on each row.
+// Never consult these bounds when a wall mask supplies the actual alpha.
+void _2DWorldBatch::PrepareCoverage(Texture2D& tex) {
+    constexpr size_t budget = 256 * 1024;
+    if (tex.Width < 16 || tex.Width > UINT16_MAX || tex.Height <= 0 ||
+        size_t(tex.Height) > (budget - coverageBytes) / sizeof(Texture2D::Coverage)) return;
+    auto rows = std::make_unique<Texture2D::Coverage[]>(tex.Height);
+    size_t skipped = 0;
+    for (int y = 0; y < tex.Height; ++y) {
+        const size_t offset = size_t(y) * tex.Width;
+        auto transparent = [&](int x) { return tex.Data ? tex.Data[offset+x].A == 0 : tex.Alpha[offset+x] == 0; };
+        int left = 0, right = tex.Width;
+        while (left < right && transparent(left)) ++left;
+        while (right > left && transparent(right-1)) --right;
+        rows[y] = {uint16_t(left), uint16_t(right)};
+        skipped += tex.Width - (right-left);
+    }
+    // Retain only entries whose empty margins save a substantial part of the loop.
+    if (skipped < size_t(tex.Width) * tex.Height / 4) return;
+    coveredRows.push_back(std::move(rows));
+    tex.coveredRows = coveredRows.back().get();
+    coverageBytes += size_t(tex.Height) * sizeof(Texture2D::Coverage);
+}
+
 void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
     Texture2D* px = sprite->Pixel;
     if (px == nullptr || !px->HasColor() || px->Width <= 0 || px->Height <= 0) return;
@@ -161,6 +186,11 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
     Texture2D* mt = (mode == _2DBatchRenderMode::WALL) ? sprite->Mask : nullptr;
     if (zt != nullptr && zt->Alpha8 == nullptr) zt = nullptr;
     if (mt != nullptr && !mt->HasColor()) mt = nullptr;
+
+    const auto& src = sprite->SrcRect;
+    const bool clipRows = !mt && src.Width == dst.Width && src.X >= 0 && src.X <= px->Width - src.Width;
+    if (clipRows && px->drawsUntilCoverage && --px->drawsUntilCoverage == 0) PrepareCoverage(*px);
+    const auto* covered = clipRows ? px->coveredRows : nullptr;
 
     BuildLookup(ColPx, ColZ, ColM, dst.Width, sprite->SrcRect.X, sprite->SrcRect.Width, sprite->FlipHorizontally,
                 px->Width, zt ? zt->Width : px->Width, mt ? mt->Width : px->Width);
@@ -214,7 +244,20 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
         uint32_t* crow = &fb.Color[(size_t)y * fb.Width];
         float* drow = &fb.Depth[(size_t)y * fb.Width];
         uint16_t* rrow = roomBuf ? roomBuf + (size_t)y * fb.Width : nullptr;
-        for (int32_t x = cx0; x < cx1; x++) {
+        int left = cx0, right = cx1;
+        if (covered) {
+            const auto span = covered[RowPx[(size_t)iy]];
+            if (span.left == span.right) continue;
+            // Map the source span back into the destination, including flipped subrectangles.
+            if (sprite->FlipHorizontally) {
+                left = std::max(left, sx0 + src.X + src.Width - span.right);
+                right = std::min(right, sx0 + src.X + src.Width - span.left);
+            } else {
+                left = std::max(left, sx0 + span.left - src.X);
+                right = std::min(right, sx0 + span.right - src.X);
+            }
+        }
+        for (int32_t x = left; x < right; x++) {
             int32_t ix = x - sx0;
             int32_t ci = ColPx[(size_t)ix];
             uint32_t a = PAL ? arow[ci] : prow[ci].A;
@@ -276,6 +319,7 @@ Texture2D* _2DWorldBatch::GetTexture(SPRFrame* item) {
         tex.Alpha = item->Alpha.data();
         tex.Palette = item->PalColors;
     }
+    tex.drawsUntilCoverage = 2;
     auto& res = _TextureCache[item];
     res = tex;
     return &res;
@@ -295,6 +339,7 @@ Texture2D* _2DWorldBatch::GetTexture(SPR2Frame* item) {
         tex.Alpha = item->AlphaData.data();
         tex.Palette = item->PalColors;
     }
+    tex.drawsUntilCoverage = 2;
     auto& res = _TextureCache[item];
     res = tex;
     return &res;
@@ -322,6 +367,8 @@ void _2DWorldBatch::ClearTextureCache() {
     // C# drops the GPU textures; ours are views onto the decoded frames, so just forget them.
     _TextureCache.clear();
     _ZTextureCache.clear();
+    coveredRows.clear();
+    coverageBytes = 0;
 }
 
 }}}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 #include "odh/formats.hpp"
+#include "odh/installed_directory.hpp"
 #include "odh/host_filesystem.hpp"
 #include <algorithm>
 #include <cctype>
@@ -16,7 +17,7 @@
 namespace odh_host::preview_detail {
 struct ArchiveInventory {
     std::vector<std::string> archives;
-    std::size_t filesystem_entries=0,regular_checks=0;
+    std::size_t filesystem_entries=0,regular_checks=0,live_directories_reused=0;
 };
 inline ArchiveInventory discover_archives(const std::filesystem::path& root,
         std::size_t entry_limit=200000,std::size_t archive_limit=256) {
@@ -52,6 +53,7 @@ using SkinPaths = std::vector<std::vector<std::filesystem::path>>;
 // directory open, including on deeply nested custom-content installations.
 inline ArchiveInventory discover_device_archives(const std::filesystem::path& root,
         const std::vector<std::string>& skin_roots, SkinPaths& skins,
+        odh::LiveInstallDirectory cached_directory=nullptr,
         std::size_t entry_limit=200000, std::size_t archive_limit=256) {
     struct Directory { std::filesystem::path path; std::size_t skin_root; };
     const auto none = skin_roots.size();
@@ -71,6 +73,33 @@ inline ArchiveInventory discover_device_archives(const std::filesystem::path& ro
             });
             current.skin_root = static_cast<std::size_t>(found - skin_roots.begin());
         }
+        auto add = [&](std::string_view name, bool is_directory, bool regular) {
+            if (++inventory.filesystem_entries > entry_limit)
+                throw odh::FormatError("CAS preview installation index exceeds limit");
+            const auto path = current.path / name;
+            if (is_directory) {
+                pending.push_back({path, current.skin_root});
+                return;
+            }
+            if (!regular) return;
+            auto ext = path.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){return char(std::tolower(c));});
+            if (ext == ".far") {
+                if (inventory.archives.size() >= archive_limit)
+                    throw odh::FormatError("CAS preview archive count exceeds limit");
+                inventory.archives.push_back(path.string());
+            } else if (current.skin_root != none && (ext == ".cmx" || ext == ".skn" || ext == ".bmp")) {
+                if (++loose_files > 65536 || (loose_path_bytes += path.native().size()) > 4u * 1024u * 1024u)
+                    throw odh::FormatError("saved appearance loose skin index budget exceeded");
+                skins[current.skin_root].push_back(path);
+            }
+        };
+        if (cached_directory && cached_directory(current.path.string(), [&](const std::string& name, bool dir) {
+                add(name, dir, !dir);
+            })) {
+            ++inventory.live_directories_reused;
+            continue;
+        }
         const auto close_dir=[](DIR* dir){closedir(dir);};
         std::unique_ptr<DIR, decltype(close_dir)> directory(opendir(current.path.c_str()), close_dir);
         if (!directory) throw odh::FormatError("cannot list preview directory: " + current.path.string());
@@ -83,37 +112,19 @@ inline ArchiveInventory discover_device_archives(const std::filesystem::path& ro
             }
             const std::string_view name(entry->d_name);
             if (name == "." || name == "..") continue;
-            if (++inventory.filesystem_entries > entry_limit)
-                throw odh::FormatError("CAS preview installation index exceeds limit");
-            const auto path = current.path / entry->d_name;
 #ifdef __vita__
             const bool is_directory = SCE_S_ISDIR(entry->d_stat.st_mode);
             const bool regular = SCE_S_ISREG(entry->d_stat.st_mode);
 #else
             bool is_directory = entry->d_type == DT_DIR, regular = entry->d_type == DT_REG;
             if (entry->d_type == DT_UNKNOWN) {
-                const auto status = std::filesystem::symlink_status(path);
+                const auto status = std::filesystem::symlink_status(current.path / entry->d_name);
                 is_directory = std::filesystem::is_directory(status);
                 regular = std::filesystem::is_regular_file(status);
                 ++inventory.regular_checks;
             }
 #endif
-            if (is_directory) {
-                pending.push_back({path, current.skin_root});
-                continue;
-            }
-            if (!regular) continue;
-            auto ext = path.extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){return char(std::tolower(c));});
-            if (ext == ".far") {
-                if (inventory.archives.size() >= archive_limit)
-                    throw odh::FormatError("CAS preview archive count exceeds limit");
-                inventory.archives.push_back(path.string());
-            } else if (current.skin_root != none && (ext == ".cmx" || ext == ".skn" || ext == ".bmp")) {
-                if (++loose_files > 65536 || (loose_path_bytes += path.native().size()) > 4u * 1024u * 1024u)
-                    throw odh::FormatError("saved appearance loose skin index budget exceeded");
-                skins[current.skin_root].push_back(path);
-            }
+            add(name, is_directory, regular);
         }
     }
     std::sort(inventory.archives.begin(), inventory.archives.end());

@@ -91,6 +91,10 @@ private:
     std::unordered_map<const void*, Texture2D> _TextureCache;
     std::unordered_map<const void*, Texture2D> _ZTextureCache;
 
+    std::vector<std::unique_ptr<Texture2D::Coverage[]>> coveredRows;
+    size_t coverageBytes = 0;
+    void PrepareCoverage(Texture2D& tex);
+
     // scratch for the rasterizer (texel lookup per destination column/row)
     std::vector<int32_t> ColPx, ColZ, ColM, RowPx, RowZ, RowM;
 
