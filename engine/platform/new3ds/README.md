@@ -18,9 +18,10 @@ is needed.
 Copy your installation data to `3ds/OpenDollhouse/game`, preserving `GameData`,
 `UserData`, expansion directories, audio and custom content. The package does
 not include these files. Saves are in `3ds/OpenDollhouse/saves` and cache in
-`3ds/OpenDollhouse/cache`. Do not delete saves when clearing cache. To record
-diagnostics, create an empty `3ds/OpenDollhouse/debug` file; the next run writes
-`cache/opendollhouse.log`.
+`3ds/OpenDollhouse/cache`. Do not delete saves when clearing cache. The game records diagnostics automatically
+in `cache/opendollhouse.log`, including performance summaries about every five
+seconds. An optional empty `3ds/OpenDollhouse/debug` file enables detailed
+loading traces; it is not required for normal performance logs.
 
 Open the `.3dsx` through the Homebrew Launcher. The memory limit depends on the
 process used by the launcher; the engine retains the Sims3DS adapter's limits

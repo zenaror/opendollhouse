@@ -18,8 +18,10 @@
 #include <3ds/allocator/mappable.h>
 #include <sys/stat.h>
 #include <sys/iosupport.h>
+#include <unistd.h>
 #include <type_traits>
 #include <cstdio>
+#include <cerrno>
 #include <cstring>
 #include <exception>
 #include <malloc.h>
@@ -29,6 +31,7 @@
 #include "audio/GameAudio.h"
 #include "platform/3ds/AudioNdsp.h"
 #include "files/FilePool.h"
+#include "odh/ConsoleDiagnostics.h"
 
 using namespace simapp;
 
@@ -148,6 +151,123 @@ static double NowMs() {
     return (double)svcGetSystemTick() / (double)(SYSCLOCK_ARM11 / 1000);
 }
 
+// Logging stays on the main thread; detailed loading-step lines remain opt-in.
+static bool g_logReady = false;
+static void LogFailure(const char* action) {
+    const int error=errno;
+    char text[160];
+    const int n = std::snprintf(text, sizeof text, "OpenDollhouse: log %s failed errno=%d\n", action,error);
+    if (n > 0) svcOutputDebugString(text, std::min(n, int(sizeof text - 1)));
+}
+static bool OpenLog() {
+    constexpr const char* path = "sdmc:/3ds/OpenDollhouse/cache/opendollhouse.log";
+    // Share one libctru descriptor state, rather than reopening the SD file twice.
+    FILE* log=std::fopen(path,"a");
+    if (!log) { LogFailure("open"); return false; }
+    const int source=fileno(log), out=fileno(stdout), err=fileno(stderr);
+    if (source<0 || out<0 || err<0) {
+        const int error=errno;std::fclose(log);errno=error;
+        LogFailure("descriptor lookup");return false;
+    }
+    if (dup2(source,out)<0) {
+        const int error=errno;std::fclose(log);errno=error;
+        LogFailure("stdout capture");return false;
+    }
+    if (dup2(source,err)<0) {
+        const int error=errno;std::fclose(log);errno=error;
+        LogFailure("stderr capture");return false;
+    }
+    if (std::fclose(log)!=0) { LogFailure("descriptor close");return false; }
+    if (std::setvbuf(stdout, nullptr, _IOLBF, 0) != 0 ||
+        std::setvbuf(stderr, nullptr, _IONBF, 0) != 0) {
+        LogFailure("buffering"); return false;
+    }
+    if (std::printf("[3ds-stdio] stream=stdout ready=1\n") < 0 ||
+        std::fprintf(stderr, "[3ds-stdio] stream=stderr ready=1\n") < 0 ||
+        std::fflush(stdout) != 0 || std::fflush(stderr) != 0) {
+        LogFailure("health check"); return false;
+    }
+    g_logReady = true;
+    return true;
+}
+static void FlushLog() {
+    // Failed freopen closes that stream; only flush after capture completed.
+    if (!g_logReady) return;
+    const int out=std::fflush(stdout);
+    const int err=std::fflush(stderr);
+    if (out != 0 || err != 0) LogFailure("flush");
+}
+
+struct ThreeDsPerformance {
+    odh::desktop::ConsoleFrameWindow Window;
+    double TopBlit=0, BottomBlit=0, Submit=0, Wait=0, LastPoll=0, MaxPollGap=0, AppBegin=0;
+    uint64_t ProgressPresents=0, InputPolls=0, ButtonPolls=0, TouchDowns=0, TouchUps=0;
+    uint64_t CirclePolls=0, CStickPolls=0, FrameErrors=0;
+    int CircleX=0, CircleY=0, CStickX=0, CStickY=0, TouchX=-1, TouchY=-1;
+    bool InApp=false;
+    FSO::Files::IOStats Io;
+    void Reset(double now) {
+        Window.Reset(now);
+        TopBlit=BottomBlit=Submit=Wait=MaxPollGap=0;
+        ProgressPresents=InputPolls=ButtonPolls=TouchDowns=TouchUps=CirclePolls=CStickPolls=FrameErrors=0;
+        Io=FSO::Files::FilePool::Stats;
+    }
+};
+static ThreeDsPerformance g_performance;
+static const char* Phase(const App& app) {
+    switch (app.CurrentMode()) {
+    case App::Mode::Boot: return "boot";
+    case App::Mode::Front: return "front";
+    case App::Mode::Loading: return "loading";
+    case App::Mode::Live: return "live";
+    case App::Mode::Error: return "error";
+    }
+    return "unknown";
+}
+static void ReportPerformance(const App& app, const char* reason, bool force=false) {
+    const double now=NowMs();
+    auto& p=g_performance;
+    const auto& w=p.Window;
+    if (!g_logReady || (!force && !w.Due(now))) return;
+    const double frames=w.Frames ? double(w.Frames) : 1.0;
+    const double presents=w.Presents ? double(w.Presents) : 1.0;
+    const auto io=FSO::Files::FilePool::Stats;
+    const auto delta=[](uint64_t a,uint64_t b) { return a>=b ? a-b : 0; };
+    const auto heap=mallinfo();
+    const long long heapFree=static_cast<long long>(__ctru_heap_size)-heap.arena+heap.fordblks;
+    const u32 regionCapacity=osGetMemRegionSize(MEMREGION_APPLICATION);
+    const u32 regionFree=osGetMemRegionFree(MEMREGION_APPLICATION);
+    std::printf("[3ds-perf] reason=%s phase=%s window_ms=%.2f fps=%.2f frames=%llu presents=%llu progress_presents=%llu "
+        "frame_call_avg_ms=%.2f frame_call_max_ms=%.2f frame_call_p95_upper_ms=%.2f app_inflight_ms=%.2f "
+        "vm_avg_ms=%.2f world_avg_ms=%.2f ui_avg_ms=%.2f updates=%llu frame_errors=%llu "
+        "top_blit_avg_ms=%.2f bottom_blit_avg_ms=%.2f submit_avg_ms=%.2f wait_avg_ms=%.2f "
+        "io_bytes=%llu io_reads=%llu io_opens=%llu io_seeks=%llu open_files=%d "
+        "heap_used_bytes=%llu heap_arena_bytes=%llu heap_capacity_bytes=%llu heap_free_estimate_bytes=%lld "
+        "linear_free_bytes=%llu linear_capacity_bytes=%llu region_api_raw_free_bytes=%llu "
+        "region_capacity_bytes=%llu region_sample_consistent=%d\n",
+        reason,Phase(app),now-w.Since,w.Fps(now),static_cast<unsigned long long>(w.Frames),
+        static_cast<unsigned long long>(w.Presents),static_cast<unsigned long long>(p.ProgressPresents),
+        w.Work/frames,w.WorkMax,w.P95Upper(),p.InApp ? now-p.AppBegin : 0.0,
+        w.Vm/frames,w.World/frames,w.Ui/frames,static_cast<unsigned long long>(w.Updates),
+        static_cast<unsigned long long>(p.FrameErrors),p.TopBlit/presents,p.BottomBlit/presents,
+        p.Submit/presents,p.Wait/presents,static_cast<unsigned long long>(delta(io.BytesRead,p.Io.BytesRead)),
+        static_cast<unsigned long long>(delta(io.Reads,p.Io.Reads)),static_cast<unsigned long long>(delta(io.Opens,p.Io.Opens)),
+        static_cast<unsigned long long>(delta(io.Seeks,p.Io.Seeks)),FSO::Files::FilePool::OpenCount(),
+        static_cast<unsigned long long>(heap.uordblks),static_cast<unsigned long long>(heap.arena),
+        static_cast<unsigned long long>(__ctru_heap_size),heapFree,static_cast<unsigned long long>(linearSpaceFree()),
+        static_cast<unsigned long long>(__ctru_linear_heap_size),
+        static_cast<unsigned long long>(regionFree),static_cast<unsigned long long>(regionCapacity),
+        int(regionFree<=regionCapacity));
+    std::printf("[3ds-input] polls=%llu poll_gap_max_ms=%.2f button_polls=%llu touch_downs=%llu touch_ups=%llu "
+        "circle_active_polls=%llu cstick_active_polls=%llu circle_x=%d circle_y=%d cstick_x=%d cstick_y=%d touch_x=%d touch_y=%d\n",
+        static_cast<unsigned long long>(p.InputPolls),p.MaxPollGap,static_cast<unsigned long long>(p.ButtonPolls),
+        static_cast<unsigned long long>(p.TouchDowns),static_cast<unsigned long long>(p.TouchUps),
+        static_cast<unsigned long long>(p.CirclePolls),static_cast<unsigned long long>(p.CStickPolls),
+        p.CircleX,p.CircleY,p.CStickX,p.CStickY,p.TouchX,p.TouchY);
+    FlushLog();
+    p.Reset(now);
+}
+
 // Canvas (row-major RGBA, R in the low byte) -> libctru BGR8 framebuffer (rotated 90 degrees: the LCDs are
 // portrait panels). Processed in 8-column strips so the source reads stay in cache.
 static void BlitCanvas(const Canvas& c, gfxScreen_t screen) {
@@ -176,14 +296,23 @@ static void BlitCanvas(const Canvas& c, gfxScreen_t screen) {
 // gfxSwapBuffers has long taken effect by the time the next frame is written, and waiting would quantize a
 // 35 ms frame to 50 ms (20 fps) instead of ~28 fps.
 static double g_lastPresent = 0;
-static void PresentFrame(App& app) {
+static void PresentFrame(App& app, bool progress=false) {
+    const double begin=NowMs();
     BlitCanvas(app.Top, GFX_TOP);
+    const double topDone=NowMs();
     BlitCanvas(app.Bottom, GFX_BOTTOM);
+    const double bottomDone=NowMs();
     gfxFlushBuffers();
     gfxSwapBuffers();
-    double now = NowMs();
-    if (now - g_lastPresent < 15.0) gspWaitForVBlank();
+    const double submitted=NowMs();
+    if (submitted - g_lastPresent < 15.0) gspWaitForVBlank();
     g_lastPresent = NowMs();
+    auto& p=g_performance;
+    p.TopBlit+=topDone-begin;p.BottomBlit+=bottomDone-topDone;
+    p.Submit+=submitted-bottomDone;p.Wait+=g_lastPresent-submitted;
+    p.Window.Presentation(bottomDone-begin,g_lastPresent-bottomDone);
+    if(progress)++p.ProgressPresents;
+    ReportPerformance(app,progress ? "progress" : "frame");
 }
 
 // FIX(sims): HOME menu / sleep. Pause the game's own sound mixing while the app is suspended (HOME menu, sleep, power
@@ -192,14 +321,14 @@ static aptHookCookie g_aptCookie;
 static void OnAptEvent(APT_HookType hook, void*) {
     switch (hook) {
     case APTHOOK_ONSUSPEND: case APTHOOK_ONSLEEP:
-        simaudio::GameAudio::Get().SetSuspended(true); fflush(stdout); break;
+        simaudio::GameAudio::Get().SetSuspended(true); FlushLog(); break;
     case APTHOOK_ONRESTORE: case APTHOOK_ONWAKEUP:
         simaudio::GameAudio::Get().SetSuspended(false); break;
     // FIX(sims) SAVE: closed from the HOME menu / power button. APT hooks run inside aptMainLoop() / aptExit() on the
     // main thread, and every save is a blocking call on that thread (files/SafeFile.h: .new written, flushed, closed,
     // then renamed), so no save is ever half-done here; give back the read handles and push the log out.
     case APTHOOK_ONEXIT:
-        FSO::Files::FilePool::CloseAll(); fflush(stdout); break;
+        FSO::Files::FilePool::CloseAll(); FlushLog(); break;
     default: break;
     }
 }
@@ -218,18 +347,23 @@ int main(int argc, char** argv) {
     mkdir(APP_ROOT, 0777);
     mkdir(SAVE_ROOT, 0777);
     mkdir(CACHE_DIR, 0777);
-    // optional log: create an empty file "debug" next to the data to get stdout in log.txt
+    if (!OpenLog()) {
+        aptUnhook(&g_aptCookie);
+        gfxExit();
+        return 1;
+    }
+    g_performance.Reset(NowMs());
+    // The optional debug file enables detailed load steps; quiet performance logs are always active.
     bool logSteps = false;
     if (FILE* dbg = fopen("sdmc:/3ds/OpenDollhouse/debug", "r")) {
         fclose(dbg);
-        freopen("sdmc:/3ds/OpenDollhouse/cache/opendollhouse.log", "w", stdout);
         logSteps = true;
-        printf("sims: %s 3DS, application memory %.1f MB (not mapped %.1f MB), app heap %.1f MB, linear heap %.1f MB (free %.1f MB)\n",
-               isNew3DS ? "New" : "Old", osGetMemRegionSize(MEMREGION_APPLICATION) / 1048576.0,
-               osGetMemRegionFree(MEMREGION_APPLICATION) / 1048576.0, __ctru_heap_size / 1048576.0,
-               __ctru_linear_heap_size / 1048576.0, linearSpaceFree() / 1048576.0);
-        fflush(stdout);
     }
+    printf("sims: %s 3DS, application memory %.1f MB (region API raw free %.1f MB), app heap %.1f MB, linear heap %.1f MB (free %.1f MB)\n",
+           isNew3DS ? "New" : "Old", osGetMemRegionSize(MEMREGION_APPLICATION) / 1048576.0,
+           osGetMemRegionFree(MEMREGION_APPLICATION) / 1048576.0, __ctru_heap_size / 1048576.0,
+           __ctru_linear_heap_size / 1048576.0, linearSpaceFree() / 1048576.0);
+    FlushLog();
 
     // sound: SoundData/, Music/ and the pack folders next to GameData (src/audio/README.md); silent without them
     {
@@ -263,7 +397,8 @@ int main(int argc, char** argv) {
                  mi.uordblks / 1048576.0, mi.arena / 1048576.0, __ctru_heap_size / 1048576.0, heapFree, linearSpaceFree() / 1048576.0);
         return std::string(buf);
     };
-    app->Present = [app]() { PresentFrame(*app); };
+    app->Present = [app]() { PresentFrame(*app, true); };
+    ReportPerformance(*app,"startup",true);
     try {
         app->Init(cfg);
     } catch (std::bad_alloc&) {
@@ -278,6 +413,10 @@ int main(int argc, char** argv) {
     double last = NowMs();
     bool wasTouching = false;
     while (aptMainLoop() && !app->QuitRequested) {
+        const double poll=NowMs();
+        auto& diagnostics=g_performance;
+        if(diagnostics.LastPoll>0)diagnostics.MaxPollGap=std::max(diagnostics.MaxPollGap,poll-diagnostics.LastPoll);
+        diagnostics.LastPoll=poll;++diagnostics.InputPolls;
         hidScanInput(); // also scans ir:rst on the New 3DS
         u32 down = hidKeysDown();
         u32 held = hidKeysHeld();
@@ -306,8 +445,8 @@ int main(int argc, char** argv) {
         in.CircleX = cp.dx / 156.0f;
         in.CircleY = cp.dy / 156.0f;
         in.CStickX = in.CStickY = 0;
+        circlePosition cs{};
         if (isNew3DS) {
-            circlePosition cs;
             hidCstickRead(&cs);
             in.CStickX = cs.dx / 156.0f;
             in.CStickY = cs.dy / 156.0f;
@@ -323,24 +462,46 @@ int main(int argc, char** argv) {
         in.TouchDown = touching && !wasTouching;
         in.TouchUp = !touching && wasTouching; // TouchX/Y keep the last position
         wasTouching = touching;
+        if(down & ~KEY_TOUCH)++diagnostics.ButtonPolls;
+        if(in.TouchDown)++diagnostics.TouchDowns;
+        if(in.TouchUp)++diagnostics.TouchUps;
+        if(cp.dx||cp.dy)++diagnostics.CirclePolls;
+        if(cs.dx||cs.dy)++diagnostics.CStickPolls;
+        diagnostics.CircleX=cp.dx;diagnostics.CircleY=cp.dy;
+        diagnostics.CStickX=cs.dx;diagnostics.CStickY=cs.dy;
+        diagnostics.TouchX=in.TouchX;diagnostics.TouchY=in.TouchY;
 
         double now = NowMs();
         double dt = now - last;
         last = now;
         if (dt > 250) dt = 250; // after a suspend (HOME menu / sleep)
+        const double frameBegin=NowMs();
+        diagnostics.InApp=true;diagnostics.AppBegin=frameBegin;
+        bool frameCompleted=false;
         try {
             app->Frame(in, dt);
+            frameCompleted=true;
         } catch (std::bad_alloc&) {
+            ++diagnostics.FrameErrors;
             printf("frame: out of memory | %s\n", cfg.MemInfo().c_str());
             fflush(stdout);
         } catch (std::exception& e) {
+            ++diagnostics.FrameErrors;
             printf("frame: %s\n", e.what());
             fflush(stdout);
         }
+        diagnostics.InApp=false;
+        const double frameMs=NowMs()-frameBegin;
+        diagnostics.Window.Frame(frameMs,frameMs,frameCompleted ? app->Stats.Vm : 0.0,
+            frameCompleted ? app->Stats.World : 0.0,frameCompleted ? app->Stats.Ui : 0.0,
+            frameCompleted ? static_cast<uint64_t>(std::max(app->Stats.Updates,0)) : 0);
         PresentFrame(*app);
     }
+    ReportPerformance(*app,"shutdown",true);
     delete app;
     simaudio::GameAudio::Get().Shutdown();
+    FlushLog();
+    aptUnhook(&g_aptCookie);
     gfxExit();
     return 0;
 }

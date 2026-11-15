@@ -255,9 +255,9 @@ SD:/3ds/OpenDollhouse/
 ```
 
 - **Saves:** `SD:/3ds/OpenDollhouse/saves`.
-- **Log:** create an empty file called `debug`, without an extension, in
-  `SD:/3ds/OpenDollhouse/`. The next run writes
-  `SD:/3ds/OpenDollhouse/cache/opendollhouse.log`.
+- **Log:** `SD:/3ds/OpenDollhouse/cache/opendollhouse.log`, created automatically.
+  An optional empty `SD:/3ds/OpenDollhouse/debug` file enables detailed loading
+  traces; periodic performance logs do not require it.
 
 The current version keeps two screens and the
 [3DS controls](controls.md#new-nintendo-3ds). The package does not contain a CIA

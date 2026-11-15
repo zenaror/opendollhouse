@@ -1,12 +1,29 @@
-# Report slow performance on Vita and Switch
+# Report slow performance on portable devices
 
 Test builds record information in `opendollhouse.log`. You do not need to enable
-an on-screen counter or pass any launch parameters.
+an on-screen counter or pass any launch parameters. Measurements are grouped
+about every five seconds. If a loading step stops responding completely, the
+next entry may be delayed. The measurements do not make the game run faster.
 
 | Device | Log location |
 | --- | --- |
 | PlayStation Vita | `ux0:/data/OpenDollhouse/cache/opendollhouse.log` |
 | Nintendo Switch | `sdmc:/switch/OpenDollhouse/cache/opendollhouse.log` |
+| New Nintendo 3DS | `sdmc:/3ds/OpenDollhouse/cache/opendollhouse.log` |
+| Android debug APK | The app's private `cache/engine/opendollhouse.log`; see the command below. |
+
+New 3DS performance logging does not require a `debug` file. That optional file
+only enables detailed loading traces. Keep normal logs when reporting a stall.
+
+With USB debugging already authorized, collect the Android debug APK's engine
+log on your computer:
+
+```sh
+adb exec-out run-as org.opendollhouse cat cache/engine/opendollhouse.log > opendollhouse-android.log
+```
+
+This differs from Android's `logcat`, which also helps with Java/SDL startup
+failures. `run-as` works with the debug APK; clearing app cache removes this log.
 
 ## Collect the log
 

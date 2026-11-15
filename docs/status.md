@@ -39,8 +39,8 @@ prove performance on the real device.
 | Linux x86_64 | Playable in local tests, including saving and continuing. Bugs and differences remain. |
 | Windows x86_64 | The current build opened the neighborhood and Create-a-Sim in Wine and exited normally. Native Windows testing is still needed. |
 | macOS Intel and Apple Silicon | Packages include a first-run language choice and remember it; no fixed language. Compilation and package checks do not replace a Mac runtime test, which is still needed. |
-| Android ARM64 | An earlier build opened on a device. The current APK includes external controller support but still needs another device test. |
-| New Nintendo 3DS | Opened a house and responded to touch in the emulator. The emulator reported a warning at exit; exit behavior and performance on hardware still need confirmation. |
+| Android ARM64 | An earlier build opened on a device. The current APK includes external controller support and periodic performance logs; it still needs another device test. |
+| New Nintendo 3DS | Earlier emulator checks opened a house and used touch. The logging update reached the map and recorded performance without a `debug` file. Hardware performance and exit behavior still need confirmation. |
 | PlayStation Vita | Hardware testing reported a house-loading crash, input stalls and choppy audio. The crash and empty-log fixes passed an occupied-house/log test in Vita3K. Performance and controls still need confirmation on the device with this update. |
 | Nintendo Switch | Device feedback reports reaching a lot, with very slow lot loading and delayed action menus. Optimization is still needed. The emulator exited before the map; controller support still needs focused device confirmation. |
 | Old Nintendo 3DS (desired) | No game package available to install; New 3DS results do not establish support. |

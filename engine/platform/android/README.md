@@ -56,11 +56,20 @@ The debug package lets you copy saves to the computer without uninstalling:
 ```sh
 adb exec-out run-as org.opendollhouse tar -C files -cf - saves > opendollhouse-saves.tar
 adb logcat -d > opendollhouse-android.log
+adb exec-out run-as org.opendollhouse cat cache/engine/opendollhouse.log > opendollhouse-engine.log
 ```
 
 These commands require an installed application and a connected device. They
 do not include the external commercial data. Inspect the engine log directory
-with `adb shell run-as org.opendollhouse ls cache/engine`.
+with `adb shell run-as org.opendollhouse ls cache/engine`. The engine file
+contains startup/loading stages and a performance summary every five seconds
+under `[android-perf]`, including frame and presentation times, file I/O,
+allocator statistics and process resident memory. Loading can present progress
+without completing a game frame; those counts are separate. The matching
+`[android-input]` summary records observed touch/controller events, focus,
+queue depth and delivered pointer position without adding per-event logging.
+These measurements require a run on the device; building the APK alone does
+not produce performance results.
 
 Choose a language and press **Play**. Missing text may fall back to English;
 localization is still being adapted. The landscape window preserves the

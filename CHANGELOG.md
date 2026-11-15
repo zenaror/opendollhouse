@@ -19,7 +19,7 @@ There is no stable public release yet.
   controllers with touch input preserved. The Vita rear touchpad's left and right
   halves act as L2 and R2.
 - Loading, performance and failure logs, including periodic performance
-  measurements on Vita and Switch.
+  measurements on Vita, Switch, Android and New 3DS in `opendollhouse.log`.
 - MPL-2.0 for authorized original contributions, with credits, notices and
   corresponding sources in the packages.
 

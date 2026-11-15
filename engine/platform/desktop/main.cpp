@@ -18,7 +18,8 @@
 #include "InputSequence.h"
 #include "SdlPortableInput.h"
 #include "SdlCanvasWindow.h"
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH) || defined(__ANDROID__)
+#define ODH_PORTABLE_DIAGNOSTICS 1
 #include "ConsoleDiagnostics.h"
 #include <malloc.h>
 #endif
@@ -27,6 +28,8 @@
 #include "../vita/StdioCapture.h"
 #elif defined(ODH_PLATFORM_SWITCH)
 #include <switch.h>
+#elif defined(__ANDROID__)
+#include "../android/AndroidDiagnostics.h"
 #endif
 #include "app/buy/UIObjectHolder.h"
 #include "DesktopHotkeys.h"
@@ -315,15 +318,20 @@ std::optional<uint8_t> ChooseLanguage(SDL_Window* window,SDL_Renderer* renderer,
 struct SdlLifetime { ~SdlLifetime() { SDL_Quit(); } };
 struct AudioLifetime { ~AudioLifetime() { simaudio::GameAudio::Get().Shutdown(); } };
 
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
 #if defined(ODH_PLATFORM_VITA)
 constexpr const char* ConsolePerfTag="vita-perf";
-#else
+#elif defined(ODH_PLATFORM_SWITCH)
 constexpr const char* ConsolePerfTag="switch-perf";
+#else
+constexpr const char* ConsolePerfTag="android-perf";
 #endif
-// These are separate memory domains: kernel free USER memory is not the
-// reusable space inside newlib's already reserved malloc arena.
+// Allocator free blocks are separate from the platform's process or kernel
+// memory measurements; report those domains independently.
 void ConsoleMemoryText(char* buffer, size_t size) {
+#if defined(__ANDROID__)
+    odh::android::MemoryText(buffer,size);
+#else
     const auto heap = mallinfo();
 #if defined(ODH_PLATFORM_VITA)
     SceKernelFreeMemorySizeInfo freeMemory{};
@@ -344,6 +352,7 @@ void ConsoleMemoryText(char* buffer, size_t size) {
         static_cast<unsigned long long>(heap.fordblks),static_cast<unsigned long long>(total),
         static_cast<unsigned long long>(used),unsigned(totalResult),unsigned(usedResult));
 #endif
+#endif
 }
 std::string ConsoleMemoryInfo() { char buffer[256]; ConsoleMemoryText(buffer, sizeof(buffer)); return buffer; }
 void ConsoleStage(const char* stage) {
@@ -356,7 +365,7 @@ void ConsoleStage(const char* stage) {
 int Run(Options options) {
     Prepare(options);
     OpenLog(options.cache / "opendollhouse.log");
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
     ConsoleStage("startup");
 #endif
     const auto resourcePatches=odh_host::prepare_reference_patches(options.saves,options.importPatches,options.patches);
@@ -426,12 +435,14 @@ int Run(Options options) {
     std::printf("[presentation] requested_native=%dx%d engine_canvas=%dx%d fixed_display=1\n",
         physicalSize.x,physicalSize.y,options.width,options.height);
     portable.LogGeometry("startup");
+#elif defined(__ANDROID__)
+    portable.LogGeometry("startup");
 #endif
     simapp::AppInput cursorInput;cursorInput.TouchX=cursorInput.TouchY=-1;
     const odh::CursorImage* softwareCursor=nullptr;
     std::string softwareCursorKey;
     AudioLifetime audioLifetime;
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
     ConsoleStage("audio-init-begin");
 #endif
     if (!options.silent) {
@@ -441,7 +452,7 @@ int Run(Options options) {
         if (simaudio::GameAudio::Get().Init(audioConfig))
             simaudio::GameAudio::Get().SetBackend(std::make_unique<odh::desktop::SdlAudio>());
     }
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
     ConsoleStage("audio-init-end");
 #endif
 #ifdef ODH_DESKTOP_PANGO
@@ -470,12 +481,12 @@ int Run(Options options) {
     }
 #endif
     simapp::App app;
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
     odh::desktop::ConsoleFrameWindow performance(NowMs());
     auto performanceIo = FSO::Files::FilePool::Stats;
-#if defined(ODH_PLATFORM_VITA)
+#if defined(ODH_PLATFORM_VITA) || defined(__ANDROID__)
     struct {
-        unsigned long long Polls=0, Events=0, Axes=0, RightStick=0, Front=0, Rear=0, Delivered=0;
+        unsigned long long Polls=0, Events=0, Axes=0, RightStick=0, Touches=0, Front=0, Rear=0, Delivered=0;
         double LastPoll=0, MaxPollGap=0;
         int TouchX=-1, TouchY=-1;
         size_t Queued=0, QueuePeak=0;
@@ -512,21 +523,32 @@ int Run(Options options) {
             static_cast<unsigned long long>(delta(io.Opens, performanceIo.Opens)),
             static_cast<unsigned long long>(delta(io.Seeks, performanceIo.Seeks)), FSO::Files::FilePool::OpenCount(),
             audio ? audio->Name() : "off", audio ? audio->LatencyMs() : 0.0, memory);
-#if defined(ODH_PLATFORM_VITA)
+#if defined(ODH_PLATFORM_VITA) || defined(__ANDROID__)
         // Read the already opened mapped controller without pumping SDL again.
         auto* diagnosticPad = portable.HasController()
             ? SDL_GameControllerFromInstanceID(portable.ControllerId()) : nullptr;
-        std::printf("[vita-input] phase=%s polls=%llu poll_gap_max_ms=%.2f events=%llu axis_events=%llu rightstick_events=%llu "
-            "front_events=%llu rear_events=%llu delivered=%llu controller=%d focus=%d right_raw_x=%d right_raw_y=%d "
-            "touch_x=%d touch_y=%d queued=%llu queue_peak=%llu\n", phase, inputDiagnostics.Polls, inputDiagnostics.MaxPollGap,
-            inputDiagnostics.Events, inputDiagnostics.Axes, inputDiagnostics.RightStick, inputDiagnostics.Front,
-            inputDiagnostics.Rear, inputDiagnostics.Delivered, int(diagnosticPad!=nullptr), int(portable.Focused()),
+#if defined(__ANDROID__)
+        constexpr const char* inputTag="android-input";
+#else
+        constexpr const char* inputTag="vita-input";
+#endif
+        std::printf("[%s] phase=%s polls=%llu poll_gap_max_ms=%.2f events=%llu axis_events=%llu rightstick_events=%llu touch_events=%llu "
+#if defined(ODH_PLATFORM_VITA)
+            "front_events=%llu rear_events=%llu "
+#endif
+            "delivered=%llu controller=%d focus=%d right_raw_x=%d right_raw_y=%d "
+            "touch_x=%d touch_y=%d queued=%llu queue_peak=%llu\n", inputTag, phase, inputDiagnostics.Polls, inputDiagnostics.MaxPollGap,
+            inputDiagnostics.Events, inputDiagnostics.Axes, inputDiagnostics.RightStick, inputDiagnostics.Touches,
+#if defined(ODH_PLATFORM_VITA)
+            inputDiagnostics.Front,inputDiagnostics.Rear,
+#endif
+            inputDiagnostics.Delivered, int(diagnosticPad!=nullptr), int(portable.Focused()),
             diagnosticPad ? int(SDL_GameControllerGetAxis(diagnosticPad,SDL_CONTROLLER_AXIS_RIGHTX)) : 0,
             diagnosticPad ? int(SDL_GameControllerGetAxis(diagnosticPad,SDL_CONTROLLER_AXIS_RIGHTY)) : 0,
             inputDiagnostics.TouchX, inputDiagnostics.TouchY, static_cast<unsigned long long>(inputDiagnostics.Queued),
             static_cast<unsigned long long>(inputDiagnostics.QueuePeak));
         inputDiagnostics.Polls=inputDiagnostics.Events=inputDiagnostics.Axes=inputDiagnostics.RightStick=0;
-        inputDiagnostics.Front=inputDiagnostics.Rear=inputDiagnostics.Delivered=0;
+        inputDiagnostics.Touches=inputDiagnostics.Front=inputDiagnostics.Rear=inputDiagnostics.Delivered=0;
         inputDiagnostics.MaxPollGap=0;inputDiagnostics.QueuePeak=inputDiagnostics.Queued;
 #endif
         std::fflush(stdout); // preserve the latest sample if the next step fails
@@ -547,7 +569,7 @@ int Run(Options options) {
             return;
         }
         const auto portableCanvas=portable.Enabled()?portable.Canvas():odh::desktop::PortableCanvas{};
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
         const double uploadStarted = NowMs();
 #endif
         if (SDL_UpdateTexture(texture.get(), nullptr, canvas.Px.data(), canvas.Width * sizeof(uint32_t)) != 0
@@ -559,15 +581,15 @@ int Run(Options options) {
             std::fprintf(stderr, "desktop: presentation failed: %s\n", SDL_GetError());
             return;
         }
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
         const double uploadDone = NowMs();
 #endif
         SDL_RenderPresent(renderer.get());
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
         performance.Presentation(uploadDone - uploadStarted, NowMs() - uploadDone);
 #endif
         if (auto backend = simaudio::GameAudio::Get().Backend()) backend->Pump(0);
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
         // App::Present is also called by blocking loading progress callbacks.
         // Report presentations separately rather than inventing completed FPS.
         performanceReport("periodic");
@@ -586,12 +608,12 @@ int Run(Options options) {
     config.SkipIntro = options.skipIntro;
     config.NowMs = NowMs;
     config.LogSteps = true;
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
     config.MemInfo = ConsoleMemoryInfo; // existing flushed load-step/progress/heartbeat lines
     ConsoleStage("app-init-begin");
 #endif
     if (!app.Init(config)) throw std::runtime_error("Game initialization failed; inspect preceding log entries.");
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
     ConsoleStage("app-init-end");
 #endif
     // Mobile and console SDL backends open a software keyboard on StartTextInput.
@@ -635,7 +657,7 @@ int Run(Options options) {
     bool havePresented = false;
     while (!app.QuitRequested && !renderFailed) {
         const double begin = NowMs();
-#if defined(ODH_PLATFORM_VITA)
+#if defined(ODH_PLATFORM_VITA) || defined(__ANDROID__)
         if(inputDiagnostics.LastPoll>0)
             inputDiagnostics.MaxPollGap=std::max(inputDiagnostics.MaxPollGap,begin-inputDiagnostics.LastPoll);
         inputDiagnostics.LastPoll=begin;++inputDiagnostics.Polls;
@@ -644,7 +666,7 @@ int Run(Options options) {
         inputs.BeginPoll();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-#if defined(ODH_PLATFORM_VITA)
+#if defined(ODH_PLATFORM_VITA) || defined(__ANDROID__)
             inputDiagnostics.QueuePeak=std::max(inputDiagnostics.QueuePeak,inputs.Pending());
             ++inputDiagnostics.Events;
             if(event.type==SDL_CONTROLLERAXISMOTION){
@@ -654,6 +676,7 @@ int Run(Options options) {
                     ++inputDiagnostics.RightStick;
             }
             if(event.type==SDL_FINGERDOWN||event.type==SDL_FINGERMOTION||event.type==SDL_FINGERUP){
+                ++inputDiagnostics.Touches;
                 if(event.tfinger.touchId==0)++inputDiagnostics.Front;
                 else if(event.tfinger.touchId==1)++inputDiagnostics.Rear;
             }
@@ -666,7 +689,7 @@ int Run(Options options) {
             }
             // Device removal/background cancellation must be observed even if
             // the ordered input queue is discarding the rest of this poll.
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
             if(event.type==SDL_WINDOWEVENT&&(event.window.event==SDL_WINDOWEVENT_SIZE_CHANGED||event.window.event==SDL_WINDOWEVENT_RESIZED))
                 portable.LogGeometry("window-size");
 #endif
@@ -803,11 +826,11 @@ int Run(Options options) {
             if(portable.Enabled())portable.Frame(begin-last,state,inputs,portable.Focused(),app.WantsTextInput());
             else inputs.Push(state,InputKind::State);
         }
-#if defined(ODH_PLATFORM_VITA)
+#if defined(ODH_PLATFORM_VITA) || defined(__ANDROID__)
         inputDiagnostics.QueuePeak=std::max(inputDiagnostics.QueuePeak,inputs.Pending());
 #endif
         auto packet=inputs.Next();
-#if defined(ODH_PLATFORM_VITA)
+#if defined(ODH_PLATFORM_VITA) || defined(__ANDROID__)
         ++inputDiagnostics.Delivered;
         inputDiagnostics.TouchX=packet.Input.TouchX;inputDiagnostics.TouchY=packet.Input.TouchY;
         inputDiagnostics.Queued=inputs.Pending();
@@ -850,16 +873,18 @@ int Run(Options options) {
             textInputActive = wantsTextInput;
         }
         present();
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
         const double completedWork = NowMs() - begin;
         performance.Frame(completedWork, app.Stats.Total, app.Stats.Vm, app.Stats.World, app.Stats.Ui,
             static_cast<uint64_t>(std::max(0, app.Stats.Updates)));
+#if !defined(__ANDROID__)
         if (completedWork >= 1000) {
             char memory[256]; ConsoleMemoryText(memory, sizeof(memory));
             std::printf("[%s] slow_completed_work_ms=%.2f app_ms=%.2f vm_ms=%.2f world_ms=%.2f ui_ms=%.2f %s\n",
                 ConsolePerfTag, completedWork, app.Stats.Total, app.Stats.Vm, app.Stats.World, app.Stats.Ui, memory);
             std::fflush(stdout);
         }
+#endif
         performanceReport("periodic");
 #endif
         // Do not report from app.Present: blocking load/save callbacks also use
@@ -888,7 +913,7 @@ int Run(Options options) {
         const double remaining = 1000.0 / 60.0 - (NowMs() - begin);
         if (remaining >= 1.0) SDL_Delay(static_cast<Uint32>(remaining));
     }
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
     performanceReport("exit", true);
 #endif
     SDL_StopTextInput();
@@ -917,7 +942,7 @@ int main(int argc, char** argv) {
     try { return Run(Parse(argc, argv)); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "OpenDollhouse: %s\n", error.what());
-#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
         ConsoleStage("exception");
 #endif
 #if !defined(ODH_PLATFORM_VITA) && !defined(ODH_PLATFORM_SWITCH)
