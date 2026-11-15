@@ -453,8 +453,8 @@ void World2D::MarkDynamic(int x0, int y0, int x1, int y1) {
     y1 = std::min<int>(RetainedTarget->Height, y1);
     for (int y = std::max(0, y0); y < y1; ++y) {
         auto& span = RestoreRows[y];
-        span.X = std::min(span.X, x0);
-        span.Y = std::max(span.Y, x1);
+        span.X = std::min<int32_t>(span.X, x0);
+        span.Y = std::max<int32_t>(span.Y, x1);
     }
 }
 
@@ -478,7 +478,7 @@ void World2D::Draw(WorldState& state, Framebuffer& target, bool retain) {
         uint32_t* tc = target.Color.data() + (size_t)y * target.Width;
         float* td = target.Depth.data() + (size_t)y * target.Width;
         const int x0 = std::clamp(-ox, left, right);
-        const int x1 = std::clamp(Composite.Width - ox, left, right);
+        const int x1 = std::clamp<int32_t>(Composite.Width - ox, left, right);
         if (sy < 0 || sy >= Composite.Height) {
             std::fill(tc + left, tc + right, ClearColor);
             std::fill(td + left, td + right, std::numeric_limits<float>::infinity());

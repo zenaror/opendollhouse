@@ -63,8 +63,9 @@ identification fields. Full byte equality or device execution is not claimed.
 The copied installation belongs in `sdmc:/switch/OpenDollhouse/game`. Saves and
 cache use the sibling `saves` and `cache` directories. The application does not
 write to the commercial installation. When launched with arguments, it accepts
-desktop options, including `--language`; startup language selection is still
-pending.
+desktop options, including `--language` for a single session. The normal launch
+offers a first-run language chooser and remembers the choice in
+`saves/language.txt`. Hold L at startup to choose again.
 
 The screen preserves the original PC layout's proportions. The adapter accepts
 touch and controller input, displaying the original cursor when using the

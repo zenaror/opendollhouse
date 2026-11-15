@@ -250,11 +250,11 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
             if (span.left == span.right) continue;
             // Map the source span back into the destination, including flipped subrectangles.
             if (sprite->FlipHorizontally) {
-                left = std::max(left, sx0 + src.X + src.Width - span.right);
-                right = std::min(right, sx0 + src.X + src.Width - span.left);
+                left = std::max<int32_t>(left, sx0 + src.X + src.Width - span.right);
+                right = std::min<int32_t>(right, sx0 + src.X + src.Width - span.left);
             } else {
-                left = std::max(left, sx0 + span.left - src.X);
-                right = std::min(right, sx0 + span.right - src.X);
+                left = std::max<int32_t>(left, sx0 + span.left - src.X);
+                right = std::min<int32_t>(right, sx0 + span.right - src.X);
             }
         }
         for (int32_t x = left; x < right; x++) {

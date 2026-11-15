@@ -23,6 +23,10 @@ in `cache/opendollhouse.log`, including performance summaries about every five
 seconds. An optional empty `3ds/OpenDollhouse/debug` file enables detailed
 loading traces; it is not required for normal performance logs.
 
+Choose the game language on first launch. Use the D-pad or touch a language,
+then press A or tap OK. Hold L while starting the app to change this choice.
+The preference is stored in `3ds/OpenDollhouse/saves/language.txt`.
+
 Open the `.3dsx` through the Homebrew Launcher. The memory limit depends on the
 process used by the launcher; the engine retains the Sims3DS adapter's limits
 and diagnostics. Building the package does not establish sufficient memory,

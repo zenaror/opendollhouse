@@ -6,7 +6,7 @@
 #include <limits>
 #include <stdexcept>
 namespace odh_host {
-odh::RasterFrame LanguagePicker::draw(int width,int height,bool ascii,bool text,std::string_view notice) const {
+odh::RasterFrame LanguagePicker::draw(int width,int height,bool ascii,bool text,std::string_view notice,std::string_view instructions) const {
     if(width<800 || height<600 || width>3840 || height>2160)throw std::invalid_argument("language picker canvas outside supported bounds");
     odh::RasterFrame frame{};frame.width=width;frame.height=height;
     frame.pixels.assign(std::size_t(width)*height,{35,39,48,255});
@@ -19,7 +19,8 @@ odh::RasterFrame LanguagePicker::draw(int width,int height,bool ascii,bool text,
     if(!text)return frame;
     TextOverlayStyle style;style.x=24;style.width=width-48;style.height=24;style.font_size_px=16;style.padding=4;
     style.foreground={245,245,245,255};style.background={22,25,32,255};style.y=18;
-    draw_text_overlay(frame,"Choose game language - Tab: next, Shift+Tab: previous, Enter or click: confirm, Esc: cancel",language(),style);
+    if(instructions.empty())instructions="Choose game language - Tab: next, Shift+Tab: previous, Enter or click: confirm, Esc: cancel";
+    draw_text_overlay(frame,instructions,language(),style);
     for(int index=0;index<20;++index){
         style.y=56+index*25;
         draw_text_overlay(frame,std::string(index==selected_?"> ":"  ")+std::to_string(index+1)+"  "+

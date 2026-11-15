@@ -28,6 +28,9 @@
 #include <new>
 #include <string>
 #include "app/App.h"
+#include "app/Font.h"
+#include "app/HandheldLanguage.h"
+#include "odh/game_languages.hpp"
 #include "audio/GameAudio.h"
 #include "platform/3ds/AudioNdsp.h"
 #include "files/FilePool.h"
@@ -292,6 +295,78 @@ static void BlitCanvas(const Canvas& c, gfxScreen_t screen) {
     }
 }
 
+// The picker runs before localized content is opened. Its font and colors are
+// built into the app, so it also works on installations with no prepared cache.
+static std::optional<uint8_t> StartupLanguage() {
+    const auto saved = ReadHandheldLanguage(SAVE_ROOT);
+    hidScanInput();
+    if (saved && !(hidKeysHeld() & KEY_L)) {
+        std::printf("[language] saved code=%u\n", unsigned(*saved));
+        return saved;
+    }
+    std::printf("[language] picker opened previous=%u\n", unsigned(saved.value_or(0)));
+    Canvas top(400,240), bottom(320,240);
+    constexpr int rows = 10, rowHeight = 20;
+    constexpr int cols = 2;
+    static_assert(rows * cols == odh_host::game_languages.size());
+    const Rect confirm(164,207,150,28), cancel(6,207,150,28);
+    const auto navy = RGBA(12,24,68), blue = RGBA(33,69,132), white = RGBA(245,248,255);
+    int selected = int(saved.value_or(1)) - 1;
+    bool writeError = false, redraw = true;
+    while (aptMainLoop()) {
+        if (redraw) {
+            top.Clear(navy);
+            DrawTextCentered(top,FontId::Title,{0,47,400,34},"Choose your language",white);
+            const auto& lang = odh_host::game_languages[selected];
+            DrawTextCentered(top,FontId::Bold,{0,87,400,24},std::string(lang.ascii_name)+" ("+lang.tag+")",white);
+            DrawTextCentered(top,FontId::Small,{0,139,400,24},"Use the D-pad or touch a language, then select OK.",white);
+            if (writeError) DrawTextCentered(top,FontId::Small,{0,171,400,24},"Could not save the language. Check the SD card and retry.",white);
+            bottom.Clear(navy);
+            for (int n=0; n<rows*cols; ++n) {
+                const Rect cell((n/rows)*160+3,(n%rows)*rowHeight+1,154,rowHeight-1);
+                if (n==selected) bottom.FillRoundRect(cell,3,blue);
+                const auto& item = odh_host::game_languages[n];
+                // The built-in font supports Latin-1. Other scripts keep their readable ASCII labels.
+                auto label = static_cast<unsigned char>(item.name[0]) < 128 ? ToLatin1(item.name) : std::string(item.ascii_name);
+                DrawTextCentered(bottom,FontId::Small,cell,label,white);
+            }
+            bottom.FillRoundRect(confirm,4,blue);
+            bottom.FillRoundRect(cancel,4,blue);
+            DrawTextCentered(bottom,FontId::Bold,confirm,"A   OK",white);
+            DrawTextCentered(bottom,FontId::Bold,cancel,"B   Back",white);
+            BlitCanvas(top,GFX_TOP); BlitCanvas(bottom,GFX_BOTTOM);
+            gfxFlushBuffers(); gfxSwapBuffers();
+            redraw = false;
+        }
+        gspWaitForVBlank();
+        hidScanInput();
+        const u32 down = hidKeysDown();
+        const int before = selected;
+        if (down & KEY_DUP) selected = (selected/rows)*rows + (selected%rows+rows-1)%rows;
+        if (down & KEY_DDOWN) selected = (selected/rows)*rows + (selected+1)%rows;
+        if (down & (KEY_DLEFT|KEY_DRIGHT)) selected = (selected+rows)%(rows*cols);
+        bool accept = (down & KEY_A) != 0, back = (down & KEY_B) != 0;
+        if (down & KEY_TOUCH) {
+            touchPosition touch{};
+            hidTouchRead(&touch);
+            if (touch.px < 320 && touch.py < rows*rowHeight) selected = (touch.px/160)*rows + touch.py/rowHeight;
+            else if (confirm.Contains(touch.px,touch.py)) accept = true;
+            else if (cancel.Contains(touch.px,touch.py)) back = true;
+        }
+        if (back) return saved;
+        if (accept) {
+            const uint8_t code = uint8_t(selected+1);
+            if (WriteHandheldLanguage(SAVE_ROOT,code)) {
+                std::printf("[language] confirmed code=%u\n", unsigned(code));
+                return code;
+            }
+            writeError = true;
+        }
+        redraw = selected != before || accept;
+    }
+    return {};
+}
+
 // Frames that took longer than a refresh (~16.7 ms) do not wait for VBlank again: the swap queued by
 // gfxSwapBuffers has long taken effect by the time the next frame is written, and waiting would quantize a
 // 35 ms frame to 50 ms (20 fps) instead of ~28 fps.
@@ -365,6 +440,14 @@ int main(int argc, char** argv) {
            __ctru_linear_heap_size / 1048576.0, linearSpaceFree() / 1048576.0);
     FlushLog();
 
+    const auto language = StartupLanguage();
+    if (!language) {
+        FlushLog();
+        aptUnhook(&g_aptCookie);
+        gfxExit();
+        return 0;
+    }
+
     // sound: SoundData/, Music/ and the pack folders next to GameData (src/audio/README.md); silent without them
     {
         simaudio::GameAudio::Config acfg;
@@ -376,6 +459,7 @@ int main(int argc, char** argv) {
 
     App* app = new App();
     App::Config cfg;
+    cfg.LanguageCode = *language;
     cfg.DataRoot = DATA_ROOT;
     cfg.SaveRoot = SAVE_ROOT;
     cfg.CacheDir = CACHE_DIR;

@@ -16,12 +16,13 @@ alone does not mean that your files are wrong. Find the expected paths in the
 On Linux and macOS, the game offers a language choice on first launch and
 remembers it. Run with `--choose-language` to choose again. On macOS, you can
 instead open `ChooseLanguage.command` without typing arguments. On Android,
-choose the language on the start screen.
+choose the language on the start screen. On **Vita, Switch and New 3DS**, hold
+**L** as you launch the game to [open its language chooser](installation.md#choose-the-language-on-a-handheld).
+The choice applies to the game text in your existing saves.
 
 On PC, you can also add `--language pt-BR` to the launcher command for that
-session. This does not change the saved Linux or macOS preference. An initial language
-choice is not yet available on every console. Text missing from the supplied
-game data may appear in English.
+session. This does not change the saved Linux or macOS preference. Text missing
+from the supplied game data may appear in English.
 
 ## Find and protect your saves
 

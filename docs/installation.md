@@ -42,6 +42,18 @@ installation. The engine does not run the original program or require an
 inserted CD. On first launch, it may prepare copies of the neighborhoods for
 its own saves and create cache files.
 
+### Choose the language on a handheld
+
+On PlayStation Vita, Nintendo Switch and New Nintendo 3DS, choose your game
+language the first time you open OpenDollhouse. Upgrading from a version that
+did not ask for a language also opens the chooser once. Confirm your choice
+and the game remembers it for later launches.
+
+To change it later, hold the **left shoulder button** while starting the game
+until the chooser appears. On Vita and New 3DS this is **L**. On Switch it is
+**L** on the left Joy-Con or Pro Controller. Canceling keeps the previous
+choice. If this is your first launch, canceling exits before opening a game.
+
 ### Optional faster first start on Vita and Switch
 
 A Linux PC can prepare the object, furniture and clothing indexes before you
@@ -230,7 +242,7 @@ The Vita needs a homebrew environment with **VitaShell** available.
 2. Install the VPK through VitaShell. To update, install over the previous
    version, keeping your data and saves.
 3. Copy the game installation contents to `ux0:/data/OpenDollhouse/game`.
-4. Open OpenDollhouse from the home screen.
+4. Open OpenDollhouse from the home screen and [choose your language](#choose-the-language-on-a-handheld).
 
 ```text
 ux0:/data/OpenDollhouse/
@@ -254,8 +266,7 @@ VitaShell may show the same location as `ux0:data/OpenDollhouse/game`.
 An earlier build opened the neighborhood on the device. The current build
 corrects the 4:3 fit and includes front touch and triggers on the rear touchpad
 halves; see [controls](controls.md#vita-rear-touchpad). These changes and
-performance still need confirmation on Vita. This adapter does not offer an
-initial language choice.
+performance still need confirmation on Vita.
 
 The source files and `SUPORTE-relink` files supplied with the VPK support
 development and redistribution. You do not need to install them to play;
@@ -288,6 +299,7 @@ SD:/3ds/OpenDollhouse/
   An optional empty `SD:/3ds/OpenDollhouse/debug` file enables detailed loading
   traces; periodic performance logs do not require it.
 
+On first launch, [choose your language](#choose-the-language-on-a-handheld).
 The current version keeps two screens and the
 [3DS controls](controls.md#new-nintendo-3ds). The package does not contain a CIA
 installer. In the emulator, a house opened and it was possible to return to the
@@ -302,7 +314,7 @@ Use **`OpenDollhouse-Switch-debug.tar.gz`**. It contains one game to install;
 1. Use a homebrew environment capable of opening `.nro` files.
 2. Extract the package's `switch/OpenDollhouse` folder to the SD card root.
 3. Copy the complete game data to `SD:/switch/OpenDollhouse/game`.
-4. Open `opendollhouse.nro` from the homebrew menu.
+4. Open `opendollhouse.nro` from the homebrew menu and [choose your language](#choose-the-language-on-a-handheld).
 
 ```text
 SD:/switch/OpenDollhouse/

@@ -18,6 +18,8 @@
 #include "InputSequence.h"
 #if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
 #include "SdlCanvasUpload.h"
+#include "SdlPortableLanguage.h"
+#include "app/HandheldLanguage.h"
 #endif
 #include "SdlPortableInput.h"
 #include "SdlCanvasWindow.h"
@@ -81,7 +83,7 @@ void Usage() {
         "  --width N         Canvas width, at least 800 (default 800)\n"
         "  --height N        Canvas height, at least 600 (default 600)\n"
         "  --language CODE   TS1 code 1..20 or locale tag (for example en-US, pt-BR)\n"
-        "  --choose-language Linux/macOS: show the language picker before loading\n"
+        "  --choose-language Show the startup language picker on supported hosts\n"
         "  --silent          Disable audio output\n"
         "  --skip-intro      Skip the introduction\n"
         "  --frames N        Diagnostic: exit after N frames without saving\n"
@@ -132,9 +134,9 @@ Options Parse(int argc, char** argv) {
     if (result.data.empty() || result.saves.empty() || result.cache.empty())
         throw std::runtime_error("--data-root, --save-root and --cache-dir are required; use --help.");
 #endif
-#ifndef ODH_DESKTOP_LANGUAGE_SETUP
+#if !defined(ODH_DESKTOP_LANGUAGE_SETUP) && !defined(ODH_PLATFORM_VITA) && !defined(ODH_PLATFORM_SWITCH)
     if(result.chooseLanguage && !result.languageExplicit)
-        throw std::runtime_error("The startup language picker is available on Linux and macOS; use --language on this platform.");
+        throw std::runtime_error("Use --language on this platform.");
 #endif
     return result;
 }
@@ -444,6 +446,25 @@ int Run(Options options) {
     simapp::AppInput cursorInput;cursorInput.TouchX=cursorInput.TouchY=-1;
     const odh::CursorImage* softwareCursor=nullptr;
     std::string softwareCursorKey;
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+    if (!options.languageExplicit) {
+        const auto saveRoot = options.saves.generic_string();
+        const auto saved = simapp::ReadHandheldLanguage(saveRoot);
+        if (!saved || options.chooseLanguage || portable.LanguageSelectionRequested()) {
+            const auto chosen = odh::desktop::ChoosePortableLanguage(window.get(), renderer.get(), texture.get(),
+                portable, options.width, options.height, saved.value_or(options.language), false);
+            if (!chosen && (!saved || SDL_HasEvent(SDL_QUIT))) return 0;
+            if (chosen && !simapp::WriteHandheldLanguage(saveRoot, *chosen))
+                throw std::runtime_error("Could not save the language in " + saveRoot + "/language.txt");
+            options.language = chosen.value_or(saved.value_or(options.language));
+        } else {
+            options.language = *saved;
+        }
+        std::printf("[language] selected=%s code=%u\n", odh_host::game_languages[options.language-1].tag,
+                    unsigned(options.language));
+        std::fflush(stdout);
+    }
+#endif
     AudioLifetime audioLifetime;
 #if defined(ODH_PORTABLE_DIAGNOSTICS)
     ConsoleStage("audio-init-begin");

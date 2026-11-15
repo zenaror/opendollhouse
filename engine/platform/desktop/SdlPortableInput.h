@@ -95,6 +95,11 @@ public:
         buttons_.fill(false);padBlocked_=true;pointerInside_=false;
     }
     bool HasController()const{return pad_!=nullptr;}
+    PortableInputProfile Profile()const{return profile_;}
+    bool LanguageSelectionRequested()const{
+        SDL_GameControllerUpdate();
+        return pad_ && SDL_GameControllerGetButton(pad_,SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+    }
     SDL_JoystickID ControllerId()const{return padId_;}
     // Exposed to the finite virtual-device fixture; ordinary runtime opens the
     // first SDL-mapped device, and does not assume raw joystick button indices.

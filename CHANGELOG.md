@@ -15,6 +15,8 @@ There is no stable public release yet.
   separate from the original installation.
 - Initial support for languages, audio, inventory, classic custom content and
   expansion activities, still subject to bugs and behavior differences.
+- A first-run language chooser on Vita, Switch and New 3DS. Hold L while
+  launching to choose again. Existing neighborhoods keep their saved progress.
 - Touch and controller input in the Vita and Switch adapters; external Android
   controllers with touch input preserved. The Vita rear touchpad's left and right
   halves act as L2 and R2.

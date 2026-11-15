@@ -165,7 +165,7 @@ void VMArchitecture::SetObjectSupported(int16_t x, int16_t y, int8_t level, bool
     // A column can only support its own tile and the eight adjacent tiles
     // above. Changing walls or floors still rebuilds the full support map.
     UpdateSupported(*this, level + 1, std::max(0, x - 1), std::max(0, y - 1),
-                        std::min(Width, x + 2), std::min(Height, y + 2), SupportSpread);
+                        std::min<int32_t>(Width, x + 2), std::min<int32_t>(Height, y + 2), SupportSpread);
 }
 
 void VMArchitecture::RegenerateSupported(int32_t level) {
