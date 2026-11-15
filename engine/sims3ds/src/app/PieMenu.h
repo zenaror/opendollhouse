@@ -80,7 +80,7 @@ private:
 #endif
     int HitDesktop(int x,int y) const;
     void LayoutDesktop();
-    void DrawDesktop(Canvas& canvas);
+    void DrawDesktop(Canvas& canvas,const Canvas* residentIcon);
     void Layout();
     Result Activate(int index, PieChoice& out);
     Result Back();

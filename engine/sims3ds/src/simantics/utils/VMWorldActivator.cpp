@@ -151,7 +151,13 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     VM->Context->Clock->Hours = VM->GlobalState[0];
     VM->Context->Clock->DayOfMonth = VM->GlobalState[1];
     VM->Context->Clock->Minutes = VM->GlobalState[5];
-    VM->Context->Clock->MinuteFractions = VM->GlobalState[6] * VM->Context->Clock->TicksPerMinute;
+    // SIMI global 6 stores seconds within the minute. Lots opened for editing
+    // may be saved before any simulation tick advances this clock.
+    const auto seconds = VM->GlobalState[6];
+    const auto ticksPerMinute = VM->Context->Clock->TicksPerMinute;
+    if (seconds < 0 || seconds >= 60 || ticksPerMinute <= 0)
+        throw std::runtime_error("The saved lot clock has an invalid seconds value");
+    VM->Context->Clock->MinuteFractions = static_cast<int32_t>(int64_t(seconds) * ticksPerMinute / 60);
     VM->Context->Clock->Month = VM->GlobalState[7];
     VM->Context->Clock->Year = VM->GlobalState[8];
 
@@ -640,6 +646,8 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
 // consumer. Classic stacks are converted afterwards; ODHI keeps full state.
 void VMWorldActivator::RestoreSavedState(OBJM* objm) {
     LastRestore = RestoreStats();
+    const auto* importedGUIDs = objm->ChunkParent ? objm->ChunkParent->Get<GTAB>(1) : nullptr;
+    auto* hood = FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::Provider();
     auto ctx = VM->Context;
     // Identity, pose and room are installed/derived by this loader. All other
     // persistent fields, including flags/placement/slot policy, precede spatial
@@ -679,6 +687,14 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
             auto& person = inst.PersonData;
             // Loading is a data installation, not an action: money setters
             // emit headlines and the display setter does not store its word.
+            // Imported families keep their old neighbor numbers in ObjM.
+            // Their current neighborhood owns the identity used for relationships and saves.
+            constexpr auto neighborWord = FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::PD_NEIGHBOR_ID;
+            int16_t neighbor = 0;
+            const auto guid = ava->Object->OBJ->GUID;
+            if (importedGUIDs && importedGUIDs->HasTarget(guid) && hood &&
+                person.PersonData.size() > neighborWord && hood->GetNeighborIDForGUID(guid, neighbor))
+                person.PersonData[neighborWord] = neighbor;
             ava->RestorePersonData(person.PersonData, person.MotiveData);
             // The decoded loader already restored this exact pose, including
             // OUT_OF_WORLD. Runtime continuation may supersede it after load.

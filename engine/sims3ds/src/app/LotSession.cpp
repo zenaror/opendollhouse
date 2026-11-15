@@ -273,16 +273,6 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
     } catch (std::exception& e) { error = std::string("Lot load failed: ") + e.what(); return false; }
     if (Blueprint == nullptr) { error = "Lot load failed"; return false; }
     if (_PreparingDemolition) {
-        // SIMI global6 is seconds (VM::InternalTick/VMClock::Seconds), not a
-        // whole-minute multiplier. No game tick runs in this property loader
-        // to repair the legacy activator's unnormalized fractional value.
-        const int seconds = _VM->GlobalState.at(6);
-        auto clock = _Ctx->Clock.get();
-        if (clock->TicksPerMinute <= 0 || seconds < 0 || seconds >= 60) {
-            error = "The saved lot clock has an invalid seconds value";
-            return false;
-        }
-        clock->MinuteFractions = int32_t((int64_t(seconds) * clock->TicksPerMinute) / 60);
         // A converter prepares an empty property, never resumes its residents,
         // actions, visitors or delayed NPC/controllers before the final commit.
         auto entities = _VM->Entities;

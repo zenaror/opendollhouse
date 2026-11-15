@@ -183,7 +183,8 @@ float TerrainComponent::StateAt(int x, int y) const {
 void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
     LastStats = RasterStats();
     if (Blueprint == nullptr) return;
-    GenerateBlades();
+    const bool grain = !world.SimpleTerrain || world.RenderingThumbnail;
+    if (grain) GenerateBlades();
     auto& ws = world.WorldSpace;
     auto K = TileProjectionOrigin(world);
     auto cam = world.Camera();
@@ -224,7 +225,7 @@ void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
         float shade = 1.0f;
         // The neutral save capture, like pinned GetLotThumb/ClearLighting,
         // does not bake the software world's heuristic slope illumination.
-        if (!world.RenderingThumbnail && !Heights.empty()) {
+        if (grain && !world.RenderingThumbnail && !Heights.empty()) {
             float dx = GetElevationPoint(x + 1, y) - GetElevationPoint(x - 1, y);
             float dy = GetElevationPoint(x, y + 1) - GetElevationPoint(x, y - 1);
             shade = std::max(0.55f, std::min(1.35f, 1.0f + 0.9f * (dx + dy)));
@@ -237,6 +238,9 @@ void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
     const float bias = 0.4f;
     float cx0 = (float)std::max<int32_t>(0, target.ClipX0), cy0 = (float)std::max<int32_t>(0, target.ClipY0);
     float cx1 = (float)std::min(target.Width, target.ClipX1), cy1 = (float)std::min(target.Height, target.ClipY1);
+    const auto* grassTexture = grain ? &Blades : nullptr;
+    // The vertex colors are normalized for the grass texture's neutral value (200).
+    constexpr uint32_t flatGrass = 0xffc8c8c8u;
     for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
         auto& a = verts[(size_t)((y - y0) * vw + (x - x0))];
         auto& b = verts[(size_t)((y - y0) * vw + (x + 1 - x0))];
@@ -245,8 +249,8 @@ void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
         float minX = std::min(std::min(a.x, b.x), std::min(c.x, d.x)), maxX = std::max(std::max(a.x, b.x), std::max(c.x, d.x));
         float minY = std::min(std::min(a.y, b.y), std::min(c.y, d.y)), maxY = std::max(std::max(a.y, b.y), std::max(c.y, d.y));
         if (maxX < cx0 || maxY < cy0 || minX >= cx1 || minY >= cy1) continue;
-        DrawTriangle(target, a, b, c, &Blades, 0, bias, &LastStats);
-        DrawTriangle(target, a, c, d, &Blades, 0, bias, &LastStats);
+        DrawTriangle(target, a, b, c, grassTexture, flatGrass, bias, &LastStats);
+        DrawTriangle(target, a, c, d, grassTexture, flatGrass, bias, &LastStats);
     }
     if (!world.RenderingThumbnail && (DrawGrid || world.BuildMode()>0)) {
         const auto eligible=[&](int x,int y) -> bool {

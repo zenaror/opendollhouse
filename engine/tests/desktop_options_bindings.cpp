@@ -30,6 +30,21 @@ int main(){try{
     struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code e;std::filesystem::remove_all(p,e);}}cleanup{dir};
     const auto source=dir/"source.txt";
     {std::ofstream f(source);f<<"Shadows=0\nLighting=0\nInterfaceEffects=0\nTerrainDetail=1\nCharacterDetail=0\nSoundVolume=31\nMusicVolume=62\nVoxVolume=93\nFreeWill=0\nAutonomyLevel=2\nAutoCentering=0\nEdgeScrolling=1\nQuickTips=0\nAutoSnapshot=0\nLivePIP=1\n";}
+    const auto legacyPortable=dir/"old-handheld.txt";
+    {std::ofstream f(legacyPortable);f<<"Shadows=1\nLighting=1\nInterfaceEffects=1\nTerrainDetail=2\nCharacterDetail=2\nMusicVolume=27\n";}
+    front::FrontSettings handheld;
+    handheld.Load(legacyPortable.string(),true);
+    need(handheld.HandheldGraphics&&!handheld.Shadows&&!handheld.Lighting&&!handheld.InterfaceEffects&&
+         handheld.TerrainDetail==0&&handheld.CharacterDetail==0&&handheld.MusicVolume==27,"old handheld graphics migrate independently of other options");
+    handheld.Shadows=true;
+    handheld.Save(legacyPortable.string());
+    front::FrontSettings reopenedHandheld;
+    reopenedHandheld.Load(legacyPortable.string(),true);
+    need(reopenedHandheld.Shadows&&reopenedHandheld.TerrainDetail==0,"handheld player's new shadow choice survives restart");
+    front::FrontSettings freshHandheld;
+    freshHandheld.Load((dir/"nonexistent").string(),true);
+    need(!freshHandheld.Shadows&&!freshHandheld.Lighting&&!freshHandheld.InterfaceEffects&&
+         freshHandheld.TerrainDetail==0&&freshHandheld.CharacterDetail==0,"low handheld profile applies on first boot");
     front::FrontEnd fe;fe.Settings().Load(source.string());auto& st=fe.Settings();
     const auto snapshot=CaptureDesktopOptions(st,true,false);
     need(snapshot.state.values[size_t(Id::sound_effects)]==31&&snapshot.state.values[size_t(Id::music)]==62&&

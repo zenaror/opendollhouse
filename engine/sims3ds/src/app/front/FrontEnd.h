@@ -45,9 +45,10 @@ struct FrontSettings {
     int AutonomyLevel = 3;                       // TS1(sims): 0 (none) .. 3 (full) for the family Sims
     // TS1(sims): 3DS
     bool PlayIntro = true;
+    bool HandheldGraphics = false;
     int LastNeighbourhood = 0;
 
-    void Load(const std::string& path);
+    void Load(const std::string& path, bool handheldGraphics = false);
     void Save(const std::string& path) const;
 };
 

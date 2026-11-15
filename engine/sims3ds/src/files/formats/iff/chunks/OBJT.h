@@ -7,8 +7,21 @@
 #pragma once
 #include "files/formats/iff/AbstractIffChunk.h"
 #include "files/formats/iff/chunks/OBJD.h"
+#include <map>
 
 namespace FSO { namespace Files { namespace Formats { namespace IFF { namespace Chunks {
+
+// The original game keeps the exported object table in imported family lots.
+// Gtab #1 translates its character definition GUIDs into this neighborhood.
+class GTAB : public IffChunk {
+public:
+    IFF_CHUNK_TYPE("Gtab")
+    void Read(IffFile*, st::Reader& stream) override;
+    uint32_t Resolve(uint32_t savedGUID) const;
+    bool HasTarget(uint32_t guid) const;
+private:
+    std::map<uint32_t,uint32_t> replacements;
+};
 
 class OBJTEntry
 {

@@ -196,7 +196,7 @@ PieMenu::Result PieMenu::Button(int dx, int dy, bool a, bool b, PieChoice& out) 
 
 void PieMenu::Draw(Canvas& c, const Canvas* icon) {
     if (!IsOpen) return;
-    if(Desktop) { DrawDesktop(c); return; }
+    if(Desktop) { DrawDesktop(c,icon); return; }
     c.Dim(Area.X, Area.Y, Area.W, Area.H, 110);
     // title
     if (!Title.empty()) {
@@ -274,7 +274,7 @@ void PieMenu::SetHead(const cas::CASSimDesc& sim) {
 
 #ifdef __3DS__
 void PieMenu::LayoutDesktop() { Desktop=false; Layout(); }
-void PieMenu::DrawDesktop(Canvas& c) { Desktop=false; Draw(c,nullptr); }
+void PieMenu::DrawDesktop(Canvas& c,const Canvas* icon) { Desktop=false; Draw(c,icon); }
 int PieMenu::HitDesktop(int,int) const { return -1; }
 PieMenu::Result PieMenu::Pointer(const AppInput&,PieChoice&,double) { return Result::None; }
 #else
@@ -341,17 +341,19 @@ PieMenu::Result PieMenu::Pointer(const AppInput& input,PieChoice& out,double dtM
     auto result=OriginalPointer.process(OriginalLayout,events,input.PointerCancelled,selected);
     Highlight=OriginalPointer.hover_target()?int(selected):-1;
     if(input.PointerCancelled){PointerCaptured=false;return Result::None;}
+#if !defined(__vita__) && !defined(__SWITCH__)
     if(Current==Root.get()) {
         auto target=OriginalPointer.hover_target();
         HeadTargetX=target?(*target)[0]:HeadX;HeadTargetY=target?(*target)[1]:HeadY;
     }
     HeadRenderTarget=HeadMotion.Update({HeadX,HeadY},{HeadTargetX,HeadTargetY},dtMs);
+#endif
     if(result.activated)return Tap((*result.activated)[0],(*result.activated)[1],out);
     if(releasedCapture && !result.consumed && HitDesktop(input.TouchX,input.TouchY)==-1){Close();return Result::Closed;}
     return Result::None;
 }
 
-void PieMenu::DrawDesktop(Canvas& c) {
+void PieMenu::DrawDesktop(Canvas& c,[[maybe_unused]] const Canvas* residentIcon) {
     if(OriginalCaptions.empty())return;
     std::optional<odh_host::PieMenuCaption> parent;
     if(Current && Current->Parent)parent=odh_host::PieMenuCaption{Current->Name,original::TextLanguage()};
@@ -359,12 +361,20 @@ void PieMenu::DrawDesktop(Canvas& c) {
     original::DrawDesktopPie(c,OriginalFrame,OriginalLayout,{HeadX,HeadY},OriginalCaptions,selected,parent,
         PieArt.width==201 && PieArt.height==201?&PieArt:nullptr,OriginalPointer.pressed(),Highlight>=0,
         [&](Canvas& target){
+#if defined(__vita__) || defined(__SWITCH__)
+            // Like the 3DS menu, reuse the resident icon already drawn in the HUD.
+            if(residentIcon && residentIcon->Width>0 && residentIcon->Height>0){
+                target.Blit(residentIcon->Px.data(),residentIcon->Width,residentIcon->Height,
+                            HeadX-residentIcon->Width/2,HeadY-residentIcon->Height/2,true);
+            }
+#else
             if(OriginalHead) {
                 OriginalPCUI::Get().DrawPieHead(target,OriginalHead,{HeadX,HeadY},HeadRenderTarget);
             } else if(Head && Head->Valid()) {
                 float yaw=std::atan(float(HeadX-HeadRenderTarget[0])/100.f),pitch=std::atan(float(HeadY-HeadRenderTarget[1])/100.f);
                 Head->DrawPieHead(target,HeadX,HeadY,yaw,pitch);
             }
+#endif
     });
 }
 

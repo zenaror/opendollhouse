@@ -3,6 +3,7 @@
 #include "content/ContentManager.h"
 #include "content/TS1FamilyImport.h"
 #include "files/formats/iff/chunks/NBRS.h"
+#include "files/formats/iff/chunks/OBJT.h"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -39,6 +40,39 @@ RawIffChunk neighbors(bool populated){
 }
 RawIffChunk strings(const char* type,unsigned id,const std::vector<std::string>& values){
     RawIffChunk result;result.Type=type;result.ID=id;result.Data=RawIff::MakeSTRFormat3(values);return result;
+}
+// A retail-imported lot retains its old objt type and stores the new GUID in Gtab #1.
+void verifyImportedLotTable() {
+    constexpr uint32_t guest = 0xc0ffee01, unrelated = 0x13579bdf;
+    RawIffChunk table; table.Type = "objt"; table.ID = 0;
+    st::Writer entries(st::Endian::Little);
+    entries.WriteUInt32(0); entries.WriteUInt32(2); entries.WriteUInt32(0x6f626a74);
+    uint16_t id = 0;
+    for (uint32_t guid : {person, unrelated}) {
+        entries.WriteUInt32(guid);
+        for (int i = 0; i < 4; ++i) entries.WriteUInt16(0);
+        entries.WriteUInt16(++id); entries.WriteUInt16(uint16_t(OBJDType::Person));
+        entries.WriteUInt16(0); // empty name and word padding
+    }
+    table.Data = entries.ToArray();
+    RawIffChunk mapping; mapping.Type = "Gtab"; mapping.ID = 1; mapping.Data.assign(32, 0);
+    word(mapping.Data,8,0x47746162); word(mapping.Data,12,2);
+    word(mapping.Data,16,person); word(mapping.Data,20,guest);
+    word(mapping.Data,24,guest); word(mapping.Data,28,0xc0ffee02);
+    auto decoded = [&](const std::vector<RawIffChunk>& chunks) {
+        FSO::Files::Formats::IFF::IffFile file;
+        file.Read(RawIff::Build(chunks));
+        return file.Get<OBJT>(0)->Entries;
+    };
+    auto original = decoded({table});
+    require(original.at(0).GUID == person, "plain lot changed a resident GUID");
+    auto moved = decoded({table,mapping});
+    require(moved.size() == 2 && moved[0].GUID == guest && moved[0].TypeID == 1 &&
+            moved[1].GUID == unrelated && moved[1].TypeID == 2, "imported lot lost resident or object identity");
+    mapping.Data.pop_back();
+    bool rejected = false;
+    try { decoded({table,mapping}); } catch (const std::exception&) { rejected = true; }
+    require(rejected, "truncated Gtab accepted");
 }
 struct Fixture {
     fs::path root;
@@ -97,6 +131,7 @@ int main(){
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     struct Cleanup{fs::path path;~Cleanup(){Content::Get()->WorldObjects.reset();std::error_code ec;fs::remove_all(path,ec);}}cleanup{root};
     try{
+        verifyImportedLotTable();
         {
             Fixture f(root/"normal");require(f.import().Ok,"normal real family import failed");f.verify();
             const auto old=read(f.root/"Neighborhood.iff");fs::remove(f.root/"Houses/House56.iff");

@@ -21,15 +21,23 @@ namespace simapp { namespace front {
 
 // ======================================================================= settings
 
-void FrontSettings::Load(const std::string& path) {
+void FrontSettings::Load(const std::string& path, bool handheldGraphics) {
+    HandheldGraphics = handheldGraphics;
+    if (HandheldGraphics) {
+        Shadows = Lighting = InterfaceEffects = false;
+        TerrainDetail = CharacterDetail = 0;
+    }
+
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return;
+    bool versionedHandheldGraphics = false;
     char line[256];
     while (fgets(line, sizeof line, f)) {
         char key[64]; int v;
         if (sscanf(line, "%63[^=]=%d", key, &v) != 2) continue;
         std::string k = key;
-        if (k == "Shadows") Shadows = v != 0;
+        if (k == "HandheldGraphicsVersion") versionedHandheldGraphics = v >= 1;
+        else if (k == "Shadows") Shadows = v != 0;
         else if (k == "Lighting") Lighting = v != 0;
         else if (k == "InterfaceEffects") InterfaceEffects = v != 0;
         else if (k == "TerrainDetail") TerrainDetail = v;
@@ -48,12 +56,20 @@ void FrontSettings::Load(const std::string& path) {
         else if (k == "LastNeighbourhood") LastNeighbourhood = v;
     }
     fclose(f);
+    if (HandheldGraphics) {
+        // An old options file serialized PC quality values even for controls
+        // this host never exposed. Start those profiles with the low preset.
+        if (!versionedHandheldGraphics) Shadows = false;
+        Lighting = InterfaceEffects = false;
+        TerrainDetail = CharacterDetail = 0;
+    }
 }
 
 void FrontSettings::Save(const std::string& path) const {
     FILE* f = FSO::Files::SafeFile::BeginWrite(path); // FIX(sims) SAVE: the crash-safe writer
     if (!f) return;
     fprintf(f, "# sims options (TS1 Options panel)\n");
+    if (HandheldGraphics) fprintf(f, "HandheldGraphicsVersion=1\n");
     fprintf(f, "Shadows=%d\nLighting=%d\nInterfaceEffects=%d\nTerrainDetail=%d\nCharacterDetail=%d\n", Shadows, Lighting, InterfaceEffects, TerrainDetail, CharacterDetail);
     fprintf(f, "SoundVolume=%d\nMusicVolume=%d\nVoxVolume=%d\n", SoundVolume, MusicVolume, VoxVolume);
     fprintf(f, "AutoCentering=%d\nFreeWill=%d\nEdgeScrolling=%d\nQuickTips=%d\nAutoSnapshot=%d\nLivePIP=%d\nAutonomyLevel=%d\n", AutoCentering, FreeWill, EdgeScrolling, QuickTips, AutoSnapshot, LivePIP, AutonomyLevel);
@@ -82,11 +98,10 @@ bool FrontEnd::Init(const Config& cfg) {
     LoadTS1Fonts();
     FrontArt::Get().Load(ui);
 #if defined(__vita__) || defined(__SWITCH__)
-    // Give new handheld profiles the inexpensive setting. An explicit player
-    // preference, including an existing save's setting, still wins below.
-    _Settings.Shadows = false;
-#endif
+    _Settings.Load(_Cfg.SaveRoot + "/sims_options.txt", true);
+#else
     _Settings.Load(_Cfg.SaveRoot + "/sims_options.txt");
+#endif
     _Setup.Configure(_Cfg.DataRoot, _Cfg.SaveRoot);
     _Nhood.reset(new NeighbourhoodScreen(this));
     _Loading.Init();

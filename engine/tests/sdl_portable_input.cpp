@@ -153,6 +153,13 @@ int main(){SDL_SetMainReady();try{
  AppInput input;input.TouchX=input.TouchY=3;Check(SdlPortableInput::UploadCursor(t.get(),canvas,8,8,input,&cursor),"cursor upload");SDL_RenderCopy(r.get(),t.get(),nullptr,nullptr);
  std::vector<Uint32> out(64);SDL_RenderReadPixels(r.get(),nullptr,SDL_PIXELFORMAT_ABGR8888,out.data(),8*4);
  Check(out[2*8+2]==0xff000000u&&out[2*8+3]==0xff332211u&&out[3*8+2]==0xffccddeeu&&out[3*8+3]==0xffffffffu,"authored cursor opacity/transparency/inversion/hotspot");Check(canvas==original,"cursor never changes engine canvas");
+ Check(SdlPortableInput::UploadCursor(t.get(),canvas,8,8,input,&cursor,true),"restore previous cursor rectangle");
+ input.TouchX=0;input.TouchY=0;
+ Check(SdlPortableInput::UploadCursor(t.get(),canvas,8,8,input,&cursor),"draw cursor clipped at canvas edge");
+ SDL_RenderCopy(r.get(),t.get(),nullptr,nullptr);
+ SDL_RenderReadPixels(r.get(),nullptr,SDL_PIXELFORMAT_ABGR8888,out.data(),8*4);
+ Check(out[2*8+2]==original[2*8+2]&&out[3*8+3]==original[3*8+3]&&out[0]==0xffffffffu&&canvas==original,
+       "immediate pointer movement restores previous background and preserves hotspot");
  }
  {SdlPortableInput disabled(window.get(),renderer.get(),800,600,PortableInputProfile::Disabled);InputSequence q;AppInput state;Check(!disabled.Handle(Finger(SDL_FINGERDOWN,window.get(),1,.5f,.5f),state,q,true,false),"PC keeps existing event path");}
  std::cout<<"PASS portable SDL geometry, ordered single-touch/cancel/focus, real virtual controller/modes/ownership/detach, Vita rear L2/R2, Android touch/controller coexistence, software cursor and PC-disabled path\n";

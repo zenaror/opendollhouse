@@ -51,6 +51,9 @@ private:
     int _HoverCheckX = -1, _HoverCheckY = -1;
 #ifndef __3DS__
     void UpdateDesktopCursor(); // Only called when Live owns the displayed cursor.
+#if defined(__vita__) || defined(__SWITCH__)
+    double _NextHoverCheck = 0;
+#endif
     original::DesktopCursorRefresh _CursorRefresh;
     original::DesktopCursorPickIdentity _DesktopPick;
 #endif

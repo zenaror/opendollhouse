@@ -6,12 +6,40 @@
 // Translated from FreeSims sims.files/formats/iff/chunks/OBJT.cs
 #include "files/formats/iff/chunks/OBJT.h"
 #include "files/formats/iff/IffFile.h"
+#include <algorithm>
 
 namespace FSO { namespace Files { namespace Formats { namespace IFF { namespace Chunks {
 
+void GTAB::Read(IffFile*, st::Reader& stream) {
+    stream.ByteOrder(st::Endian::Little);
+    if (stream.size() < 16 || stream.ReadUInt32() != 0 || stream.ReadUInt32() != 0 ||
+        stream.ReadUInt32() != 0x47746162) throw std::runtime_error("invalid Gtab header");
+    const uint32_t count = stream.ReadUInt32();
+    if (count > 65535 || uint64_t(count) * 8 != stream.size() - stream.pos())
+        throw std::runtime_error("invalid Gtab record count");
+    std::map<uint32_t,uint32_t> decoded;
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto from = stream.ReadUInt32();
+        const auto to = stream.ReadUInt32();
+        if (!from || !to || !decoded.emplace(from,to).second)
+            throw std::runtime_error("invalid or duplicate Gtab character mapping");
+    }
+    replacements.swap(decoded);
+}
+
+uint32_t GTAB::Resolve(uint32_t savedGUID) const {
+    const auto found = replacements.find(savedGUID);
+    return found == replacements.end() ? savedGUID : found->second;
+}
+
+bool GTAB::HasTarget(uint32_t guid) const {
+    return std::any_of(replacements.begin(), replacements.end(),
+        [guid](const auto& pair) { return pair.second == guid; });
+}
+
 void OBJT::Read(IffFile* iff, st::Reader& stream)
 {
-    (void)iff;
+    const auto* guids = iff ? iff->Get<GTAB>(1) : nullptr;
     st::Reader& io = stream;
     io.ByteOrder(st::Endian::Little);
     {
@@ -26,7 +54,8 @@ void OBJT::Read(IffFile* iff, st::Reader& stream)
 
         while (io.HasMore())
         {
-            Entries.push_back(OBJTEntry(io, version));
+            auto& entry = Entries.emplace_back(io, version);
+            if (guids) entry.GUID = guids->Resolve(entry.GUID);
         }
     }
 }

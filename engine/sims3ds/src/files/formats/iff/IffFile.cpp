@@ -80,6 +80,7 @@ const std::unordered_map<std::string, IffFile::ChunkFactory>& IffFile::CHUNK_TYP
         {"NBRS", &MakeChunk<NBRS>},
         {"NGBH", &MakeChunk<NGBH>},
         {"objt", &MakeChunk<OBJT>},
+        {"Gtab", &MakeChunk<GTAB>},
         {"Arry", &MakeChunk<ARRY>},
         {"ObjM", &MakeChunk<OBJM>},
         {"ODHI", &MakeChunk<ODHI>},

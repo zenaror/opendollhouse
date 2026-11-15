@@ -437,6 +437,18 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
     if (!objtChunk || !objmChunk) { Error = "house file has no objt#0/ObjM#1"; return false; }
     OBJTRaw objt;
     if (!objt.Parse(objtChunk->Data)) { Error = "cannot parse objt"; return false; }
+    // Match live definitions with the same lot-local mapping as the loader.
+    // Leave Raw and Gtab untouched so the original imported type IDs round-trip.
+    if (auto mapChunk = file.Find("Gtab", 1)) {
+        try {
+            GTAB guids;
+            st::Reader input(mapChunk->Data, st::Endian::Little);
+            guids.Read(nullptr, input);
+            for (auto& entry : objt.Entries) entry.GUID = guids.Resolve(entry.GUID);
+        } catch (const std::exception& e) {
+            Error = e.what(); return false;
+        }
+    }
     OBJMRawChunk objm;
     if (!objm.Parse(objmChunk->Data, err)) { Error = "cannot parse ObjM: " + err; return false; }
 
@@ -452,6 +464,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         bytes.resize(bytes.size() + 8, 0);
         st::Reader r(bytes, st::Endian::Little);
         ownedEntries.emplace_back(new OBJTEntry(r, objt.Version));
+        ownedEntries.back()->GUID = raw->GUID;
         typeEntries[typeId] = ownedEntries.back().get();
         return ownedEntries.back().get();
     };

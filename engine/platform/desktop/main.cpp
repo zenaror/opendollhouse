@@ -607,6 +607,12 @@ int Run(Options options) {
     config.DesktopHeight = options.height;
     config.SkipIntro = options.skipIntro;
     config.NowMs = NowMs;
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+    // Like the 3DS host, yield between complete VM updates. An overloaded
+    // lot must service input and audio before trying to catch up again.
+    config.VMBudgetMs = 14.0;
+    std::printf("[portable-perf] VM budget %.0f ms per frame\n", config.VMBudgetMs);
+#endif
     config.LogSteps = true;
 #if defined(ODH_PORTABLE_DIAGNOSTICS)
     config.MemInfo = ConsoleMemoryInfo; // existing flushed load-step/progress/heartbeat lines
@@ -844,6 +850,34 @@ int Run(Options options) {
         if(packet.Quit)app.RequestDesktopQuit();
         const double elapsed = std::clamp(begin - last, 0.0, 250.0);
         last = begin;
+#if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
+        // On a slow frame, show stick motion on the last completed scene before
+        // simulation or drawing can block again. Clicks keep their ordered position.
+        if(havePresented && elapsed>=32 && app.Stats.Total>=32 && portable.Focused() && softwareCursor &&
+           packet.Type==InputKind::State && !packet.Input.Touching && !packet.Input.MouseRightHeld &&
+           (cursorInput.TouchX!=packet.Input.TouchX || cursorInput.TouchY!=packet.Input.TouchY)){
+            const auto& previous=app.DesktopCanvas();
+            const auto viewport=portable.Canvas();
+            using Cursor=odh::desktop::SdlPortableInput;
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
+            const double uploadStarted=NowMs();
+#endif
+            if(!Cursor::UploadCursor(texture.get(),previous.Px,previous.Width,previous.Height,cursorInput,softwareCursor,true) ||
+               !Cursor::UploadCursor(texture.get(),previous.Px,previous.Width,previous.Height,packet.Input,softwareCursor) ||
+               SDL_RenderClear(renderer.get())!=0 || SDL_RenderCopy(renderer.get(),texture.get(),nullptr,&viewport.Box)!=0){
+                std::fprintf(stderr,"portable pointer presentation failed: %s\n",SDL_GetError());
+                renderFailed=true;
+                break;
+            }
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
+            const double uploadDone=NowMs();
+#endif
+            SDL_RenderPresent(renderer.get());
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
+            performance.Presentation(uploadDone-uploadStarted,NowMs()-uploadDone);
+#endif
+        }
+#endif
         cursorInput=packet.Input; // Cursor and engine consume the same ordered point.
         app.Frame(packet.Input, elapsed);
         // Frame has rendered the canvas. Export before presentation so an SDL

@@ -114,8 +114,16 @@ void App::ApplyPlaySettings() {
     auto& st = _Front->Settings();
     // Apply at the existing load/settings-change boundary, including a newly
     // created World after travel. Portable hosts retain their current defaults.
-    if (_Front->IsDesktop()) if (auto world = _Session->World())
+    if (_Front->IsDesktop()) if (auto world = _Session->World()) {
         world->DrawAvatarShadows = st.Shadows;
+        if (world->State.SimpleTerrain != st.HandheldGraphics) {
+            world->State.SimpleTerrain = st.HandheldGraphics;
+            world->Get2DWorld().Invalidate();
+        }
+        if (st.HandheldGraphics)
+            std::printf("[portable-graphics] shadows=%d terrain_grain=off slope_shading=off "
+                        "avatar_filter=nearest room_lighting=on\n", int(st.Shadows));
+    }
     const bool freeWill = st.FreeWill && (_Front->IsDesktop() || st.AutonomyLevel > 0);
     if (auto vm = _Session->VM()) {
         vm->FreeWillEnabled = freeWill;

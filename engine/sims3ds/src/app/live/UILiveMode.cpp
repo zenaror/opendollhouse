@@ -190,6 +190,19 @@ void UILiveMode::PointerUpdate() {
 void UILiveMode::UpdateDesktopCursor() {
     const auto& p=L->P;
     if(!p.Active || p.FromTouch || L->Pie.IsOpen)return;
+#if defined(__vita__) || defined(__SWITCH__)
+    // Moving the stick should not execute object interaction tests. A tap or
+    // controller click goes directly through OpenPieAt regardless of this timer.
+    if(p.X!=_HoverCheckX || p.Y!=_HoverCheckY){
+        _HoverCheckX=p.X;_HoverCheckY=p.Y;
+        _CursorArt="Shared/cursors/LiveNothing.cur";
+        _DesktopPick.Clear();_CursorRefresh.InvalidatePick();
+        _NextHoverCheck=L->Time+200;
+        return;
+    }
+    if(L->Time<_NextHoverCheck)return;
+    _NextHoverCheck=L->Time+750;
+#endif
     auto* vm=L->S->VM();auto& state=L->S->World()->State;
     const auto& frame=L->S->LastFrame();const auto center=state.CenterTile();
     const std::array<double,8> camera{center.X,center.Y,double(state.Zoom()),double(state.Rotation()),

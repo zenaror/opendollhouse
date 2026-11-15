@@ -49,6 +49,16 @@ There is no stable public release yet.
 
 ### Fixed
 
+- Vita and Switch use the resident’s existing portrait in the action wheel.
+  Moving the stick no longer checks each object for possible interactions.
+- Vita and Switch now use the 3DS limit on simulation time spent between input
+  updates. Both start with simpler terrain and Sim shadows off. Existing
+  handheld profiles switch to the new defaults once.
+- Restored the residents of classic lots that refer to a family's earlier
+  character IDs, including the Charming family.
+- Fixed saving Old Town lots opened for building when the saved clock was
+  partway through a minute.
+
 - Vita and Switch reuse unchanged parts of the lot while Sims move. The
   neighborhood map keeps its roof fades and animated water while drawing
   fewer pixels. New Vita and Switch profiles start with Sim shadows off;

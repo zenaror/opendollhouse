@@ -89,6 +89,9 @@ public:
     // A save picture uses a neutral scene render and clips ground geometry only.
     // Default false preserves ordinary world lighting/terrain and cache behavior.
     bool RenderingThumbnail = false;
+    // Portable lots omit decorative grass grain and slope shading. Ambient
+    // room light, time of day, tile heights and the build grid stay active.
+    bool SimpleTerrain = false;
     st::Rectangle ThumbnailGroundBounds;
     bool ThumbnailGroundTile(int x, int y) const {
         return !RenderingThumbnail || ThumbnailGroundBounds.Width <= 0 ||

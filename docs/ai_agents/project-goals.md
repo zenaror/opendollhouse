@@ -40,12 +40,16 @@ search, extra neighborhood entry/zoom steps or added weather are not part of
 the default product scope. A disabled-by-default toggle does not automatically
 make such a change acceptable.
 
-Bug fixes, clearer failure logs, faster loading and lower memory use can fit
-the project when they preserve gameplay, presentation and save integrity.
-Touch and controller adaptations can also fit: they provide access to the same
-actions on different hardware. They do not justify new automation, different
-game rules or replacing the desktop interface with a portable one. PC uses one
-screen; the temporary two-screen layout is specific to the 3DS.
+On PC, preserve the original single-screen interface, controls and presentation.
+On handhelds, choose rendering detail, internal resolution, input and frame
+scheduling to suit the device. For example, a touch menu can show the resident's
+portrait while the PC menu turns the resident's head toward the pointer.
+The 3DS can use both screens.
+
+Keep essential actions, simulation rules and saved progress shared. A family
+saved on one port should reopen on another with its residents, possessions and
+progress intact. When changing how a lot loads or saves, test an edited lot
+through a save and reload. Record which ports actually read that save.
 
 If a proposed feature changes the original experience, discuss it with the
 maintainers before implementing it. Do not merge it as an incidental fix or
