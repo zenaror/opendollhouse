@@ -45,6 +45,10 @@ New Vita and Switch builds also record `[cold-ui]` lines when preparing interfac
 artwork or portraits. These include elapsed time and file-read counts, helping
 separate a slow first menu opening from slow drawing afterward.
 
+`[lot-entry]` lines separate the first house frame into preparation, input,
+simulation, drawing and audio. They appear once per house entry, helping locate
+a loading delay without adding information to the game screen.
+
 The log helps identify which stage took time and how much memory the program
 used. You do not need to interpret its numbers to report a problem. If the file
 is empty or missing, include that with your steps: its absence also helps the

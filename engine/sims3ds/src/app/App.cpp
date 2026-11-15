@@ -45,6 +45,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#ifndef __3DS__
+#include "resource.hpp"
+#include <ctime>
+#endif
 
 namespace simapp {
 
@@ -159,6 +163,32 @@ void App::LeaveLot() { FinishLeave(false, false); }
 
 void App::LiveFrame(const AppInput& in, double dtMs) {
     auto& s = *_Session;
+#ifndef __3DS__
+    // Only the first live frame of each entered lot. Sequential wall times
+    // reconcile work before VM/world/UI with those existing measured phases.
+    const bool firstEntry = _Cfg.Desktop && !_Lot;
+    const int entryHouse = s.HouseNumber;
+    const double entryStart = firstEntry ? Now() : 0;
+    double entryLast = entryStart;
+    auto entryClock = firstEntry ? std::clock() : std::clock_t(-1);
+    auto entryReads = firstEntry ? resource_io_counters().reads.load() : 0;
+    auto entryBytes = firstEntry ? resource_io_counters().bytes.load() : 0;
+    const auto entryMark = [&](const char* phase) {
+        if (!firstEntry) return;
+        const double end = Now();
+        const auto cpu = std::clock();
+        const double clockMs = entryClock != std::clock_t(-1) && cpu != std::clock_t(-1) && cpu >= entryClock
+            ? (double(cpu) - double(entryClock)) * 1000.0 / CLOCKS_PER_SEC : -1;
+        const auto reads = resource_io_counters().reads.load();
+        const auto bytes = resource_io_counters().bytes.load();
+        std::printf("[lot-entry] house=%d phase=%s wall_ms=%.3f cumulative_ms=%.3f c_clock_ms=%.3f direct_reads=%llu direct_bytes=%llu\n",
+            entryHouse, phase, end - entryLast, end - entryStart, clockMs,
+            static_cast<unsigned long long>(reads - entryReads), static_cast<unsigned long long>(bytes - entryBytes));
+        entryLast = end; entryClock = cpu; entryReads = reads; entryBytes = bytes;
+    };
+#else
+    const auto entryMark = [](const char*) {};
+#endif
     if (!_Lot) {
         _Lot.reset(new LotScreen(_Session.get(), &_Str, &Top, &UI()));
         _Lot->Desktop = _Cfg.Desktop;
@@ -166,6 +196,7 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
         _Lot->NowMs = [this]() { return Now(); };
         _Lot->ThumbInterval = _Cfg.ThumbInterval;
     }
+    entryMark("construct");
     auto& lot = *_Lot;
     lot.ObserveDesktopPointer(in);
     // the options panel's Neighborhood / Save / Quit and their dialogs (front/AppFlow.cpp)
@@ -190,7 +221,9 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
         passive.DesktopPointer=in.DesktopPointer;passive.PointerCancelled=in.PointerCancelled;
         passive.TouchX=in.TouchX;passive.TouchY=in.TouchY;
     }
+    entryMark("flow-and-setup");
     lot.Input(flowConsumed ? passive : in, dtMs, _Time);
+    entryMark("input");
     Speed = lot.Speed;
     PickMsLast = lot.PickMsLast;
     // lot.LeaveRequested / QuitRequested are answered by LotFlow next frame (the TS1 "Save?" dialogs)
@@ -225,6 +258,7 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
     if (done == n) _UpdateAccum = std::max(0.0, _UpdateAccum - n);
     Stats.Updates = done;
     Stats.Vm = Now() - t0;
+    entryMark("vm");
 
     // ---------------- render
     double t1 = Now();
@@ -233,6 +267,7 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
     if (lot.CutFollow) s.UpdateMouseCut(true, lot.CutX, lot.CutY);
     s.Draw();
     Stats.World = Now() - t1;
+    entryMark("world");
     double t2 = Now();
     if (_Cfg.ShowStats) {
         char sb[128];
@@ -252,6 +287,7 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
     _DrawnFrame.lot_mode = static_cast<int>(lot.CurrentMode);
     _DrawnFrame.modal = simDialogDrawn || lotDialogDrawn;
     _DrawnFrame.pie = lot.Pie.IsOpen;
+    entryMark("ui");
 }
 
 // ======================================================================= frame
@@ -297,6 +333,9 @@ void App::Frame(const AppInput& inRaw, double dtMs) {
     _DrawnFrame = {};
     _Time += dtMs;
     double t0 = Now();
+#ifndef __3DS__
+    bool enteredLot = false;
+#endif
     Mode frameMode = _Mode; // TS1(sims) hardware pass: the slow-frame log line names the screen the frame started on
     Stats = FrameStats();
     // TS1(sims): the cheat console (app/ui/UICheatConsole.h) in the neighbourhood and on a lot
@@ -407,6 +446,9 @@ void App::Frame(const AppInput& inRaw, double dtMs) {
             _Mode = Mode::Live;
             // TS1(sims) hardware pass: the first frame draws the whole lot (sprites, walls, floors decoded on demand)
             FSO::Files::LoadProgress::Step("lot " + std::to_string(_LoadHouse) + ": first frame");
+#ifndef __3DS__
+            enteredLot = _Cfg.Desktop;
+#endif
             LiveFrame(AppInput(), 0);
             FSO::Files::LoadProgress::Step("lot " + std::to_string(_LoadHouse) + ": playing");
             break;
@@ -419,8 +461,21 @@ void App::Frame(const AppInput& inRaw, double dtMs) {
         Cheats.Draw(Top, _Time);
         _DrawnFrame.cheats = true;
     }
+#ifndef __3DS__
+    const double entryAudioStart = enteredLot ? Now() : 0;
+    const auto entryAudioClock = enteredLot ? std::clock() : std::clock_t(-1);
+#endif
     AudioFrame(dtMs);
     Stats.Total = Now() - t0;
+#ifndef __3DS__
+    if (enteredLot) {
+        const auto endClock = std::clock();
+        const double clockMs = entryAudioClock != std::clock_t(-1) && endClock != std::clock_t(-1) && endClock >= entryAudioClock
+            ? (double(endClock) - double(entryAudioClock)) * 1000.0 / CLOCKS_PER_SEC : -1;
+        std::printf("[lot-entry] house=%d phase=outer-audio wall_ms=%.3f c_clock_ms=%.3f app_total_ms=%.3f\n",
+            _LoadHouse, Now() - entryAudioStart, clockMs, Stats.Total);
+    }
+#endif
     // TS1(sims) hardware pass: a frame that blocked for over a second (a load without step lines, a stall) is named
     // in log.txt with the screen it happened on
     if (_Cfg.LogSteps && Stats.Total > 1000) {

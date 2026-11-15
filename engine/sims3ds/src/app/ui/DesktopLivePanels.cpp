@@ -28,6 +28,7 @@
 #include "original_control_panel.hpp"
 #include "character_ui_images.hpp"
 #include "linux_ui_strings.hpp"
+#include "resource.hpp"
 #include "original_live_help.hpp"
 #include "linux_motive_panel.hpp"
 #include "app/ui/OriginalPresentation.h"
@@ -82,7 +83,10 @@ struct PanelResources {
         odh_host::GameUiStrings controls(r);
         for(size_t i=0;i<control_tips.size();++i)control_tips[i]=controls.get(138,i,lang,"");
         text.report_card=label(139,0,"");school_help={label(139,1,""),label(139,2,"")};
+        {
+            ColdResourceStage fontStage("live-panel-font");
         school_grade_font.Load(front::ResGraphics::Get().Raw("Fonts/variablesans_18.ffn"));
+        }
         text.career=label(136,0,text.career);text.unemployed=label(136,7,text.unemployed);
         text.salary_unavailable=label(136,8,"");text.performance_unavailable=label(136,9,"");
         for(unsigned i=0;i<career_help.size();++i)career_help[i]=label(137,i,"");
@@ -114,7 +118,11 @@ std::optional<std::string> selected_work_label(STR* strings,std::size_t index){
 PanelResources& resources(){
     static std::unique_ptr<PanelResources> current;
     const auto root=FSO::Content::Content::Get()->SimsCompleteDir;const auto lang=TextLanguage();
-    if(!current||current->root!=root||current->language!=lang)current.reset(new PanelResources(root,lang));
+    if(!current||current->root!=root||current->language!=lang){
+        // Inclusive parent of art, localized text and font preparation.
+        ColdResourceStage stage("live-panel-resources");
+        current.reset(new PanelResources(root,lang));
+    }
     return *current;
 }
 

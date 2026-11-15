@@ -1,4 +1,5 @@
 #include "linux_ui_strings.hpp"
+#include "resource.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -137,6 +138,49 @@ int main() {
                 "other menu tables are reused from the initial IFF read");
         require(strings.get(999, 0, 14, "Fallback") == "Fallback",
                 "missing table uses caller fallback");
+
+        // A real loader read spans multiple 64 KiB windows, then serves further
+        // languages and indexes without reopening or rereading the resource.
+        TempTree windowed;
+        const std::string long_label(128 * 1024 + 17, 'x');
+        for (const auto resource : {odh_host::GameUiStringResource::menus,
+                                    odh_host::GameUiStringResource::live_panels}) {
+            const bool is_live = resource == odh_host::GameUiStringResource::live_panels;
+            const auto window_path = windowed.root / (is_live ? "GameData/Live.iff" : "GameData/UIText.iff");
+            const std::uint16_t table = is_live ? 130 : 128;
+            write_iff(window_path, {{table, string_table({{1, long_label}, {1, "after window"},
+                                                        {14, "Selecionado"}})}});
+            const auto opens_before = resource_io_counters().opens.load();
+            const auto reads_before = resource_io_counters().reads.load();
+            odh_host::GameUiStrings catalog(windowed.root, resource);
+            require(resource_io_counters().opens.load() == opens_before,
+                    "catalog construction keeps resource loading lazy");
+            require(catalog.get(table, 0, 1, "missing") == long_label,
+                    "a selected string survives multiple resource read windows");
+            require(resource_io_counters().opens.load() == opens_before + 1,
+                    "the production string loader opens one buffered resource");
+            const auto reads_after = resource_io_counters().reads.load();
+            require(reads_after > reads_before && reads_after - reads_before <= 4,
+                    "a large selected table uses bounded file-window refills");
+            require(catalog.get(table, 0, 14, "missing") == "Selecionado" &&
+                    catalog.get(table, 1, 14, "missing") == "after window" &&
+                    catalog.get(999, 0, 14, "missing") == "missing",
+                    "language, per-index English fallback and missing table survive windowing");
+            require(resource_io_counters().opens.load() == opens_before + 1 &&
+                    resource_io_counters().reads.load() == reads_after,
+                    "subsequent catalog queries reuse the first load without file IO");
+        }
+
+        TempTree truncated;
+        const auto truncated_path = truncated.root / "GameData/UIText.iff";
+        write_iff(truncated_path, {{128, string_table({{1, "truncated"}})}});
+        std::filesystem::resize_file(truncated_path, std::filesystem::file_size(truncated_path) - 1);
+        bool truncated_rejected = false;
+        try {
+            odh_host::GameUiStrings bad(truncated.root);
+            (void)bad.get(128, 0, 1, "fallback");
+        } catch (const odh::FormatError&) { truncated_rejected = true; }
+        require(truncated_rejected, "buffered selected chunks retain truncated-payload bounds checks");
 
         TempTree missing;
         odh_host::GameUiStrings absent(missing.root);

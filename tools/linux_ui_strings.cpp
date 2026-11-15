@@ -1,5 +1,6 @@
 #include "odh/host_filesystem.hpp"
 #include "linux_ui_strings.hpp"
+#include "resource.hpp"
 
 #include "odh/formats.hpp"
 
@@ -45,7 +46,9 @@ void GameUiStrings::load() {
     if (!path_is_within(game_root_, path))
         throw odh::FormatError("UIText.iff resolves outside the selected game installation");
 
-    std::ifstream input(path, std::ios::binary);
+    ColdResourceStage stage(resource_==GameUiStringResource::live_panels?
+        "ui-strings-live":"ui-strings-menus");
+    BufferedResourceFile input(path.string());
     if (!input) throw odh::FormatError("cannot open UIText.iff inside the game installation");
     input.seekg(0, std::ios::end);
     const auto end = input.tellg();
