@@ -17,8 +17,8 @@ public download link.
 | --- | --- | --- |
 | Linux x86_64 | `linux` | `OpenDollhouse-Linux-debug.tar.gz` |
 | Windows x86_64 | `windows` | `OpenDollhouse-windows-x86_64.tar.gz` |
-| macOS Intel | `macos-intel` | `OpenDollhouse-macos-x86_64-pt-BR-launcher.tar.gz` |
-| macOS Apple Silicon | `macos-arm64` | `OpenDollhouse-macos-arm64-pt-BR-launcher.tar.gz` |
+| macOS Intel | `macos-intel` | `OpenDollhouse-macos-x86_64-launcher.tar.gz` |
+| macOS Apple Silicon | `macos-arm64` | `OpenDollhouse-macos-arm64-launcher.tar.gz` |
 | Android ARM64 | `android` | `OpenDollhouse-arm64-debug.apk` |
 | New Nintendo 3DS | `new3ds` | `OpenDollhouse-new3ds.zip` |
 | PlayStation Vita | `psvita` | `OpenDollhouse.vpk` |

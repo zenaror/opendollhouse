@@ -50,7 +50,9 @@ if ! cmp -s "$odh_build/source-inputs.json" "$odh_build/source-inputs-after.json
   printf 'Sources changed during compilation. Rerun to produce a consistent package.\n' >&2
   exit 1
 fi
-odh_package="$odh_build/odl-launcher"
+odh_launcher_folder=odl-launcher
+if [[ $odh_target != windows-x86_64 ]]; then odh_launcher_folder=odh-launcher; fi
+odh_package="$odh_build/$odh_launcher_folder"
 cmake --install "$odh_build" --prefix "$odh_package"
 mkdir -p "$odh_package/share/licenses/dependencies"
 cp -a "$odh_deps/share/licenses/." "$odh_package/share/licenses/dependencies/"
@@ -83,35 +85,40 @@ if [[ $odh_target == windows-x86_64 ]]; then
 exit /b %errorlevel%
 BAT
 else
-  cat > "$odh_package/OpenDollhouse.command" <<'SH'
-#!/bin/sh
-set -eu
-base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec "$base/bin/opendollhouse" "$@"
-SH
-  chmod +x "$odh_package/OpenDollhouse.command"
+  cp "$odh_root/engine/platform/desktop/macos-launcher.sh" "$odh_package/OpenDollhouse.command"
+  cp "$odh_root/engine/platform/desktop/macos-language-launcher.sh" "$odh_package/ChooseLanguage.command"
+  chmod +x "$odh_package/OpenDollhouse.command" "$odh_package/ChooseLanguage.command"
 fi
 cat > "$odh_package/README.txt" <<'TEXT'
 OpenDollhouse — experimental native desktop build
 
-Put the complete odl-launcher folder inside your own The Sims installation:
+Put the complete launcher folder inside your own The Sims installation.
+Windows uses odl-launcher; macOS uses odh-launcher:
   The Sims/
     GameData/
     UIGraphics/
-    odl-launcher/
+    <launcher-folder>/
       OpenDollhouse.cmd       (Windows)
       OpenDollhouse.command   (macOS)
+      ChooseLanguage.command (macOS: choose another language)
       bin/  lib/  share/
-Run the launcher for your system without arguments. You may also run
-bin/opendollhouse.exe (Windows) or bin/opendollhouse (macOS) directly.
-The installation is located from the executable, independently of the working
-directory. No game files are included or downloaded.
+Run the launcher for your system without arguments. On Windows, you may also
+run bin/opendollhouse.exe directly. To run the macOS binary directly, supply
+--data-root /path/to/The\ Sims; using its launcher handles this for you.
+The launcher finds the installation independently of the working directory.
+No game files are included or downloaded.
 
 Saves and cache use this user's OpenDollhouse storage, outside the installation.
 Original UserData is a read source. Keep backups of your OpenDollhouse saves.
 For another layout, use --data-root DIR --save-root DIR --cache-dir DIR.
 ODH_SAVE_ROOT and ODH_CACHE_ROOT set defaults; explicit command flags win.
 Use --help for other options. Missing game data produces an explanatory error.
+
+On macOS, the first launch offers the game language selection and remembers
+your choice. Open ChooseLanguage.command to choose again. --language CODE is
+a temporary override; the launcher does not force a language. The preference
+is saved in ~/Library/Application Support/opendollhouse/config, unless
+XDG_CONFIG_HOME explicitly selects another configuration location.
 
 Keep bin, lib (when present), and share together. Windows DLLs stay beside the
 executable. The macOS launcher must retain its executable permission; run it
@@ -140,5 +147,5 @@ files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
        for p in sorted(root.rglob('*')) if p.is_file() and p.name!='MANIFEST.json'}
 (root/'MANIFEST.json').write_text(json.dumps({'target':sys.argv[2],'sha256':files},indent=2)+'\n')
 PY
-tar -czf "$odh_build/OpenDollhouse-$odh_target.tar.gz" -C "$odh_build" odl-launcher
+tar -czf "$odh_build/OpenDollhouse-$odh_target.tar.gz" -C "$odh_build" "$odh_launcher_folder"
 printf '\nPackage built (target execution not verified): %s\n' "$odh_build/OpenDollhouse-$odh_target.tar.gz"

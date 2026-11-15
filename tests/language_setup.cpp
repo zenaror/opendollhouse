@@ -18,6 +18,18 @@ int main(int argc,char** argv){
         require(mkdtemp(name.data()),"cannot create isolated settings directory");sandbox=name.data();
         require(setenv("XDG_CONFIG_HOME",sandbox.c_str(),1)==0,"cannot isolate XDG config");
         using namespace odh_host;
+        require(linux_user_config_path()==sandbox/"opendollhouse"/"config","explicit XDG config path ignored");
+        const char* home=std::getenv("HOME");
+        require(unsetenv("XDG_CONFIG_HOME")==0,"cannot inspect default config path");
+        if(home&&*home){
+#ifdef __APPLE__
+            require(linux_user_config_path()==std::filesystem::path(home)/"Library"/"Application Support"/"opendollhouse"/"config",
+                "macOS config must use Application Support");
+#else
+            require(linux_user_config_path()==std::filesystem::path(home)/".config"/"opendollhouse"/"config","Linux config fallback changed");
+#endif
+        }else require(linux_user_config_path().empty(),"missing config homes must not invent a path");
+        require(setenv("XDG_CONFIG_HOME",sandbox.c_str(),1)==0,"cannot restore isolated config path");
         require(parse_game_language("en-US")==1&&parse_game_language("pt-BR")==14&&parse_game_language("14")==14,"EN/PT CLI and saved codes disagree");
         for(std::size_t i=0;i<game_languages.size();++i)
             require(parse_game_language(game_languages[i].tag)==i+1&&parse_game_language(std::to_string(i+1))==i+1,"selectable code not accepted by CLI");
@@ -51,6 +63,6 @@ int main(int argc,char** argv){
         {std::ofstream out(linux_user_config_path());out<<invalid;}
         require(!setup.confirm(1,backup,error)&&read(linux_user_config_path())==invalid,"config changed after prompt was overwritten without warning");
         std::filesystem::remove_all(sandbox);
-        std::cout<<"Language setup: EN/PT, code convergence, fallback, pointer/keyboard, persisted fields and invalid-config recovery passed\n";
+        std::cout<<"Language setup: config paths, EN/PT, code convergence, fallback, pointer/keyboard, persisted fields and invalid-config recovery passed\n";
     }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

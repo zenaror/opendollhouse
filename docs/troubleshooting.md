@@ -13,12 +13,13 @@ alone does not mean that your files are wrong. Find the expected paths in the
 
 ## Choose a language
 
-On Linux, the launcher offers a language choice when you first open it. Run it
-with `--choose-language` to choose again. On Android, choose the language on the
-start screen. The macOS packages marked `pt-BR` open in Brazilian Portuguese.
+On Linux and macOS, the game offers a language choice on first launch and
+remembers it. Run with `--choose-language` to choose again. On macOS, you can
+instead open `ChooseLanguage.command` without typing arguments. On Android,
+choose the language on the start screen.
 
 On PC, you can also add `--language pt-BR` to the launcher command for that
-session. This does not change the saved Linux preference. An initial language
+session. This does not change the saved Linux or macOS preference. An initial language
 choice is not yet available on every console. Text missing from the supplied
 game data may appear in English.
 

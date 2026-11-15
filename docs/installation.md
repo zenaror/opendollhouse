@@ -111,16 +111,17 @@ Choose the package matching your computer:
 
 | Mac | Package |
 | --- | --- |
-| Apple Silicon, such as M1, M2 and later | `OpenDollhouse-macos-arm64-pt-BR-launcher.tar.gz` |
-| Intel | `OpenDollhouse-macos-x86_64-pt-BR-launcher.tar.gz` |
+| Apple Silicon, such as M1, M2 and later | `OpenDollhouse-macos-arm64-launcher.tar.gz` |
+| Intel | `OpenDollhouse-macos-x86_64-launcher.tar.gz` |
 
 1. Extract the package.
 2. Place the entire **`odh-launcher`** folder inside the game installation.
-3. Open `odh-launcher/OpenDollhouse.command`.
+3. Open `odh-launcher/OpenDollhouse.command` and choose the game language on
+   first launch. Your choice is remembered.
 
 On Mac, the name is `odh-launcher`; Linux and Windows use `odl-launcher`.
-Keep the folder name and all its contents. The macOS launcher already selects
-Brazilian Portuguese.
+Keep the folder name and all its contents. No language is forced. To change
+your saved choice later, open `odh-launcher/ChooseLanguage.command`.
 
 To launch from Terminal:
 
@@ -132,10 +133,12 @@ cd "/path/to/The Sims/odh-launcher"
 If the copy lost its permissions:
 
 ```sh
-chmod +x OpenDollhouse.command bin/opendollhouse
+chmod +x OpenDollhouse.command ChooseLanguage.command bin/opendollhouse
 ```
 
 - **Saves:** `~/Library/Application Support/opendollhouse/saves`.
+- **Language preference:** `~/Library/Application Support/opendollhouse/config`.
+  An explicit `XDG_CONFIG_HOME` overrides this location.
 - **Logs:** `~/Library/Caches/opendollhouse/launcher.log` and
   `~/Library/Caches/opendollhouse/opendollhouse.log`.
 

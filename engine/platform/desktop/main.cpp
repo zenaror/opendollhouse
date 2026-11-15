@@ -35,8 +35,8 @@
 #if !defined(ODH_PLATFORM_VITA) && !defined(ODH_PLATFORM_SWITCH)
 #include "DesktopPaths.h"
 #endif
-#if defined(__linux__) && !defined(__ANDROID__)
-#define ODH_LINUX_LANGUAGE_SETUP 1
+#if (defined(__linux__) && !defined(__ANDROID__)) || defined(__APPLE__)
+#define ODH_DESKTOP_LANGUAGE_SETUP 1
 #include "linux_language_setup.hpp"
 #include "app/ui/OriginalTextBackend.h"
 #endif
@@ -74,7 +74,7 @@ void Usage() {
         "  --width N         Canvas width, at least 800 (default 800)\n"
         "  --height N        Canvas height, at least 600 (default 600)\n"
         "  --language CODE   TS1 code 1..20 or locale tag (for example en-US, pt-BR)\n"
-        "  --choose-language Linux: show the language picker again before loading\n"
+        "  --choose-language Linux/macOS: show the language picker before loading\n"
         "  --silent          Disable audio output\n"
         "  --skip-intro      Skip the introduction\n"
         "  --frames N        Diagnostic: exit after N frames without saving\n"
@@ -125,9 +125,9 @@ Options Parse(int argc, char** argv) {
     if (result.data.empty() || result.saves.empty() || result.cache.empty())
         throw std::runtime_error("--data-root, --save-root and --cache-dir are required; use --help.");
 #endif
-#ifndef ODH_LINUX_LANGUAGE_SETUP
+#ifndef ODH_DESKTOP_LANGUAGE_SETUP
     if(result.chooseLanguage && !result.languageExplicit)
-        throw std::runtime_error("The startup language picker is currently available on Linux; use --language.");
+        throw std::runtime_error("The startup language picker is available on Linux and macOS; use --language on this platform.");
 #endif
     return result;
 }
@@ -259,7 +259,7 @@ uint32_t Button(SDL_Keycode key) {
     }
 }
 
-#ifdef ODH_LINUX_LANGUAGE_SETUP
+#ifdef ODH_DESKTOP_LANGUAGE_SETUP
 std::optional<uint8_t> ChooseLanguage(SDL_Window* window,SDL_Renderer* renderer,SDL_Texture* texture,
         int width,int height,uint8_t initial,bool invalidSettings) {
     simapp::original::InstallTextBackendIfNeeded();
@@ -362,7 +362,7 @@ int Run(Options options) {
     options.patches=resourcePatches.root;
     std::printf("resource patches: %s\n",resourcePatches.diagnostic.c_str());
     std::printf("\nOpenDollhouse desktop: single canvas %dx%d\n", options.width, options.height);
-#ifdef ODH_LINUX_LANGUAGE_SETUP
+#ifdef ODH_DESKTOP_LANGUAGE_SETUP
     odh_host::LinuxLanguageSetup languageSetup;
     if(!options.languageExplicit){
         languageSetup.load();
@@ -448,7 +448,7 @@ int Run(Options options) {
     // of creating a separate map for every measurement and label.
     odh_host::LinuxTextRuntime textRuntime;
 #endif
-#ifdef ODH_LINUX_LANGUAGE_SETUP
+#ifdef ODH_DESKTOP_LANGUAGE_SETUP
     if(!options.languageExplicit && (options.chooseLanguage || languageSetup.needs_choice())){
         const auto chosen=ChooseLanguage(window.get(),renderer.get(),texture.get(),options.width,options.height,
             options.language,!languageSetup.readable);

@@ -45,7 +45,13 @@ std::filesystem::path linux_user_config_path() {
     const char* xdg=std::getenv("XDG_CONFIG_HOME");
     if(xdg&&*xdg)return std::filesystem::path(xdg)/"opendollhouse"/"config";
     const char* home=std::getenv("HOME");
-    if(home&&*home)return std::filesystem::path(home)/".config"/"opendollhouse"/"config";
+    if(home&&*home){
+#ifdef __APPLE__
+        return std::filesystem::path(home)/"Library"/"Application Support"/"opendollhouse"/"config";
+#else
+        return std::filesystem::path(home)/".config"/"opendollhouse"/"config";
+#endif
+    }
     return {};
 }
 

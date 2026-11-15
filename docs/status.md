@@ -38,7 +38,7 @@ prove performance on the real device.
 | --- | --- |
 | Linux x86_64 | Playable in local tests, including saving and continuing. Bugs and differences remain. |
 | Windows x86_64 | The current build opened the neighborhood and Create-a-Sim in Wine and exited normally. Native Windows testing is still needed. |
-| macOS Intel and Apple Silicon | Packages prepared and inspected. They still need to run on a Mac. |
+| macOS Intel and Apple Silicon | Packages include a first-run language choice and remember it; no fixed language. Compilation and package checks do not replace a Mac runtime test, which is still needed. |
 | Android ARM64 | An earlier build opened on a device. The current APK includes external controller support but still needs another device test. |
 | New Nintendo 3DS | Opened a house and responded to touch in the emulator. The emulator reported a warning at exit; exit behavior and performance on hardware still need confirmation. |
 | PlayStation Vita | An earlier build reached the neighborhood on hardware, with slow performance and choppy audio. The current update includes controls and a centered image; it opened and responded to front touch in Vita3K. Real performance still needs another device test. |

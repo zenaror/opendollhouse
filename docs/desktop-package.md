@@ -23,7 +23,9 @@ The Sims/
 ```
 
 On Mac, use `odh-launcher` instead of `odl-launcher`. Choose the correct Intel
-or Apple Silicon package; the current launcher opens in Brazilian Portuguese.
+or Apple Silicon package. The first launch asks for your game language and
+remembers it. Open `ChooseLanguage.command` to choose again; no arguments are
+needed and no language is forced.
 Execution of these packages still needs confirmation on a Mac.
 
 ## Your saves

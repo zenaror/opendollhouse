@@ -2,7 +2,8 @@
 #pragma once
 #include "linux_user_config.hpp"
 namespace odh_host {
-// Linux host preference only. Game files and player records are never opened.
+// Desktop host preference only (Linux and macOS). Game files and player records
+// are never opened. Historical API names are retained for existing callers.
 struct LinuxLanguageSetup {
     LinuxUserConfig config;
     bool readable=true;

@@ -23,8 +23,8 @@ if(ODH_UI_HAS_PANGO)
   target_compile_definitions(opendollhouse PRIVATE ODH_DESKTOP_PANGO)
 endif()
 target_link_libraries(opendollhouse PRIVATE odh_engine SDL2::SDL2)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
-  target_compile_definitions(opendollhouse PRIVATE ODH_LINUX_LANGUAGE_SETUP)
+if((CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID) OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  target_compile_definitions(opendollhouse PRIVATE ODH_DESKTOP_LANGUAGE_SETUP)
   target_sources(opendollhouse PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/linux_language_setup.cpp
     ${PROJECT_SOURCE_DIR}/tools/linux_user_config.cpp
