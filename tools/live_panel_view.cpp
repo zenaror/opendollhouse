@@ -23,6 +23,55 @@ std::uint32_t house_display_area(std::uint32_t square_feet,HouseAreaUnits units)
     float value=static_cast<float>(square_feet)*0.09290304034948349f;
     value+=0.5f;return static_cast<std::uint32_t>(value);
 }
+LiveCareerSource live_career_source(std::int16_t age,std::int16_t job,std::int16_t level)noexcept{
+    // Original004eaa44/004ea85e: school owns CARR-1/level0 and uses PD57.
+    return age<18?LiveCareerSource{-1,0,57,true}:LiveCareerSource{job,level,63,false};
+}
+std::optional<std::string> live_career_title(const LiveCareerLabelReader& base,const LiveCareerLabelReader& alternate,
+        unsigned level,bool gender,bool panel){
+    if(level>=10)return {};
+    // Original observed panel uses the base bank; profession consultation
+    // uses the admitted alternate bank, falling back to base when absent.
+    const auto& reader=!panel&&alternate?alternate:base;
+    if(!reader)return {};
+    if(gender)if(auto text=reader(23+level);text&&!text->empty())return text;
+    return reader(3+2*level);
+}
+std::optional<std::string> live_career_hours(std::string format,int start,int end,std::uint8_t language){
+    if(format.empty()||start<0||start>=24||end<0||end>=24)return {};
+    const auto time=[&](int hour){
+        const bool twelve=language==1||language==2||language==19;const bool afternoon=hour>=12;
+        if(twelve){if(!hour)hour=12;else if(hour>12)hour-=12;}
+        auto value=(hour<10?std::string{" "}:std::string{})+std::to_string(hour)+":00";
+        if(twelve)value+=afternoon?" pm":" am";
+        return value;
+    };
+    for(const auto& pair:std::array<std::pair<std::string,std::string>,3>{{{"$Start",time(start)},{"$End",time(end)},{"$CarTime",time((start+23)%24)}}}){
+        std::size_t at=0;while((at=format.find(pair.first,at))!=std::string::npos){format.replace(at,pair.first.size(),pair.second);at+=pair.second.size();}
+    }
+    return format;
+}
+std::optional<std::string> live_school_grade_label(std::int16_t raw,const LiveCareerLabelReader& reader){
+    // Original4034e6 passes raw+1 to the one-based accessor4705f2: the
+    // selected Work4097 index is raw itself, not a career threshold or clamp.
+    if(raw<0||!reader)return {};return reader(unsigned(raw));
+}
+void LiveCareerSelection::reconcile(std::string identity){
+    if(identity_!=identity){identity_=std::move(identity);selected_.reset();negative_since_.reset();}
+}
+bool LiveCareerSelection::toggle(unsigned control){
+    if(identity_.empty()||control>=1)return false;
+    if(selected_==control)selected_.reset();else selected_=control;return true;
+}
+bool LiveCareerSelection::show(unsigned control){
+    if(identity_.empty()||control>=1)return false;selected_=control;return true;
+}
+bool LiveCareerSelection::alert(bool negative,std::uint64_t now)noexcept{
+    if(!negative||identity_.empty()){negative_since_.reset();return false;}
+    if(!negative_since_||now<*negative_since_)negative_since_=now;
+    // Original5307ab schedules333ms;52c727 alternates the text palette.
+    return ((now-*negative_since_)/333)%2!=0;
+}
 std::array<bool,6> live_panel_capabilities(const LivePanelSnapshot& snapshot) noexcept {
     return {true,snapshot.has_selected_person&&snapshot.relationships.has_value(),
         snapshot.has_selected_person&&(snapshot.career.has_value()||complete(snapshot.skills)),
@@ -31,10 +80,26 @@ std::array<bool,6> live_panel_capabilities(const LivePanelSnapshot& snapshot) no
                 (snapshot.house->lot_name&&!snapshot.house->lot_name->empty())||
                 std::any_of(snapshot.house->ratings.begin(),snapshot.house->ratings.end(),[](const auto& v){return v.has_value();}))};
 }
+std::optional<LiveInterestsInfo> live_interests_snapshot(const LivePersonDataReader& read){
+    if(!read)return {};
+    const auto age=read(58);if(!age)return {};
+    LiveInterestsInfo interests;interests.age=*age;
+    for(std::size_t topic=0;topic<interests.raws.size();++topic){
+        const auto raw=read(live_interest_indices[topic]);if(!raw)return {};
+        interests.raws[topic]=*raw;
+    }
+    return interests;
+}
 std::vector<unsigned> live_interest_topics(std::int16_t age){
     // EXE0051e1a1:age0 follows the adult list, unlike some animation rules.
     if(age==0||age>=18)return {0,1,2,3,4,5,6,7,12,13,14,15,16,17,18};
     return {8,9,10,11,4,5,6,7};
+}
+unsigned live_job_performance_grade(std::int16_t raw) noexcept {
+    return raw<-60?0u:raw<-30?1u:raw<30?2u:raw<60?3u:4u;
+}
+std::optional<std::string> live_job_performance_label(std::int16_t raw,const LiveCareerLabelReader& read){
+    return read?read(live_job_performance_grade(raw)):std::nullopt;
 }
 unsigned live_panel_points(std::int32_t raw) noexcept {
     return static_cast<unsigned>(std::clamp(raw,0,1000)/100);
@@ -132,6 +197,15 @@ std::string house_value_text(std::string format,std::string_view token,const std
     return format;
 }
 }
+LiveSchoolLayout live_school_layout(const OriginalControlPanelLayout& common){
+    // Original532d31..532d7e sizes the grade button to the whole school
+    // container width and its font height, then centers it vertically.
+    const auto x=common.right_content.x-int(std::lround(2*common.scale));
+    const auto width=common.base.width-x;
+    const auto height=int(std::lround(24*common.scale)); // Authored18pt control, measured against original grade ink.
+    return {{x,common.right_content.y,width,int(std::lround(16*common.scale))},
+            {x,common.right_content.y+(int(std::lround(100*common.scale))-height)/2,width,height}};
+}
 LivePanelLayout live_panel_layout(const OriginalControlPanelLayout& common){
     LivePanelLayout out;
     const auto r=[&](float x,float y,float w,float h){return panel_rect(common,x,y,w,h);};
@@ -144,9 +218,14 @@ LivePanelLayout live_panel_layout(const OriginalControlPanelLayout& common){
     for(int n=0;n<columns;++n){out.relationship_faces.push_back(r(35+42*n,17,40,40));
         out.relationship_daily.push_back(r(35+42*n,69,40,5));out.relationship_long_term.push_back(r(35+42*n,89,40,5));}
     out.previous=r(authored_width-22,21,9,49);out.next=r(authored_width-10,21,9,49);
+    out.career_icon=r(1,3,28,22);
     out.career_title=r(2,24,130,18);out.salary=r(18,51,110,17);
-    out.performance_title=r(18,69,110,17);out.performance=r(18,84,96,5);
-    for(unsigned n=0;n<6;++n){out.skill_labels[n]=r(70,4+15*n,83,14);out.skill_bars[n]=r(156,7+15*n,40,11);}
+    // Original1024x768 performance arrow matches the complete13x12 frame at
+    //523,736. The original parent starts at520,668, two pixels before this
+    //layout's content origin522,668. Its caption uses a16px image/text inset.
+    out.performance=r(1,67,95,15);out.performance_icon=r(1,68,13,12);
+    out.performance_title=r(17,67,79,15);
+    for(unsigned n=0;n<6;++n){out.skill_labels[n]=r(70,4+15*n,83,14);out.skill_bars[n]=r(155,7+15*n,40,11);}
     return out;
 }
 LiveInterestLayout live_interest_layout(const OriginalControlPanelLayout& common,std::int16_t age,std::size_t page){
@@ -225,6 +304,10 @@ void LivePanelView::draw(odh::RasterFrame& frame,const LivePanelSnapshot& snapsh
         for(unsigned n=0;n<5;++n){text(text_.personality_names[n],layout.personality_labels[n],false,LiveTextAlignment::right);
             skill_bar(frame,*art_,layout.personality_bars[n],*snapshot.personality[n],true);}
         if(snapshot.zodiac)text(*snapshot.zodiac,layout.zodiac,true);
+    }else if(tab_==LivePanelTab::career&&snapshot.career&&snapshot.career->school){
+        const auto school=live_school_layout(common);text(text_.report_card,school.title,true);
+        if(snapshot.career->report_card&&snapshot.career->report_card->grade)
+            text(*snapshot.career->report_card->grade,school.grade,false,LiveTextAlignment::center);
     }else if(tab_==LivePanelTab::career){
         text(text_.career,panel_rect(common,34,3,68,21),true);
         if(snapshot.career){const auto& career=*snapshot.career;
@@ -233,14 +316,23 @@ void LivePanelView::draw(odh::RasterFrame& frame,const LivePanelSnapshot& snapsh
                 if(icons->width==112&&icons->height%22==0&&row<icons->height/22)
                     odh::blit_color_keyed_bitmap(frame,*icons,panel_rect(common,1,3,28,22),odh::UiBitmapRect{0,int(row)*22,28,22},{255,0,255});
             }
-            if(!career.employed)text(text_.unemployed,layout.career_title);
+            if(!career.employed){text(text_.unemployed,layout.career_title);
+                text(text_.salary_unavailable,layout.salary);text(text_.performance_unavailable,layout.performance_title);
+                if(art_->find("cpanel\\buttons\\salarybutton.bmp"))art_->draw_button(frame,"cpanel\\buttons\\salarybutton.bmp",panel_rect(common,1,54,13,11),0);
+                if(art_->find("cpanel\\buttons\\performancebutton.bmp"))art_->draw_button(frame,"cpanel\\buttons\\performancebutton.bmp",layout.performance_icon,0);
+            }
             else {if(career.title)text(*career.title,layout.career_title);
                 if(career.salary){std::string salary="§"+std::to_string(*career.salary);
                     text(salary,layout.salary);
-                    if(art_->find("cpanel\\buttons\\salarybutton.bmp"))art_->draw_button(frame,"cpanel\\buttons\\salarybutton.bmp",panel_rect(common,1,53,13,11),0);}
+                    if(art_->find("cpanel\\buttons\\salarybutton.bmp"))art_->draw_button(frame,"cpanel\\buttons\\salarybutton.bmp",panel_rect(common,1,54,13,11),0);}
                 if(career.performance){
-                    text(career.performance_label?*career.performance_label:std::to_string(*career.performance),layout.performance_title);
-                    if(art_->find("cpanel\\buttons\\performancebutton.bmp"))art_->draw_button(frame,"cpanel\\buttons\\performancebutton.bmp",panel_rect(common,1,69,13,12),0);
+                    // The original paints a localized grade, never the raw word.
+                    // Missing selected Work metadata stays absent.
+                    if(career.performance_label)text(*career.performance_label,layout.performance_title);
+                    if(const auto* icon=art_->find("cpanel\\buttons\\performancebutton.bmp")){
+                        if(icon->width!=52||icon->height!=12)throw odh::FormatError("original performance button dimensions differ");
+                        art_->draw_button(frame,"cpanel\\buttons\\performancebutton.bmp",layout.performance_icon,0);
+                    }
                 }
             }
         }

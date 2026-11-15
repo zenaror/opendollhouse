@@ -31,7 +31,7 @@ std::optional<odh::UiBitmapRect> original_tooltip_layout(std::uint32_t width,std
     return odh::UiBitmapRect{int(x),int(y),box_width,box_height};
 }
 std::optional<odh::UiBitmapRect> draw_original_tooltip(odh::RasterFrame& frame,std::string_view name,
-        std::uint8_t language,std::array<std::int32_t,2> pointer,float scale){
+        std::uint8_t language,std::array<std::int32_t,2> pointer,float scale,std::array<std::uint8_t,4> foreground){
     if(frame.pixels.size()!=std::uint64_t(frame.width)*frame.height)
         throw std::invalid_argument("original tooltip destination pixels invalid");
     const auto box=original_tooltip_layout(frame.width,frame.height,name,language,pointer,scale);
@@ -45,7 +45,7 @@ std::optional<odh::UiBitmapRect> draw_original_tooltip(odh::RasterFrame& frame,s
     TextOverlayStyle style;style.x=box->x+pad;style.y=box->y+edge;
     style.width=box->width-pad*2;style.height=box->height-edge*2;style.padding=0;
     style.font_size_px=font_size(scale);style.wrap_lines=true;
-    style.foreground={0,0,0,255};style.background={0,0,0,0};
+    style.foreground=foreground;style.background={0,0,0,0};
     (void)draw_text_overlay(frame,name,language,style);
     return box;
 }

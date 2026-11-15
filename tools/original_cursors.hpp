@@ -3,6 +3,7 @@
 #include "odh/cursor.hpp"
 #include <array>
 #include <filesystem>
+#include <string_view>
 
 namespace odh_host {
 // Asset identities, preserving original file stems. These are not inferred
@@ -20,6 +21,7 @@ struct OriginalCursorLimits {
     std::uint32_t pixels=65536,directory_entries=512;
 };
 const char* original_cursor_filename(OriginalCursorAsset);
+std::optional<OriginalCursorAsset> original_cursor_asset_for_path(std::string_view);
 enum class OriginalCursorStatus {ready,unsupported_icon_without_hotspot};
 // Eager owned bank: only the fixed allowlist under the canonical installation
 // is loaded; no file reads occur in at(). A missing/ambiguous/bad cursor fails.
@@ -29,6 +31,9 @@ class OriginalCursors {
 public:
     explicit OriginalCursors(const std::filesystem::path& game_root,OriginalCursorLimits={});
     const odh::WindowsCursor& at(OriginalCursorAsset)const;
+    // Normalized installed resource path, never arbitrary filesystem I/O.
+    // Unknown paths and the authenticated MOVEIN ICO exception return null.
+    const odh::CursorImage* image_for_path(std::string_view path)const;
     OriginalCursorStatus status(OriginalCursorAsset)const;
     const char* diagnostic(OriginalCursorAsset)const;
 private:

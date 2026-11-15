@@ -27,11 +27,52 @@ inline constexpr std::array<const char*,19> live_interest_icon_keys{
     "cpanel\\buttons\\intereststyle.bmp","cpanel\\buttons\\interestcharisma.bmp","cpanel\\buttons\\interesthealth.bmp",
     "cpanel\\buttons\\interestromance.bmp"};
 struct LiveInterestsInfo {std::int16_t age=0;std::array<std::int16_t,19> raws{};};
+using LivePersonDataReader=std::function<std::optional<std::int16_t>(unsigned)>;
+// Same immutable boundary for both engine adapters. Original TS1 aliases are
+// numeric source words, including names that differ in the inherited TSO enum.
+std::optional<LiveInterestsInfo> live_interests_snapshot(const LivePersonDataReader&);
 // Original0051e1a1:age0 uses adult topics, ages1..17 children,18+adult.
 std::vector<unsigned> live_interest_topics(std::int16_t age);
 inline constexpr unsigned live_neighbor_index=31,live_job_index=56,live_job_level_index=57,live_job_performance_index=63;
+using LiveCareerLabelReader=std::function<std::optional<std::string>(unsigned)>;
+struct LiveCareerHelp {
+    std::optional<std::string> title,description;
+    std::optional<unsigned> icon_row; // Prepared original22-row JobIconMultiPopup.
+};
+struct LiveCareerSource {std::int16_t job=0,level=0;unsigned performance_word=63;bool school=false;};
+LiveCareerSource live_career_source(std::int16_t age,std::int16_t job,std::int16_t level)noexcept;
+std::optional<std::string> live_career_title(const LiveCareerLabelReader&,const LiveCareerLabelReader&,
+    unsigned level,bool alternate_gender,bool panel_title);
+std::optional<std::string> live_career_hours(std::string format,int start,int end,std::uint8_t language);
+// Pure presentation lifetime: no timer callbacks enter the VM or mutate Sim data.
+class LiveCareerSelection {
+public:
+    void reconcile(std::string identity);
+    void close()noexcept{selected_.reset();}
+    bool toggle(unsigned control);
+    bool show(unsigned control);
+    std::optional<unsigned> selected()const noexcept{return selected_;}
+    bool alert(bool negative,std::uint64_t now_ms)noexcept;
+private:
+    std::string identity_;
+    std::optional<unsigned> selected_;
+    std::optional<std::uint64_t> negative_since_;
+};
+struct LiveSchoolInfo {
+    std::int16_t raw=0;
+    std::optional<std::string> grade;
+};
+std::optional<std::string> live_school_grade_label(std::int16_t,const LiveCareerLabelReader&);
+struct LiveSchoolLayout {odh::UiBitmapRect title,grade;};
+// Original report-card container and its centered variablesans18 button.
+LiveSchoolLayout live_school_layout(const OriginalControlPanelLayout&);
 struct LiveCareerInfo {
-    bool employed=false;
+    bool employed=false,school=false;
+    std::optional<LiveSchoolInfo> report_card;
+    std::string identity;
+    std::array<LiveCareerHelp,1> help{}; // Profession consultation; additional original-only controls stay separate.
+    std::optional<std::string> hours;
+
     std::optional<std::uint16_t> job_type;
     std::optional<std::string> performance_label;
     // Absent metadata is not a zero salary or a fictitious job title.
@@ -74,6 +115,7 @@ struct LivePanelText {
         personality="Personality",relationships="Relationships",no_relationships="";
     std::array<std::string,6> skill_names{"Cooking","Mechanical","Charisma","Body","Logic","Creativity"};
     std::array<std::string,5> personality_names{"Neat","Outgoing","Active","Playful","Nice"};
+    std::string salary_unavailable="",performance_unavailable="",report_card="";
     std::string interests="Interests";
     std::array<std::string,19> interest_descriptions{};
     std::array<std::string,19> interest_names{"Travel","Money","Politics","The 60's","Weather","Sports","Music","Outdoors","Toys","Aliens","Pets","School","Exercise","Food","Parties","Style","Hollywood","Technology","Romance"};
@@ -84,7 +126,7 @@ struct LivePanelText {
     HouseAreaUnits house_area_units=HouseAreaUnits::square_feet;
 };
 struct LivePanelLayout {
-    odh::UiBitmapRect title,career_title,salary,performance,performance_title,zodiac,previous,next;
+    odh::UiBitmapRect title,career_title,salary,performance,performance_title,performance_icon,career_icon,zodiac,previous,next;
     std::array<odh::UiBitmapRect,6> skill_labels,skill_bars;
     std::array<odh::UiBitmapRect,5> personality_labels,personality_bars;
     std::vector<odh::UiBitmapRect> relationship_faces,relationship_daily,relationship_long_term;
@@ -106,6 +148,12 @@ LivePanelLayout live_panel_layout(const OriginalControlPanelLayout&);
 std::array<bool,6> live_panel_capabilities(const LivePanelSnapshot&) noexcept;
 // Saturation is presentation-only. Snapshot raw values are never rewritten.
 unsigned live_panel_points(std::int32_t raw) noexcept;
+// Original403515 / Work STR4096 grades. Returned index is zero based; the
+// original string accessor004705f2 takes1..5 and subtracts one internally.
+unsigned live_job_performance_grade(std::int16_t raw) noexcept;
+// Provider returns already decoded text from the current selected Work STR4096.
+// A missing label never falls back to a raw word or an invented grade name.
+std::optional<std::string> live_job_performance_label(std::int16_t,const LiveCareerLabelReader&);
 enum class LiveTextAlignment { left,center,right };
 using LivePanelTextPainter=std::function<void(odh::RasterFrame&,std::string_view,const odh::UiBitmapRect&,bool,LiveTextAlignment)>;
 class LivePanelView {

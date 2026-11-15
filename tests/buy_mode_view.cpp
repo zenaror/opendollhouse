@@ -59,17 +59,29 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
         queue.actions[2].notify_idle=true;queue.actions[2].priority=0;
         queue.active=InteractionActiveSnapshot{1,12};queue.actions[0].priority=50;queue.actions[0].notify_idle=true;
         queue.actions[5].priority=50;queue.actions[5].notify_idle=true;
-        const auto tiles=original_queue_layout(queue,100,100,0);
+        const auto tiles=original_queue_layout(queue,200,100,0);
         require(tiles[0].cancelled&&!tiles[2].cancelled,
             "retained active cancellation uses actor priority zero; unrelated pending action keeps its original priority");
-        require(!original_queue_layout(queue,100,100,50)[0].cancelled,
+        require(!original_queue_layout(queue,200,100,50)[0].cancelled,
             "notification alone is not cancellation while the active actor priority is positive");
         require(tiles.size()==3&&tiles[0].active&&tiles[1].cancelled&&tiles[1].identity.uid==3&&tiles[2].identity.uid==6,
             "real queue ordering hides Idle, inner ParentIdle and later ParentExit");
-        require(queue_tile_at(tiles,53,8)==&tiles[1]&&queue_tile_at(tiles,8,53)==&tiles[2]&&!queue_tile_at(tiles,7,8),
-            "queue hit rectangles identify exact visible wrapped tile");
+        require(queue_tile_at(tiles,82,32)==&tiles[1]&&queue_tile_at(tiles,132,32)==&tiles[2]&&!queue_tile_at(tiles,77,32)&&!queue_tile_at(tiles,31,32),
+            "queue hit rectangles identify exact visible tile and excludes the five pixel gap");
+        for(const auto viewport:{std::pair<unsigned,unsigned>{800,600},{1024,768},{1280,720}}){
+            const auto desktop=original_queue_layout(queue,viewport.first,viewport.second);
+            require(desktop.size()==3&&desktop[0].box.x==32&&desktop[0].box.y==32&&desktop[1].box.x==82,
+                "desktop queue preserves fixed inset/pitch across one-screen viewport sizes");
+        }
+        require(original_queue_layout(queue,0,768).empty()&&original_queue_layout(queue,1024,0).empty(),
+            "empty viewport has no queue tiles");
+        auto long_queue=queue;long_queue.actions.clear();
+        for(unsigned i=0;i<25;++i){InteractionActionSnapshot item{};item.uid=i+1;long_queue.actions.push_back(item);}
+        const auto long_tiles=original_queue_layout(long_queue,800,600);
+        require(long_tiles.size()==25&&long_tiles[19].box.x==982&&long_tiles[19].box.y==32&&long_tiles[19].identity.uid==20,
+            "long queue preserves every logical action in one horizontal row; raster clips the viewport");
         const auto old=tiles[0].identity;++queue.run_generation;
-        require(!(old==original_queue_layout(queue,100,100)[0].identity),"reused action UID after restart is not a previous cancel target");
+        require(!(old==original_queue_layout(queue,200,100)[0].identity),"reused action UID after restart is not a previous cancel target");
     }
     std::vector<std::pair<std::string,std::string>> ui;for(const auto* key:{"Backgrounds/PanelBack.bmp","Backgrounds/LivePatch.bmp","Backgrounds/BuyPatch.bmp","Backgrounds/BuildPatch.bmp","CatalogUnknown.bmp","Buttons/Objects.bmp","Buttons/People.bmp","Buttons/Arch.bmp","Buttons/ScrollLeft.bmp","Buttons/ScrollRight.bmp","Catalog/BuyFSeating.bmp","Catalog/BuyFSurfaces.bmp","Catalog/BuyFAppliances.bmp","Catalog/BuyFElectronics.bmp","Catalog/BuyFPlumbing.bmp","Catalog/BuyFDecorative.bmp","Catalog/BuyFMisc.bmp","Catalog/BuyFLighting.bmp"})ui.push_back({std::string("cpanel/")+key,bmp()});
     ui.push_back({"cpanel/Backgrounds/PopupInfo.bmp",solid_bmp(559,127,{15,15,90})});
@@ -77,8 +89,10 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
     write(game/"UIGraphics/UIGraphics.far",far(ui));
     {
         auto entries=ui;
-        entries.push_back({"CPanel/Buttons/IconFrame.bmp",solid_bmp(90,45,{0,0,80})});
+        entries.push_back({"CPanel/Buttons/IconFrame.bmp",solid_bmp(90,45,{0,0,255})});
         entries.push_back({"Other/QueueCancel.bmp",solid_bmp(45,45,{255,0,255})});
+        entries.push_back({"CPanel/Catalog/ThumbTemplate.bmp",solid_bmp(180,45,{20,30,40})});
+        entries.push_back({"CPanel/People/PeopleTemplate.bmp",solid_bmp(180,45,{0,0,80})});
         write(game/"UIGraphics/UIGraphics.far",far(entries));
         OriginalQueueView queue_art(game);
         BitmapImage strip{74,37,24,true,std::vector<std::array<std::uint8_t,4>>(74*37,{240,10,10,255}),0};
@@ -89,6 +103,22 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
         require(std::count(icon_frame.pixels.begin(),icon_frame.pixels.end(),std::array<std::uint8_t,4>{20,210,30,255})==37*37&&
             std::count(icon_frame.pixels.begin(),icon_frame.pixels.end(),std::array<std::uint8_t,4>{240,10,10,255})==0,
             "37px normal object frame stays at one source pixel per screen pixel; highlighted duplicate is excluded");
+        auto bytes=solid_bmp(105,41,{240,10,10});
+        const unsigned face_stride=(105*3+3)&~3U;
+        for(unsigned y=0;y<41;++y)for(unsigned x=0;x<35;++x){
+            const auto p=54+y*face_stride+x*3;bytes[p]=40;bytes[p+1]=80;bytes[p+2]=120;
+        }
+        std::istringstream stream(bytes,std::ios::binary);
+        auto head=read_queue_portrait(View(stream,bytes.size()));
+        require(head.width==35&&head.height==41,"queue selects one authored BMP2002 cell");
+        icon_frame.pixels.assign(45*45,{0,0,80,255});
+        QueueTile tile;tile.box={0,0,45,45};
+        queue_art.draw_tile(icon_frame,tile,&head,QueueIconKind::authored_avatar);
+        require(icon_frame.pixels[2*45+5]==head.pixels.front()&&icon_frame.pixels[42*45+39]==head.pixels.back()&&
+            icon_frame.pixels[2*45+4]!=head.pixels.front(),"authored35x41 head retains full cell and native scale at5,2");
+        const auto malformed=solid_bmp(104,41,{120,80,40});std::istringstream bad(malformed,std::ios::binary);
+        bool rejected=false;try{read_queue_portrait(View(bad,malformed.size()));}catch(const FormatError&){rejected=true;}
+        require(rejected,"unequal BMP2002 cells rejected without consulting unrelated resources");
         write(game/"UIGraphics/UIGraphics.far",far(ui));
     }
     const auto art_key=ui.front().first;
@@ -192,6 +222,8 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
     ui.push_back({"cpanel/housesubbars.bmp",solid_bmp(40,16,{0,180,220})});
     ui.push_back({"cpanel/backgrounds/housesubbarsoff.bmp",solid_bmp(40,16,{45,45,90})});
     ui.push_back({"cpanel/jobsubbars.bmp",solid_bmp(40,11,{0,200,240})});
+    ui.push_back({"cpanel/buttons/performancebutton.bmp",solid_bmp(52,12,{120,230,250})});
+    ui.push_back({"cpanel/buttons/salarybutton.bmp",solid_bmp(52,11,{230,150,40})});
     ui.push_back({"cpanel/backgrounds/jobsubbarsoff.bmp",solid_bmp(40,11,{40,40,100})});
     ui.push_back({"cpanel/backgrounds/persbkg.bmp",solid_bmp(40,14,{40,40,100})});
     write(game/"UIGraphics/UIGraphics.far",far(ui));
@@ -235,7 +267,7 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
         desktop.modes[0].x==10&&desktop.modes[0].y==591&&desktop.rotate_left.x==43&&desktop.rotate_left.y==712&&
         desktop.zoom_in.x==26&&desktop.zoom_in.y==690&&desktop.panel_background.x==220&&desktop.panel_background.y==668,
         "native desktop positions match measured original screenshot without enlarging UI with viewport");
-    require(desktop.portraits.x==230&&desktop.portraits.y==673&&desktop.live_gadget.x==414&&
+    require(desktop.portraits.x==229&&desktop.portraits.y==673&&desktop.live_gadget.x==414&&
         desktop.needs[0].x==540&&desktop.needs[4].x==640&&desktop.needs[0].y+13==701&&
         desktop.needs[3].y+13==758&&desktop.needs[0].width==60,
         "occupied original screenshot anchors portraits, divider and paired five-pixel need meters");
@@ -327,6 +359,23 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
         actual.simulation_speed=1;art->draw(speed_frame,OriginalPanelMode::buy,actual);
         for(std::size_t i=0;i<3;++i)require(ink(i)==disabled,"editor mode ignores stale hover and captured speed appearance");
     }
+    {
+        // The three authored wall choices select exactly one button. In
+        // cutaway mode the walls are not fully down, but Up is not selected.
+        const std::array<BuyUiRect,3> boxes{{common.walls_up,common.walls_down,common.walls_cutaway}};
+        const std::array<std::array<bool,2>,3> modes{{{{false,false}},{{true,false}},{{false,true}}}};
+        RasterFrame walls_frame;walls_frame.width=800;walls_frame.height=600;
+        walls_frame.pixels.resize(800*600,{17,19,23,255});
+        for(std::size_t selected=0;selected<modes.size();++selected){
+            OriginalPanelState actual;actual.walls_down=modes[selected][0];actual.cutaway=modes[selected][1];
+            art->draw(walls_frame,OriginalPanelMode::live,actual);
+            for(std::size_t i=0;i<boxes.size();++i){
+                const auto& b=boxes[i];const auto pixel=walls_frame.pixels[std::size_t(b.y+b.height*3/4)*800+b.x+b.width*3/4];
+                require(pixel==(i==selected?std::array<std::uint8_t,4>{90,70,50,255}:std::array<std::uint8_t,4>{70,50,30,255}),
+                    "walls Up/Down/Cutaway highlight exactly the current choice");
+            }
+        }
+    }
     OriginalPanelState navigation;navigation.can_level_up=true;navigation.can_level_down=false;navigation.cutaway=false;
     require(art->hit(common,common.level_up.x+common.level_up.width*3/4,common.level_up.y+common.level_up.height*3/4)==OriginalPanelAction::none&&
         art->hit(common,common.level_up.x+common.level_up.width*3/4,common.level_up.y+common.level_up.height*3/4,navigation)==OriginalPanelAction::level_up&&
@@ -356,8 +405,8 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
         live.draw(frame,actual,[&](auto&,auto value,const auto&,bool,LiveTextAlignment){captions.emplace_back(value);});
         require(std::find(captions.begin(),captions.end(),"Actual job")!=captions.end()&&
             std::find(captions.begin(),captions.end(),"§155")!=captions.end()&&
-            std::find(captions.begin(),captions.end(),"-30")!=captions.end(),
-            "career paints actual title salary and signed performance without fabricating a qualitative label");
+            std::find(captions.begin(),captions.end(),"-30")==captions.end(),
+            "career paints actual title and salary without inventing a raw performance caption");
         const auto skills_layout=live_panel_layout(common);
         const auto sample=[&](const auto& box,int dx){return frame.pixels[std::size_t(box.y+2)*frame.width+box.x+dx];};
         require(sample(skills_layout.skill_bars[0],2)==std::array<std::uint8_t,4>{40,40,100,255}&&
@@ -365,11 +414,50 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
             sample(skills_layout.skill_bars[1],6)==std::array<std::uint8_t,4>{40,40,100,255}&&
             sample(skills_layout.skill_bars[5],38)==std::array<std::uint8_t,4>{0,200,240,255},
             "source raw skills0/100/1000 uncover zero/one/ten authored four-pixel segments");
+        require(std::find(captions.begin(),captions.end(),"-30")==captions.end(),"unresolved performance label never displays the raw simulation word");
+        actual.career->performance_label="Satisfatório";captions.clear();
+        live.draw(frame,actual,[&](auto&,auto value,const auto&,bool,LiveTextAlignment){captions.emplace_back(value);});
+        require(std::find(captions.begin(),captions.end(),"Satisfatório")!=captions.end()&&actual.career->performance==-30,
+            "resolved localized Work grade paints without mutating the actual performance");
+        actual.career->performance_label="Bom · 良好";captions.clear();
+        frame.pixels.assign(frame.pixels.size(),std::array<std::uint8_t,4>{17,19,23,255});
+        const auto bounds=live_panel_layout(common);
+        std::optional<BuyUiRect> painted_grade;
+        live.draw(frame,actual,[&](auto&,auto value,const auto& box,bool,LiveTextAlignment){
+            captions.emplace_back(value);if(value=="Bom · 良好")painted_grade=box;});
+        require(painted_grade&&painted_grade->x==bounds.performance_title.x&&painted_grade->y==bounds.performance_title.y&&
+            std::find(captions.begin(),captions.end(),"Bom · 良好")!=captions.end(),
+            "renderer forwards a full mixed UTF8 grade in the original performance control");
+        const auto& arrow=bounds.performance_icon;
+        require(frame.pixels[size_t(arrow.y)*frame.width+arrow.x]==std::array<std::uint8_t,4>{120,230,250,255},
+            "performance paints the original button frame at the independently observed arrow position");
+        require(frame.pixels[size_t(564)*frame.width+523]==std::array<std::uint8_t,4>{230,150,40,255}&&
+            frame.pixels[size_t(553)*frame.width+523]!=std::array<std::uint8_t,4>{230,150,40,255},
+            "salary's complete eleven-pixel frame matches the observed original placement instead of a one-pixel shift");
+        actual.career->performance_label.reset();captions.clear();
+        live.draw(frame,actual,[&](auto&,auto value,const auto&,bool,LiveTextAlignment){captions.emplace_back(value);});
+        require(std::find(captions.begin(),captions.end(),"-30")==captions.end()&&actual.career->performance==-30,
+            "missing current grade label preserves raw data and cannot reintroduce a numeric surrogate");
         const auto measured=live_panel_layout(original_control_panel_layout(1024,768));
-        require(measured.skill_bars[0].x==678&&measured.skill_bars[5].y==750&&
+        require(measured.skill_bars[0].x==677&&measured.skill_bars[5].y==750&&
             measured.personality_bars[0].x==679&&measured.personality_bars[4].y==748&&
             measured.relationship_faces[0].x==557&&measured.relationship_faces[1].x==599,
             "secondary panels retain original measured columns rather than the Simitone grid");
+        for(const auto viewport:{std::array<unsigned,2>{800,600},{1024,768},{1280,720}}){
+            LivePanelSnapshot child;child.has_selected_person=true;child.skills={100,200,300,400,500,600};
+            child.career=LiveCareerInfo{};child.career->school=true;child.career->employed=true;
+            child.career->title="ADULT ONLY";child.career->salary=275;child.career->performance_label="ADULT GRADE";
+            child.career->report_card=LiveSchoolInfo{4,std::string{"7"}};
+            LivePanelText labels;labels.report_card="Boletim";LivePanelView schoolView(art,labels);
+            require(schoolView.select(LivePanelTab::career,child),"selected child report card is an available career-tab consumer");
+            RasterFrame report;report.width=viewport[0];report.height=viewport[1];
+            const auto clear=std::array<uint8_t,4>{17,19,23,255};report.pixels.assign(size_t(report.width)*report.height,clear);
+            std::vector<std::string> text;schoolView.draw(report,child,[&](auto&,auto value,const auto&,bool,LiveTextAlignment){text.emplace_back(value);});
+            require(text==std::vector<std::string>{"Boletim","7"},"school paints its report title/actual grade and no profession salary performance or six skill captions");
+            require(std::all_of(report.pixels.begin(),report.pixels.end(),[&](const auto& p){return p==clear;}),
+                "school never paints adult career icon or six skill meters beneath its text");
+            require(child.career->report_card->raw==4,"school painter cannot rewrite the current grade word");
+        }
         actual.has_selected_person=false;actual.house=LiveHouseInfo{};
         actual.house->area_square_feet=171;actual.house->bedrooms=2;actual.house->bathrooms=0;
         actual.house->lot_name="Large";actual.house->ratings={0,10,100,-5,std::nullopt};
@@ -420,6 +508,35 @@ void fixture(){TemporaryDirectory temporary;const auto game=temporary.path/"game
             "native interest values7/1/10 fill seven/one/ten segments; invalid values only saturate presentation");
         require(actual.interests->raws[0]==7&&actual.interests->raws[3]==-1&&actual.interests->raws[4]==32000,
             "painting interests never changes simulation values");
+        LivePanelText translated;
+        for(unsigned topic=0;topic<19;++topic){translated.interest_names[topic]="Tópico "+std::to_string(topic);
+            translated.interest_descriptions[topic]="Descrição "+std::to_string(topic);}
+        for(const auto viewport:{std::pair<unsigned,unsigned>{800,600},{1024,768},{1280,720}}){
+            const auto panel=original_control_panel_layout(viewport.first,viewport.second);
+            for(const auto age:{0,7,18}){
+                actual.interests->age=std::int16_t(age);
+                LivePanelView interests(art,translated);require(interests.select(LivePanelTab::interests,actual),"localized interests retain actual selected-person capability");
+                const auto first=live_interest_layout(panel,actual.interests->age,0);
+                std::vector<unsigned> visited;
+                for(std::size_t page=0;page<first.pages;++page){
+                    const auto current=live_interest_layout(panel,actual.interests->age,page);
+                    require(interests.interest_page()==page,"click consumer and layout keep the same current page");
+                    for(const auto& cell:current.cells){
+                        visited.push_back(cell.topic);
+                        const auto expected=translated.interest_names[cell.topic]+"\n"+translated.interest_descriptions[cell.topic];
+                        require(interests.hover_text(panel,cell.icon.x,cell.icon.y,actual)==expected&&
+                            interests.hover_text(panel,cell.bar.x,cell.bar.y,actual)==expected,
+                            "each actual topic illustration and meter expose the localized original description");
+                    }
+                    const bool moved=interests.click(panel,current.next.x,current.next.y,actual);
+                    require(moved==(page+1<first.pages),"paging hit cannot advance beyond the real adult/child topics");
+                }
+                require(visited==live_interest_topics(actual.interests->age),"three desktop sizes expose each applicable topic once without aliases becoming extra topics");
+                for(std::size_t page=first.pages-1;page>0;--page){const auto current=live_interest_layout(panel,actual.interests->age,page);
+                    require(interests.click(panel,current.previous.x,current.previous.y,actual)&&interests.interest_page()==page-1,"previous hit returns to the actual preceding page");}
+                require(!interests.click(panel,first.previous.x,first.previous.y,actual),"first page cannot move before zero");
+            }
+        }
         actual.has_selected_person=false;live.reconcile(actual);require(live.tab()==LivePanelTab::needs,
             "removing the active person closes a stale person panel");
     }

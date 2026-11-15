@@ -66,6 +66,19 @@ int main() {try {
         require(image.pixels==expected,"BGR, row padding and orientation produce opaque RGBA");
         auto exact=bytes;set(exact,34,bytes.size()-(bits==8?66:54));
         require(decode(exact).pixels==expected,"exact nonzero image size accepted");
+        auto padded_image=exact+std::string(2,'\0');
+        set(padded_image,2,padded_image.size());
+        const auto rows=bytes.size()-(bits==8?66:54);
+        set(padded_image,34,rows+2);
+        const auto padded_decode=decode(padded_image);
+        require(padded_decode.pixels==expected && padded_decode.remaining_bytes==2,
+                "BI_RGB image extent can include a bounded original skin trailer");
+        auto bad_trailer=padded_image;set(bad_trailer,34,rows+3);
+        rejects([&]{decode(bad_trailer);});
+        bad_trailer=padded_image;set(bad_trailer,2,bytes.size());
+        rejects([&]{decode(bad_trailer);});
+        bad_trailer=padded_image;set(bad_trailer,34,rows-1);
+        rejects([&]{decode(bad_trailer);});
         require(decode(bytes+"tail").remaining_bytes==4,"tail measured from end of pixels");
         require(decode(fixture(bits,top_down,3,7)).pixels==expected,"offset gap accepted");
         for(std::size_t cut=0;cut<bytes.size();++cut)

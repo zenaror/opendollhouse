@@ -1,6 +1,7 @@
 #include "odh/mesh.hpp"
 #include <iostream>
 #include <sstream>
+#include <locale>
 
 namespace {
 int checks=0;
@@ -151,6 +152,29 @@ int main(){try{
         text_mesh.blend_data[0].weight==16384&&text_mesh.blend_vertices.size()==1&&
         text_mesh.vertex_count2==4&&text_mesh.remaining_bytes==0,
         "text SKN blend order is normalized to BMF mesh fields");
+    const auto numeric_bits=[&](const std::string& value){
+        auto bytes=skn_fixture();bytes.replace(bytes.find("0.5 0.25"),3,value);
+        return skn(bytes).real_vertices[0].texcoord_bits[0];
+    };
+    const std::vector<std::pair<std::string,std::uint32_t>> numbers{
+        {".5",0x3f000000U},{"1.",0x3f800000U},{"-2.5E+1",0xc1c80000U},
+        {"125e-3",0x3e000000U},{"-0",0x80000000U},{"-0.000e999999",0x80000000U},
+        {"1e-45",1U},{"1.1754943508222875e-38",0x00800000U},
+        {"3.40282346638528859811704183484516925440e38",0x7f7fffffU},
+        {"1.000000059604644775390625",0x3f800000U},
+        {"1.000000059604644775390626",0x3f800001U},
+        {"INF",0x7f800000U},{"-infinity",0xff800000U}};
+    for(const auto& n:numbers)require(numeric_bits(n.first)==n.second,"SKN decimal exponent/range/rounding bits preserved");
+    require((numeric_bits("NaN(payload_12)")&0x7fffffffU)>0x7f800000U,"SKN NaN metadata accepted");
+    require((numeric_bits("-nan()")&0xff800000U)==0xff800000U,"SKN signed NaN preserved");
+    for(const auto* bad:{"+1",".","1e","1e+","0x1p0","1,5","1junk","nan(!)","infinite",
+                         "3.5e38","-3.5e38","1e-46","-1e-9999"})rejects([&]{numeric_bits(bad);});
+    struct CommaDecimal:std::numpunct<char>{char do_decimal_point()const override{return ',';}
+        char do_thousands_sep()const override{return '.';}std::string do_grouping()const override{return "\3";}};
+    struct RestoreLocale{std::locale previous=std::locale();~RestoreLocale(){std::locale::global(previous);}};
+    {RestoreLocale restore;std::locale::global(std::locale(std::locale::classic(),new CommaDecimal));
+        for(const auto& n:numbers)require(numeric_bits(n.first)==n.second,"SKN floats ignore global comma/grouping locale");
+        rejects([&]{numeric_bits("1,5");});rejects([&]{numeric_bits("1.234.567");});}
     for(std::size_t cut=0;cut+1<skn_bytes.size();++cut)rejects([&]{skn(skn_bytes.substr(0,cut));});
     rejects([&]{skn(skn_bytes+"unexpected\n");});
     odh::MeshLimits skn_limits;skn_limits.vertices=2;rejects([&]{skn(skn_bytes,skn_limits);});

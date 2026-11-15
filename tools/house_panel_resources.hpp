@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
-#include "house_panel_snapshot.hpp"
+#include "house_panel_metrics.hpp"
 #include "odh/named_float_constants.hpp"
 #include "odh/saved_architecture.hpp"
 

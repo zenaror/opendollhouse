@@ -1,4 +1,5 @@
 #include "linux_text_renderer.hpp"
+#include "linux_text_runtime.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,6 +15,8 @@ void require(bool condition, const char* message) {
 
 int main() {
     try {
+    odh_host::LinuxTextRuntime text_runtime; // API parity, no Pango resource in this backend.
+
     {
         const std::string message="Escolha uma família para entrar na casa.";
         const auto natural=odh_host::measure_text_overlay(message,14,14);

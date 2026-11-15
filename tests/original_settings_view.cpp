@@ -33,11 +33,12 @@ std::string far(const std::vector<std::pair<std::string,std::string>>& entries){
         put(s,offsets[i]);put(s,unsigned(e.first.size()));s+=e.first;}
     return s;
 }
-std::string ui_strings(){
+std::string ui_strings(unsigned language=1){
     std::vector<std::string> labels(84);labels[28]="Terrain detail";labels[31]="Character detail long";
+    if(language==15)labels[44]="\x89\xb9"; // Original Japanese CP932 for 音.
     labels[39]="Low";labels[40]="Med";labels[41]="High";
     std::string payload;put(payload,0xfffd,2);put(payload,unsigned(labels.size()),2);
-    for(const auto& label:labels){put(payload,1,1);payload+=label;payload.append(2,'\0');}
+    for(const auto& label:labels){put(payload,language,1);payload+=label;payload.append(2,'\0');}
     std::string out(64,'\0');const std::string signature="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";
     out.replace(0,signature.size(),signature);out+="STR#";
     const auto size=unsigned(payload.size()+76);for(int shift:{24,16,8,0})out.push_back(char(size>>shift));
@@ -51,6 +52,11 @@ struct Temp {
 };
 std::array<int,2> center(BuyUiRect rect){return {rect.x+rect.width/2,rect.y+rect.height/2};}
 const Pixel& pixel(const odh::RasterFrame& f,std::array<int,2> p){return f.pixels[std::size_t(p[1])*f.width+p[0]];}
+std::string shaped_label;unsigned shaped_language=0;
+TextOverlayExtent spy_measure(std::string_view,uint8_t,int,int){return {20,12};}
+TextOverlayResult spy_draw(odh::RasterFrame&,std::string_view text,uint8_t language,TextOverlayStyle){
+    if(text=="\xe9\x9f\xb3"){shaped_label=std::string(text);shaped_language=language;}return {};
+}
 void cases(){
     Temp temp;const auto archive=temp.path/"UIGraphics/UIGraphics.far";
     const std::vector<std::pair<std::string,std::string>> assets{
@@ -66,7 +72,7 @@ void cases(){
             need(!layout.controls.empty(),"original page has real controls");
             if(page==OriginalSettingsPage::graphics){
                 need(layout.controls.size()==10&&layout.labels.size()==9,
-                    "Complete has four checkboxes, six radios, six labels and three shared headings");
+                    "preserved AA-enabled presentation has four checkboxes, six radios and three shared headings");
                 for(std::size_t id=39;id<=41;++id){
                     unsigned count=0;for(const auto& label:layout.labels)if(label.string_index==id)++count;
                     need(count==1,"detail column headings occur once, not once per radio row");
@@ -152,6 +158,51 @@ void cases(){
     need(desktop.controls.size()==wide.controls.size(),"desktop original control count");
     for(unsigned i=0;i<desktop.controls.size();++i)need(desktop.controls[i].rect.x==wide.controls[i].rect.x&&
         wide.controls[i].rect.y-desktop.controls[i].rect.y==168,"desktop original size anchored to footer");
+    OriginalSettingsView complete(temp.path,1,false);
+    const auto observed=complete.layout(1024,768,OriginalSettingsPage::graphics);
+    need(observed.controls.size()==9&&observed.controls[0].id==OriginalSettingId::shadows&&
+        observed.controls[0].rect.y==695,"observed Complete omits AA without moving remaining original rows");
+    for(const auto& c:observed.controls)need(c.id!=OriginalSettingId::anti_alias,"hidden AA cannot draw or receive input");
+    OriginalSettingsInteraction pointer;
+    const auto sound=complete.layout(1024,768,OriginalSettingsPage::sound);
+    const auto track=sound.controls[1].rect;const auto mid=center(track);
+    auto press=pointer.update(complete,sound,state,capabilities,{mid[0],mid[1],true,true,false,false});
+    need(press&&press->id==OriginalSettingId::music&&press->value>=45&&press->value<=55&&pointer.captured()==1,
+        "raw pointer captures the drawn music slider and applies exact travel");
+    const auto drag=pointer.update(complete,sound,state,capabilities,{track.x-50,0,false,true,false,false});
+    need(drag&&drag->value==0,"held slider clamps outside track without switching controls");
+    const auto release=pointer.update(complete,sound,state,capabilities,{track.x+track.width+50,0,false,false,true,false});
+    need(release&&release->value==100&&!pointer.captured(),"release outside track commits endpoint and clears capture");
+    pointer.update(complete,sound,state,capabilities,{mid[0],mid[1],true,true,false,false});
+    need(!pointer.update(complete,sound,state,capabilities,{0,0,false,false,false,true})&&!pointer.captured(),
+        "focus cancellation never fabricates a settings edit");
+    pointer.update(complete,sound,state,capabilities,{mid[0],mid[1],true,true,false,false});
+    auto stopped=capabilities;stopped[static_cast<size_t>(OriginalSettingId::music)]=false;
+    need(!pointer.update(complete,sound,state,stopped,{mid[0],mid[1],false,true,false,false})&&!pointer.captured(),
+        "lost capability clears an unavailable capture");
+    pointer.update(complete,sound,state,capabilities,{mid[0],mid[1],true,true,false,false});
+    need(!pointer.update(complete,sound,state,capabilities,{})&&!pointer.captured(),
+        "modal-suppressed or released idle input clears capture without an edit");
+    const auto play=complete.layout(1024,768,OriginalSettingsPage::play);const auto check=center(play.controls[0].rect);
+    need(!pointer.update(complete,play,state,capabilities,{check[0],check[1],true,true,false,false}),"checkbox press does not activate twice");
+    need(!pointer.update(complete,play,state,capabilities,{0,0,false,false,true,false}),"checkbox release outside cancels");
+    pointer.update(complete,play,state,capabilities,{check[0],check[1],true,true,false,false});
+    const auto checked=pointer.update(complete,play,state,capabilities,{check[0],check[1],false,false,true,false});
+    need(checked&&checked->id==OriginalSettingId::auto_center&&checked->value==1,"checkbox release on same control activates once");
+    write(temp.path/"GameData/UIText.iff",ui_strings(15));
+    OriginalSettingsView japanese(temp.path,15,false);
+    const auto previous_backend=set_text_overlay_backend({spy_measure,spy_draw,nullptr});
+    struct RestoreBackend{TextOverlayBackend backend;~RestoreBackend(){set_text_overlay_backend(backend);}}restore_backend{previous_backend};
+    odh::RasterFrame localized;localized.width=1024;localized.height=768;localized.pixels.assign(1024*768,clear);
+    japanese.draw(localized,OriginalSettingsPage::sound,state,capabilities);
+    need(shaped_label=="\xe9\x9f\xb3"&&shaped_language==15,"actual original CP932 STR entry reaches the shared shaper as complete UTF8 with language15");
+    OriginalSettingsText selected_text;selected_text[44]="\xe9\x9f\xb3";
+    // Different/missing disk entries cannot override a selected native STR label.
+    write(temp.path/"GameData/UIText.iff",ui_strings(1));
+    OriginalSettingsView selected_view(temp.path,15,false,false,&selected_text);
+    shaped_label.clear();selected_view.draw(localized,OriginalSettingsPage::sound,state,capabilities);
+    need(shaped_label==selected_text[44]&&shaped_language==15,
+        "selected runtime UTF8 labels take precedence while standalone raw-resource fallback stays intact");
     auto malformed=assets;malformed[0].second=bmp(100,21);write(archive,far(malformed));
     bool rejected=false;try{OriginalSettingsView bad(temp.path);}catch(const odh::FormatError&){rejected=true;}
     need(rejected,"wrong original strip shape rejected");

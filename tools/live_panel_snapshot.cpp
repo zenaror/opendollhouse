@@ -12,14 +12,7 @@ LivePanelSnapshot prepare_live_panel_snapshot(const odh::World& world,odh::World
         return index<person->person_data.size()?std::optional<std::int16_t>{person->person_data[index]}:std::nullopt;};
     for(std::size_t i=0;i<result.skills.size();++i)result.skills[i]=value(live_skill_indices[i]);
     for(std::size_t i=0;i<result.personality.size();++i)result.personality[i]=value(live_personality_indices[i]);
-    if(const auto age=value(58)){
-        LiveInterestsInfo interests;interests.age=*age;bool complete=true;
-        for(std::size_t i=0;i<interests.raws.size();++i){
-            const auto raw=value(live_interest_indices[i]);
-            if(!raw){complete=false;break;}interests.raws[i]=*raw;
-        }
-        if(complete)result.interests=interests;
-    }
+    result.interests=live_interests_snapshot(value);
     const auto job=value(live_job_index),level=value(live_job_level_index);
     if(job&&*job==0)result.career=LiveCareerInfo{};
     else if(job&&level&&bindings.career)result.career=bindings.career(*job,*level);

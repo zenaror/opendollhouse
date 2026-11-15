@@ -3,7 +3,7 @@
 #include "odh/bitmap.hpp"
 #include "odh/pie_menu.hpp"
 #include "odh/raster.hpp"
-#include "linux_window.hpp"
+#include "window_pointer_event.hpp"
 
 namespace odh_host {
 struct PieMenuCaption {
@@ -62,5 +62,5 @@ std::optional<PieMenuBranchPresentation> layout_linux_pie_menu_branch(
 void draw_linux_pie_menu(odh::RasterFrame&,const odh::PieMenuLayout&,
     const std::vector<PieMenuCaption>&,std::size_t selected,
     const std::optional<PieMenuCaption>& parent,const odh::BitmapImage* background,bool pressed=false,
-    PieMenuBackground kind=PieMenuBackground::live_face);
+    PieMenuBackground kind=PieMenuBackground::live_face,bool highlight_selected=true);
 }

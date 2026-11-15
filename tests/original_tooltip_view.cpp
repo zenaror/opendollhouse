@@ -18,6 +18,16 @@ odh::RasterFrame frame(unsigned width,unsigned height){
     out.depth.assign(out.pixels.size(),42);out.owner_ids.assign(out.pixels.size(),77);out.shaded_samples=13;out.tested_samples=29;return out;
 }
 void cases(){
+    auto price=frame(800,600);const auto oldDepth=price.depth;const auto oldOwners=price.owner_ids;
+    const auto priceBox=draw_original_tooltip(price,"$7.999",14,{750,550},1,{255,0,0,255});
+    need(bool(priceBox),"unaffordable catalog price has tooltip geometry");
+    bool redInk=false;
+    for(int y=priceBox->y+1;y<priceBox->y+priceBox->height-1;++y)
+        for(int x=priceBox->x+1;x<priceBox->x+priceBox->width-1;++x){
+            const auto& pixel=price.pixels[size_t(y)*price.width+x];
+            redInk=redInk||(pixel[0]>pixel[1]+40&&pixel[0]>pixel[2]+40);
+        }
+    need(redInk&&price.depth==oldDepth&&price.owner_ids==oldOwners,"price foreground preserves world picking and depth");
     const auto measured=measure_text_overlay("Viagens",14,10);
     const auto layout=original_tooltip_layout(1024,768,"Viagens",14,{559,703});
     need(layout&&layout->x==559&&layout->width==measured.width+10&&layout->y+layout->height==689,

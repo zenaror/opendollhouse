@@ -12,6 +12,15 @@ inline HeadPortraitCamera original_frontal_portrait_camera() {
     return camera;
 }
 
+// Keep the reference camera elevation for quadruped HUD heads, removing
+// only yaw. The human HUD keeps its independently established level view.
+// This is a presentation profile, never a mutation of a world skeleton/pose.
+inline HeadPortraitCamera original_hud_portrait_camera(bool quadruped) {
+    auto camera=original_frontal_portrait_camera();
+    if(quadruped)camera.pitch_radians=HeadPortraitCamera{}.pitch_radians;
+    return camera;
+}
+
 // Family-selection portraits fill the 41px interior of PeopleTemplate.bmp.
 // Measured against the four original Cortes portraits; this is not a change
 // to the separately rendered live HUD or pie menu.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "linux_simitone_cas_member.hpp"
+#include "cas_draft_state.hpp"
 
 #include <optional>
 #include <stdexcept>
@@ -15,31 +16,15 @@ namespace odh_host {
 class LinuxCasDraftMembers {
 public:
     const std::vector<SimitoneCasPersonInput>& members() const noexcept { return members_; }
-    std::optional<std::size_t> editing() const noexcept { return editing_; }
-    const SimitoneCasPersonInput& select(std::size_t index) {
-        const auto& member = members_.at(index);
-        editing_ = index;
-        return member;
-    }
-    void begin_new() noexcept { editing_.reset(); }
-    void accept(SimitoneCasPersonInput member) {
-        if (editing_) members_.at(*editing_) = std::move(member);
-        else {
-            if (members_.size() >= 8) throw std::invalid_argument("CAS household limit reached");
-            members_.push_back(std::move(member));
-        }
-        editing_.reset();
-    }
-    bool erase_selected() {
-        if (!editing_) return false;
-        members_.erase(members_.begin() + *editing_);
-        editing_.reset();
-        return true;
-    }
+    std::optional<std::size_t> editing() const noexcept { return state_.editing(); }
+    const SimitoneCasPersonInput& select(std::size_t index) { return state_.select(members_,index); }
+    void begin_new() noexcept { state_.begin_new(); }
+    void accept(SimitoneCasPersonInput member) { state_.accept(members_,std::move(member)); }
+    bool erase_selected() { return state_.erase_selected(members_); }
 
 private:
     std::vector<SimitoneCasPersonInput> members_;
-    std::optional<std::size_t> editing_;
+    CasDraftState state_;
 };
 
 } // namespace odh_host

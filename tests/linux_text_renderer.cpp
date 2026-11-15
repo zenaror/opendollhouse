@@ -1,4 +1,7 @@
 #include "linux_text_renderer.hpp"
+#include "linux_text_runtime.hpp"
+#include <pango/pangocairo.h>
+#include <memory>
 
 #include <algorithm>
 #include <iostream>
@@ -8,7 +11,7 @@
 
 namespace {
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
-void sample(const std::string& text,std::uint8_t language) {
+void sample_with_reference(const std::string& text,std::uint8_t language,PangoFontMap* reference) {
     odh::RasterFrame frame{320,240,std::vector<std::array<std::uint8_t,4>>(320U*240U,{245,245,242,255}),{},0,0};
     auto without_glyphs=frame;
     const auto result=odh_host::draw_text_overlay(frame,text,language);
@@ -21,10 +24,41 @@ void sample(const std::string& text,std::uint8_t language) {
         without_glyphs.pixels.begin(),std::size_t{0},std::plus<>{},
         [](const auto& with_text,const auto& background){return with_text!=background?std::size_t{1}:std::size_t{0};});
     check(visible_glyph_pixels>0,"visible glyph pixels differ from the background-only overlay");
+    const auto extent=odh_host::measure_text_overlay(text,language,15);
+    auto borrowed_frame=odh::RasterFrame{320,240,std::vector<std::array<std::uint8_t,4>>(320U*240U,{245,245,242,255}),{},0,0};
+    {
+        // Same constructor/configuration as the old default map, owned here
+        // explicitly. The grouped language matrix checks unchanged pixels,
+        // metrics and glyph fallback for owned versus externally leased maps.
+        odh_host::LinuxTextRuntime borrowed(reference);
+        const auto measured=odh_host::measure_text_overlay(text,language,15);
+        const auto shaped=odh_host::draw_text_overlay(borrowed_frame,text,language);
+        check(measured.width==extent.width&&measured.height==extent.height,"owned and borrowed maps preserve metrics");
+        check(shaped.glyphs==result.glyphs&&shaped.missing_glyphs==result.missing_glyphs,"owned and borrowed maps preserve fallback");
+    }
+    check(frame.pixels==borrowed_frame.pixels,"owned and borrowed maps preserve exact pixels");
 }
 }
 
 int main(){try{
+    // Standalone callers have a finite local lease without installing a TLS
+    // default; the explicit host scope then shares one map across this matrix.
+    const auto standalone=odh_host::measure_text_overlay("ação",14,15);
+    odh_host::LinuxTextRuntime text_runtime;
+    const auto scoped=odh_host::measure_text_overlay("ação",14,15);
+    check(standalone.width==scoped.width&&standalone.height==scoped.height,"standalone and host scopes preserve metrics");
+    {
+        odh_host::LinuxTextRuntime nested;
+        bool refused=false;
+        try{odh_host::LinuxTextRuntime invalid(nullptr);}catch(const std::invalid_argument&){refused=true;}
+        check(refused,"invalid external map is rejected before changing the active scope");
+        const auto after=odh_host::measure_text_overlay("ação",14,15);
+        check(after.width==scoped.width&&after.height==scoped.height,"nested/error scope keeps the parent usable");
+    }
+    const auto unref=[](PangoFontMap* value){if(value)g_object_unref(value);};
+    std::unique_ptr<PangoFontMap,decltype(unref)> reference(pango_cairo_font_map_new(),unref);
+    check(bool(reference),"reference map allocated");
+    const auto sample=[&](const std::string& text,std::uint8_t language){sample_with_reference(text,language,reference.get());};
     {
         const std::string message="Escolha uma família para entrar na casa.";
         const auto natural=odh_host::measure_text_overlay(message,14,14);

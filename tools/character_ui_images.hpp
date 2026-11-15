@@ -16,6 +16,11 @@ struct CharacterUiImageLimits {
 // The caller authenticates the character IFF before passing its bounded View.
 // Missing image resources are optional; malformed or duplicate selected IDs fail.
 CharacterUiImages read_character_ui_images(const odh::View&,CharacterUiImageLimits={});
+// Current resource providers can retain an authoritative IFF in a FAR or in
+// memory. This DTO edge shares the exact same bounded image decoder and strip
+// splitting code; it never guesses a physical path from a logical IFF name.
+struct CharacterUiImageResource {std::uint16_t id;std::vector<std::uint8_t> bitmap;};
+CharacterUiImages read_character_ui_images(const std::vector<CharacterUiImageResource>&,CharacterUiImageLimits={});
 // Original relation portrait uses long-term (matrix index2), not daily(index0).
 // Missing data selects the neutral picture without manufacturing a stored score.
 std::size_t character_relationship_frame(std::optional<std::int16_t> long_term) noexcept;

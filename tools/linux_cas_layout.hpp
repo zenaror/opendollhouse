@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 #include "odh/ui_bitmap.hpp"
-#include "linux_window.hpp"
+#include "window_input.hpp"
 #include <algorithm>
 #include <array>
 #include <numeric>
@@ -43,6 +43,7 @@ struct CasWidget {
     int text_index=-1;
     std::size_t index=0;
 };
+inline int cas_trait_target(const CasWidget& widget,int x){return (x-widget.box.x+3)/6;}
 inline std::vector<CasWidget> cas_layout(bool character,std::size_t members){
     using C=CasControl;
     if(members>8)throw odh::FormatError("CAS family exceeds eight slots");

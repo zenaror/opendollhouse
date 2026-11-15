@@ -1,22 +1,28 @@
-# Documentação
+# Player guide
 
-OpenDollhouse é um motor experimental em C/C++ para os dados do The Sims 1.
-Ainda não há uma versão completa jogável publicada.
+This documentation accompanies the experimental **milestone 1** builds. Start
+with installation; you do not need to understand the engine code to play.
 
-- [Compilar, iniciar e testar](tools.md): requisitos, comandos e uso experimental.
-- [Situação do primeiro marco](progresso.md): entregas disponíveis e pendências.
-- [Plano de desenvolvimento](native-port-plan.md): resultados esperados e dependências.
-- [Requisitos da versão jogável](linux-playable-scope.md): o que precisa funcionar.
-- [Cobertura funcional](playable-feature-matrix.md): limites por área do jogo.
-- [Arquitetura](architecture.md): componentes, fronteiras e salvamento.
-- [Contratos do motor](engine-contracts.md): identidades, objetos, viagens e transações.
-- [Formatos](formats.md): leitores, limites e dados não interpretados.
-- [Migração](migration/README.md): relação entre as referências e o motor nativo.
-- [Mods e expansões](modding.md): conteúdo clássico e futuras interfaces.
-- [Portabilidade](portability.md): alvos, dependências e limites de suporte.
-- [Validação](validation-workflow.md): como conferir uma mudança sem confundir as provas.
-- [Referências e atribuições](references.md): origens, revisões e licenças.
+## Install and play
 
-Os guias devem permitir entender e revisar o projeto a partir de um clone.
-Resultados experimentais são delimitados: compilar, executar uma ação, reabrir
-um save e funcionar em outro aparelho são verificações diferentes.
+- [Install on each platform](installation.md): where to put the data and how to start.
+- [Which package to use](testing-builds.md): test builds and available systems.
+- [Keyboard shortcuts](keyboard-controls.md): speed, camera and game modes.
+- [Console and Android controls](controls.md): touch, buttons and sticks.
+- [Current status](status.md): what to expect and which limitations matter.
+
+## Saves and troubleshooting
+
+- [Help](troubleshooting.md): language, updates, saves and problem reports.
+- [Starting on PC](desktop-package.md): launchers and save locations.
+- [Linux package requirements](linux-package.md).
+- [Collecting a log on Vita and Switch](console-diagnostics.md).
+
+Players provide their own commercial The Sims files. OpenDollhouse does not
+include or download them. Back up your saves before updating an experimental
+version.
+
+[Credits and licenses](references.md) · [Recent changes](../CHANGELOG.md)
+
+To build or contribute, including with an AI agent, use the separate
+[ai_agents guides](ai_agents/README.md).

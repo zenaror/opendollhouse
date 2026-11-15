@@ -107,7 +107,10 @@ int main() {
             {133, string_table({{14, "Casa"}})},
             {135, string_table({{14, "Tamanho"}})},
             {138, string_table({{14, "Pequeno"}})},
+            {139, string_table({{14, "Boletim"}, {14, "Notas"}, {14, "Estudar"},
+                                {1, "Report Card"}, {1, "Grades"}, {1, "Study"}})},
             {140, string_table({{14, "Interesses"}})},
+            {141, string_table({{14, "Invent\341rio"}, {1, "Inventory"}})},
             {142, string_table({{14, "Descri\347\343o"}, {1, "Description"}})},
             {128, string_table({{14, "unrelated"}})},
         });
@@ -117,8 +120,16 @@ int main() {
                 "same table ID remains scoped to the selected original resource");
         require(live.get(136,0,14,"fallback")=="Job" && live.get(128,0,14,"missing")=="missing",
                 "live panels preserve English fallback and exclude unrelated menu tables");
+        require(live.get(139,0,14,"missing")=="Boletim"&&live.get(139,1,14,"missing")=="Notas"&&
+                live.get(139,2,14,"missing")=="Estudar"&&live.get(139,0,15,"missing")=="Report Card"&&
+                strings.get(139,0,14,"menu-only")=="menu-only",
+                "school title and help belong to Live139 with selected-language and English fallback, never UIText");
         require(live.get(140,0,14,"fallback")=="Interesses"&&live.get(142,0,14,"fallback")=="Descrição",
                 "interest captions and descriptions load from Live rather than UIText");
+        require(live.get(141,0,14,"missing")=="Inventário" &&
+                live.get(141,0,15,"missing")=="Inventory" &&
+                strings.get(141,0,14,"menu-only")=="menu-only",
+                "inventory title is loaded from Live141 with its source encoding and English fallback");
         require(live.get(133,0,14,"fallback")=="Casa" && live.get(135,0,14,"fallback")=="Tamanho" &&
                 live.get(138,0,14,"fallback")=="Pequeno", "house tables remain scoped to original Live resource");
         std::filesystem::rename(path, path.string() + ".moved");

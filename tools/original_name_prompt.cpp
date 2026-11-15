@@ -1,3 +1,4 @@
+#include "original_win_button.hpp"
 // SPDX-License-Identifier: MPL-2.0
 #include "original_name_prompt.hpp"
 #include "original_ui_art.hpp"
@@ -69,7 +70,8 @@ void draw_original_name_prompt(odh::RasterFrame& frame,const OriginalNamePromptL
         const unsigned state=hover==i+1&&pressed==i+1?1:hover==i+1?2:0;
         if(buttons){
             if(buttons->width!=260||buttons->height!=33)throw odh::FormatError("invalid original WinBtn strip");
-            odh::blit_color_keyed_bitmap(frame,*buttons,l.buttons[i],odh::UiBitmapRect{int(state)*65,0,65,33},{255,0,255});
+            if(!draw_original_win_button(frame,*buttons,l.buttons[i],state))
+                odh::blit_color_keyed_bitmap(frame,*buttons,l.buttons[i],odh::UiBitmapRect{int(state)*65,0,65,33},{255,0,255});
         }else fill(frame,l.buttons[i],state==1?Color{20,90,150,255}:Color{10,60,120,255});
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
         text(frame,i?cancel:accept,l.buttons[i],language,true,keyboard_button==i?Color{255,255,0,255}:Color{255,250,231,255},14);

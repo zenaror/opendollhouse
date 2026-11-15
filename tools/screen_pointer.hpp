@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
-#include "linux_window.hpp"
+#include "window_input.hpp"
 #include <cstddef>
 #include <optional>
 

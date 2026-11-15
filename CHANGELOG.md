@@ -1,115 +1,70 @@
 # Changelog
 
-Mudanças relevantes para usuários e contribuidores, no formato
-[Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
-Ainda não há uma versão completa jogável publicada.
+Notable changes for players and contributors, following
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+There is no stable public release yet.
 
-## A publicar
+## Unreleased
 
-### Adicionado
+### Added
 
-- Persistência nativa para animações importadas, poses de objetos segurados e
-  controle de olhar, com leitura dos formatos anteriores suportados.
+- Experimental packages for Linux, Windows, macOS Intel and Apple Silicon,
+  Android, New 3DS, Vita and Switch, with platform instructions. Testing varies;
+  see the [current status](docs/status.md#other-platforms).
+- PC launchers that find the game data without arguments, with saves and cache
+  separate from the original installation.
+- Initial support for languages, audio, inventory, classic custom content and
+  expansion activities, still subject to bugs and behavior differences.
+- Touch and controller input in the Vita and Switch adapters; external Android
+  controllers with touch input preserved. The Vita rear touchpad's left and right
+  halves act as L2 and R2.
+- Loading, performance and failure logs, including periodic performance
+  measurements on Vita and Switch.
+- MPL-2.0 for authorized original contributions, with credits, notices and
+  corresponding sources in the packages.
 
-- Pontos de retorno opcionais em testes sem janela, usando o salvamento nativo
-  para preservar progresso aceito antes de uma falha.
-- Serviços C++ de cadastro de personagens e mudança de família, com preservação
-  de identidades e ações. A integração dos percursos originais segue em desenvolvimento.
-- Motor experimental C/C++ com leitores de recursos, execução parcial de scripts,
-  movimento, personagens, objetos e salvamento de sessões delimitadas.
-- Interface Linux experimental para vizinhança, famílias, simulação, compra e
-  construção, com reconstrução parcial da aparência original.
-- Serviços iniciais de áudio, idiomas, conteúdo personalizado e viagens.
-- Verificadores de continuidade de partidas e ferramentas de inspeção de dados.
-- Registros de falhas com a identidade da ação, do alvo e da etapa de
-  posicionamento envolvida.
-- Guias de arquitetura, formatos, requisitos jogáveis e futuras extensões.
-- Leitura compartilhada de arquivos BCF mistos e preparação da aparência de
-  animais com a estrutura corporal da espécie, sem mãos humanas.
+### Changed
 
-### Modificado
+- Documentation organized for milestone 1 players: installation, controls,
+  saves, help and limitations. Public contribution instructions are separate
+  in `docs/ai_agents/`.
+- Public repository documentation and contribution guides are now in English.
+  In-game language selection and support for other languages are unchanged.
+- Contributor guidance now explains the milestones and PR review criteria,
+  keeping the original experience separate from reference-specific QoL changes
+  and modernization.
+- PC interface restores original panels and resources, including options,
+  inventory, interests, needs and help. Presentation still has differences
+  and needs further polish.
+- Create-a-Sim preview adjusted for adult and child proportions, pose, automatic
+  rotation and animation according to the original reference.
+- Vita and Switch images adjusted to keep a centered 4:3 aspect ratio without
+  stretching or clipping the bottom panel. Device confirmation is still pending.
+- Vita and Switch audio continues processing when drawing takes longer.
+  This does not confirm that choppy audio on the devices has been resolved.
 
-- Desenvolvimento orientado por percursos completos no aplicativo: vida em casa,
-  gestão de famílias/lotes e viagens com ida, atividade e retorno.
-- Documentação reorganizada em guias públicos autossuficientes, com cobertura e
-  limitações explícitas; registros internos e resultados gerados fora do Git.
+### Fixed
 
-### Consertado
+- Saved lot thumbnails preserve their proportions and reflect yard changes,
+  avoiding dark grass bands, clipped trees and fragments of street objects.
+- House loading and character records corrected for expansion formats.
+  Import preserves existing families, houses and deletions.
+- Saving and loading corrected in cases involving active actions, pending
+  questions, removed visitors and objects contained in furniture. This does
+  not guarantee universal save compatibility with the original game.
+- Buying, building and travel received fixes for catalogs, placement, object
+  preservation and returning travelers. Some combinations still need testing.
+- Portraits, action queues, locale-specific clocks, lighting on mirrored objects
+  and needs panels received presentation fixes.
+- Magic coins are no longer clipped in family selection; career, personality
+  and object information and descriptions were restored from game data.
+- Family selection and pet names corrected to preserve identities and
+  responses when saving and continuing.
+- Characters leaving a lot are no longer brought back to the mailbox. Also
+  corrected Drew's departing car movement and Japanese needs-panel spacing.
+- Vita and Switch file paths corrected to find player-provided neighborhoods,
+  keeping saves separate from game data.
 
-- Encerramento do áudio nas trocas repetidas de casa, preservando os demais
-  consumidores do serviço até que liberem suas referências.
-- Preparação dos moradores antes de entrar na casa e desenhá-los, preservando
-  a identificação do personagem selecionado e as verificações do salvamento.
-
-- Restauração da aparência sem janela passa a localizar os recursos na instalação
-  do jogo, sem depender de opções de captura de tela.
-- Importação do personagem principal consulta seus dados de origem pelo mesmo
-  serviço de identificação usado pelos demais moradores.
-- Continuação do modo de diagnóstico com um morador usa seu restaurador próprio,
-  preservando as verificações de casa, personagem e arquivos de origem.
-- Preparação de objetos reutiliza os serviços de olhar e necessidades no estado
-  isolado, preservando as restrições de caminhada e a ordem da simulação.
-- Preparação de compra, movimentação e venda ligada aos serviços nativos de
-  relacionamentos, distância e direção, usando o estado isolado da transação.
-- Consulta do menu preserva a origem dos estados visuais e dos níveis dos objetos,
-  mantendo a partida do jogador protegida de alterações da consulta.
-- Fluxo experimental de saída de famílias com partida nativa salva passa a preparar
-  a casa desocupada pelo serviço existente. A validação pelas telas continua pendente.
-- Consulta de ações dos objetos conserva a informação do cômodo, sem alterar
-  o estado da casa ou os registros do personagem durante a verificação do menu.
-- Conferência dos arquivos do jogo acelerada nos sistemas compatíveis,
-  preservando os resultados e a alternativa portátil.
-- Entrada comum de uma casa original, com recursos conferidos antes da recuperação
-  e salvamento com o relógio parado, sem opções experimentais obrigatórias nesse percurso.
-- Reabertura de uma continuação curta da importação clássica, preservando o
-  salvamento inteiro após respostas únicas aos diálogos observados e avanço da
-  simulação. Um salvamento nativo anterior também foi reaberto sem alteração.
-
-- Criação de objetos carregados na mão durante uma ação, preservando a ação
-  do personagem e recusando mudanças inesperadas durante a preparação da animação.
-- Reabertura de partidas com personagens sem registro de roupas, preservando
-  os registros existentes sem gerar novos durante a leitura.
-- Alturas de apoios em arquivos antigos, evitando interromper a colocação de
-  objetos por um campo que o formato não grava.
-- Diagnósticos de posicionamento preservam a etapa e o motivo informado pelo motor.
-- Preparação de portas e janelas para compra, mantendo as verificações dos
-  objetos já instalados.
-- Posicionamento e preservação de objetos de parede ao salvar e reabrir.
-- Abertura de perfis antigos que ainda não possuem uma pasta de personagens
-  criados pelo jogador.
-- Leitura das famílias da instalação original Complete Collection, evitando
-  uma falha antes de abrir a casa.
-- Carregamento dos recursos de ações entre Sims durante interações em andamento,
-  incluindo pedidos de passagem, preservando a fila e o salvamento.
-- Carregamento de roupas, rostos e outros recursos de aparência, evitando buscas
-  repetidas nos arquivos do jogo.
-- Ordem das entradas rápidas de teclado e mouse na janela nativa, preservando
-  exclusões de texto e cliques sucessivos. Criação, renomeação e exclusão de
-  famílias foram observadas pelas telas, com reabertura dos dados e encerramento
-  normal. A versão de diagnóstico ainda aponta memória não liberada ao encerrar.
-- Continuação doméstica no cenário de incêndio validado: criação do fogo e
-  reação de pânico prosseguiram, com salvamento e reabertura da partida. A
-  aparência, as consequências, o combate ao fogo e o atendimento dos bombeiros
-  continuam incompletos.
-- Gestos de mãos explicitamente vazios nos dados originais, usados por algumas
-  fantasias, sem exigir peças inexistentes nem substituir o gesto pelo de repouso.
-- Tratamento da cabeça opcional de animais quando sua aparência está
-  comprovadamente ausente, mantendo os erros de recursos inválidos.
-- Leitura da posição e direção de alvos que saíram do lote durante uma
-  caminhada, preservando a referência original quando seu número é reutilizado.
-- Tratamento da posição especial usada pelo jogo para retirar personagens do
-  lote, preservando a direção e os vínculos dos objetos carregados.
-- Referências de ações pendentes a objetos removidos, permitindo o encerramento
-  previsto pelo jogo sem atingir outro objeto que reutilize o mesmo número.
-- Continuação da simulação quando os dados originais pedem uma animação
-  comprovadamente ausente, preservando erros reais de leitura e recursos.
-- Posicionamento, circulação e retirada de objetos em casos de recuperação de
-  partidas, permitindo continuidade de interações residenciais delimitadas.
-- Preservação de vínculos e ações em cenários de salvar e reabrir uma sessão.
-- Mensagens de emprego e horários localizados, incluindo acentos e valores
-  monetários literais; retorno de escola/trabalho, promoção e pagamento já
-  observados em um percurso residencial.
-
-A cobertura continua parcial. Esses resultados não constituem paridade completa,
-aceitação das sete expansões ou suporte comprovado aos demais aparelhos.
-Veja a [situação funcional](docs/playable-feature-matrix.md).
+For installation and updates, see the [player guide](docs/README.md).
+Builds remain experimental; a fix in one playthrough does not validate every
+combination in the game or every device.

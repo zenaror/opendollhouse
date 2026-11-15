@@ -1,0 +1,39 @@
+--- a/include/c11/threads.h
++++ b/include/c11/threads.h
+@@ -47,7 +47,7 @@
+ #include <sys/time.h>
+ 
+ static inline int
+-timespec_get(struct timespec *ts, int base)
++_mesa_timespec_get(struct timespec *ts, int base)
+ {
+     if (!ts) return 0;
+     if (base == TIME_UTC) {
+@@ -59,6 +59,8 @@
+     }
+     return 0;
+ }
++/* newlib may declare timespec_get without providing a linkable symbol. */
++#define timespec_get _mesa_timespec_get
+ #endif
+ 
+ #else
+--- a/include/c11/threads_posix.h
++++ b/include/c11/threads_posix.h
+@@ -384,7 +384,7 @@
+ // 7.25.6.1
+ #ifndef HAVE_TIMESPEC_GET
+ static inline int
+-timespec_get(struct timespec *ts, int base)
++_mesa_timespec_get(struct timespec *ts, int base)
+ {
+     if (!ts) return 0;
+     if (base == TIME_UTC) {
+@@ -393,4 +393,6 @@
+     }
+     return 0;
+ }
+-#endif
++/* newlib may declare timespec_get without providing a linkable symbol. */
++#define timespec_get _mesa_timespec_get
++#endif

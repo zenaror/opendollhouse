@@ -1,6 +1,7 @@
 #include "linux_cas_screen.hpp"
 #include "linux_cas_draft.hpp"
 #include "linux_cas_layout.hpp"
+#include "cas_presentation.hpp"
 #include "linux_vm_dialog.hpp"
 #include "linux_cas_preview.hpp"
 #include "linux_ui_strings.hpp"
@@ -84,66 +85,12 @@ std::optional<SimitoneCasPersonInput> make_person(const std::vector<LinuxCasOutf
     return result;
 }
 
-constexpr std::array<std::uint8_t,3> magenta{255,0,255};
-constexpr const char* family_background="Nbhd/DsgnFamBkg.bmp";
-constexpr const char* character_background="Nbhd/CreateACharBack.bmp";
-constexpr const char* trait_bar="Nbhd/DesignCharPersLED.bmp";
-constexpr const char* remaining_bar="Nbhd/CACPointRemainingBars.bmp";
-constexpr const char* portrait_frame="CPanel/People/PeopleTemplate.bmp";
-
-std::vector<std::string> art_keys(){
-    std::vector<std::string> keys{family_background,character_background,trait_bar,remaining_bar,portrait_frame,"Shared/Sys/WinBtn.bmp","CPanel/Backgrounds/PopupInfoTiles.bmp"};
-    for(const bool character:{false,true})for(const auto& widget:cas_layout(character,0))
-        if(widget.image)keys.emplace_back(widget.image);
-    return keys;
-}
-void label(odh::RasterFrame& frame,std::string_view text,const odh::UiBitmapRect& box,std::uint8_t language,
-           bool focused=false,bool centered=false,bool wrap=false,int font_size=15,bool right=false,bool disabled=false){
-    if(text.empty())return;
-    TextOverlayStyle style;style.x=box.x;style.y=box.y;style.width=box.width;style.height=box.height;
-    style.font_size_px=font_size;style.padding=2;style.centered=centered;style.right_aligned=right;style.wrap_lines=wrap;
-    style.background={0,0,0,0};style.foreground=focused?cas_input_color:cas_label_color;
-    if(disabled)style.foreground=cas_disabled_label_color;
-    draw_text_overlay(frame,text,language,style);
-}
-void paint_field(odh::RasterFrame& frame,std::string_view value,const CasWidget& widget,
-        std::uint8_t language,bool focused){
-    const bool biography=widget.control==CasControl::bio;
-    if(biography){
-        // The existing wrapped editor owns paging; retain its end caret until
-        // full cursor/selection editing is implemented, but never recolor text.
-        label(frame,std::string(value)+(focused?"|":""),widget.box,language,true,false,true);
-        return;
-    }
-    const int inset=widget.control==CasControl::family_name?5:4;
-    TextOverlayStyle style;style.x=widget.box.x;style.y=widget.box.y;
-    style.width=widget.box.width;style.height=widget.box.height;style.padding=inset;
-    style.font_size_px=15;style.foreground=cas_input_color;style.background={0,0,0,0};
-    if(!value.empty())draw_text_overlay(frame,value,language,style);
-    if(focused){
-        const auto width=value.empty()?0:measure_text_overlay(value,language,style.font_size_px).width;
-        const auto caret=cas_edit_caret(widget.box,width,inset);
-        for(int y=caret.y;y<caret.y+caret.height;++y)if(y>=0&&y<int(frame.height)&&caret.x>=0&&caret.x<int(frame.width))
-            frame.pixels[std::size_t(y)*frame.width+std::size_t(caret.x)]={255,255,255,255};
-    }
-}
-void paint_strip(odh::RasterFrame& frame,const OriginalUiArt& art,const CasWidget& widget,unsigned state){
-    const auto& image=art.at(widget.image);
-    if(!image.width||image.width%4||state>=4)throw odh::FormatError("invalid original CAS button state strip");
-    const int width=int(image.width/4);
-    odh::blit_color_keyed_bitmap(frame,image,widget.box,odh::UiBitmapRect{width*int(state),0,width,int(image.height)},magenta);
-}
-void paint_meter(odh::RasterFrame& frame,const odh::BitmapImage& image,int x,int y,int filled){
-    const int width=std::min(filled,int(image.width));
-    if(width>0)odh::blit_color_keyed_bitmap(frame,image,{x,y,width,int(image.height)},
-        odh::UiBitmapRect{0,0,width,int(image.height)},magenta);
-}
 } // namespace
 
 std::optional<LinuxCasFamilyDraft> show_linux_cas_family_creator(
         LinuxWindow& window,const LinuxCasCatalog& catalog,std::uint8_t language,const std::filesystem::path& game_root){
     if(language<1||language>20)throw std::invalid_argument("CAS screen language outside 1..20");
-    const OriginalUiArt art(game_root,art_keys());
+    const OriginalUiArt art(game_root,cas_art_keys());
     GameUiStrings strings(game_root);
     std::vector<std::string> family_text,character_text;
     constexpr const char* family_fallback[]{"Add a New Sim","Delete Selected Sim","Edit Selected Sim","Done","Cancel",
@@ -244,61 +191,21 @@ std::optional<LinuxCasFamilyDraft> show_linux_cas_family_creator(
     };
     std::optional<SimitoneCasPersonInput> pending_member;
     const auto render=[&](){
-        odh::RasterFrame frame{};frame.width=800;frame.height=600;
-        frame.pixels.assign(800U*600U,{0,0,0,255});
-        frame.depth.assign(frame.pixels.size(),std::numeric_limits<float>::infinity());
-        const auto& bg=art.at(character?character_background:family_background);
-        if(bg.width!=800||bg.height!=600)throw odh::FormatError("invalid original CAS background");
-        odh::blit_color_keyed_bitmap(frame,bg,0,0,magenta);
-        const auto& text=character?character_text:family_text;
-        const auto& title=text[character?15:9];window.set_title("OpenDollhouse | "+title);
-        label(frame,title,{0,6,800,32},language,false,true,false,21);
-        label(frame,text[character?26:12],{10,50,246,31},language,false,false,false,17,true);
-        if(character){
-            label(frame,character_text[16],{143,87,220,29},language,false,false,false,18);
-            auto biography_label=character_text[24];
-            if(!trim(form.name).empty()){
-                biography_label=character_text[25];
-                const auto marker=biography_label.find("%s");
-                if(marker!=std::string::npos)biography_label.replace(marker,2,trim(form.name)+" "+trim(family_name));
-            }
-            label(frame,biography_label,{24,388,750,24},language,false,false,false,14);
-            const auto remaining=25-std::accumulate(form.personality.begin(),form.personality.end(),0);
-            paint_meter(frame,art.at(remaining_bar),117,342,remaining*6);
-            if(!bodies.empty()&&!heads.empty()){
-                const auto person=make_person(bodies,heads,form,form.name.empty()?" ":form.name,form.biography,language);
-                if(person)if(const auto* image=preview(*person,false))
-                    odh::blit_color_keyed_bitmap(frame,*image,{618,145,100,220},std::nullopt,magenta);
-            }
-        }
-        for(std::size_t i=0;i<controls.size();++i){
-            const auto& widget=controls[i];const auto c=widget.control;const bool focused=i==focus;
-            if(widget.image){
-                const unsigned state=cas_button_state(enabled(c),on(c),hovered==i,
-                    hovered==i&&pointer.pressed_target()==i);
-                paint_strip(frame,art,widget,state);
-                if(c==C::cancel||c==C::done)label(frame,text[widget.text_index],widget.box,language,false,true,false,17,false,!enabled(c));
-            }else if(c==C::member){
-                const auto& member=draft.members()[widget.index];
-                const odh::UiBitmapRect box{widget.box.x+15,widget.box.y+10,45,45};
-                const auto& strip=art.at(portrait_frame);
-                if(strip.width!=180||strip.height!=45)throw odh::FormatError("invalid CAS portrait frame");
-                const int state=selected_member==widget.index?1:0;
-                odh::blit_color_keyed_bitmap(frame,strip,box,odh::UiBitmapRect{state*45,0,45,45},magenta);
-                if(const auto* image=preview(member,true))
-                    odh::blit_color_keyed_bitmap(frame,*image,{box.x+2,box.y+2,41,41},std::nullopt,magenta);
-                label(frame,member.name_utf8,{widget.box.x,widget.box.y+61,widget.box.width,28},
-                    language,false,true,false,15);
-            }else if(c==C::trait){
-                label(frame,text[widget.text_index],{40,widget.box.y-1,178,32},language,false,false,false,19,true);
-                paint_meter(frame,art.at(trait_bar),widget.box.x,widget.box.y,form.personality[widget.index]*6);
-            }else{
-                const auto& value=c==C::name?form.name:c==C::bio?form.biography:family_name;
-                paint_field(frame,value,widget,language,focused);
-            }
-        }
-        if(!feedback.empty()||!preview_error.empty())
-            label(frame,feedback.empty()?preview_error:feedback,{36,565,728,29},language,true,true);
+        CasPresentation view;
+        view.character=character;view.family_name=family_name;view.name=form.name;view.biography=form.biography;
+        view.traits=form.personality;view.labels=character?character_text:family_text;view.controls=controls;
+        view.focus=focus;view.hovered=hovered;view.pressed=pointer.pressed_target();view.selected=selected_member;
+        view.enabled=enabled;view.on=on;
+        for(const auto& member:draft.members())view.members.push_back(member.name_utf8);
+        view.portrait=[&](std::size_t i){return preview(draft.members()[i],true);};
+        view.body_preview=[&]()->const odh::BitmapImage*{
+            if(bodies.empty()||heads.empty())return nullptr;
+            const auto person=make_person(bodies,heads,form,form.name.empty()?" ":form.name,form.biography,language);
+            return person?preview(*person,false):nullptr;
+        };
+        view.feedback=feedback.empty()?preview_error:feedback;
+        auto frame=view.draw(art,language);
+        window.set_title("OpenDollhouse | "+view.labels[character?15:9]);
         if(question)draw_vm_dialog(frame,dialog,language,0,dialog_appearance);
         window.present(frame);
     };
@@ -400,7 +307,7 @@ std::optional<LinuxCasFamilyDraft> show_linux_cas_family_creator(
             case C::body_previous: case C::body_next: adjust_index(form.body,delta?delta:(c==C::body_previous?-1:1),bodies.size());break;
             case C::head_previous: case C::head_next: adjust_index(form.head,delta?delta:(c==C::head_previous?-1:1),heads.size());break;
             case C::trait:{
-                const int target=clicked?((*click)[0]-widget.box.x+3)/6:
+                const int target=clicked?cas_trait_target(widget,(*click)[0]):
                     int(form.personality[widget.index])+(delta<0?-1:1);
                 step_cas_trait(form.personality,widget.index,target);break;}
             case C::family_name:case C::name:case C::bio: if(input.confirm)focus=(focus+1)%controls.size();break;

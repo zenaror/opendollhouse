@@ -16,6 +16,7 @@ std::optional<odh::BitmapImage> read_object_catalog_icon(const odh::View&,std::u
 // once; lookup, layout and painting never open files.
 class OriginalUiArt {
 public:
+    explicit OriginalUiArt(std::map<std::string,odh::BitmapImage> images);
     OriginalUiArt(const std::filesystem::path& game_root,const std::vector<std::string>& required,
         const std::vector<std::string>& optional={},std::size_t pixel_limit=2*1024*1024);
     const odh::BitmapImage* find(const std::string& key) const;

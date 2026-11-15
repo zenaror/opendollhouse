@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "phonebook_choices.hpp"
-#include <set>
+#include "phonebook_candidates.hpp"
 #include <algorithm>
 namespace odh_host {
 PhonebookChoices phonebook_choices(const odh::World& world,odh::WorldEntityReference identity,
@@ -19,28 +19,17 @@ PhonebookChoices phonebook_choices(const odh::World& world,odh::WorldEntityRefer
     const auto source=std::find_if(relation_state.sources.begin(),relation_state.sources.end(),[&](const auto& row){
         return row.matrix==odh::RelationshipMatrix::neighbor&&row.id==nid&&row.generation==0;});
     if(source==relation_state.sources.end())return refuse("phonebook caller relationship authority unavailable");
-    PhonebookChoices result;std::set<std::int16_t> emitted;std::size_t bytes=0;
+    PhonebookSnapshot snapshot;snapshot.caller_current=snapshot.relationships_current=true;
     for(const auto& pair:source->pairs){
-        // The reference explicitly casts the relationship key to signed short.
-        const auto word=static_cast<std::uint32_t>(pair.target)&65535U;
-        const auto target=static_cast<std::int16_t>(word<=32767U?static_cast<std::int32_t>(word):static_cast<std::int32_t>(word)-65536);
-        const auto* neighbor=neighbors.by_id(target);
-        if(!neighbor)return refuse("phonebook relationship references a missing current neighbor");
-        const auto family=neighbor->person_data?neighbor->person_data->at(61):0;
-        const auto gender=neighbor->person_data?neighbor->person_data->at(65):0;
-        if(!family||gender>=2)continue;
-        // Source UI returns positive NIDs for calls and -1 for its separate
-        // Cancel button. Do not reinterpret malformed selected IDs as Cancel.
-        if(target<=0)return refuse("phonebook eligible neighbor has no positive selectable ID");
-        if(!emitted.insert(target).second)return refuse("phonebook relationship keys alias one selectable neighbor");
-        if(result.choices.size()>=max_choices)return refuse("phonebook choice budget exhausted");
-        if(!display_name)return refuse("phonebook character display-name provider unavailable");
-        const auto name=display_name(target,neighbor->guid);
-        if(!name||name->empty()||name->size()>4096||name->find('\0')!=std::string::npos)
-            return refuse("phonebook admitted character display name unavailable");
-        if(name->size()>max_bytes-bytes)return refuse("phonebook label byte budget exhausted");
-        bytes+=name->size();result.choices.push_back({*name,target});
+        snapshot.relationship_keys.push_back(pair.target);
+        const auto target=static_cast<std::int16_t>(static_cast<std::uint32_t>(pair.target)&65535U);
+        const auto* n=neighbors.by_id(target);if(!n)continue;
+        const bool data=n->person_data&&n->person_data->size()>65;
+        snapshot.neighbors.push_back({target,n->guid,data,data?n->person_data->at(61):int16_t(0),data?n->person_data->at(65):int16_t(0)});
     }
-    result.ready=true;return result;
+    const auto selected=select_phonebook_choices(snapshot,display_name,max_choices,max_bytes);
+    PhonebookChoices result;result.ready=selected.ready;result.diagnostic=selected.diagnostic;
+    for(const auto& c:selected.choices)result.choices.push_back({c.label,c.value});
+    return result;
 }
 }

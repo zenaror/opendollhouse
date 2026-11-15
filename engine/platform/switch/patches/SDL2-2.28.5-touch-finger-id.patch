@@ -1,0 +1,11 @@
+--- a/src/video/switch/SDL_switchtouch.c
++++ b/src/video/switch/SDL_switchtouch.c
+@@ -96,7 +96,7 @@
+                     /* Finger moved */
+                     if (touchState.touches[j].x != touchStateOld.touches[i].x || touchState.touches[j].y != touchStateOld.touches[i].y) {
+                         SDL_SendTouchMotion(id,
+-                                            (SDL_FingerID)i, window,
++                                            (SDL_FingerID)touchStateOld.touches[i].finger_id, window,
+                                             (float)touchState.touches[j].x / rel_w,
+                                             (float)touchState.touches[j].y / rel_h, 1);
+                     }

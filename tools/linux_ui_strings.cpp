@@ -1,3 +1,4 @@
+#include "odh/host_filesystem.hpp"
 #include "linux_ui_strings.hpp"
 
 #include "odh/formats.hpp"
@@ -16,7 +17,7 @@ namespace {
 bool path_is_within(const std::filesystem::path& root,
                     const std::filesystem::path& candidate) {
     const auto relative = candidate.lexically_relative(root);
-    if (relative.empty() || relative.is_absolute()) return false;
+    if (relative.empty() || odh::hostfs::is_absolute(relative)) return false;
     for (const auto& component : relative)
         if (component == "..") return false;
     return true;
@@ -39,7 +40,7 @@ void GameUiStrings::load() {
     const auto candidate = game_root_ / (resource_==GameUiStringResource::live_panels?"GameData/Live.iff":"GameData/UIText.iff");
     std::error_code error;
     if (!std::filesystem::is_regular_file(candidate, error) || error) return;
-    const auto path = std::filesystem::canonical(candidate, error);
+    const auto path = odh::hostfs::canonical(candidate, error);
     if (error) throw odh::FormatError("cannot resolve UIText.iff inside the game installation");
     if (!path_is_within(game_root_, path))
         throw odh::FormatError("UIText.iff resolves outside the selected game installation");
@@ -53,7 +54,7 @@ void GameUiStrings::load() {
     const odh::View view(input, static_cast<std::uint64_t>(end));
     odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
         const bool selected=resource_==GameUiStringResource::live_panels?
-            (chunk.id==131||chunk.id==132||chunk.id==133||chunk.id==135||chunk.id==138||chunk.id==136||chunk.id==137||chunk.id==140||chunk.id==142):is_ui_table(chunk.id);
+            (chunk.id==130||chunk.id==131||chunk.id==132||chunk.id==133||chunk.id==134||chunk.id==135||chunk.id==138||chunk.id==139||chunk.id==136||chunk.id==137||chunk.id==140||chunk.id==141||chunk.id==142||chunk.id==170||chunk.id==180):is_ui_table(chunk.id);
         if (chunk.type != "STR#" || !selected) return;
         if (tables_.count(chunk.id))
             throw odh::FormatError("ambiguous UIText STR# resource");

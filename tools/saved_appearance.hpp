@@ -75,6 +75,11 @@ public:
     // BCF/CMX name metadata and failures of selected resources remain errors.
     // Cat/kat classification never substitutes another literal skeleton name.
     SceneConfig resolve_avatar_body(const odh::AvatarBodyStrings&);
+    // Live head portrait: exact current skeleton and optional body/head parts.
+    // No BodySTR defaults, hand substitutions or saved-person state.
+    SceneConfig resolve_live_portrait(const std::string& skeleton,const std::string& body,
+        const std::string& head,const std::array<std::string,6>& hands,
+        const std::vector<std::string>& accessories);
     // Add runtime BoundAppearances names using the same strict OBJM accessory resolver.
     void append_accessories(SceneConfig&, const std::vector<std::string>& names);
     // Nonempty BodySTR 17..22 variants are tagged for SceneState; an empty

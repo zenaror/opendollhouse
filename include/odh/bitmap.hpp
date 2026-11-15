@@ -18,7 +18,9 @@ struct BitmapImage {
 };
 
 // BMP file header + 40-byte BITMAPINFOHEADER, BI_RGB 8-bit indexed / 24-bit
-// BGR, or bottom-up BI_RLE8. Reserved file fields must be zero. Palette
+// BGR, or bottom-up BI_RLE8. BI_RGB rows use their padded stride; a larger
+// nonzero biSizeImage may include trailing bytes within the declared payload.
+// Reserved file fields must be zero. Palette
 // reserved bytes are ignored; no Sims color-key or transparency semantics are
 // inferred.
 enum class BmpExtentPolicy { file_header,iff_container };

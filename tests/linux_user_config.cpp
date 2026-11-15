@@ -59,6 +59,10 @@ int main(){try{
         check(!odh_host::load_linux_user_config(restored,&error)&&restored.preferences.lighting,
             "invalid or duplicated presentation preferences do not replace accepted settings");
     }
+    for(const auto* invalid:{"language_confirmed=2","language_confirmed=yes","language_confirmed=0\nlanguage_confirmed=1"}){
+        {std::ofstream file(path);file<<"language=20\n"<<invalid<<'\n';}
+        check(!odh_host::load_linux_user_config(restored,&error),"malformed or duplicate confirmation must be rejected");
+    }
     for(const std::string invalid:{"","0","9","03","2x","3\nneighborhood=4"}){
         {std::ofstream file(path);file<<"language=20\nneighborhood="<<invalid<<'\n';}
         check(!odh_host::load_linux_user_config(restored,&error)&&restored.neighborhood_number==1,

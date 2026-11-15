@@ -90,7 +90,7 @@ scheduler source under test is the real adapted source.
 The bridge requires a managed runtime with native interop and reverse callbacks.
 Its target framework does not establish a CLR on a console. Native cross-build,
 console execution, full simulation extraction and game behavior remain separate
-gates. See [the platform decision](../../docs/portability.md).
+gates. See [the platform decision](../../docs/ai_agents/engine.md).
 
 ## Provenance and license
 

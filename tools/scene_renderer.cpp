@@ -309,7 +309,9 @@ struct SceneRenderer::Impl {
             else {auto& source=archive_for(part.mesh_far,animation_archive);
                 const auto skn=selected_mesh.size()>=4&&selected_mesh.substr(selected_mesh.size()-4)==".skn";
                 mesh=skn?odh::read_skn(source.exact(part.bmf_entry)):odh::read_bmf(source.exact(part.bmf_entry));}
-            if(fold(mesh.skin_name)!=fold(binding->mesh_name))throw odh::FormatError("scene renderer mesh skin name differs from appearance binding");
+            // Identity was checked against the selected resource basename
+            // above. The decoded SkinName is exporter metadata, not a second
+            // lookup key (shipped TS1 BMFs can retain a different internal name).
             if(part.loose_texture_asset||(part.loose_skin_assets&&part.texture_far.empty()))texture=loose_bmp(part.texture_entry);
             else texture=odh::read_bmp(archive_for(part.texture_far,texture_archive).exact(part.texture_entry));
             std::size_t bones = 0;
@@ -478,7 +480,7 @@ struct SceneRenderer::Impl {
         }
         if(pose_only){if(anchors)*anchors=prepared_anchors;return {};}
         std::optional<std::array<float,3>> head_position;
-        if(state.head_only&&state.avatar_visible) {
+        if ((state.head_only || portrait) && state.avatar_visible) {
             std::optional<std::size_t> head;
             for(std::size_t i=0;i<pose.bones.size();++i)if(fold(pose.bones[i].name)=="head") {
                 if(head)throw odh::FormatError("scene renderer head-only pose has ambiguous HEAD bone");
@@ -489,14 +491,14 @@ struct SceneRenderer::Impl {
             // Simitone's StripAllButHead zeros the absolute matrices of every
             // bone other than HEAD. Keep the same deformation rule here; the
             // portrait camera can be added independently from lot projection.
-            for(std::size_t i=0;i<pose.bones.size();++i)if(i!=*head) {
+            if (state.head_only) for(std::size_t i=0;i<pose.bones.size();++i)if(i!=*head) {
                 pose.bones[i].absolute_matrix.fill(0.0f);
                 pose.bones[i].absolute_position.fill(0.0f);
             }
         }
         std::optional<PortraitView> view;
         if(portrait&&state.avatar_visible) {
-            if(!head_position)throw odh::FormatError("scene renderer portrait requires head-only pose");
+            if(!head_position)throw odh::FormatError("scene renderer portrait requires a head anchor");
             view=portrait_view(*portrait,*head_position);
         }
         std::vector<odh::RasterTriangle> triangles;
@@ -598,6 +600,12 @@ odh::CompositeFrame SceneRenderer::render_head_portrait(const SceneState& state,
     portrait_state.avatar_direction=0;
     portrait_state.head_only=true;
     return impl_->render(portrait_state,odh::WorldProjection{},options,&camera);
+}
+odh::CompositeFrame SceneRenderer::render_body_portrait(const SceneState& state, HeadPortraitCamera camera) {
+    if (!impl_) throw odh::FormatError("scene renderer used after move");
+    auto fullBody = state;
+    fullBody.head_only = false;
+    return impl_->render(fullBody, odh::WorldProjection{}, odh::RasterOptions{}, &camera);
 }
 std::uint64_t SceneRenderer::cache_samples() const { return impl_ ? impl_->sample_count : 0; }
 std::size_t SceneRenderer::cache_clips() const { return impl_ ? impl_->clips.size() : 0; }

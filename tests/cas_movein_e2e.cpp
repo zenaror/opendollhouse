@@ -754,7 +754,7 @@ int inspect_management(const fs::path& game,bool layout){
     const auto replay=odh::replay_family_overlay(source_families(neighborhood),odh_host::linux_neighborhood_identity(neighborhood),*overlay);
     const auto encoded=odh::encode_family_overlay(*overlay);
     const auto player=odh_host::linux_player_character_directory();
-    const odh::DefinitionIndex catalog(odh::read_character_catalog(player));
+    const odh::DefinitionIndex catalog(odh::read_character_catalog_if_present(player));
     std::cout<<R"({"overlay_sha256":)"<<json_string(hex_digest(odh::sha256(encoded.data(),encoded.size())))
         <<R"(,"assignment_count":)"<<overlay->assignments.size()<<R"(,"creation_count":)"<<overlay->creations.size()
         <<R"(,"archive_count":)"<<overlay->archives.size()<<R"(,"families":[)";

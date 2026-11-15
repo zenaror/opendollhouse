@@ -1,6 +1,7 @@
 #pragma once
 
-#include "linux_window.hpp"
+#include "neighborhood_presentation.hpp"
+namespace odh_host { class LinuxWindow; }
 #include "neighborhood_request.hpp"
 #include "odh/session_entry.hpp"
 #include "odh/neighborhood_picker.hpp"
@@ -16,35 +17,6 @@
 
 namespace odh_host {
 
-struct NeighborhoodHouseArt {
-    std::uint16_t house=0;
-    odh::UiBitmapRect closed_box,open_box,hit;
-    odh::BitmapImage closed;
-    std::optional<odh::BitmapImage> open;
-};
-struct NeighborhoodHoverText {std::string address,family_summary;};
-using NeighborhoodHoverTextProvider=std::function<NeighborhoodHoverText(std::uint16_t house)>;
-using NeighborhoodPortraitProvider=std::function<const odh::BitmapImage*(std::uint32_t)>;
-struct PreparedNeighborhoodMap {
-    odh::RasterFrame frame;
-    std::vector<odh::NeighborhoodMarker> markers;
-    unsigned marker_scale = 1;
-    unsigned mode = 1;
-    std::vector<odh::FamilyEntry> source_families;
-    std::vector<odh::FamilyEntry> effective_families;
-    std::vector<std::string> missing_layers;
-    std::filesystem::path ui_graphics;
-    std::array<bool,8> region_available{{false,true,true,true,true,true,false,true}};
-    std::uint8_t language=1;
-    std::vector<NeighborhoodHouseArt> houses;
-    std::vector<std::array<std::uint8_t,4>> background;
-    std::map<std::uint32_t,bool> unique_neighbors;
-    std::filesystem::path installed_characters;
-    unsigned visual_mode=1;
-
-};
-
-std::optional<std::uint16_t> pick_map_lot(const PreparedNeighborhoodMap&,std::int32_t x,std::int32_t y);
 struct MoveInFamilySelection {
     std::uint16_t family_chunk_id = 0;
     std::array<std::uint8_t, 32> family_identity{};

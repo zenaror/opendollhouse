@@ -15,6 +15,8 @@ struct OriginalCursorPolicyInput {
     // position. Disabled edge scrolling cannot advertise a movement cursor.
     bool edge_scrolling_enabled=false,right_drag=false;
     std::array<int,2> edge{0,0};
+    // Supplied only by the real captured RMB camera consumer.
+    std::optional<std::array<int,2>> right_drag_direction;
     // This is the real object-holder adapter, not merely entering Buy/Build.
     bool object_holder_active=false;
     OriginalObjectCursor object_cursor=OriginalObjectCursor::none;
@@ -31,7 +33,7 @@ struct OriginalCursorSelection {
 // Pure presentation policy. Source anchors: pinned Simitone UILotControl
 // LiveModeUpdate626–654 and UIObjectHolder.Update335–357/446–448; file mapping
 // pinned FreeSO CursorManager.GenMap. No VM query or file read occurs here.
-// Right-drag direction/anchor and custom Build tools need separate proven
-// adapters; the asset name Pan is deliberately not interpreted as a rule.
+// Right-drag direction is supplied by the captured camera; custom Build tools
+// still need their own proven adapters. Pan is not interpreted as a rule.
 OriginalCursorSelection select_original_cursor(const OriginalCursorPolicyInput&) noexcept;
 }

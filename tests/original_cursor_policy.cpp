@@ -9,6 +9,15 @@ using Asset=OriginalCursorAsset;using Domain=OriginalCursorDomain;using Mode=Ori
 void need(bool value,const char* why){if(!value)throw std::runtime_error(why);}
 void cases(){
     {
+        OriginalCursorPolicyInput camera;camera.domain=Domain::world_canvas;camera.right_drag=true;
+        need(select_original_cursor(camera).reason==OriginalCursorReason::unbound_right_drag,"RMB without actual direction remains unbound");
+        camera.right_drag_direction=std::array<int,2>{1,-1};
+        need(select_original_cursor(camera).asset==Asset::UPRIGHT,"captured RMB direction reaches existing original cursor asset mapping");
+        camera.domain=Domain::modal;
+        need(select_original_cursor(camera).asset==Asset::Arrow,"modal suppresses captured RMB direction");
+    }
+
+    {
         OriginalCursorPolicyInput canvas;canvas.domain=OriginalCursorDomain::world_canvas;
         need(select_original_cursor(canvas).asset==OriginalCursorAsset::Arrow,"unpicked world canvas does not invent a ground target");
         canvas.edge_scrolling_enabled=true;canvas.edge={1,0};

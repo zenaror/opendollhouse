@@ -74,12 +74,18 @@ bool load_linux_user_config(LinuxUserConfig& config,std::string* error) {
     if(!input){if(errno==ENOENT||!std::filesystem::exists(path)) {config=LinuxUserConfig{};return true;}
         set_error(error,"cannot open user config");return false;}
     LinuxUserConfig loaded;std::string line;bool have_language=false,have_neighborhood=false;
-    unsigned preference_seen=0;
+    unsigned preference_seen=0;bool have_language_confirmation=false;
     while(std::getline(input,line)){
         if(line.rfind("language=",0)==0){const auto code=line.substr(9);char* end=nullptr;
             errno=0;const long value=std::strtol(code.c_str(),&end,10);
             if(errno||end==code.c_str()||*end!='\0'||value<1||value>20){set_error(error,"invalid language code");return false;}
             loaded.language_code=static_cast<int>(value);have_language=true;
+        } else if(line.rfind("language_confirmed=",0)==0){
+            const auto value=line.substr(19);
+            if(have_language_confirmation||(value!="0"&&value!="1")){
+                set_error(error,"invalid language confirmation");return false;
+            }
+            have_language_confirmation=true;loaded.language_confirmed=value=="1";
         } else if(line.rfind("neighborhood=",0)==0){
             const auto value=std::string_view(line).substr(13);
             if(have_neighborhood || value.size()!=1 || value.front()<'1' || value.front()>'8'){
@@ -117,7 +123,7 @@ bool save_linux_user_config(const LinuxUserConfig& config,std::string* error) {
     if(ec){set_error(error,"cannot create user config directory: "+ec.message());return false;}
     if(::chmod(directory.c_str(),0700)!=0){set_error(error,"cannot secure user config directory");return false;}
     const std::string contents="language="+std::to_string(config.language_code)+"\ndata_root_hex="+
-        encode_path(config.data_root)+"\nneighborhood="+std::to_string(config.neighborhood_number)+"\nlighting="+std::to_string(config.preferences.lighting)+
+        encode_path(config.data_root)+"\nlanguage_confirmed="+std::to_string(config.language_confirmed)+"\nneighborhood="+std::to_string(config.neighborhood_number)+"\nlighting="+std::to_string(config.preferences.lighting)+
         "\nauto_center="+std::to_string(config.preferences.auto_center)+"\nedge_scrolling="+
         std::to_string(config.preferences.edge_scrolling)+"\n";
     std::string pattern=(directory/".config-XXXXXX").string();

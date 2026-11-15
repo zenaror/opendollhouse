@@ -1,5 +1,6 @@
 /build*/
 /reports/
+/Testing/
 __pycache__/
 # Commercial reference files stay outside this checkout.
 *.iso

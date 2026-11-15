@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 using System;
+using System.Collections.Generic;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 
@@ -21,6 +22,16 @@ namespace OpenDollhouse.Simulation
     public delegate int ExpressionRead<TContext>(TContext context, byte scope, short index);
     public delegate bool ExpressionWrite<TContext>(TContext context, byte scope, short index, int value);
     public delegate void ExpressionLevels<TContext>(TContext context, out int caller, out int callee, out int offset);
+    public delegate NativeThreadState ExpressionState<TContext>(TContext context);
+
+    public struct ExpressionAccessCounts
+    {
+        public uint NativeReads;
+        public uint NativeWrites;
+        public uint HostReads;
+        public uint HostWrites;
+        public uint StackResolutions;
+    }
 
     public sealed class ExpressionUnknownOperatorException : InvalidOperationException
     {
@@ -39,6 +50,7 @@ namespace OpenDollhouse.Simulation
             internal ExceptionDispatchInfo Failure;
             internal bool NegativeSqrt;
             internal byte Operator;
+            internal List<NativeStateHandle> ResolvedStackHandles;
             internal CallFrame Next;
         }
 
@@ -48,17 +60,29 @@ namespace OpenDollhouse.Simulation
         private static readonly NativeExpressionMethods.ReadVariable NativeRead = ReadCallback;
         private static readonly NativeExpressionMethods.WriteVariable NativeWrite = WriteCallback;
         private static readonly NativeExpressionMethods.ReadLevels NativeLevels = LevelsCallback;
+        private static readonly NativeExpressionMethods.ResolveStackState NativeResolveStack = ResolveStackCallback;
 
         private readonly ExpressionRead<TContext> read;
         private readonly ExpressionWrite<TContext> write;
         private readonly ExpressionLevels<TContext> levels;
+        private readonly ExpressionState<TContext> state;
+        private readonly ExpressionState<TContext> stackState;
 
         public ExpressionExecutor(ExpressionRead<TContext> read, ExpressionWrite<TContext> write,
             ExpressionLevels<TContext> levels)
+            : this(read, write, levels, null, null) { }
+
+        public ExpressionExecutor(ExpressionRead<TContext> read, ExpressionWrite<TContext> write,
+            ExpressionLevels<TContext> levels, ExpressionState<TContext> state,
+            ExpressionState<TContext> stackState)
         {
             this.read = read ?? throw new ArgumentNullException("read");
             this.write = write ?? throw new ArgumentNullException("write");
             this.levels = levels ?? throw new ArgumentNullException("levels");
+            if ((state == null) != (stackState == null))
+                throw new ArgumentException("State and stack-state resolvers must be supplied together.");
+            this.state = state;
+            this.stackState = stackState;
             // The borrowed packed struct is passed as bytes to the C ABI.
             // A future big-endian managed host must encode LE explicitly.
             if (!BitConverter.IsLittleEndian)
@@ -71,7 +95,15 @@ namespace OpenDollhouse.Simulation
 
         public bool Execute(TContext context, ExpressionOperand operand, out bool negativeSqrt)
         {
+            ExpressionAccessCounts ignored;
+            return Execute(context, operand, out negativeSqrt, out ignored);
+        }
+
+        public bool Execute(TContext context, ExpressionOperand operand, out bool negativeSqrt,
+            out ExpressionAccessCounts access)
+        {
             if (context == null) throw new ArgumentNullException("context");
+            access = default(ExpressionAccessCounts);
             var frame = free;
             if (frame == null) frame = new CallFrame();
             else free = frame.Next;
@@ -86,9 +118,32 @@ namespace OpenDollhouse.Simulation
             try
             {
                 uint result;
-                int status = NativeExpressionMethods.Execute(ref operand, 8, IntPtr.Zero,
-                    NativeRead, NativeWrite, NativeLevels, out result);
-                negativeSqrt = frame.NegativeSqrt;
+                int status;
+                if (state == null)
+                {
+                    status = NativeExpressionMethods.Execute(ref operand, 8, IntPtr.Zero,
+                        NativeRead, NativeWrite, NativeLevels, out result);
+                    negativeSqrt = frame.NegativeSqrt;
+                }
+                else
+                {
+                    // SafeHandle marshaling holds the current native holder for
+                    // the entire call. Its bound banks may still change in a
+                    // reentrant host callback and are resolved per access.
+                    var currentState = state(context);
+                    uint nativeReads, nativeWrites, hostReads, hostWrites, stackResolutions, sqrt;
+                    status = NativeExpressionMethods.ExecuteWithState(ref operand, 8,
+                        currentState == null ? null : currentState.Handle, IntPtr.Zero,
+                        NativeRead, NativeWrite, NativeLevels, NativeResolveStack,
+                        out result, out nativeReads, out nativeWrites, out hostReads,
+                        out hostWrites, out stackResolutions, out sqrt);
+                    access = new ExpressionAccessCounts {
+                        NativeReads = nativeReads, NativeWrites = nativeWrites,
+                        HostReads = hostReads, HostWrites = hostWrites,
+                        StackResolutions = stackResolutions
+                    };
+                    negativeSqrt = sqrt != 0;
+                }
                 if (frame.Failure != null) frame.Failure.Throw();
                 switch (status)
                 {
@@ -99,11 +154,18 @@ namespace OpenDollhouse.Simulation
                     case 3: throw new ExpressionUnknownOperatorException();
                     case 4: throw new OverflowException();
                     case 1: throw new ArgumentException("Invalid native Expression argument.");
+                    case 6: throw new IndexOutOfRangeException();
+                    case 7: throw new InvalidOperationException("Native Expression register bank is unavailable.");
                     default: throw new InvalidOperationException("Native Expression internal error: " + status);
                 }
             }
             finally
             {
+                if (frame.ResolvedStackHandles != null)
+                {
+                    foreach (var handle in frame.ResolvedStackHandles) handle.DangerousRelease();
+                    frame.ResolvedStackHandles.Clear();
+                }
                 current = frame.Next;
                 frame.Context = null;
                 frame.Executor = null;
@@ -157,6 +219,40 @@ namespace OpenDollhouse.Simulation
             {
                 frame.Executor.levels(frame.Context, out caller, out callee, out offset);
                 return 0;
+            }
+            catch (Exception exception)
+            {
+                frame.Failure = ExceptionDispatchInfo.Capture(exception);
+                return 1;
+            }
+        }
+
+        private static int ResolveStackCallback(IntPtr ignored, out IntPtr state)
+        {
+            state = IntPtr.Zero;
+            var frame = current;
+            if (frame == null) return 1;
+            try
+            {
+                var resolved = frame.Executor.stackState(frame.Context);
+                if (resolved == null) throw new NullReferenceException();
+                var handle = resolved.Handle;
+                bool pinned = false;
+                handle.DangerousAddRef(ref pinned);
+                if (!pinned) throw new InvalidOperationException("Native stack holder was not retained.");
+                try
+                {
+                    if (frame.ResolvedStackHandles == null)
+                        frame.ResolvedStackHandles = new List<NativeStateHandle>();
+                    frame.ResolvedStackHandles.Add(handle);
+                    state = handle.DangerousGetHandle();
+                    return 0;
+                }
+                catch
+                {
+                    handle.DangerousRelease();
+                    throw;
+                }
             }
             catch (Exception exception)
             {

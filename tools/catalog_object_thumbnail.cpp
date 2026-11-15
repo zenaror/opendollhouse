@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-#include "catalog_object_thumbnail.hpp"
+#include "catalog_object_thumbnail_core.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
 namespace odh_host {
+
 CatalogObjectThumbnail::CatalogObjectThumbnail(const odh::DefinitionIndex& definitions)
     :definitions_(definitions),renderer_(definitions){}
 void CatalogObjectThumbnail::clear(){result_={};}
@@ -49,26 +50,7 @@ const CatalogObjectThumbnailResult& CatalogObjectThumbnail::select(
         auto rendered=renderer_.render(visuals,camera,base,true,true);
         if(rendered.offscreen_layers||rendered.clipped_layers)
             throw odh::FormatError("catalog thumbnail artwork exceeds isolated camera budget");
-        const auto& composite=rendered.composite;
-        if(composite.owner_ids.size()!=side*side||composite.sprite_rgba.size()!=side*side)
-            throw odh::FormatError("catalog thumbnail ownership/alpha unavailable");
-        std::uint32_t left=side,top=side,right=0,bottom=0;
-        for(std::uint32_t y=0;y<side;++y)for(std::uint32_t x=0;x<side;++x){
-            const auto i=std::size_t(y)*side+x;
-            if(composite.owner_ids[i]&&std::isfinite(composite.image.depth[i])){
-                left=std::min(left,x);top=std::min(top,y);
-                right=std::max(right,x+1);bottom=std::max(bottom,y+1);
-            }
-        }
-        if(left>=right||top>=bottom){result_.detail="selected graphics contain no visible pixels";return result_;}
-        odh::BitmapImage image{right-left,bottom-top,32,true,{},0};
-        image.pixels.assign(std::size_t(image.width)*image.height,{0,0,0,0});
-        for(std::uint32_t y=top;y<bottom;++y)for(std::uint32_t x=left;x<right;++x){
-            const auto i=std::size_t(y)*side+x;
-            if(!composite.owner_ids[i]||!std::isfinite(composite.image.depth[i]))continue;
-            image.pixels[std::size_t(y-top)*image.width+x-left]=composite.sprite_rgba[i];
-        }
-        result_.image=std::move(image);result_.status=CatalogObjectThumbnailStatus::ready;
+        result_=catalog_thumbnail_detail::crop_thumbnail(rendered.composite);
     }catch(const odh::FormatError& error){
         result_.status=CatalogObjectThumbnailStatus::failed;result_.detail=error.what();
     }

@@ -16,19 +16,26 @@ std::optional<NeighborhoodMapConfig> neighborhood_map_config(unsigned mode) {
     if(!neighborhood_mode_supported(mode)) return std::nullopt;
     switch(mode) {
         case 1: return NeighborhoodMapConfig{"Nbhd\\NScreen.BMP",1,
-            {{"Nbhd\\DiffN1-N2_8.bmp",0,0}}};
+            {{"Nbhd\\DiffN1-N2_8.bmp",0,0}},
+            {"Nbhd\\DiffN1-N2_8.bmp","Nbhd\\DiffN1-N3_8.bmp","Nbhd\\DiffN1-N4_8.bmp"}};
         case 2: return NeighborhoodMapConfig{"Downtown\\DScreen.bmp",1,
-            {{"Downtown\\dscreen00.bmp",0,0}}};
+            {{"Downtown\\dscreen00.bmp",0,0}},
+            {"Downtown\\dscreen00.bmp","Downtown\\dscreen01.bmp","Downtown\\dscreen02.bmp","Downtown\\dscreen03.bmp","Downtown\\dscreen04.bmp"}};
         case 3: return NeighborhoodMapConfig{"VIsland\\visland.bmp",1,
             {{"VIsland\\visland_waves001.bmp",0,0},
              {"VIsland\\visland_port.bmp",0,0},
-             {"VIsland\\visland_trees.bmp",0,0}}};
+             {"VIsland\\visland_trees.bmp",0,0}},
+            {"VIsland\\visland_waves001.bmp","VIsland\\visland_waves002.bmp","VIsland\\visland_waves003.bmp","VIsland\\visland_waves004.bmp","VIsland\\visland_waves005.bmp"}};
         case 4: return NeighborhoodMapConfig{"Community\\NScreen_unleashed.bmp",2,
-            {{"Community\\NScreen_unleashed_waves001.bmp",0,0}}};
+            {{"Community\\NScreen_unleashed_waves001.bmp",0,0}},
+            {"Community\\NScreen_unleashed_waves001.bmp","Community\\NScreen_unleashed_waves002.bmp","Community\\NScreen_unleashed_waves003.bmp",
+             "Community\\NScreen_unleashed_waves004.bmp","Community\\NScreen_unleashed_waves005.bmp","Community\\NScreen_unleashed_waves006.bmp"},false};
         case 5: return NeighborhoodMapConfig{"Studiotown\\DScreen.bmp",1,
             {{"Studiotown\\DScreen_top_layer.bmp",0,0}}};
         case 7: return NeighborhoodMapConfig{"Magicland\\DScreen.bmp",1,
-            {{"Magicland\\DScreen_waves1.bmp",0,62}}};
+            {{"Magicland\\DScreen_waves1.bmp",0,62}},
+            {"Magicland\\DScreen_waves1.bmp","Magicland\\DScreen_waves2.bmp","Magicland\\DScreen_waves3.bmp",
+             "Magicland\\DScreen_waves4.bmp","Magicland\\DScreen_waves5.bmp","Magicland\\DScreen_waves6.bmp"},false};
     }
     throw FormatError("invalid neighborhood mode");
 }

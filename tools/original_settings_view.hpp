@@ -39,9 +39,11 @@ struct OriginalGraphicsMetrics {
 };
 OriginalSettingsLayout original_settings_layout(std::uint32_t width,std::uint32_t height,OriginalSettingsPage,
     const OriginalGraphicsMetrics& graphics_metrics={});
+using OriginalSettingsText=std::array<std::string,84>;
 class OriginalSettingsView {
 public:
-    explicit OriginalSettingsView(const std::filesystem::path& game,std::uint8_t language=1);
+    explicit OriginalSettingsView(const std::filesystem::path& game,std::uint8_t language=1,bool show_anti_alias=true,bool show_tutorial_reset=false,
+        const OriginalSettingsText* selected_text=nullptr);
     OriginalSettingsLayout layout(std::uint32_t width,std::uint32_t height,OriginalSettingsPage)const;
     std::optional<std::size_t> hit(const OriginalSettingsLayout&,int x,int y,
         const OriginalSettingsState&,const OriginalSettingsCapabilities&)const;
@@ -54,7 +56,23 @@ public:
         std::optional<std::size_t> pressed={})const;
 private:
     OriginalUiArt art_;
-    std::array<std::string,84> strings_;
+    OriginalSettingsText strings_;
     std::uint8_t language_;
+    bool show_anti_alias_;
+    bool show_tutorial_reset_;
+};
+}
+
+namespace odh_host {
+// Presentation capture only; active values and persistence stay with the host.
+struct OriginalSettingsPointerInput {int x=0,y=0;bool down=false,held=false,up=false,cancel=false;};
+class OriginalSettingsInteraction {
+public:
+    void reset(){captured_.reset();}
+    std::optional<std::size_t> captured()const{return captured_;}
+    std::optional<OriginalSettingsEvent> update(const OriginalSettingsView&,const OriginalSettingsLayout&,
+        const OriginalSettingsState&,const OriginalSettingsCapabilities&,OriginalSettingsPointerInput);
+private:
+    std::optional<std::size_t> captured_;
 };
 }

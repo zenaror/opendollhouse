@@ -210,7 +210,7 @@ std::optional<std::array<std::int32_t,2>> PieMenuPointer::hover_target() const n
 }
 void draw_linux_pie_menu(odh::RasterFrame& frame,const odh::PieMenuLayout& layout,
         const std::vector<PieMenuCaption>& labels,std::size_t selected,const std::optional<PieMenuCaption>& parent,
-        const odh::BitmapImage* background,bool pressed,PieMenuBackground kind){
+        const odh::BitmapImage* background,bool pressed,PieMenuBackground kind,bool highlight_selected){
     if(frame.pixels.size()!=std::uint64_t(frame.width)*frame.height||labels.size()!=layout.items.size()||
        selected>=labels.size()||parent.has_value()!=layout.back_button.has_value())
         throw odh::FormatError("pie menu presentation does not match layout");
@@ -224,6 +224,6 @@ void draw_linux_pie_menu(odh::RasterFrame& frame,const odh::PieMenuLayout& layou
     if(layout.previous_page)draw_caption(frame,*layout.previous_page,{"‹",1},regular);
     if(layout.next_page)draw_caption(frame,*layout.next_page,{"›",1},regular);
     for(std::size_t i=layout.page_first;i<labels.size()&&i-layout.page_first<layout.page_size;++i)
-        draw_caption(frame,layout.items[i],labels[i],i==selected?(pressed?down:highlight):regular);
+        draw_caption(frame,layout.items[i],labels[i],highlight_selected&&i==selected?(pressed?down:highlight):regular);
 }
 }

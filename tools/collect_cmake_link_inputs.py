@@ -55,13 +55,13 @@ def make_rules(text):
     if left or right:need(rhs and left,'invalid final depfile rule');rules.append((left,right))
     return rules
 
-def parse_depfile(path,obj,build):
+def parse_depfile(path,obj,build,dependency_cwd=None):
     rules=make_rules(read_text(path));need(rules and rules[0][1],'missing dependency rule: '+str(path))
     targets,dependencies=rules[0]
     need(obj in [path_at(x,build) for x in targets],'depfile target does not identify actual linked object: '+str(obj))
     for targets2,deps2 in rules[1:]:
         need(not deps2 and all(x in dependencies for x in targets2),'unsupported secondary depfile rule')
-    return list(dict.fromkeys(path_at(x,build) for x in dependencies))
+    return list(dict.fromkeys(path_at(x,dependency_cwd or build) for x in dependencies))
 
 def archive_members(path):
     """Data parser only. Thin archives rejected; symbol/name tables excluded."""
@@ -87,36 +87,38 @@ class Collector:
     def __init__(self,build,source,collect):
         self.build=build.resolve();self.source=source.resolve();self.collect=collect
         need(self.build.is_dir() and self.source.is_dir() and self.build!=self.source,'invalid build/source roots')
-        self.nodes={};self.outputs={};self.tracked={};self.responses={}
-        for file in sorted((self.build/'CMakeFiles').glob('*.dir/link.txt')):
+        self.nodes={};self.outputs={};self.tracked={};self.responses={};self.directories={}
+        for file in sorted(self.build.glob('**/CMakeFiles/*.dir/link.txt')):
             name=file.parent.name[:-4];node=self.parse_link(name,file)
             need(name not in self.nodes,'duplicate target');self.nodes[name]=node
+            self.directories[name]=file.parent
             need(node['output'] not in self.outputs,'duplicate local output producer: '+str(node['output']));self.outputs[node['output']]=name
     def pin(self,p):
         p=Path(p);need(p.is_file(),'required actual input missing: '+str(p))
         if p not in self.tracked:self.tracked[p]={'sha256':digest(p),'bytes':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns}
         return self.tracked[p]
-    def expand(self,tokens,depth=0,seen=None):
+    def expand(self,tokens,depth=0,seen=None,cwd=None):
         need(depth<=8,'response nesting limit');out=[]
         for token in tokens:
             if token.startswith('@'):
-                p=path_at(token[1:],self.build);need(inside(p,self.build),'response outside build');self.responses[p]=read_text(p)
+                p=path_at(token[1:],cwd or self.build);need(inside(p,self.build),'response outside build');self.responses[p]=read_text(p)
                 if seen is not None:seen.add(p)
-                out.extend(self.expand(shlex.split(self.responses[p]),depth+1,seen))
+                out.extend(self.expand(shlex.split(self.responses[p]),depth+1,seen,cwd))
             else:out.append(token)
         need(len(out)<=200000,'link token budget');return out
     def parse_link(self,name,file):
-        responses=set();commands=[self.expand(shlex.split(line),seen=responses) for line in read_text(file).splitlines() if line.strip()]
+        cwd=file.parent.parent.parent
+        responses=set();commands=[self.expand(shlex.split(line),seen=responses,cwd=cwd) for line in read_text(file).splitlines() if line.strip()]
         need(commands,'empty link metadata: '+name);primary=commands[0]
         need(not any(x in primary for x in ('&&',';','|','>','<')),'shell wrapper in link metadata unsupported')
         if '-o' in primary:
-            at=primary.index('-o');need(at+1<len(primary),'missing link output');output=path_at(primary[at+1],self.build);kind='linked'
+            at=primary.index('-o');need(at+1<len(primary),'missing link output');output=path_at(primary[at+1],cwd);kind='linked'
         else:
             need(Path(primary[0]).name in ('ar','gcc-ar','llvm-ar') or Path(primary[0]).name.endswith('-ar'),'unsupported archive creator')
-            candidates=[x for x in primary[1:] if x.endswith('.a')];need(len(candidates)==1,'archive output ambiguous');output=path_at(candidates[0],self.build);kind='archive'
-        objects=[path_at(x,self.build) for x in primary[1:] if x.endswith(('.o','.obj'))]
-        archives=[path_at(x,self.build) for x in primary[1:] if x.endswith('.a') and path_at(x,self.build)!=output]
-        shared=[path_at(x,self.build) for x in primary[1:] if re.search(r'\.so(?:\.[0-9.]+)?$',x) and path_at(x,self.build)!=output]
+            candidates=[x for x in primary[1:] if x.endswith('.a')];need(len(candidates)==1,'archive output ambiguous');output=path_at(candidates[0],cwd);kind='archive'
+        objects=[path_at(x,cwd) for x in primary[1:] if x.endswith(('.o','.obj'))]
+        archives=[path_at(x,cwd) for x in primary[1:] if x.endswith('.a') and path_at(x,cwd)!=output]
+        shared=[path_at(x,cwd) for x in primary[1:] if re.search(r'\.so(?:\.[0-9.]+)?$',x) and path_at(x,cwd)!=output]
         need(inside(output,self.build),'target output outside actual build')
         search_libraries=[]
         for i,token in enumerate(primary):
@@ -127,8 +129,13 @@ class Collector:
         return {'name':name,'directory':file.parent,'file':file,'output':output,'kind':kind,'objects':objects,'libraries':archives+shared,'commands':commands,
             'search_libraries':search_libraries,'response_files':sorted(responses)}
     def object_target(self,obj):
-        need(inside(obj,self.build),'object outside build: '+str(obj));m=re.match(r'CMakeFiles/([^/]+)\.dir/',obj.relative_to(self.build).as_posix())
-        need(m,'cannot bind object to its actual CMake target: '+str(obj));return m.group(1)
+        need(inside(obj,self.build),'object outside build: '+str(obj))
+        directories=[p for p in obj.parents if inside(p,self.build) and p.name.endswith('.dir') and p.parent.name=='CMakeFiles']
+        need(len(directories)==1,'cannot bind object to its actual CMake target: '+str(obj))
+        directory=directories[0];name=directory.name[:-4]
+        need(name not in self.directories or self.directories[name]==directory,'ambiguous object target: '+name)
+        self.directories[name]=directory
+        return name
     def closure(self,target):
         need(target in self.nodes,'unknown actual linked target '+target);targets=set();objects=set();libraries=set();external=set();todo=[target];processed=set()
         while todo:
@@ -139,7 +146,7 @@ class Collector:
                 objects.add(obj);owner=self.object_target(obj)
                 if owner!=name:
                     # OBJECT libraries can have flags/dependencies without link.txt.
-                    need((self.build/f'CMakeFiles/{owner}.dir/flags.make').is_file(),'object target flags missing');targets.add(owner)
+                    need((self.directories[owner]/'flags.make').is_file(),'object target flags missing');targets.add(owner)
             for lib in node['libraries']:
                 if inside(lib,self.build):
                     need(lib in self.outputs,'local library has no actual CMake link metadata: '+str(lib));libraries.add(lib);todo.append(self.outputs[lib])
@@ -148,7 +155,7 @@ class Collector:
     def metadata(self,targets):
         result={}
         for name in sorted(targets):
-            directory=self.build/f'CMakeFiles/{name}.dir'
+            directory=self.directories[name]
             for suffix in ['flags.make','DependInfo.cmake','build.make']:
                 p=directory/suffix;need(p.is_file(),'target metadata missing: '+str(p));result[p]=None
             if name in self.nodes:
@@ -172,8 +179,8 @@ class Collector:
                     self.pin(lib);need(lib.stat().st_mtime_ns<=node['output'].stat().st_mtime_ns,'library newer than consuming link output: '+name)
         for obj in sorted(objects):
             owner=self.object_target(obj);op=self.pin(obj);dep=Path(str(obj)+'.d');need(dep.is_file(),'missing REAL .o.d, refusing inference: '+str(dep));self.pin(dep);meta[dep]=None
-            ds=parse_depfile(dep,obj,self.build);need(ds,'object dependency set empty');need(any(inside(x,self.source) or inside(x,self.build) for x in ds),'object has no native/generated source authority')
-            flags=self.build/f'CMakeFiles/{owner}.dir/flags.make';self.pin(flags)
+            ds=parse_depfile(dep,obj,self.build,self.directories[owner].parent.parent);need(ds,'object dependency set empty');need(any(inside(x,self.source) or inside(x,self.build) for x in ds),'object has no native/generated source authority')
+            flags=self.directories[owner]/'flags.make';self.pin(flags)
             need(flags.stat().st_mtime_ns<=obj.stat().st_mtime_ns,'flags newer than actual object: '+str(obj))
             for d in ds:
                 self.pin(d);need(d.stat().st_mtime_ns<=obj.stat().st_mtime_ns,'dependency newer than object; rebuild required: '+str(d))
@@ -184,7 +191,7 @@ class Collector:
                 elif inside(d,Path('/usr')) or inside(d,Path('/lib')):system.add(d)
                 else:unexpected.add(d)
             need(obj.stat().st_mtime_ns<=top['output'].stat().st_mtime_ns,'object newer than binary')
-            build_make=self.build/f'CMakeFiles/{owner}.dir/build.make';self.pin(build_make)
+            build_make=self.directories[owner]/'build.make';self.pin(build_make)
             recipe=[];active=False;relative=obj.relative_to(self.build).as_posix()
             for line in read_text(build_make).splitlines():
                 if line.startswith(relative+':'):active=True;continue
@@ -202,7 +209,7 @@ class Collector:
                 archive_rows.append({'path':str(lib.relative_to(self.build)),'sha256':self.pin(lib)['sha256'],'member_count':sum(actual.values()),'members_verified_against_actual_objects':True})
         target_metadata={};tools=set()
         for name in sorted(targets):
-            directory=self.build/f'CMakeFiles/{name}.dir';flags=read_text(directory/'flags.make');assignments={m.group(1):m.group(2) for m in re.finditer(r'^([A-Z][A-Z0-9_]*)[ \t]*=[ \t]*(.*)$',flags,re.M)}
+            directory=self.directories[name];flags=read_text(directory/'flags.make');assignments={m.group(1):m.group(2) for m in re.finditer(r'^([A-Z][A-Z0-9_]*)[ \t]*=[ \t]*(.*)$',flags,re.M)}
             target_metadata[name]={'build_make_sha256':self.pin(directory/'build.make')['sha256'],'flags_make_assignments':assignments,'link_commands':self.nodes[name]['commands'] if name in self.nodes else None,'kind':self.nodes[name]['kind'] if name in self.nodes else 'object-library'}
             if name in self.nodes:
                 for command in self.nodes[name]['commands']:

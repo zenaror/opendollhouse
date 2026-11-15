@@ -2,68 +2,63 @@
 
 <a href="https://www.buymeacoffee.com/zenaro147" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
-Reimplementação em **C/C++** do The Sims 1 para PC, orientada pela experiência
-original, pelas sete expansões e pelo conteúdo personalizado clássico.
-Simitone e FreeSO são referências de comportamento e código.
+An independent **C/C++** engine for playing The Sims 1 with files from your own
+installation. The project aims to preserve the look and experience of the
+original PC game, including its seven expansion packs.
 
-**Projeto experimental: ainda não há uma versão completa jogável.** O motor
-nativo já possui leitores de dados, simulação parcial, interface Linux de teste,
-áudio e salvamento em cenários limitados. A interface original, construção/compra
-completas e a cobertura das expansões continuam em desenvolvimento.
+**This is the first experimental version, milestone 1.** It is playable on
+Linux, with bugs and differences still present. Simitone is the functional
+reference for this milestone; compatibility is not complete. See the
+[current status and limitations](docs/status.md).
 
-Linux é o primeiro alvo de validação. Windows, macOS Intel/Apple Silicon,
-Android, New Nintendo 3DS, PS Vita e Switch são alvos futuros; Wii U é um alvo
-desejado. Isso não representa suporte ou desempenho comprovado nessas plataformas.
+## Start playing
 
-## Dados do jogo
+You need the files from a complete **The Sims Complete Collection** installation.
+They are not included with OpenDollhouse. Use an installed or extracted game
+folder: an ISO alone is not enough. The engine does not require the original
+executable or an inserted CD. Full Legacy Collection compatibility has not yet
+been confirmed.
 
-Você precisa fornecer uma cópia dos dados do **The Sims Complete Collection**,
-fora do checkout. O projeto não distribui dados comerciais. A entrada atual é
-uma pasta de dados extraídos; importação direta de ISO/CAB não está implementada.
-O motor não depende do executável original nem de um CD inserido.
+1. Obtain the test package for your system. Packages prepared in a development
+   checkout are in `build/releases/debug/<platform>/`; these generated files
+   are not included in a clone of the source repository.
+2. On Linux and Windows, extract the entire `odl-launcher` folder into the game
+   installation, next to `GameData` and `UIGraphics`. On macOS, keep the
+   `odh-launcher` folder name used by the package.
+3. Open the package launcher without arguments. For Android and consoles,
+   follow the platform instructions below.
 
-## Compilar e testar no Linux
+**[Installation instructions for each platform →](docs/installation.md)**
 
-Requisitos: compilador C++17, CMake 3.16+ e Python 3.8+ para scripts auxiliares.
-A janela exige X11; PangoCairo é recomendado para textos e idiomas.
-Em Debian/Ubuntu/Linux Mint:
+Experimental packages exist for Linux, Windows, macOS Intel/Apple Silicon,
+Android, New 3DS, Vita and Switch. Testing varies by platform; a package does
+not guarantee performance or every feature on that device. There is no stable
+public release yet, and no game package for Wii U or Old 3DS.
+See [which package to use](docs/testing-builds.md).
 
-```sh
-sudo apt install build-essential cmake python3 libx11-dev libpango1.0-dev
-cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/native --parallel 2
-ctest --test-dir build/native --output-on-failure
-```
+## Playing and getting help
 
-Para compilar apenas ferramentas e testes sem janela, configure com
-`-DODH_X11=OFF`. Os testes de janela são opcionais e exigem um display isolado.
+- [Installation, language and saved games](docs/installation.md).
+- [Keyboard shortcuts](docs/keyboard-controls.md).
+- [Console and Android controls](docs/controls.md).
+- [Troubleshooting and reporting a problem](docs/troubleshooting.md).
+- [Recent changes](CHANGELOG.md).
 
-## Uso experimental
+OpenDollhouse saves are separate from the original game files. Back up your
+saved games before updating a test build.
 
-A partir da raiz do checkout, indique sua pasta de dados:
+## Contributing
 
-```sh
-export GAME_ROOT="/caminho/para/The Sims"
-./build/native/odh-person --game-root "$GAME_ROOT" --mode 1
-```
+The engine code is in `engine/sims3ds/`; platform adapters are in
+`engine/platform/`. To build the project or contribute with an AI agent,
+see the [contributor guides](docs/ai_agents/README.md).
+Playing a prepared package does not require a compiler or .NET.
 
-O seletor de vizinhança e as interações ainda têm cobertura limitada.
-Use um perfil de testes e preserve seus saves originais.
-Consulte [ferramentas e exemplos](docs/tools.md) e a
-[matriz de funcionalidades](docs/playable-feature-matrix.md) antes de testar.
+## Credits and license
 
-## Código e documentação
-
-- `src/`, `include/odh/` e `native/`: motor e componentes C/C++.
-- `tools/`: programas de inspeção, interface e validação.
-- `tests/`: testes e dados sintéticos.
-- [Documentação](docs/README.md): arquitetura, formatos, planos e validações.
-- [Mods e expansões](docs/modding.md): guia do suporte futuro; ainda sem API pública estável.
-- [Changelog](CHANGELOG.md): mudanças relevantes ainda não lançadas.
-- [Referências e atribuições](docs/references.md): Simitone, FreeSO e dependências.
-
-## Licenciamento
-
-A licença do código do ODH ainda será definida. Não presumir que a licença de
-uma referência se aplica ao projeto. Reutilização de código de terceiros exige
-verificar as licenças dos arquivos e dependências. Dados do jogo não são distribuídos.
+The project uses a Sims3DS codebase and references Simitone, FreeSims and FreeSO.
+We preserve their authors' credits and licenses. Authorized original
+contributions use [MPL-2.0](LICENSE); other components retain their own terms.
+See [credits](docs/references.md) and [license notices](NOTICE.md).
+The Sims and its expansions belong to Maxis/Electronic Arts; their data is not
+distributed here.

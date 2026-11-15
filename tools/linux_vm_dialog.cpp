@@ -1,4 +1,6 @@
+#include "original_win_button.hpp"
 #include "linux_vm_dialog.hpp"
+#include "original_button_state.hpp"
 
 #include "linux_text_renderer.hpp"
 #include "odh/ui_bitmap.hpp"
@@ -109,7 +111,7 @@ odh::UiBitmapRect illustration_extent(int fw,int fh,const odh::DialogState& stat
     if(!image||!image->width||!image->height)return {};
     const bool compact=fh<240;
     const int rows=std::min<std::size_t>(4,state.prompt.choices.size());
-    const auto max_width=std::min(520,fw-32),max_height=std::min(312,fh-32);
+    const auto max_width=std::min(appearance.tutorial_corner?563:520,fw-32),max_height=std::min(312,fh-32);
     constexpr int text_column_min=72,image_gap=12;
     const auto w=max_width-2*content_margin-image_gap-text_column_min;
     const auto h=max_height-(compact?8:content_margin)-33-(compact?8:12)-8-
@@ -122,13 +124,13 @@ odh::UiBitmapRect illustration_extent(int fw,int fh,const odh::DialogState& stat
 VmMessageDialogLayout content_layout(int fw,int fh,const odh::DialogState& state,
         std::uint8_t language,const VmDialogAppearance& appearance){
     const bool compact=fh<240;
-    const int fontsize=compact?11:15;
+    const int fontsize=compact?11:(appearance.tutorial_corner?19:15);
     const auto& title=state.prompt.title;const auto& message=state.prompt.message;
     if(title.size()>4096||message.size()>4096)throw std::invalid_argument("dialog text outside layout budget");
     const int rows=std::min<std::size_t>(4,state.prompt.choices.size());
-    const int count=static_cast<int>(vm_dialog_button_count(state.instruction.operands[5]));
+    const int count=state.instruction.operands[5]==10&&appearance.phonebook_cancel_button?2:static_cast<int>(vm_dialog_button_count(state.instruction.operands[5]));
     const int button_w=count>1?104:92;
-    const int max_w=std::min(520,fw-32);
+    const int max_w=std::min(appearance.tutorial_corner?563:520,fw-32);
     const int controls_min_w=std::max(280,count*(button_w+16)+24);
     const auto title_w=title.empty()?0:measure_text_overlay(title,language,fontsize).width;
     const auto text_w=message.empty()?0:measure_text_overlay(message,language,fontsize).width;
@@ -136,7 +138,7 @@ VmMessageDialogLayout content_layout(int fw,int fh,const odh::DialogState& state
     const int image_w=illustration.width?illustration.width+12:0;
     const int min_w=std::min(max_w,std::max(controls_min_w,image_w+2*content_margin+76));
     const int pref=std::max(title_w,std::min(480,text_w)*2/3+image_w)+2*content_margin;
-    const int width=std::clamp(pref,min_w,max_w);
+    const int width=appearance.tutorial_corner?max_w:std::clamp(pref,min_w,max_w);
     const int body_w=std::max(20,width-2*content_margin-image_w-4);
     int body_h=message.empty()?fontsize:measure_text_overlay(message,language,fontsize,body_w).height;
     if(illustration.width&&!message.empty()){
@@ -151,10 +153,10 @@ VmMessageDialogLayout content_layout(int fw,int fh,const odh::DialogState& state
     const int wanted=2*content_margin+33+10+std::max(title_h+body_h+8,image_h)
         +(input?36:0)+(rows?rows*choice_row_height+8:0);
     const int height=std::clamp(wanted,std::min(126,fh-32),std::min(312,fh-32));
-    const int x=(fw-width)/2,y=(fh-height)/2;
+    const int x=appearance.tutorial_corner?fw-width:(fw-width)/2,y=appearance.tutorial_corner?0:(fh-height)/2;
     const int bw=std::min(button_w,(width-24)/count-8);
     if(illustration.width){illustration.x=x+content_margin;illustration.y=y+(compact?8:content_margin);}
-    return {x,y,width,height,x+(width-bw)/2,y+height-(compact?8:12)-33,bw,33,illustration};
+    return {x,y,width,height,x+(width-bw)/2,y+height-(compact?8:12)-33,bw,33,illustration,uint8_t(count)};
 }
 }
 
@@ -242,14 +244,14 @@ static TextOverlayResult draw_dialog_body(odh::RasterFrame& frame,std::string_vi
     if(icon.width){style.x+=icon.width+12;style.width-=icon.width+12;}
     if(!title.empty()){
         style.y=layout->y+(compact_input?6:12);style.height=compact_input?20:26;
-        style.font_size_px=compact_input?11:15;
+        style.font_size_px=compact_input?11:(appearance.tutorial_corner?21:15);
         style.centered=appearance.center_title;
         (void)draw_text_overlay(frame,title,language,style);
     }
     style.y=layout->y+(title.empty()?(compact_input?6:16):(compact_input?26:40));
     const auto default_bottom=text_input?input_y(*layout)-4:layout->ok_y-4;
     style.height=body_bottom_limit.value_or(default_bottom)-style.y;
-    style.font_size_px=compact_input?11:15;style.padding=1;
+    style.font_size_px=compact_input?11:(appearance.tutorial_corner?19:15);style.padding=1;
     if(style.height<=style.padding*2)throw std::invalid_argument("VM dialog has no room for message text");
     if(icon.width){
         const auto flow=illustrated_text_flow(message,language,style.font_size_px,
@@ -292,20 +294,24 @@ odh::UiBitmapRect response_box(const VmMessageDialogLayout& l,std::size_t count,
     return {l.x+(l.width-total)/2+static_cast<int>(index)*(width+gap),l.ok_y,width,l.ok_height};
 }
 void draw_response(odh::RasterFrame& frame,odh::UiBitmapRect box,std::string_view label,
-        std::uint8_t language,bool focused,const VmDialogAppearance& appearance){
+        std::uint8_t language,bool focused,const VmDialogAppearance& appearance,bool disabled=false,std::size_t index=0){
     if(label.empty()||label.size()>4096)throw std::invalid_argument("VM dialog response label outside bounds");
     if(const auto* strip=appearance.button_strip){
         if(strip->width!=260||strip->height!=33)throw odh::FormatError("invalid original WinBtn strip");
-        // Keyboard selection does not depress a momentary button. Its resting
-        // state is frame zero (classic cTSWinBtn state calculation 005e3a26).
-        odh::blit_color_keyed_bitmap(frame,*strip,box,odh::UiBitmapRect{0,0,65,33},{255,0,255});
+        const bool hover=appearance.response_pointer&&box.contains((*appearance.response_pointer)[0],(*appearance.response_pointer)[1]);
+        // Keyboard focus colors the caption but does not depress the artwork.
+        const auto state=original_button_frame(!disabled,false,hover,appearance.pressed_response==index);
+        if(!draw_original_win_button(frame,*strip,box,state))
+            odh::blit_color_keyed_bitmap(frame,*strip,box,odh::UiBitmapRect{int(state)*65,0,65,33},{255,0,255});
     }else{
         fill(frame,box.x,box.y,box.width,box.height,focused?Color{137,107,59,255}:Color{102,76,43,255});
     }
     TextOverlayStyle style;style.x=box.x;style.y=box.y;style.width=box.width;style.height=box.height;
     style.font_size_px=14;style.padding=2;style.background={0,0,0,0};
     style.centered=true;
-    style.foreground=appearance.button_strip&&focused?Color{255,255,0,255}:Color{255,250,231,255};
+    const bool hover=appearance.response_pointer&&box.contains((*appearance.response_pointer)[0],(*appearance.response_pointer)[1]);
+    const bool caption_focus=appearance.response_pointer?hover:focused;
+    style.foreground=disabled?Color{128,128,128,255}:appearance.button_strip&&caption_focus?Color{255,255,0,255}:Color{255,250,231,255};
     (void)draw_text_overlay(frame,label,language,style);
 }
 }
@@ -351,9 +357,15 @@ std::optional<std::size_t> vm_dialog_choice_hit(const VmMessageDialogLayout& lay
     if(index>=state.prompt.choices.size())return {};
     return index;
 }
+std::optional<odh::UiBitmapRect> vm_dialog_choice_rect(const VmMessageDialogLayout& layout,const odh::DialogState& state,std::size_t index){
+    const auto rows=std::size_t(choice_rows(layout));const auto start=vm_dialog_choice_index(state)/rows*rows;
+    if(index<start||index>=start+rows||index>=state.prompt.choices.size())return {};
+    return odh::UiBitmapRect{layout.x+18,choice_top(layout)+int(index-start)*choice_row_height,layout.width-36,choice_row_height};
+}
+odh::UiBitmapRect vm_dialog_button_rect(const VmMessageDialogLayout& l,std::uint8_t type,std::size_t index){return response_box(l,l.response_count?l.response_count:vm_dialog_button_count(type),index);}
 std::size_t vm_dialog_button_count(std::uint8_t type) noexcept {return type==1?2U:type==2?3U:1U;}
 std::optional<std::uint8_t> vm_dialog_button_hit(const VmMessageDialogLayout& layout,std::uint8_t type,std::int32_t x,std::int32_t y) noexcept {
-    const auto count=vm_dialog_button_count(type);
+    const auto count=layout.response_count?layout.response_count:vm_dialog_button_count(type);
     for(std::size_t n=0;n<count;++n)
         if(response_box(layout,count,n).contains(x,y))return static_cast<std::uint8_t>(n);
     return {};
@@ -367,19 +379,20 @@ TextOverlayResult draw_vm_dialog(odh::RasterFrame& frame,const odh::DialogState&
     const auto cancel=default_label(appearance.cancel,language==14?"Cancelar":"Cancel");
     std::string_view first=state.prompt.yes;
     if(first.empty())first=type==1||type==2?default_label(appearance.yes,"Yes"):default_label(appearance.ok,"OK");
-    if(odh::dialog_selector_type(type)&&state.prompt.choices.empty())
+    if(odh::dialog_selector_type(type)&&state.prompt.choices.empty()&&!(type==10&&appearance.phonebook_cancel_button))
         first=state.prompt.cancel.empty()?cancel:std::string_view(state.prompt.cancel);
     const auto layout=vm_message_dialog_layout(frame.width,frame.height,state,language,appearance);
     const auto has_rows=layout&&odh::dialog_selector_type(type)&&!state.prompt.choices.empty();
     const auto page=draw_dialog_body(frame,state.prompt.title,state.prompt.message.empty()?" ":state.prompt.message,
         language,first_line,type==3,has_rows?std::optional<int>(choice_top(*layout)):std::nullopt,appearance,layout);
     if(!layout)return page;
-    const auto count=vm_dialog_button_count(type);
+    const auto count=layout->response_count?layout->response_count:vm_dialog_button_count(type);
     const std::array<std::string_view,3> labels{{first,
-        state.prompt.no.empty()?default_label(appearance.no,"No"):std::string_view(state.prompt.no),
+        type==10&&appearance.phonebook_cancel_button?(state.prompt.cancel.empty()?cancel:std::string_view(state.prompt.cancel)):(state.prompt.no.empty()?default_label(appearance.no,"No"):std::string_view(state.prompt.no)),
         state.prompt.cancel.empty()?cancel:std::string_view(state.prompt.cancel)}};
+    const bool contact_selected=std::any_of(state.prompt.choices.begin(),state.prompt.choices.end(),[&](const auto& c){return std::to_string(c.value)==state.input;});
     for(std::size_t n=0;n<count;++n)
-        draw_response(frame,response_box(*layout,count,n),labels[n],language,n==state.selected_button,appearance);
+        draw_response(frame,response_box(*layout,count,n),labels[n],language,n==state.selected_button,appearance,type==10&&appearance.phonebook_cancel_button&&n==0&&!contact_selected,n);
     TextOverlayStyle style;style.font_size_px=14;style.padding=2;style.foreground={255,250,231,255};
     style.background={0,0,0,0};
     if(odh::dialog_selector_type(type)&&!state.prompt.choices.empty()){
@@ -394,9 +407,12 @@ TextOverlayResult draw_vm_dialog(odh::RasterFrame& frame,const odh::DialogState&
             const auto index=start+row;
             if(index>=state.prompt.choices.size())break;
             style.y=top+row*choice_row_height;
-            if(index==selected)fill(frame,style.x,style.y,style.width,style.height,{102,76,43,255});
+            if(index==selected&&(!(type==10&&appearance.phonebook_cancel_button)||contact_selected))fill(frame,style.x,style.y,style.width,style.height,{102,76,43,255});
             (void)draw_text_overlay(frame,state.prompt.choices[index].label,language,style);
         }
+        // The paired native phone-book buttons occupy the entire bottom row;
+        // the existing keyboard hint must not paint across Call/Cancel.
+        if(type==10&&appearance.phonebook_cancel_button)return page;
         style.y=layout->ok_y;style.width=layout->ok_x-style.x-4;
         const auto position=std::to_string(selected+1)+" / "+std::to_string(state.prompt.choices.size());
         (void)draw_text_overlay(frame,position+"   Tab   Esc",language,style);

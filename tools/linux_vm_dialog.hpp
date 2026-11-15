@@ -21,12 +21,18 @@ struct VmDialogAppearance {
     const odh::BitmapImage* panel_tiles=nullptr;
     const odh::BitmapImage* illustration=nullptr;
     bool center_title=false; // Game VM notices opt in; existing management/CAS keep their style.
+    bool phonebook_cancel_button=false; // Opt-in paired Call/Cancel; legacy generic selectors keep their contract.
+    bool tutorial_corner=false; // Original pending-help box; independent of configurable Quick Tips/highlights.
+    // Native response-button presentation only; never part of a VM ticket/save.
+    std::optional<std::array<int,2>> response_pointer;
+    std::optional<std::size_t> pressed_response;
 };
 
 struct VmMessageDialogLayout {
     std::int32_t x=0,y=0,width=0,height=0;
     std::int32_t ok_x=0,ok_y=0,ok_width=0,ok_height=0;
     odh::UiBitmapRect illustration; // Exact same image bounds for measuring and painting.
+    std::uint8_t response_count=0; // Shared painting/hit count for this measured appearance.
 };
 
 std::optional<VmMessageDialogLayout> vm_message_dialog_layout(
@@ -46,6 +52,8 @@ std::string expand_vm_dialog_text(std::string_view,const VmDialogSubstitution&);
 std::size_t vm_dialog_choice_index(const odh::DialogState&,int delta=0);
 std::optional<std::size_t> vm_dialog_choice_hit(const VmMessageDialogLayout&,
     const odh::DialogState&,int x,int y);
+std::optional<odh::UiBitmapRect> vm_dialog_choice_rect(const VmMessageDialogLayout&,const odh::DialogState&,std::size_t index);
+odh::UiBitmapRect vm_dialog_button_rect(const VmMessageDialogLayout&,std::uint8_t type,std::size_t index);
 std::size_t vm_dialog_button_count(std::uint8_t type) noexcept;
 std::optional<std::uint8_t> vm_dialog_button_hit(const VmMessageDialogLayout&,std::uint8_t type,std::int32_t x,std::int32_t y) noexcept;
 // Scroll offset is presentation-only: changing pages never answers the dialog

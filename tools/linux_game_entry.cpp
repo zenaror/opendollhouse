@@ -16,6 +16,7 @@
 #include "neighborhood_portraits.hpp"
 #include "original_ui_art.hpp"
 #include "linux_text_renderer.hpp"
+#include "linux_text_runtime.hpp"
 #include "linux_vm_dialog.hpp"
 #include "linux_cas_layout.hpp"
 #include "odh/lot_context.hpp"
@@ -1498,6 +1499,11 @@ void append(std::vector<std::string>& target, std::initializer_list<std::string>
 
 int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* session_log) {
     try {
+#ifdef ODH_HAVE_X11
+        // One lazy text owner outlives every dialog, lot and window in this
+        // frontend invocation, including callbacks into the standalone host.
+        odh_host::LinuxTextRuntime text_runtime;
+#endif
 #ifdef ODH_HAVE_SDL_AUDIO
         // Explicit executable ownership, lazy until an audio device is needed.
         // This scope outlives every per-house sink, including travel rollback.
@@ -1950,10 +1956,11 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     family_overlay?&*family_overlay:nullptr,static_cast<std::uint8_t>(options.language));
                 portrait_resources.reset(game,userdata/"Characters",player_character_directory);
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
-                odh_host::LinuxUserConfig settings;
+                odh_host::LinuxUserConfig settings;std::string settings_error;
+                if(!odh_host::load_linux_user_config(settings,&settings_error))throw odh::FormatError(settings_error);
                 settings.preferences=options.preferences;
                 settings.language_code=static_cast<int>(options.language);settings.data_root=game;
-                settings.neighborhood_number=storage.number();std::string settings_error;
+                settings.neighborhood_number=storage.number();
                 if(!odh_host::save_linux_user_config(settings,&settings_error))throw odh::FormatError(settings_error);
 #endif
                 continue;
@@ -2985,12 +2992,12 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     return 0;
                 }
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
-                odh_host::LinuxUserConfig saved;
+                odh_host::LinuxUserConfig saved;std::string config_error;
+                if(!options.load_session && !options.headless_ticks && !odh_host::load_linux_user_config(saved,&config_error))throw odh::FormatError(config_error);
                 saved.preferences=options.preferences;
                 saved.language_code = static_cast<int>(options.language);
                 saved.data_root = game;
                 saved.neighborhood_number=storage.number();
-                std::string config_error;
                 if (!options.load_session && !options.headless_ticks && !odh_host::save_linux_user_config(saved, &config_error))
                     throw odh::FormatError("cannot save user settings: " + config_error);
 #endif
@@ -3009,6 +3016,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
                 session_context.save_preferences=[&](const odh_host::PlayerPreferences& next,std::string& error){
                     odh_host::LinuxUserConfig settings;
+                    if(!odh_host::load_linux_user_config(settings,&error))return false;
                     settings.language_code=static_cast<int>(options.language);settings.data_root=game;
                     settings.neighborhood_number=options.neighborhood;settings.preferences=next;
                     if(!odh_host::save_linux_user_config(settings,&error))return false;

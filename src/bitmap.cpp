@@ -57,7 +57,7 @@ BitmapImage read_bmp(const View& view, BitmapLimits limits,BmpExtentPolicy polic
         throw FormatError("BMP row allocation extent exceeded");
     const auto image_bytes=multiply(stride,result.height);
     const auto size_image=view.le32(34);
-    if((!rle8 && size_image!=0 && size_image!=image_bytes) || (rle8 && size_image==0))
+    if((!rle8 && size_image!=0 && size_image<image_bytes) || (rle8 && size_image==0))
         throw FormatError("BMP image size does not match row extent");
     const auto used=view.le32(46);
     // True-color files with color tables are outside this narrow profile.
@@ -69,6 +69,11 @@ BitmapImage read_bmp(const View& view, BitmapLimits limits,BmpExtentPolicy polic
        (!rle8 && declared_size<pixel_offset+image_bytes) || declared_size<pixel_offset)
         throw FormatError("BMP pixel or declared file extent outside payload");
     const auto available=declared_size-pixel_offset;
+    // Some original BI_RGB skins include a short trailer in biSizeImage.
+    // Decode only the stride-derived rows; the reported extent must still fit
+    // the authenticated file/container, never justify reading beyond it.
+    if(!rle8 && size_image!=0 && size_image>available)
+        throw FormatError("BMP reported image extent outside payload");
     const auto data_bytes=rle8?std::min<std::uint64_t>(size_image,available):image_bytes;
     if(rle8 && (data_bytes==0 || data_bytes>limits.rle_bytes))
         throw FormatError("BMP RLE8 payload exceeds configured limit");

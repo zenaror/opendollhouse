@@ -438,6 +438,27 @@ int main(int argc,char** argv){try{
        expansion_scene.parts.front().bmf_entry=="Skins\\XSKIN-LOOSE.SKN");
  SceneRenderer expansion_renderer(expansion_scene);
  check(expansion_renderer.vertices()==24&&expansion_renderer.render(SceneState{},loose_camera).image.shaded_samples>0);
+ // An exported mesh's internal label is not its resource identity. A
+ // renamed BMF/SKN remains selected by the appearance's exact file binding.
+ {
+  auto aliased_mesh=loose_mesh();aliased_mesh.replace(0,aliased_mesh.find('\n'),"exporter-original-label");
+  const auto alias_far=dir.path/"mesh-internal-alias.far";
+  far(alias_far,{{"Skins\\XSKIN-LOOSE.SKN",aliased_mesh}});
+  auto alias_sources=all_fars;alias_sources.push_back(alias_far.string());
+  SavedAppearanceResources alias_resources(a.string(),t.string(),"rig.bcf","adult",skins.string(),alias_sources);
+  const auto alias_scene=alias_resources.resolve_body(expansion_body);
+  check(alias_scene.parts.front().mesh_far==alias_far.string(),"alias retains exact selected mesh provenance");
+  SceneRenderer alias_renderer(alias_scene);
+  check(alias_renderer.render(SceneState{},loose_camera).image.pixels==expansion_renderer.render(SceneState{},loose_camera).image.pixels,
+        "internal mesh label does not change decoded geometry or rendering");
+  auto wrong_binding=alias_scene;wrong_binding.parts.front().bmf_entry="Skins\\unbound.skn";
+  rejects([&]{SceneRenderer rejected(wrong_binding);});
+  const auto truncated_far=dir.path/"mesh-alias-truncated.far";
+  far(truncated_far,{{"Skins\\XSKIN-LOOSE.SKN","exporter-original-label\n"}});
+  auto truncated_sources=all_fars;truncated_sources.push_back(truncated_far.string());
+  SavedAppearanceResources truncated(a.string(),t.string(),"rig.bcf","adult",skins.string(),truncated_sources);
+  rejects([&]{truncated.resolve_body(expansion_body);});
+ }
  // Loose CMX can consume globally selected FAR meshes/textures. FAR BMPs
  // precede same-named loose images, as TS1Provider.BuildDictionary specifies.
  const auto mixed_scene=expanded.resolve_body(loose_body);

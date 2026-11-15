@@ -10,6 +10,11 @@ namespace {
 constexpr const char* checkbox="CPanel/Buttons/optcheckbox.bmp";
 constexpr const char* radio="CPanel/Buttons/optradio.bmp";
 constexpr const char* slider_off="CPanel/Buttons/optslideroff.bmp";
+constexpr const char* tutorial_reset="CPanel/Buttons/OptTutReset.bmp";
+std::vector<std::string> settings_assets(bool tutorial){
+    std::vector<std::string> keys{checkbox,radio,"CPanel/Buttons/optslideroff.bmp","CPanel/Buttons/optslideron.bmp"};
+    if(tutorial)keys.emplace_back(tutorial_reset);return keys;
+}
 constexpr const char* slider_on="CPanel/Buttons/optslideron.bmp";
 std::size_t index(OriginalSettingId id){return static_cast<std::size_t>(id);}
 int maximum(OriginalSettingControlKind kind){return kind==OriginalSettingControlKind::slider?100:kind==OriginalSettingControlKind::radio?2:1;}
@@ -71,15 +76,15 @@ OriginalSettingsLayout original_settings_layout(std::uint32_t width,std::uint32_
         check(OriginalSettingId::quick_tips,72,645,676);
         check(OriginalSettingId::auto_snapshot,75,645,696);
         check(OriginalSettingId::live_pip,78,645,716);
-        // Complete Collection additionally exposes Export HTML in STR145[81].
-        // Its fourth-row placement shares the original repeated checkbox grid;
-        // the Legacy capture omits this retired export feature.
+        // Actual Complete PC observation confirms Export HTML in this fourth
+        // row, alongside the other seven checkboxes (STR145[81]).
         check(OriginalSettingId::export_html,81,645,736);
     }
     return out;
 }
-OriginalSettingsView::OriginalSettingsView(const std::filesystem::path& game,std::uint8_t language):
-    art_(game,{checkbox,radio,slider_off,slider_on}),language_(language){
+OriginalSettingsView::OriginalSettingsView(const std::filesystem::path& game,std::uint8_t language,bool show_anti_alias,bool show_tutorial_reset,
+        const OriginalSettingsText* selected_text):
+    art_(game,settings_assets(show_tutorial_reset)),language_(language),show_anti_alias_(show_anti_alias),show_tutorial_reset_(show_tutorial_reset){
     if(language<1||language>20)throw odh::FormatError("settings language outside supported range");
     for(const auto* key:{checkbox,radio}){
         const auto& image=art_.at(key);
@@ -90,8 +95,15 @@ OriginalSettingsView::OriginalSettingsView(const std::filesystem::path& game,std
         const auto& image=art_.at(key);
         if(image.width!=44||image.height!=14)throw odh::FormatError("original settings slider dimensions differ");
     }
-    GameUiStrings strings(game);
-    for(std::size_t i=0;i<strings_.size();++i)strings_[i]=strings.get(145,i,language,"");
+    if(show_tutorial_reset_ && (art_.at(tutorial_reset).width!=88 || art_.at(tutorial_reset).height!=30))
+        throw odh::FormatError("original tutorial reset strip dimensions differ");
+    // Native callers provide the already selected runtime STR (including PIFF)
+    // as UTF8. Standalone/legacy callers retain the original read-only fallback.
+    if(selected_text)strings_=*selected_text;
+    else {
+        GameUiStrings strings(game);
+        for(std::size_t i=0;i<strings_.size();++i)strings_[i]=strings.get(145,i,language,"");
+    }
 }
 OriginalSettingsLayout OriginalSettingsView::layout(std::uint32_t width,std::uint32_t height,OriginalSettingsPage page)const{
     OriginalGraphicsMetrics metrics;
@@ -109,7 +121,14 @@ OriginalSettingsLayout OriginalSettingsView::layout(std::uint32_t width,std::uin
         metrics.header_text_height=std::max(3,int(std::ceil(header_height/scale)));
         metrics.label_text_height=std::max(1,int(std::ceil(label_height/scale)));
     }
-    return original_settings_layout(width,height,page,metrics);
+    auto out=original_settings_layout(width,height,page,metrics);
+    // Observed Complete PC page omits the unsupported AA checkbox without
+    // moving the remaining original rows. Other presentation callers opt in.
+    if(!show_anti_alias_ && page==OriginalSettingsPage::graphics){
+        out.controls.erase(std::remove_if(out.controls.begin(),out.controls.end(),[](const auto& c){return c.id==OriginalSettingId::anti_alias;}),out.controls.end());
+        out.labels.erase(std::remove_if(out.labels.begin(),out.labels.end(),[](const auto& l){return l.string_index==14;}),out.labels.end());
+    }
+    return out;
 }
 std::optional<std::size_t> OriginalSettingsView::hit(const OriginalSettingsLayout& layout,int x,int y,
         const OriginalSettingsState& state,const OriginalSettingsCapabilities& capabilities)const{
@@ -160,6 +179,13 @@ void OriginalSettingsView::draw(odh::RasterFrame& frame,OriginalSettingsPage pag
                 odh::UiBitmapRect{int(cell)*20,0,20,int(image.height)},{255,0,255});
         }
     }
+    if(page==OriginalSettingsPage::play && show_tutorial_reset_){
+        // Original frame0 matched observed1024x768 ink at999,675. Keep the
+        // source strip's unavailable frame, with no invented tutorial action.
+        const auto scaled=[&](int n){return int(std::lround(n*layout.scale));};
+        const BuyUiRect rect{int(frame.width)-scaled(25),int(frame.height)-scaled(93),scaled(22),scaled(30)};
+        odh::blit_color_keyed_bitmap(frame,art_.at(tutorial_reset),rect,odh::UiBitmapRect{66,0,22,30},{255,0,255});
+    }
     for(const auto& label:layout.labels){
         if(label.string_index>=strings_.size()||strings_[label.string_index].empty())continue;
         TextOverlayStyle style;style.x=label.rect.x;style.y=label.rect.y;style.width=label.rect.width;style.height=label.rect.height;
@@ -167,5 +193,25 @@ void OriginalSettingsView::draw(odh::RasterFrame& frame,OriginalSettingsPage pag
         style.background={0,0,0,0};style.foreground={255,255,255,255};style.centered=label.centered;style.right_aligned=label.right_aligned;
         (void)draw_text_overlay(frame,strings_[label.string_index],language_,style);
     }
+}
+}
+
+namespace odh_host {
+std::optional<OriginalSettingsEvent> OriginalSettingsInteraction::update(const OriginalSettingsView& view,
+        const OriginalSettingsLayout& layout,const OriginalSettingsState& state,
+        const OriginalSettingsCapabilities& capabilities,OriginalSettingsPointerInput in){
+    if(in.cancel || (!in.down&&!in.held&&!in.up)){reset();return {};}
+    if(in.down)captured_=view.hit(layout,in.x,in.y,state,capabilities);
+    if(!captured_)return {};
+    const auto control=*captured_;
+    if(control>=layout.controls.size()){reset();return {};}
+    if(!view.activate(layout,control,in.x,state,capabilities)){reset();return {};}
+    const bool slider=layout.controls[control].kind==OriginalSettingControlKind::slider;
+    std::optional<OriginalSettingsEvent> event;
+    if(slider && (in.down||in.held||in.up))event=view.activate(layout,control,in.x,state,capabilities);
+    else if(in.up && view.hit(layout,in.x,in.y,state,capabilities)==captured_)
+        event=view.activate(layout,control,in.x,state,capabilities);
+    if(in.up)reset();
+    return event;
 }
 }

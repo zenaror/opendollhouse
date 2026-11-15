@@ -9,8 +9,13 @@ OriginalCursorSelection select_original_cursor(const OriginalCursorPolicyInput& 
         input.domain==OriginalCursorDomain::world_person;
     if(!world)return {Asset::Arrow,Reason::ui};
     // The selected reference uses directional arrows/anchor during right drag,
-    // not Pan.cur. Defer that adapter rather than guessing a direction here.
-    if(input.right_drag)return {Asset::Arrow,Reason::unbound_right_drag};
+    // not Pan.cur. A missing real consumer direction remains explicitly unbound.
+    if(input.right_drag && !input.right_drag_direction)return {Asset::Arrow,Reason::unbound_right_drag};
+    if(input.right_drag_direction && input.right_drag){
+        auto camera=input;camera.right_drag=false;camera.right_drag_direction.reset();
+        camera.edge_scrolling_enabled=true;camera.edge=*input.right_drag_direction;
+        return select_original_cursor(camera);
+    }
     if(input.mode!=OriginalCursorMode::live&&input.object_holder_active){
         // ObjectHolder sets its cursor after camera processing in the source.
         switch(input.object_cursor){

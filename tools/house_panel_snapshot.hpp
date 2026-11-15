@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
-#include "odh/room_map.hpp"
+#include "house_panel_metrics.hpp"
 #include "odh/house_layout_history.hpp"
 #include "odh/property_valuation.hpp"
 #include "odh/ts1_curve.hpp"
@@ -15,13 +15,6 @@ using odh::new_house_layout_history;
 using odh::sample_house_layout_history;
 using odh::rotate_house_layout_history;
 
-struct HousePanelTuning {
-    float yard_multiplier,outdoor_negative_impact_factor,outdoor_good_count_factor;
-    std::int32_t dirty_penalty,broken_penalty;
-};
-// Verified executable defaults, selected explicitly by the host ONLY after
-// authenticating that named SNCF overrides do not change these six values.
-HousePanelTuning original_house_panel_default_tuning();
 struct HousePanelBindings {
     // Room29 MUST come from the caller's current room-map authority, never a
     // potentially stale stored bank after architecture changes. Other fields
@@ -49,12 +42,6 @@ struct HousePanelInput {
     // Casa needs only these resolved financial components, not final lot price.
     const odh::PropertyObjectAssets* object_assets=nullptr;
     const odh::PropertyArchitectureValue* architecture_value=nullptr;
-};
-struct HousePanelSnapshot {
-    std::optional<std::uint32_t> area_square_feet,bedrooms,bathrooms;
-    // Order exactly LiveSTR133[1..5]: Size,Furnishings,Yard,Upkeep,Layout.
-    std::array<std::optional<std::int16_t>,5> ratings;
-    bool complete()const;
 };
 // Original loaded terrain side comes from authenticated SIMI.GlobalData[23].
 // Zero selects the constructor64 fallback; unsupported values stay unknown.

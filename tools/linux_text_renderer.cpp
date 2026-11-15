@@ -1,10 +1,14 @@
 #include "linux_text_renderer.hpp"
+#include "linux_text_runtime.hpp"
 
 #include <pango/pangocairo.h>
 
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <exception>
+#include <thread>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -21,6 +25,36 @@ struct ObjectDeleter { void operator()(gpointer p) const {if(p)g_object_unref(p)
 using Surface=std::unique_ptr<cairo_surface_t,SurfaceDeleter>;
 using Context=std::unique_ptr<cairo_t,ContextDeleter>;
 template<class T> using Object=std::unique_ptr<T,ObjectDeleter>;
+struct LayoutIterDeleter { void operator()(PangoLayoutIter* p) const {if(p)pango_layout_iter_free(p);} };
+using LayoutIter=std::unique_ptr<PangoLayoutIter,LayoutIterDeleter>;
+struct FontDescriptionDeleter { void operator()(PangoFontDescription* p) const {if(p)pango_font_description_free(p);} };
+using FontDescription=std::unique_ptr<PangoFontDescription,FontDescriptionDeleter>;
+
+struct FontMapState {
+    Object<PangoFontMap> font_map;
+    FontMapState()=default;
+    explicit FontMapState(PangoFontMap* borrowed) {
+        if(!borrowed||!PANGO_IS_CAIRO_FONT_MAP(borrowed))
+            throw std::invalid_argument("text runtime requires a valid borrowed Cairo font map");
+        font_map.reset(PANGO_FONT_MAP(g_object_ref(borrowed)));
+    }
+    PangoFontMap* get() {
+        if(!font_map)font_map.reset(pango_cairo_font_map_new());
+        if(!font_map)throw std::runtime_error("Pango could not create the owned text font map");
+        return font_map.get();
+    }
+};
+struct TextRuntimeBinding {
+    std::shared_ptr<FontMapState> state;
+    TextRuntimeBinding* previous=nullptr;
+    std::thread::id thread;
+};
+// Non-owning only: no TLS/default-map strong cache survives the host scope.
+thread_local TextRuntimeBinding* active_text_runtime=nullptr;
+std::shared_ptr<FontMapState> acquire_text_font_map() {
+    return active_text_runtime?active_text_runtime->state:std::make_shared<FontMapState>();
+}
+
 
 const char* language_tag(std::uint8_t language) {
     switch(language) {
@@ -35,29 +69,51 @@ const char* language_tag(std::uint8_t language) {
 
 std::size_t missing_glyphs(PangoLayout* layout,std::size_t& glyph_count) {
     std::size_t missing=0;
-    auto* iterator=pango_layout_get_iter(layout);
+    LayoutIter iterator(pango_layout_get_iter(layout));
     if(!iterator)throw std::runtime_error("Pango could not inspect the text layout");
     do {
-        const auto* run=pango_layout_iter_get_run_readonly(iterator);
+        const auto* run=pango_layout_iter_get_run_readonly(iterator.get());
         if(run&&run->glyphs)for(int i=0;i<run->glyphs->num_glyphs;++i) {
             ++glyph_count;
             if(run->glyphs->glyphs[i].glyph&PANGO_GLYPH_UNKNOWN_FLAG)++missing;
         }
-    } while(pango_layout_iter_next_run(iterator));
-    pango_layout_iter_free(iterator);
+    } while(pango_layout_iter_next_run(iterator.get()));
     return missing;
 }
 }
 
-TextOverlayExtent measure_text_overlay(std::string_view utf8,std::uint8_t language,
-                                      int font_size_px,int wrap_width) {
+struct LinuxTextRuntime::Impl {
+    TextRuntimeBinding binding;
+    explicit Impl(std::shared_ptr<FontMapState> state)
+        :binding{std::move(state),active_text_runtime,std::this_thread::get_id()} {
+        active_text_runtime=&binding;
+    }
+    ~Impl() {
+        // Violating thread/LIFO lifetime must not leave a dangling active scope
+        // or invalidate a different consumer's font map during stack unwinding.
+        if(binding.thread!=std::this_thread::get_id()||active_text_runtime!=&binding)
+            std::terminate();
+        active_text_runtime=binding.previous;
+        // binding.state releases its map after restoring the previous scope.
+        // Pango's own GObject finalizer owns Fontconfig/font/cache shutdown.
+    }
+};
+LinuxTextRuntime::LinuxTextRuntime()
+    :impl_(std::make_unique<Impl>(active_text_runtime?active_text_runtime->state:std::make_shared<FontMapState>())) {}
+LinuxTextRuntime::LinuxTextRuntime(PangoFontMap* borrowed)
+    :impl_(std::make_unique<Impl>(std::make_shared<FontMapState>(borrowed))) {}
+LinuxTextRuntime::~LinuxTextRuntime()=default;
+
+static TextOverlayExtent measured_layout(std::string_view utf8,std::uint8_t language,
+                                      int font_size_px,int wrap_width,std::vector<TextOverlayLineRange>* ranges) {
     (void)language_tag(language);
     if(utf8.size()>32768||font_size_px<1||font_size_px>256||wrap_width<0||wrap_width>8192)
         throw std::invalid_argument("text measurement outside supported bounds");
     if(utf8.empty())return {};
     if(!g_utf8_validate(utf8.data(),static_cast<gssize>(utf8.size()),nullptr))
         throw std::invalid_argument("text measurement input is not valid UTF-8");
-    Object<PangoContext> context(pango_font_map_create_context(pango_cairo_font_map_get_default()));
+    const auto font_map=acquire_text_font_map();
+    Object<PangoContext> context(pango_font_map_create_context(font_map->get()));
     if(!context)throw std::runtime_error("Pango could not create a measurement context");
     pango_context_set_language(context.get(),pango_language_from_string(language_tag(language)));
     Object<PangoLayout> layout(pango_layout_new(context.get()));
@@ -67,15 +123,29 @@ TextOverlayExtent measure_text_overlay(std::string_view utf8,std::uint8_t langua
     pango_layout_set_auto_dir(layout.get(),TRUE);
     pango_layout_set_width(layout.get(),wrap_width?wrap_width*PANGO_SCALE:-1);
     pango_layout_set_wrap(layout.get(),PANGO_WRAP_WORD_CHAR);
-    auto* description=pango_font_description_new();
+    FontDescription description(pango_font_description_new());
     if(!description)throw std::runtime_error("Pango could not create a measurement font");
-    pango_font_description_set_family(description,game_font_family);
-    pango_font_description_set_absolute_size(description,font_size_px*PANGO_SCALE);
-    pango_layout_set_font_description(layout.get(),description);
-    pango_font_description_free(description);
+    pango_font_description_set_family(description.get(),game_font_family);
+    pango_font_description_set_absolute_size(description.get(),font_size_px*PANGO_SCALE);
+    pango_layout_set_font_description(layout.get(),description.get());
+    description.reset();
     TextOverlayExtent extent;
     pango_layout_get_pixel_size(layout.get(),&extent.width,&extent.height);
+    if(ranges){
+        LayoutIter iterator(pango_layout_get_iter(layout.get()));
+        if(!iterator)throw std::runtime_error("Pango could not inspect measured line ranges");
+        do{int top=0,bottom=0;pango_layout_iter_get_line_yrange(iterator.get(),&top,&bottom);
+            ranges->push_back({PANGO_PIXELS(top),PANGO_PIXELS(bottom)});
+        }while(pango_layout_iter_next_line(iterator.get()));
+    }
     return extent;
+}
+TextOverlayExtent measure_text_overlay(std::string_view utf8,std::uint8_t language,int font_size_px,int wrap_width){
+    return measured_layout(utf8,language,font_size_px,wrap_width,nullptr);
+}
+std::vector<TextOverlayLineRange> text_overlay_line_ranges(std::string_view utf8,std::uint8_t language,int font_size_px,int wrap_width){
+    std::vector<TextOverlayLineRange> ranges;
+    (void)measured_layout(utf8,language,font_size_px,wrap_width,&ranges);return ranges;
 }
 
 TextOverlayResult draw_text_overlay(odh::RasterFrame& frame,std::string_view utf8,
@@ -92,6 +162,9 @@ TextOverlayResult draw_text_overlay(odh::RasterFrame& frame,std::string_view utf
        (style.pixel_scroll_y&&(*style.pixel_scroll_y<0||*style.pixel_scroll_y>1048576)))
         throw std::invalid_argument("text overlay geometry outside supported bounds");
 
+    // Declared BEFORE Cairo resources so layouts/contexts/surfaces all die
+    // before the last local font-map lease on every return/exception path.
+    const auto font_map=acquire_text_font_map();
     Surface surface(cairo_image_surface_create(CAIRO_FORMAT_ARGB32,static_cast<int>(frame.width),static_cast<int>(frame.height)));
     if(!surface||cairo_surface_status(surface.get())!=CAIRO_STATUS_SUCCESS)
         throw std::runtime_error("Cairo could not allocate the text overlay");
@@ -104,8 +177,7 @@ TextOverlayResult draw_text_overlay(odh::RasterFrame& frame,std::string_view utf
                           style.background[2]/255.0,style.background[3]/255.0);
     cairo_rectangle(context.get(),style.x,style.y,style.width,style.height);cairo_fill(context.get());
 
-    auto* font_map=pango_cairo_font_map_get_default();
-    Object<PangoContext> pango_context(pango_font_map_create_context(font_map));
+    Object<PangoContext> pango_context(pango_font_map_create_context(font_map->get()));
     if(!pango_context)throw std::runtime_error("Pango could not create a font context");
     pango_context_set_language(pango_context.get(),pango_language_from_string(language_tag(language)));
     Object<PangoLayout> layout(pango_layout_new(pango_context.get()));
@@ -118,24 +190,23 @@ TextOverlayResult draw_text_overlay(odh::RasterFrame& frame,std::string_view utf
     pango_layout_set_wrap(layout.get(),PANGO_WRAP_WORD_CHAR);
     pango_layout_set_alignment(layout.get(),style.centered?PANGO_ALIGN_CENTER:
         (style.right_aligned||language==12)?PANGO_ALIGN_RIGHT:PANGO_ALIGN_LEFT);
-    auto* description=pango_font_description_new();
+    FontDescription description(pango_font_description_new());
     if(!description)throw std::runtime_error("Pango could not create a font description");
-    pango_font_description_set_family(description,game_font_family);
-    pango_font_description_set_absolute_size(description,style.font_size_px*PANGO_SCALE);
-    pango_layout_set_font_description(layout.get(),description);
-    pango_font_description_free(description);
+    pango_font_description_set_family(description.get(),game_font_family);
+    pango_font_description_set_absolute_size(description.get(),style.font_size_px*PANGO_SCALE);
+    pango_layout_set_font_description(layout.get(),description.get());
+    description.reset();
 
     PangoRectangle logical{};pango_layout_get_pixel_extents(layout.get(),nullptr,&logical);
     auto text_y=style.y+(style.height-logical.height)/2-logical.y;
     TextOverlayResult result;
     if(style.wrap_lines) {
         struct Line {int top,bottom;};std::vector<Line> lines;
-        auto* iterator=pango_layout_get_iter(layout.get());
+        LayoutIter iterator(pango_layout_get_iter(layout.get()));
         if(!iterator)throw std::runtime_error("Pango could not inspect wrapped lines");
-        do {int top=0,bottom=0;pango_layout_iter_get_line_yrange(iterator,&top,&bottom);
+        do {int top=0,bottom=0;pango_layout_iter_get_line_yrange(iterator.get(),&top,&bottom);
             lines.push_back({PANGO_PIXELS(top),PANGO_PIXELS(bottom)});
-        } while(pango_layout_iter_next_line(iterator));
-        pango_layout_iter_free(iterator);
+        } while(pango_layout_iter_next_line(iterator.get()));
         const auto available=style.height-style.padding*2;
         result.line_count=lines.size();
         result.max_first_line=lines.size()-1;

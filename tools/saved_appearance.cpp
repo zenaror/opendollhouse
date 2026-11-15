@@ -1,4 +1,6 @@
+#include "odh/host_filesystem.hpp"
 #include "saved_appearance.hpp"
+#include "odh/ts1_texture_name.hpp"
 #include "saved_appearance_far_index.hpp"
 #include "odh/mesh.hpp"
 #include "odh/bcf.hpp"
@@ -18,11 +20,6 @@ std::string fold(std::string s) {for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<c
 void bounded_name(const std::string& s) {
     if(s.empty()||s.size()>4096||s.find('\0')!=std::string::npos)
         throw odh::FormatError("saved appearance empty, oversized or embedded-NUL name");
-}
-std::string uniform(std::string s) {
-    s=fold(std::move(s));
-    for(const auto* skin:{"lgt","med","drk"})for(auto p=s.find(skin);p!=std::string::npos;p=s.find(skin))s.erase(p,3);
-    return s;
 }
 std::optional<std::string> texture_override(const std::string& raw) {
     if(raw.empty())return {};
@@ -128,8 +125,8 @@ struct SavedAppearanceResources::Impl {
             if(catalog_mode&&!retain_duplicates)selected.clear();
             selected.push_back({entry,name,archive});};
         std::vector<Archive*> archives{&animations,&textures};
-        std::set<std::filesystem::path> admitted{std::filesystem::canonical(a),std::filesystem::canonical(t)};
-        for(const auto& source:sources){bounded_name(source);if(!admitted.insert(std::filesystem::canonical(source)).second)continue;
+        std::set<std::filesystem::path> admitted{odh::hostfs::canonical(a),odh::hostfs::canonical(t)};
+        for(const auto& source:sources){bounded_name(source);if(!admitted.insert(odh::hostfs::canonical(source)).second)continue;
             extra_archives.push_back(std::make_unique<Archive>(source));archives.push_back(extra_archives.back().get());}
         for(auto* archive:archives)for(const auto& entry:archive->entries){
             const auto key=basename(entry.name);
@@ -168,7 +165,7 @@ struct SavedAppearanceResources::Impl {
         roots.insert(roots.end(),loose_roots.begin(),loose_roots.end());
         std::size_t loose_files=0,path_bytes=0;std::set<std::filesystem::path> scanned;
         std::vector<std::string> cmx_order;std::set<std::string> cmx_seen;
-        for(const auto& root:roots){bounded_name(root);std::error_code error;const auto canonical=std::filesystem::canonical(root,error);
+        for(const auto& root:roots){bounded_name(root);std::error_code error;const auto canonical=odh::hostfs::canonical(root,error);
             if(error||!std::filesystem::is_directory(canonical))throw odh::FormatError("saved appearance skins directory is not accessible");
             if(!scanned.insert(canonical).second)continue;
             if(skins_root.empty())skins_root=canonical;
@@ -226,9 +223,55 @@ struct SavedAppearanceResources::Impl {
         if(found->second.size()!=1)throw odh::FormatError("saved appearance named resource ambiguous: "+name);
         return found->second.front();
     }
-    const Named& appearance_named(const std::string& name){
-        if(appearances.find(fold(name))!=appearances.end())return named(appearances,name);
-        return named(loose_appearance_names,name);
+    std::optional<Named> find_appearance(const std::string& name){
+        const auto key=fold(name);
+        if(appearances.count(key))return named(appearances,name);
+        if(loose_appearance_names.count(key))return named(loose_appearance_names,name);
+        // A legacy producer wrote filenames instead of declared suit names.
+        // Preserve the selected resource and reject ambiguous containers.
+        const auto cmx=key+".cmx",bcf=cmx+".bcf";
+        const bool text=skin_files.count(cmx)||(catalog_mode&&files.count(cmx));
+        const bool binary=files.count(bcf);
+        if(text && binary)throw odh::FormatError("saved appearance legacy suit host ambiguous: "+name);
+        if(text || binary){
+            Named host;
+            if(catalog_mode)host=file(animations,text?cmx:bcf);
+            else if(binary){
+                // The explicit legacy archive has no cross-directory
+                // filename precedence. A stem must identify one entry.
+                bool matched=false;
+                for(const auto& entry:animations.entries)if(basename(entry.name)==bcf){
+                    if(matched)throw odh::FormatError("saved appearance legacy suit host ambiguous: "+name);
+                    host={entry.name,{},&animations};
+                    matched=true;
+                }
+                if(!matched)return std::nullopt;
+            }
+            else {
+                const auto& paths=skin_files.at(cmx);
+                if(paths.size()!=1)throw odh::FormatError("saved appearance legacy suit host ambiguous: "+name);
+                host={paths.front().string(),{},nullptr};
+            }
+            auto suits=decode(host,[&](const auto& view){
+                if(text)return odh::read_cmx_appearances(view).appearances;
+                auto result=odh::read_bcf_resources(view);
+                if(result.remaining_bytes)throw odh::FormatError("saved appearance trailing selected BCF bytes");
+                return result.appearances;
+            });
+            if(suits.size()>1)throw odh::FormatError("saved appearance legacy suit host ambiguous: "+name);
+            if(suits.size()==1){
+                const auto declared=fold(suits.front().name);
+                const auto& index=appearances.count(declared)?appearances:loose_appearance_names;
+                const auto& selected=named(index,declared);
+                if(selected.archive==host.archive && selected.entry==host.entry)return selected;
+                throw odh::FormatError("saved appearance legacy suit host shadowed: "+name);
+            }
+        }
+        return std::nullopt;
+    }
+    Named appearance_named(const std::string& name){
+        if(auto host=find_appearance(name))return *host;
+        throw odh::FormatError("saved appearance named resource missing: "+name);
     }
     std::filesystem::path loose_file(const std::string& host,const std::string& filename){
         bounded_name(filename);const auto key=fold(filename);const auto sibling=std::filesystem::path(host).parent_path();
@@ -264,8 +307,9 @@ struct SavedAppearanceResources::Impl {
         return file(animations,name+".bmf");
     }
     Named texture_file(const Named& host,const std::string& name){
-        if(!catalog_mode&&!host.archive)return {loose_file(host.entry,name+".bmp").string(),name,nullptr};
-        return file(textures,name+".bmp");
+        const auto filename=odh::ts1_bmp_filename(name);
+        if(!catalog_mode&&!host.archive)return {loose_file(host.entry,filename).string(),name,nullptr};
+        return file(textures,filename);
     }
     odh::Mesh mesh(const Named& resource){
         return decode(resource,[&](const auto& view){auto result=basename(resource.entry).size()>=4&&
@@ -292,9 +336,13 @@ struct SavedAppearanceResources::Impl {
         std::vector<std::string> defaults;std::size_t replaced=0;
         for(std::size_t i=0;i<appearance->bindings.size();++i){const auto& binding=appearance->bindings[i];bounded_name(binding.mesh_name);
             const auto selected=mesh_file(host,binding.mesh_name);const auto decoded=mesh(selected);
-            if(fold(decoded.skin_name)!=fold(binding.mesh_name))throw odh::FormatError("saved appearance mesh skin mismatch");
-            const auto m=uniform(decoded.texture_name),o=override?uniform(*override):std::string{};
-            if(override&&(fold(decoded.texture_name)=="x"||(m.size()>=o.size()&&m.compare(m.size()-o.size(),o.size(),o)==0)))replaced=i;
+            // TS1BMFProvider addresses the binding's file name. SkinName is
+            // exporter metadata: shipped BMFs can omit an attachment token in
+            // that field while their selected file and binding match exactly.
+            const auto selected_name=basename(selected.entry);
+            if(selected_name!=basename(binding.mesh_name+".bmf")&&selected_name!=basename(binding.mesh_name+".skn"))
+                throw odh::FormatError("saved appearance selected mesh file differs from binding");
+            if(override&&odh::ts1_override_matches(decoded.texture_name,*override))replaced=i;
             meshes.push_back(selected);defaults.push_back(decoded.texture_name);}
         for(std::size_t i=0;i<meshes.size();++i){const auto texture_name=override&&i==replaced?*override:defaults[i];bounded_name(texture_name);
             const auto texture=texture_file(host,texture_name);
@@ -411,12 +459,8 @@ SceneConfig SavedAppearanceResources::resolve_avatar_body(const odh::AvatarBodyS
         if(!body.head.empty()){
             stage="head";part=body.head;
             const auto head=body_resource(body.head,"head");
-            const auto key=fold(head.appearance);
-            const bool present=impl_->appearances.find(key)!=impl_->appearances.end()||
-                impl_->loose_appearance_names.find(key)!=impl_->loose_appearance_names.end();
-            if(present){
-                const auto& head_host=impl_->appearance_named(head.appearance);
-                part=head.appearance+" @"+(head_host.archive?head_host.archive->path:std::string{"loose"})+" ["+head_host.entry+"]";
+            if(auto head_host=impl_->find_appearance(head.appearance)){
+                part=head.appearance+" @"+(head_host->archive?head_host->archive->path:std::string{"loose"})+" ["+head_host->entry+"]";
                 impl_->part(scene,head.appearance,head.texture_map);
             }else if(impl_->scan_diagnostics.malformed_resources){
                 throw odh::FormatError("animal head appearance absence is unproved: incomplete BCF/CMX name index");
@@ -433,6 +477,25 @@ SceneConfig SavedAppearanceResources::resolve_avatar_body(const odh::AvatarBodyS
             " stage="+stage+" selected_rig="+rig_source.substr(0,768)+" part="+part.substr(0,256)+
             " catalog_malformed="+std::to_string(impl_->scan_diagnostics.malformed_resources)+": "+error.what());
     }
+}
+SceneConfig SavedAppearanceResources::resolve_live_portrait(const std::string& skeleton,
+        const std::string& body,const std::string& head,const std::array<std::string,6>& hands,
+        const std::vector<std::string>& accessories){
+    if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
+    if(!odh::avatar_body_type(skeleton))throw odh::FormatError("live portrait unsupported current skeleton");
+    const auto& rig=impl_->named(impl_->skeletons,skeleton);
+    if(!rig.archive)throw odh::FormatError("live portrait skeleton requires an indexed FAR source");
+    auto scene=impl_->config;
+    scene.skeleton_far=rig.archive->path;scene.skeleton_entry=rig.entry;scene.skeleton_name=rig.name;
+    for(const auto* raw:{&body,&head})if(!raw->empty()){
+        const auto part=body_resource(*raw,"live portrait");
+        impl_->part(scene,part.appearance,part.texture_map);
+    }
+    std::array<AppearanceResource,6> variants;
+    for(size_t i=0;i<6;++i)if(!hands[i].empty())variants[i]=body_resource(hands[i],"live hand");
+    impl_->hands(scene,variants);
+    append_accessories(scene,accessories);
+    return scene;
 }
 void SavedAppearanceResources::append_accessories(SceneConfig& scene,const std::vector<std::string>& names) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
@@ -473,15 +536,15 @@ SavedAppearanceResourceCatalog SavedAppearanceResources::resource_catalog(
  const std::string& skins_directory,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots){
  if(sources.empty()&&loose_roots.empty())throw odh::FormatError("wardrobe metadata requires the admitted catalog-mode provider");
  Impl provider(animation_far,textures_far,{},{},skins_directory,sources,loose_roots,true);
- const auto root=std::filesystem::canonical(game_root);
+ const auto root=odh::hostfs::canonical(game_root);
  SavedAppearanceResourceCatalog catalog;auto& result=catalog.assets;
  std::map<std::pair<odh::WardrobeAssetKind,std::string>,std::uint32_t> ordinals;
  std::size_t text_bytes=0;std::uint64_t content_bytes=0;
  std::map<std::pair<std::string,std::string>,std::array<std::uint8_t,32>> hashes;
  const auto add=[&](odh::WardrobeAssetKind kind,const std::string& name,const Named& selected){
-  const auto path=std::filesystem::canonical(selected.archive?selected.archive->path:selected.entry);
+  const auto path=odh::hostfs::canonical(selected.archive?selected.archive->path:selected.entry);
   const auto relative=path.lexically_relative(root);
-  if(relative.empty()||relative.is_absolute()||*relative.begin()=="..")throw odh::FormatError("wardrobe selected resource escaped trusted game root");
+  if(relative.empty()||odh::hostfs::is_absolute(relative)||*relative.begin()=="..")throw odh::FormatError("wardrobe selected resource escaped trusted game root");
   const auto source=relative.generic_string(),asset=selected.archive?selected.entry:std::string{};
   const auto growth=name.size()+source.size()+asset.size();
   if(name.empty()||name.size()>256||source.size()>1024||asset.size()>1024||result.size()>=32768||growth>16u*1024u*1024u-text_bytes)

@@ -70,5 +70,46 @@ for spelling in ['-l','-l -o sample']:
  except ValueError:pass
  else:raise AssertionError('missing library argument accepted')
 checks['joined_separated_search_library_and_missing_argument']=True
+# add_subdirectory link scripts run from their own binary directory. The
+# executable can supply an archive from a sibling directory and OBJECT-library
+# inputs without a link.txt of their own.
+(directory/'link.txt').write_text('/usr/bin/c++ CMakeFiles/sample.dir/main.cpp.o -o sample\n')
+def nested_object(subdir,target):
+ d=build/subdir/'CMakeFiles'/f'{target}.dir';d.mkdir(parents=True)
+ rel=(d/'main.cpp.o').relative_to(build).as_posix()
+ (d/'flags.make').write_text('CXX_FLAGS = -O0\n')
+ (d/'DependInfo.cmake').write_text('# metadata\n')
+ (d/'build.make').write_text(rel+': '+str(source/'main.cpp')+'\n\tcompiler -c source\n')
+ o=d/'main.cpp.o';o.write_bytes(('object '+target).encode())
+ Path(str(o)+'.d').write_text(rel+': '+str(source/'main.cpp')+'\n')
+ return d,o
+libdir,libobj=nested_object('engine','nested_library')
+(libdir/'link.txt').write_text('/usr/bin/ar qc libnested.a CMakeFiles/nested_library.dir/main.cpp.o\n')
+(build/'engine/libnested.a').write_bytes(b'!<arch>\n'+member('main.cpp.o/',libobj.read_bytes()))
+objdir,extraobj=nested_object('engine/shared','nested_objects')
+appdir,appobj=nested_object('engine/desktop','nested_app')
+response=build/'engine/desktop/inputs.rsp'
+response.write_text('CMakeFiles/nested_app.dir/main.cpp.o ../shared/CMakeFiles/nested_objects.dir/main.cpp.o ../libnested.a')
+(appdir/'link.txt').write_text('/usr/bin/c++ @inputs.rsp -o nested_app\n')
+(build/'engine/desktop/nested_app').write_bytes(b'linked nested fixture')
+col=m.Collector(build,source,True);data=col.one('nested_app');col.verify_unchanged()
+assert data['object_count']==3 and data['native_targets']==['nested_app','nested_library','nested_objects']
+assert len(data['archives'])==1 and data['archives'][0]['member_count']==1
+assert col.nodes['nested_app']['output']==build/'engine/desktop/nested_app'
+assert response in col.nodes['nested_app']['response_files']
+checks['subdirectories_sibling_archive_object_library_and_local_response_file']=True
+# -MT names are relative to the root make invocation; dependency paths are
+# relative to the actual compiler working directory. A root shadow must not win.
+root_header=build/'generated.hpp';local_header=build/'engine/desktop/generated.hpp'
+root_header.write_text('// wrong root header\n');local_header.write_text('// actual local header\n')
+relative=appobj.relative_to(build).as_posix()
+Path(str(appobj)+'.d').write_text(relative+': '+str(source/'main.cpp')+' generated.hpp\n')
+parsed=m.parse_depfile(Path(str(appobj)+'.d'),appobj,build,build/'engine/desktop')
+assert local_header in parsed and root_header not in parsed
+appobj.write_bytes(appobj.read_bytes())
+(build/'engine/desktop/nested_app').write_bytes(b'linked nested fixture')
+col=m.Collector(build,source,True);data=col.one('nested_app');col.verify_unchanged()
+assert [r['path'] for r in data['generated']]==['engine/desktop/generated.hpp']
+checks['relative_dependency_uses_compiler_cwd_not_root_shadow']=True
 temporary.cleanup()
 print(json.dumps({'scope':'pure parser checks; no compiler or game execution','passed':True,'checks':checks},indent=2))

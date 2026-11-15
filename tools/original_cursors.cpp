@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+#include "odh/host_filesystem.hpp"
 #include "original_cursors.hpp"
 #include <algorithm>
 #include <fstream>
@@ -14,7 +15,7 @@ constexpr std::array<const char*,original_cursor_count> filenames{{
 std::string fold(std::string value){for(auto& c:value)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return value;}
 bool within(const std::filesystem::path& root,const std::filesystem::path& path){
     const auto relative=path.lexically_relative(root);
-    if(relative.empty()||relative.is_absolute())return false;
+    if(relative.empty()||odh::hostfs::is_absolute(relative))return false;
     for(const auto& part:relative)if(part=="..")return false;
     return true;
 }
@@ -25,8 +26,8 @@ const char* original_cursor_filename(OriginalCursorAsset asset){
     return filenames[i];
 }
 OriginalCursors::OriginalCursors(const std::filesystem::path& game_root,OriginalCursorLimits limits){
-    const auto root=std::filesystem::canonical(game_root);
-    const auto directory=std::filesystem::canonical(root/"UIGraphics/Shared/cursors");
+    const auto root=odh::hostfs::canonical(game_root);
+    const auto directory=odh::hostfs::canonical(root/"UIGraphics/Shared/cursors");
     if(!within(root,directory))throw odh::FormatError("original cursor directory escapes installation");
     std::array<std::optional<std::filesystem::path>,original_cursor_count> paths;
     std::uint32_t count=0;
@@ -35,7 +36,7 @@ OriginalCursors::OriginalCursors(const std::filesystem::path& game_root,Original
         const auto name=fold(item.path().filename().string());
         for(std::size_t i=0;i<filenames.size();++i)if(name==fold(filenames[i])){
             if(paths[i])throw odh::FormatError("original cursor filename is ambiguous");
-            const auto selected=std::filesystem::canonical(item.path());
+            const auto selected=odh::hostfs::canonical(item.path());
             if(selected.parent_path()!=directory||!std::filesystem::is_regular_file(selected))
                 throw odh::FormatError("original cursor asset is not an in-directory regular file");
             paths[i]=selected;
@@ -67,6 +68,19 @@ const odh::WindowsCursor& OriginalCursors::at(OriginalCursorAsset asset)const{
     const auto i=static_cast<std::size_t>(asset);
     if(i>=cursors_.size())throw odh::FormatError("unknown original cursor asset identity");
     return cursors_[i];
+}
+std::optional<OriginalCursorAsset> original_cursor_asset_for_path(std::string_view path){
+    auto key=fold(std::string(path));std::replace(key.begin(),key.end(),'\\','/');
+    for(std::size_t i=0;i<filenames.size();++i)
+        if(key=="shared/cursors/"+fold(filenames[i]))return static_cast<OriginalCursorAsset>(i);
+    return {};
+}
+const odh::CursorImage* OriginalCursors::image_for_path(std::string_view path)const{
+    const auto asset=original_cursor_asset_for_path(path);
+    if(!asset)return nullptr;
+    const auto i=static_cast<std::size_t>(*asset);
+    if(status_[i]!=OriginalCursorStatus::ready||cursors_[i].images.empty())return nullptr;
+    return &cursors_[i].images.front();
 }
 OriginalCursorStatus OriginalCursors::status(OriginalCursorAsset asset)const{
     const auto i=static_cast<std::size_t>(asset);

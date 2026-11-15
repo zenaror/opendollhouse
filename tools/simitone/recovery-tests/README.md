@@ -20,8 +20,7 @@ resource and its TTAB/TTAs; using the compiled engine without data would require
 separate content-fixture infrastructure. This harness is not evidence that the
 real engine's placement, callbacks or gameplay work.
 
-Expected behavior comes from the supplied-profile native exports documented in
-`docs/simitone-save-code-signatures.md`: 72 mutable words, nine retained fields,
+The tests check the source-linked recovery policy: 72 mutable words, nine retained fields,
 identity/version, separate EP3 temporary-state policy, notifications before the
 reset snapshot, and group-wide detach/restart/Init/placement ordering. Tests also
 exercise category-index consistency, callback changes after EP10, contained-child

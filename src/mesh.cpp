@@ -5,6 +5,9 @@
 #include <charconv>
 #include <cctype>
 #include <cstring>
+#include <cmath>
+#include <limits>
+#include <locale>
 #include <sstream>
 
 namespace odh {
@@ -99,6 +102,48 @@ private:
     std::size_t line_=0,token_=0;
 };
 
+// C++17 floating from_chars is missing from some supported standard libraries.
+// Validate its general-format grammar first, then convert directly to float in
+// an explicitly classic locale (no process-global locale or double rounding).
+float skn_float(const std::string& token) {
+    const auto invalid=[]()->float{throw FormatError("invalid SKN float");};
+    std::size_t at=0;const bool negative=!token.empty()&&token[0]=='-';
+    if(negative)++at;
+    if(at==token.size())return invalid();
+    auto lower=token.substr(at);
+    for(auto& c:lower)if(c>='A'&&c<='Z')c=char(c-'A'+'a');
+    if(lower=="inf"||lower=="infinity")
+        return negative?-std::numeric_limits<float>::infinity():std::numeric_limits<float>::infinity();
+    if(lower=="nan"||(lower.size()>=5&&lower.compare(0,4,"nan(")==0&&lower.back()==')')){
+        if(lower!="nan")for(std::size_t i=4;i+1<lower.size();++i)
+            if(!((lower[i]>='a'&&lower[i]<='z')||(lower[i]>='0'&&lower[i]<='9')||lower[i]=='_'))return invalid();
+        return std::copysign(std::numeric_limits<float>::quiet_NaN(),negative?-1.0f:1.0f);
+    }
+    const auto digit=[](char c){return c>='0'&&c<='9';};
+    bool nonzero=false;std::size_t digits=0;
+    const auto mantissa=[&]{while(at<token.size()&&digit(token[at])){
+        nonzero|=token[at]!='0';++digits;++at;}};
+    mantissa();
+    if(at<token.size()&&token[at]=='.'){++at;mantissa();}
+    if(!digits)return invalid();
+    if(at<token.size()&&(token[at]=='e'||token[at]=='E')){
+        ++at;if(at<token.size()&&(token[at]=='+'||token[at]=='-'))++at;
+        const auto begin=at;while(at<token.size()&&digit(token[at]))++at;
+        if(at==begin)return invalid();
+    }
+    if(at!=token.size())return invalid();
+    if(!nonzero)return negative?-0.0f:0.0f;
+    std::istringstream input(token);input.imbue(std::locale::classic());
+    float number=0;input>>number;
+    // libc++ can set failbit for ERANGE on a tiny nonzero result, including
+    // a value rounded up to the smallest normal. Zero underflow and overflow
+    // remain errors; no saturated large result is accepted through failbit.
+    const bool tiny=number!=0&&std::abs(number)<=std::numeric_limits<float>::min();
+    if((input.fail()&&!tiny)||
+       !std::isfinite(number)||number==0||input.rdbuf()->in_avail()!=0)return invalid();
+    return number;
+}
+
 class SknCursor {
 public:
     explicit SknCursor(std::string bytes):bytes_(std::move(bytes)){}
@@ -136,11 +181,7 @@ public:
         return count;
     }
     std::uint32_t bits() {
-        const auto value=token();float number=0;
-        const auto parsed=std::from_chars(value.data(),value.data()+value.size(),number,
-                                          std::chars_format::general);
-        if(parsed.ec!=std::errc{}||parsed.ptr!=value.data()+value.size())
-            throw FormatError("invalid SKN float");
+        const float number=skn_float(token());
         std::uint32_t raw=0;static_assert(sizeof(raw)==sizeof(number));
         std::memcpy(&raw,&number,sizeof(raw));return raw;
     }

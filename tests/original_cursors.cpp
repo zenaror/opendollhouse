@@ -28,6 +28,9 @@ void cases(){
     Temp temp;need(original_cursor_count==51,"complete original cursor inventory");
     for(std::size_t i=0;i<original_cursor_count;++i)write(temp.directory/original_cursor_filename(static_cast<OriginalCursorAsset>(i)),fixture());
     OriginalCursors bank(temp.path);
+    need(bank.image_for_path("Shared/cursors/Arrow.cur")==&bank.at(OriginalCursorAsset::Arrow).images.front(),"native resource path binds the actual validated loose asset");
+    need(bank.image_for_path("sHaReD\\CuRsOrS\\bUlLdOzE.CUR")==&bank.at(OriginalCursorAsset::BULLDOZE).images.front(),"native lookup normalizes only slash/case");
+    need(!bank.image_for_path("../Shared/cursors/Arrow.cur")&&!bank.image_for_path("Shared/cursors/unknown.cur"),"unknown/traversal paths never become filesystem lookups");
     for(std::size_t i=0;i<original_cursor_count;++i){const auto& cursor=bank.at(static_cast<OriginalCursorAsset>(i));
         need(cursor.images.size()==1&&cursor.images[0].width==2&&cursor.images[0].hotspot_x==1&&cursor.images[0].invert[3]==1,
             "all allowlisted identities retain owned hotspot and inversion");}
@@ -41,6 +44,7 @@ void cases(){
     write(move_in,icon);
     {
         const OriginalCursors icon_bank(temp.path);
+        need(!icon_bank.image_for_path("Shared/cursors/MOVEIN.cur"),"ICO without a hotspot cannot become a native cursor");
         need(icon_bank.at(OriginalCursorAsset::MOVEIN).images.empty()&&
             icon_bank.status(OriginalCursorAsset::MOVEIN)==OriginalCursorStatus::unsupported_icon_without_hotspot&&
             std::string(icon_bank.diagnostic(OriginalCursorAsset::MOVEIN)).find("hotspot")!=std::string::npos,

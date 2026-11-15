@@ -134,6 +134,8 @@ public:
     // Always applies the head-only pose.
     odh::CompositeFrame render_head_portrait(const SceneState&,
         HeadPortraitCamera = {}, odh::RasterOptions = {});
+    // Whole-body perspective preview. Keep the rig intact around the head anchor.
+    odh::CompositeFrame render_body_portrait(const SceneState&, HeadPortraitCamera);
     // Renderer-owned legacy cache only. An external resolver owns/accounts its
     // cache; resolved planes are borrowed with shared ownership for each draw.
     std::uint64_t cache_samples() const;

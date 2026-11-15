@@ -13,6 +13,7 @@ struct LinuxUserConfig {
     int language_code=1;
     std::filesystem::path data_root;
     bool has_saved_settings=false;
+    bool language_confirmed=false; // Explicit picker choice, separate from legacy defaults.
     unsigned neighborhood_number=1;
     PlayerPreferences preferences;
 };

@@ -14,6 +14,9 @@ struct NeighborhoodMapConfig {
     std::string resource;
     unsigned marker_scale = 1;
     std::vector<NeighborhoodMapLayer> first_frame_layers;
+    std::vector<std::string> animation_frames;
+    bool animation_pulsates = true;
+    unsigned animation_frame_ms = 250; // fixed Simitone profile: 15 ticks at 60 Hz
 };
 // Exact FAR spelling. Mode 6 deliberately has no configured map.
 std::optional<NeighborhoodMapConfig> neighborhood_map_config(unsigned mode);

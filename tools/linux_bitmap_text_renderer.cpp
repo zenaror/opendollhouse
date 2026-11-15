@@ -1,4 +1,5 @@
 #include "linux_text_renderer.hpp"
+#include "linux_text_runtime.hpp"
 
 #include <algorithm>
 #include <array>
@@ -6,6 +7,13 @@
 #include <vector>
 
 namespace odh_host {
+// The bounded bitmap backend owns no Pango/font cache or external resources.
+struct LinuxTextRuntime::Impl {};
+LinuxTextRuntime::LinuxTextRuntime()=default;
+LinuxTextRuntime::LinuxTextRuntime(_PangoFontMap*) {
+    throw std::invalid_argument("borrowed Pango font maps require the Pango text backend");
+}
+LinuxTextRuntime::~LinuxTextRuntime()=default;
 namespace {
 using Glyph = std::array<std::uint8_t, 7>;
 constexpr std::array<Glyph, 26> letters{{

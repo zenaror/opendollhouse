@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+#include "odh/host_filesystem.hpp"
 #include "original_ui_art.hpp"
 #include <algorithm>
 #include <fstream>
@@ -63,12 +64,17 @@ std::optional<odh::BitmapImage> read_object_catalog_icon(const odh::View& view,s
     return image;
 }
 
+OriginalUiArt::OriginalUiArt(std::map<std::string,odh::BitmapImage> images){
+    for(auto& entry:images)if(!images_.emplace(folded(entry.first),std::move(entry.second)).second)
+        throw odh::FormatError("ambiguous original UI image binding");
+}
+
 OriginalUiArt::OriginalUiArt(const std::filesystem::path& game_root,const std::vector<std::string>& required,
         const std::vector<std::string>& optional,std::size_t pixel_limit){
-    const auto root=std::filesystem::canonical(game_root);
-    const auto path=std::filesystem::canonical(root/"UIGraphics/UIGraphics.far");
+    const auto root=odh::hostfs::canonical(game_root);
+    const auto path=odh::hostfs::canonical(root/"UIGraphics/UIGraphics.far");
     const auto relative=path.lexically_relative(root);
-    if(relative.empty()||relative.is_absolute()||std::any_of(relative.begin(),relative.end(),
+    if(relative.empty()||odh::hostfs::is_absolute(relative)||std::any_of(relative.begin(),relative.end(),
         [](const auto& part){return part=="..";}))throw odh::FormatError("original UI archive is outside selected installation");
     std::ifstream stream(path,std::ios::binary);
     if(!stream)throw odh::FormatError("cannot open original UI archive");
