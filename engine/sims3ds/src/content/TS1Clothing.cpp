@@ -39,7 +39,7 @@ bool TS1Clothing::EnsureBuilt() {
     if (!content->EnsureInit()) return false; // not set up yet: try again later
     _Built = true;
     std::set<std::string> suits;
-    for (auto& kv : content->BCF.SkinHostBCF) suits.insert(Lower(kv.first));
+    for (auto& kv : content->BCF.AllSuitHosts()) suits.insert(Lower(kv.first));
     for (auto& f : content->TS1Global.ListExtension(".bcf")) if (EndsWith(f, ".cmx.bcf")) suits.insert(f.substr(0, f.size() - 8));
     for (auto& f : content->TS1Global.ListExtension(".cmx")) suits.insert(f.substr(0, f.size() - 4));
     auto add = [&](const std::string& cat, const std::string& type, const std::string& item) {

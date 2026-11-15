@@ -25,6 +25,9 @@ There is no stable public release yet.
 
 ### Changed
 
+- When entering a home, the game looks up the outfits its residents wear.
+  Custom outfits outside the game index are discovered as needed. The household
+  bar reads each resident's face strip independently.
 - Reduced repeated drawing and file access when playing a lot on Vita and Switch.
 - Documentation organized for milestone 1 players: installation, controls,
   saves, help and limitations. Public contribution instructions are separate

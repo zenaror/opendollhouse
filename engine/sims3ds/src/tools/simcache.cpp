@@ -47,7 +47,8 @@ int main(int argc, char** argv) {
         FSO::Content::Content::Init(root, cache); // objects.cache, wallfloor*.cache
         simapp::UICatalog::Get().Init(cache);     // catalog.cache
         FSO::Content::TS1::TS1AvatarContent::SetBasePath(root);
-        FSO::Content::TS1::TS1AvatarContent::Get()->EnsureInit(); // cmxnames/avatars/bcfnames.cache
+        auto* avatars = FSO::Content::TS1::TS1AvatarContent::Get();
+        if (avatars->EnsureInit()) avatars->BCF.AllSuitHosts(); // generate the full offline index
         FSO::Files::InstallDirCache::Save();                       // dirs.cache (incl. what the avatar index listed)
     } catch (std::exception& e) {
         std::printf("simcache: failed: %s\n", e.what());

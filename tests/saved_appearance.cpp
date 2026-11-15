@@ -329,6 +329,53 @@ int main(int argc,char** argv){try{
   auto ignored_hands=dog;for(auto& hand:ignored_hands.hands)hand="unparsed;animal-hand-field";
   check(species.resolve_avatar_body(ignored_hands).parts.size()==dog_scene.parts.size(),
       "source animal type ignores hand strings even when populated");
+  // A large custom host has an unrelated filename and still overrides the
+  // embedded appearance. The animation-only record has a malformed tail:
+  // its zero prefix is safe for known visuals, never for a full diagnostic.
+  {
+   const auto patch=dir.path/"visual-patch.far";
+   std::string long_mesh(220,'v');
+   const auto custom=appearance("embedded-dog-body",{long_mesh,long_mesh,long_mesh});
+   check(custom.size()>512);
+   auto broken_clip=clip();broken_clip.append(32*1024,'x');
+   const auto mesh_bytes=mesh(long_mesh,"loose-texture");
+   const std::string first="unexpected.bcf",alias="shared.bcf";
+   far(patch,{{first,custom},{alias,custom},{"clip-only.bcf",broken_clip},{long_mesh+".bmf",mesh_bytes}});
+   // Two different logical names share a byte range in this FAR.
+   // Make the second directory entry point at the first's physical bytes.
+   {
+    const auto table=16+2*custom.size()+broken_clip.size()+mesh_bytes.size();
+    std::fstream edit(patch,std::ios::binary|std::ios::in|std::ios::out);
+    edit.seekp(static_cast<std::streamoff>(table+4+16+first.size()+8));
+    std::string offset;word(offset,16);edit.write(offset.data(),4);check(bool(edit));
+   }
+   auto patched=sources;patched.push_back(patch.string());
+   SavedAppearanceResources full(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),patched);
+   SavedAppearanceResources visual(base.string(),t.string(),"legacy-explicit.bcf","adult",skins.string(),patched,
+       {},nullptr,{},SavedAppearanceResources::Declarations::VisualFirst);
+   const auto scene=visual.resolve_avatar_body(embedded_dog);
+   check(scene.parts.size()==3 && scene.parts[0].appearance_far==patch.string() &&
+         scene.parts[0].appearance_entry==alias && scene.parts[0].bmf_entry==full.resolve_avatar_body(embedded_dog).parts[0].bmf_entry);
+   auto absent=dog;absent.head="not-in-any-file";
+   rejects([&]{visual.resolve_avatar_body(absent);});
+   check(visual.diagnostics().malformed_resources==1 &&
+         visual.diagnostics().resource_errors==full.diagnostics().resource_errors);
+   check(visual.resolve_avatar_body(embedded_dog).parts.size()==3);
+  }
+  {
+   // Portraits fit, but a later full scan exceeds the catalog name budget.
+   // Keep the usable visual index after that failed upgrade.
+   const auto clip_archive=dir.path/"many-animations.far";
+   std::string clips(8,'\0');word(clips,3000);
+   const auto declaration=clip().substr(12);
+   for(int i=0;i<3000;++i)clips+=declaration;
+   far(clip_archive,{{"rig.bcf",rig()},{"one.bcf",clips},{"two.bcf",clips},{"three.bcf",clips}});
+   SavedAppearanceResources visual(clip_archive.string(),t.string(),"rig.bcf","adult",skins.string(),
+       {animals.string()},{},nullptr,{},SavedAppearanceResources::Declarations::VisualFirst);
+   check(visual.resolve_avatar_body(embedded_dog).parts.size()==1);
+   rejects([&]{visual.diagnostics();});
+   check(visual.resolve_avatar_body(embedded_dog).parts.size()==1);
+  }
   const auto human_after=species.resolve_avatar_body(human),legacy_after=species.resolve_body(human);
   check(human_after.parts.size()==8&&human_after.skeleton_entry=="adult-skeleton.cmx.bcf"&&human_after.skeleton_far.empty()&&
       legacy_after.skeleton_entry=="legacy-explicit.bcf"&&legacy_after.skeleton_far.empty(),

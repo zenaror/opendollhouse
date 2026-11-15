@@ -75,7 +75,7 @@ private:
 class TS1BCFProvider {
 public:
     explicit TS1BCFProvider(TS1Provider* provider) : BaseProvider(provider) {}
-    void Init();
+    bool Init();
 
     /// name with extension: "a2o-standing-loop.anim", "b001mafit_01.apr", "adult.skel" (case-insensitive)
     FSO::Vitaboy::Animation* GetAnimation(const std::string& name);
@@ -87,7 +87,8 @@ public:
 
     // name (lower, no extension) -> host file (lower, e.g. "ross-walking-loop.cmx")
     std::unordered_map<std::string, std::string> AnimHostBCF;
-    std::unordered_map<std::string, std::string> SkinHostBCF;
+    /// All declared suits for the clothes/CAS catalog, including unindexed custom hosts.
+    const std::unordered_map<std::string, std::string>& AllSuitHosts();
     std::unordered_map<std::string, std::string> SkelHostBCF;
 
     size_t LoadedFiles() const { return BCFCache.size(); }
@@ -98,6 +99,14 @@ public:
 
 private:
     TS1Provider* BaseProvider;
+    std::unordered_map<std::string, std::string> SkinHostBCF;
+    std::vector<std::string> PendingSuitHosts;
+    std::string NamesCache, NamesKey;
+    bool LooseNamesLoaded = false;
+    void EnsureLooseNames();
+    void CollectUnindexedHosts();
+    void DiscoverSuits(const std::string* wanted);
+    void SaveNames() const;
     struct CachedBCF { std::unique_ptr<FSO::Vitaboy::BCF> B; uint32_t Gen = 0; }; // FIX(sims): see TrimCache
     std::unordered_map<std::string, CachedBCF> BCFCache; // host file -> parsed
     uint32_t CacheGen = 1;

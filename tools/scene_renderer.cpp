@@ -510,6 +510,10 @@ struct SceneRenderer::Impl {
             const auto mesh = odh::skin_mesh(meshes[index], pose);
             if(view) {
                 for(const auto& face:mesh.faces) {
+                    // StripAllButHead can collapse an entire body triangle to one point.
+                    // It has zero area from every direction, including at the near plane.
+                    if(state.head_only && mesh.vertices[face[0]].position==mesh.vertices[face[1]].position &&
+                       mesh.vertices[face[0]].position==mesh.vertices[face[2]].position)continue;
                     const std::array<PortraitVertex,3> source{{
                         {mesh.vertices[face[0]].position,mesh.vertices[face[0]].texcoord,mesh.vertices[face[0]].normal},
                         {mesh.vertices[face[1]].position,mesh.vertices[face[1]].texcoord,mesh.vertices[face[1]].normal},

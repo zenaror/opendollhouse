@@ -327,7 +327,7 @@ int main(int argc, char** argv) {
             auto have = [&](const std::string& bodyString) {
                 auto mesh = FSO::Content::ToLowerInvariant(bodyString.substr(0, bodyString.find(',')));
                 auto tex = FSO::Content::ToLowerInvariant(bodyString.substr(bodyString.find('=') + 1));
-                bool m = av->BCF.SkinHostBCF.count(mesh) || av->TS1Global.Has(mesh + ".cmx") || av->TS1Global.Has(mesh + ".cmx.bcf");
+                bool m = av->BCF.AllSuitHosts().count(mesh) || av->TS1Global.Has(mesh + ".cmx") || av->TS1Global.Has(mesh + ".cmx.bcf");
                 bool t = av->TS1Global.Has(tex + ".bmp");
                 return std::string(m ? "" : " [NO MESH]") + (t ? "" : " [NO TEX]");
             };

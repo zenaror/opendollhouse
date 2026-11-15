@@ -16,6 +16,7 @@
 #include <set>
 #include <cmath>
 #include <climits>
+#include <utility>
 
 namespace {
 std::string fold(std::string s) {for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c+'a'-'A');return s;}
@@ -89,46 +90,58 @@ SavedAnimationAppearance saved_animation_appearance(const std::string& raw,const
 
 struct SavedAppearanceResources::Impl {
     SceneConfig config;Archive animations,textures;
-    std::map<std::string,std::vector<Named>> appearances,loose_appearance_names,clips,skeletons;
+    using NameIndex=std::map<std::string,std::vector<Named>>;
+    struct DeclarationsIndex {
+        NameIndex appearances,clips,skeletons;
+        std::vector<std::string> appearance_order;
+        SavedAppearanceCatalogDiagnostics diagnostics;
+        std::uint64_t count=0,bytes=0;
+    } names;
+    NameIndex loose_appearance_names;
     std::filesystem::path skins_root;
     std::map<std::string,std::vector<std::filesystem::path>> skin_files;
     bool catalog_mode=false;
-    SavedAppearanceCatalogDiagnostics scan_diagnostics;
     std::vector<std::unique_ptr<Archive>> extra_archives;
     std::map<std::string,Named> files;
-    std::vector<std::string> file_order,appearance_order,skin_file_order;
+    std::vector<std::string> file_order,skin_file_order;
     template<class Decode> auto decode(const Named& selected,Decode decoder){
         if(selected.archive)return decoder(selected.archive->view(selected.archive->select(selected.entry)));
         BufferedResourceFile input(selected.entry);if(!input)throw odh::FormatError("saved appearance loose resource unavailable");
         return decoder(odh::View(input,input.size()));
     }
     void note_metadata_failure(const std::string& source,const odh::FormatError& error){
-        ++scan_diagnostics.malformed_resources;
-        if(scan_diagnostics.resource_errors.size()<16){
+        ++names.diagnostics.malformed_resources;
+        if(names.diagnostics.resource_errors.size()<16){
             auto message=source+": "+error.what();if(message.size()>512)message.resize(512);
-            scan_diagnostics.resource_errors.push_back(std::move(message));
+            names.diagnostics.resource_errors.push_back(std::move(message));
         }
+    }
+    std::filesystem::path name_cache;
+    bool use_name_cache=false,visual_first=false;
+    void add(NameIndex& index,const std::string& name,const std::string& entry,Archive* archive=nullptr,bool retain_duplicates=false){
+        bounded_name(name);
+        if(++names.count>8192||(names.bytes+=name.size()+entry.size())>(catalog_mode?4u*1024u*1024u:256u*1024u))
+            throw odh::FormatError("saved appearance named resource budget exceeded");
+        const auto key=fold(name);
+        if(&index==&names.appearances&&!index.count(key))names.appearance_order.push_back(key);
+        auto& selected=index[key];
+        // TS1Provider.BuildDictionary and TS1BCFProvider assign later
+        // filename/name entries. The caller supplies a stable source order.
+        if(catalog_mode&&!retain_duplicates)selected.clear();
+        selected.push_back({entry,name,archive});
     }
     Impl(const std::string& a,const std::string& t,const std::string& se,const std::string& sn,
          const std::string& skins,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots,bool metadata_only=false,
          const std::vector<std::vector<std::filesystem::path>>* installed_skins=nullptr,
-         const std::filesystem::path& name_cache={})
-         :animations(a,installed_skins!=nullptr),textures(t,installed_skins!=nullptr) {
+         const std::filesystem::path& cache_path={},Declarations mode=Declarations::All)
+         :animations(a,installed_skins!=nullptr),textures(t,installed_skins!=nullptr),name_cache(cache_path),
+          use_name_cache(installed_skins || !cache_path.empty()) {
         config.animation_far=a;config.textures_far=t;
         if(!metadata_only){config.skeleton_entry=animations.select(se).name;config.skeleton_name=sn;bounded_name(sn);}
         catalog_mode=!sources.empty()||!loose_roots.empty();
         if(sources.size()>128||loose_roots.size()>16)throw odh::FormatError("saved appearance source count exceeds bound");
-        std::uint64_t count=0,bytes=0,file_count=0,file_bytes=0;
-        auto add=[&](auto& index,const std::string& name,const std::string& entry,Archive* archive=nullptr,bool retain_duplicates=false){bounded_name(name);
-            if(++count>8192||(bytes+=name.size()+entry.size())>(catalog_mode?4u*1024u*1024u:256u*1024u))
-                throw odh::FormatError("saved appearance named resource budget exceeded");
-            const auto key=fold(name);
-            if(&index==&appearances&&!index.count(key))appearance_order.push_back(key);
-            auto& selected=index[key];
-            // TS1Provider.BuildDictionary and TS1BCFProvider assign later
-            // filename/name entries. The caller supplies a stable source order.
-            if(catalog_mode&&!retain_duplicates)selected.clear();
-            selected.push_back({entry,name,archive});};
+        visual_first=catalog_mode && mode==Declarations::VisualFirst;
+        std::uint64_t file_count=0,file_bytes=0;
         std::vector<Archive*> archives{&animations,&textures};
         std::set<std::filesystem::path> admitted{odh::hostfs::canonical(a),odh::hostfs::canonical(t)};
         for(const auto& source:sources){bounded_name(source);if(!admitted.insert(odh::hostfs::canonical(source)).second)continue;
@@ -142,40 +155,10 @@ struct SavedAppearanceResources::Impl {
             if(!files.count(key))file_order.push_back(key);
             files[key]={entry.name,key,archive};
         }
-        using odh_host::preview_detail::PortraitNames;
-        std::optional<odh_host::preview_detail::PortraitNameCache> names_cache;
-        if(installed_skins || !name_cache.empty()) names_cache.emplace(name_cache);
-        auto read_names=[&](const odh::View& view,char kind){
-            auto parse=[kind](const odh::View& source){
-                PortraitNames result;
-                if(kind=='T'){
-                    for(auto& appearance:odh::read_cmx_appearances(source).appearances)
-                        result.emplace_back('A',std::move(appearance.name));
-                }else{
-                    auto decoded=odh::read_bcf_resources(source);
-                    if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing BCF bytes");
-                    for(auto& rig:decoded.skeletons)result.emplace_back('S',std::move(rig.name));
-                    for(auto& appearance:decoded.appearances)result.emplace_back('A',std::move(appearance.name));
-                    if(kind=='B')for(auto& clip:decoded.animations)result.emplace_back('C',std::move(clip.name));
-                }
-                return result;
-            };
-            return names_cache ? names_cache->read(view,kind,parse) : parse(view);
-        };
-        auto publish=[&](const PortraitNames& names,const std::string& entry,Archive* archive){
-            for(const auto& item:names){
-                if(item.first=='S') add(skeletons,item.second,entry,archive,true);
-                else if(item.first=='A') add(appearances,item.second,entry,archive);
-                else add(clips,item.second,entry,archive);
-            }
-        };
-        if(!catalog_mode)for(const auto& entry:*animations.entries){const auto key=fold(entry.name);
-            if(key.size()>=4&&key.substr(key.size()-4)==".bcf")
-                publish(read_names(animations.view(entry),'B'),entry.name,&animations);}
+        if(!catalog_mode)index_names(false);
         std::vector<std::string> roots;if(!skins.empty())roots.push_back(skins);
         roots.insert(roots.end(),loose_roots.begin(),loose_roots.end());
         std::size_t loose_files=0,path_bytes=0;std::set<std::filesystem::path> scanned;
-        std::vector<std::string> cmx_order;std::set<std::string> cmx_seen;
         if(installed_skins && installed_skins->size()!=roots.size())
             throw odh::FormatError("portrait skin inventory root count mismatch");
         for(std::size_t i=0;i<roots.size();++i){const auto& root=roots[i];bounded_name(root);std::error_code error;const auto canonical=odh::hostfs::canonical(root,error);
@@ -195,7 +178,7 @@ struct SavedAppearanceResources::Impl {
                 if(!skin_files.count(skin_key))skin_file_order.push_back(skin_key);
                 auto& group=skin_files[skin_key];if(catalog_mode)group.clear();group.push_back(path);
                 if(ext==".cmx"){
-                    if(catalog_mode){const auto key=basename(path.string());if(cmx_seen.insert(key).second)cmx_order.push_back(key);continue;}
+                    if(catalog_mode)continue;
                     odh::AppearanceCollection decoded;
                     try{BufferedResourceFile input(path);decoded=odh::read_cmx_appearances(odh::View(input,std::filesystem::file_size(path)));}
                     catch(const odh::FormatError& error){note_metadata_failure(path.string(),error);continue;}
@@ -203,13 +186,64 @@ struct SavedAppearanceResources::Impl {
                 }
             }
         }
+        if(catalog_mode)index_names(visual_first);
+    }
+    // Callers which need saved clips or a proof that an optional resource is
+    // absent retain the complete parser, including errors in animation tails.
+    void complete_index(){
+        if(!visual_first)return;
+        auto visual_names=std::exchange(names,{});
+        try{
+            index_names(false);
+            visual_first=false;
+        }catch(...){
+            names=std::move(visual_names);
+            throw;
+        }
+    }
+    void index_names(bool visual){
+        using odh_host::preview_detail::PortraitNames;
+        std::optional<odh_host::preview_detail::PortraitNameCache> names_cache;
+        if(use_name_cache) names_cache.emplace(name_cache);
+        auto read_names=[&](const odh::View& view,char kind){
+            auto parse=[kind](const odh::View& source){
+                PortraitNames result;
+                if(kind=='T'){
+                    for(auto& appearance:odh::read_cmx_appearances(source).appearances)
+                        result.emplace_back('A',std::move(appearance.name));
+                }else{
+                    auto decoded=odh::read_bcf_resources(source);
+                    if(decoded.remaining_bytes)throw odh::FormatError("saved appearance trailing BCF bytes");
+                    for(auto& rig:decoded.skeletons)result.emplace_back('S',std::move(rig.name));
+                    for(auto& appearance:decoded.appearances)result.emplace_back('A',std::move(appearance.name));
+                    if(kind=='B')for(auto& clip:decoded.animations)result.emplace_back('C',std::move(clip.name));
+                }
+                return result;
+            };
+            return names_cache ? names_cache->read(view,kind,parse) : parse(view);
+        };
+        std::size_t animation_only=0;
+        auto publish=[&](const PortraitNames& items,const std::string& entry,Archive* archive){
+            for(const auto& item:items){
+                if(item.first=='S') add(names.skeletons,item.second,entry,archive,true);
+                else if(item.first=='A') add(names.appearances,item.second,entry,archive);
+                else add(names.clips,item.second,entry,archive);
+            }
+        };
+        if(!catalog_mode)for(const auto& entry:*animations.entries){const auto key=fold(entry.name);
+            if(key.size()>=4&&key.substr(key.size()-4)==".bcf")
+                publish(read_names(animations.view(entry),'B'),entry.name,&animations);}
         if(catalog_mode){
             // TS1BCFProvider enumerates the ONE projected BCF/CMX provider in
             // registration order before indexing its internal appearance names.
             // First key insertion establishes clothing order; later hosts select
             // the actual payload. Do not scan all BCFs before all CMXs.
             std::vector<std::string> ordered=file_order;std::set<std::string> seen(ordered.begin(),ordered.end());
-            for(const auto& key:cmx_order)if(seen.insert(key).second)ordered.push_back(key);
+            for(const auto& key:skin_file_order){
+                if(key.size()<4 || key.compare(key.size()-4,4,".cmx")!=0)continue;
+                const auto host=basename(key);
+                if(seen.insert(host).second)ordered.push_back(host);
+            }
             struct Declaration {
                 Named source;
                 const odh::FarEntry* entry=nullptr;
@@ -217,11 +251,19 @@ struct SavedAppearanceResources::Impl {
                 PortraitNames names;
                 std::string error;
             };
+            // In a BCF, two zero counts at byte 0 mean no skeleton and no
+            // appearance. A portrait never needs the following animation data.
+            // Read short records whole to avoid coming back for small suits.
+            const auto fetch_size=[visual](const Declaration& job){
+                const auto size=job.entry->length;
+                return visual && job.kind!='T' && size>512 ? std::uint32_t{8} : size;
+            };
+            const std::uint32_t max_gap=visual ? 16*1024 : 64*1024;
             std::vector<Declaration> batch;
             auto flush=[&]{
                 std::vector<std::size_t> order(batch.size());
                 std::iota(order.begin(),order.end(),0);
-                if(names_cache)std::stable_sort(order.begin(),order.end(),[&](auto i,auto j){
+                if(names_cache || visual)std::stable_sort(order.begin(),order.end(),[&](auto i,auto j){
                     const auto& a=batch[i];const auto& b=batch[j];
                     if(a.source.archive!=b.source.archive)return std::less<Archive*>{}(a.source.archive,b.source.archive);
                     return (a.entry?a.entry->offset:0)<(b.entry?b.entry->offset:0);
@@ -234,16 +276,16 @@ struct SavedAppearanceResources::Impl {
                     auto& job=batch[order[n]];
                     if(!job.error.empty())continue;
                     constexpr std::size_t max_extent=256*1024;
-                    if(names_cache && n>=extent_end && job.entry && job.entry->length<=max_extent) {
+                    if((names_cache || visual) && n>=extent_end && job.entry && fetch_size(job)<=max_extent) {
                         extent_offset=job.entry->offset;
-                        std::uint64_t end=std::uint64_t(extent_offset)+job.entry->length;
+                        std::uint64_t end=std::uint64_t(extent_offset)+fetch_size(job);
                         extent_end=n+1;
                         while(extent_end<order.size()){
                             const auto& next=batch[order[extent_end]];
                             // A short gap costs less than another SD seek. Larger gaps
                             // remain unread, even in a sparse custom archive.
-                            if(next.source.archive!=job.source.archive || !next.entry || next.entry->offset>end+64*1024)break;
-                            const auto next_end=std::uint64_t(next.entry->offset)+next.entry->length;
+                            if(next.source.archive!=job.source.archive || !next.entry || next.entry->offset>end+max_gap)break;
+                            const auto next_end=std::uint64_t(next.entry->offset)+fetch_size(next);
                             if(next_end-extent_offset>max_extent)break;
                             end=std::max(end,next_end);
                             ++extent_end;
@@ -253,8 +295,19 @@ struct SavedAppearanceResources::Impl {
                     }
                     try{
                         if(n<extent_end){
-                            const auto group=odh::View(extent.data(),extent.size());
-                            job.names=read_names(group.subview(job.entry->offset-extent_offset,job.entry->length),job.kind);
+                            const auto pos=job.entry->offset-extent_offset;
+                            const auto available=extent.size()-pos;
+                            if(visual && job.kind!='T' && job.entry->length>=8 &&
+                               std::all_of(extent.begin()+pos,extent.begin()+pos+8,[](auto byte){return byte==0;})){
+                                ++animation_only;
+                                continue;
+                            }
+                            if(job.entry->length<=available){
+                                const auto group=odh::View(extent.data(),extent.size());
+                                job.names=read_names(group.subview(pos,job.entry->length),job.kind);
+                            }else{
+                                job.names=read_names(job.source.archive->view(*job.entry),job.kind);
+                            }
                         }else if(job.entry)job.names=read_names(job.source.archive->view(*job.entry),job.kind);
                         else job.names=decode(job.source,[&](const auto& view){return read_names(view,job.kind);});
                     }catch(const odh::FormatError& error){
@@ -263,8 +316,8 @@ struct SavedAppearanceResources::Impl {
                         job.error.resize(std::min(job.error.size(),std::size_t{512}));
                     }
                     for(const auto& item:job.names){
-                        if(count+(++pending_names)>8192 ||
-                           bytes+(pending_bytes+=item.second.size()+job.source.entry.size())>4u*1024u*1024u)
+                        if(names.count+(++pending_names)>8192 ||
+                           names.bytes+(pending_bytes+=item.second.size()+job.source.entry.size())>4u*1024u*1024u)
                             throw odh::FormatError("saved appearance named resource budget exceeded");
                     }
                 }
@@ -290,10 +343,11 @@ struct SavedAppearanceResources::Impl {
                         job.error=error.what();
                     }
                 }
-                if(!names_cache || batch.size()==8192)flush();
+                if((!names_cache && !visual) || batch.size()==8192)flush();
             }
             if(!batch.empty())flush();
         }
+        if(visual)std::printf("[cold-ui] stage=portrait-visual-index animation_only_skipped=%zu\n",animation_only);
         if(names_cache) names_cache->save();
     }
     Named file(Archive& legacy,const std::string& name){
@@ -311,7 +365,7 @@ struct SavedAppearanceResources::Impl {
     }
     std::optional<Named> find_appearance(const std::string& name){
         const auto key=fold(name);
-        if(appearances.count(key))return named(appearances,name);
+        if(names.appearances.count(key))return named(names.appearances,name);
         if(loose_appearance_names.count(key))return named(loose_appearance_names,name);
         // A legacy producer wrote filenames instead of declared suit names.
         // Preserve the selected resource and reject ambiguous containers.
@@ -347,7 +401,7 @@ struct SavedAppearanceResources::Impl {
             if(suits.size()>1)throw odh::FormatError("saved appearance legacy suit host ambiguous: "+name);
             if(suits.size()==1){
                 const auto declared=fold(suits.front().name);
-                const auto& index=appearances.count(declared)?appearances:loose_appearance_names;
+                const auto& index=names.appearances.count(declared)?names.appearances:loose_appearance_names;
                 const auto& selected=named(index,declared);
                 if(selected.archive==host.archive && selected.entry==host.entry)return selected;
                 throw odh::FormatError("saved appearance legacy suit host shadowed: "+name);
@@ -457,7 +511,7 @@ struct SavedAppearanceResources::Impl {
     std::optional<SavedAnimationAppearance> animation(const std::string& raw) {
         if(raw.empty())return {};
         bounded_name(raw);auto semi=raw.find(';');if(semi==std::string::npos)throw odh::FormatError("saved animation missing fields");
-        auto host=named(clips,raw.substr(0,semi));auto decoded=odh::read_bcf_animations(animations.view(animations.select(host.entry)));
+        auto host=named(names.clips,raw.substr(0,semi));auto decoded=odh::read_bcf_animations(animations.view(animations.select(host.entry)));
         for(const auto& c:decoded.animations)if(c.name==host.name){auto out=saved_animation_appearance(raw,c);out.entry=host.entry;out.cfp_entry=animations.select(c.xskill+".cfp").name;return out;}
         throw odh::FormatError("saved animation indexed header missing");
     }
@@ -473,17 +527,19 @@ struct SavedAppearanceResources::Impl {
 };
 SavedAppearanceResources::SavedAppearanceResources(const std::string& a,const std::string& t,const std::string& se,const std::string& sn,
                                                    const std::string& skins,const std::vector<std::string>& sources,const std::vector<std::string>& loose_roots,
-        const std::vector<std::vector<std::filesystem::path>>* installed_skins,const std::filesystem::path& name_cache)
-    :impl_(std::make_unique<Impl>(a,t,se,sn,skins,sources,loose_roots,false,installed_skins,name_cache)){}
+        const std::vector<std::vector<std::filesystem::path>>* installed_skins,const std::filesystem::path& name_cache,Declarations mode)
+    :impl_(std::make_unique<Impl>(a,t,se,sn,skins,sources,loose_roots,false,installed_skins,name_cache,mode)){}
 SavedAppearanceResources::~SavedAppearanceResources()=default;
 SavedAppearanceResources::SavedAppearanceResources(SavedAppearanceResources&&) noexcept=default;
 SavedAppearanceResources& SavedAppearanceResources::operator=(SavedAppearanceResources&&) noexcept=default;
 const SavedAppearanceCatalogDiagnostics& SavedAppearanceResources::diagnostics() const {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
-    return impl_->scan_diagnostics;
+    impl_->complete_index();
+    return impl_->names.diagnostics;
 }
 SavedAppearance SavedAppearanceResources::resolve(const odh::ObjmPersonState& person) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
+    impl_->complete_index();
     auto out=impl_->body_head_animation(person);
     impl_->part(out.scene,person.left_hand.bytes,person.left_hand_texture.bytes);impl_->part(out.scene,person.right_hand.bytes,person.right_hand_texture.bytes);
     return out;
@@ -525,15 +581,15 @@ SceneConfig SavedAppearanceResources::resolve_avatar_body(const odh::AvatarBodyS
         // TS1BCFProvider indexes the internal skeleton name, not an inferred
         // filename. Selected-file precedence is already owned by this catalog;
         // duplicate internal names remain ambiguous rather than replacing a rig.
-        const auto candidates=impl_->skeletons.find(fold(body.avatar_type));
-        if(candidates!=impl_->skeletons.end()&&candidates->second.size()!=1){
+        const auto candidates=impl_->names.skeletons.find(fold(body.avatar_type));
+        if(candidates!=impl_->names.skeletons.end()&&candidates->second.size()!=1){
             rig_source="ambiguous";
             for(std::size_t i=0;i<candidates->second.size()&&i<2;++i){
                 const auto& candidate=candidates->second[i];
                 rig_source+=" "+(candidate.archive?candidate.archive->path:std::string{"loose"})+" ["+candidate.entry+"]";
             }
         }
-        const auto& rig=impl_->named(impl_->skeletons,body.avatar_type);
+        const auto& rig=impl_->named(impl_->names.skeletons,body.avatar_type);
         if(!rig.archive)throw odh::FormatError("avatar skeleton requires an indexed FAR source");
         rig_source=rig.archive->path+" ["+rig.entry+":"+rig.name+"]";
         auto scene=impl_->config;
@@ -549,7 +605,7 @@ SceneConfig SavedAppearanceResources::resolve_avatar_body(const odh::AvatarBodyS
             if(auto head_host=impl_->find_appearance(head.appearance)){
                 part=head.appearance+" @"+(head_host->archive?head_host->archive->path:std::string{"loose"})+" ["+head_host->entry+"]";
                 impl_->part(scene,head.appearance,head.texture_map);
-            }else if(impl_->scan_diagnostics.malformed_resources){
+            }else if(diagnostics().malformed_resources){
                 throw odh::FormatError("animal head appearance absence is unproved: incomplete BCF/CMX name index");
             }
             // SimAvatar.ReloadHead adds nothing when the source appearance
@@ -562,7 +618,7 @@ SceneConfig SavedAppearanceResources::resolve_avatar_body(const odh::AvatarBodyS
     }catch(const odh::FormatError& error){
         throw odh::FormatError("avatar appearance species="+body.avatar_type+" requested_rig="+body.avatar_type+
             " stage="+stage+" selected_rig="+rig_source.substr(0,768)+" part="+part.substr(0,256)+
-            " catalog_malformed="+std::to_string(impl_->scan_diagnostics.malformed_resources)+": "+error.what());
+            " catalog_malformed="+std::to_string(diagnostics().malformed_resources)+": "+error.what());
     }
 }
 SceneConfig SavedAppearanceResources::resolve_live_portrait(const std::string& skeleton,
@@ -570,7 +626,7 @@ SceneConfig SavedAppearanceResources::resolve_live_portrait(const std::string& s
         const std::vector<std::string>& accessories){
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
     if(!odh::avatar_body_type(skeleton))throw odh::FormatError("live portrait unsupported current skeleton");
-    const auto& rig=impl_->named(impl_->skeletons,skeleton);
+    const auto& rig=impl_->named(impl_->names.skeletons,skeleton);
     if(!rig.archive)throw odh::FormatError("live portrait skeleton requires an indexed FAR source");
     auto scene=impl_->config;
     scene.skeleton_far=rig.archive->path;scene.skeleton_entry=rig.entry;scene.skeleton_name=rig.name;
@@ -596,7 +652,7 @@ void SavedAppearanceResources::append_accessories(SceneConfig& scene,const std::
         // TS1 preserves BoundAppearances even when content.Get returns null.
         // Only a proven index miss is a visual no-op; selected malformed or
         // ambiguous resources still take the ordinary strict decoder path.
-        if(impl_->appearances.find(key)==impl_->appearances.end()&&
+        if(impl_->names.appearances.find(key)==impl_->names.appearances.end()&&
            impl_->loose_appearance_names.find(key)==impl_->loose_appearance_names.end())continue;
         odh::ObjmSavedAccessory item{};item.name.bytes=name;
         impl_->accessory(scene,item);
@@ -613,6 +669,7 @@ SavedAppearance SavedAppearanceResources::resolve_gestures(const odh::ObjmPerson
         const auto field="hand"+std::to_string(17+i);
         variants[i]=body_resource(body.hands[i],field.c_str());
     }
+    impl_->complete_index();
     auto out=impl_->body_head_animation(person);
     impl_->hands(out.scene,variants);
     return out;
@@ -646,8 +703,8 @@ SavedAppearanceResourceCatalog SavedAppearanceResources::resource_catalog(
   ordinals.emplace(std::make_pair(kind,fold(name)),static_cast<std::uint32_t>(result.size()));
   result.push_back({kind,name,source,asset,hash->second,static_cast<std::uint64_t>(result.size())});
  };
- for(const auto& names:provider.appearances){
-  const auto& selected=provider.named(provider.appearances,names.first);
+ for(const auto& names:provider.names.appearances){
+  const auto& selected=provider.named(provider.names.appearances,names.first);
   add(odh::WardrobeAssetKind::appearance,selected.name,selected);
  }
  // The same file() selects FAR winners before loose files, just as texture_file().
@@ -655,7 +712,7 @@ SavedAppearanceResourceCatalog SavedAppearanceResources::resource_catalog(
  for(const auto& item:provider.files)if(item.first.size()>=4&&item.first.substr(item.first.size()-4)==".bmp")textures.insert(item.first);
  for(const auto& item:provider.skin_files)if(item.first.size()>=4&&item.first.substr(item.first.size()-4)==".bmp")textures.insert(item.first);
  for(const auto& name:textures)add(odh::WardrobeAssetKind::texture,name.substr(0,name.size()-4),provider.file(provider.textures,name));
- for(const auto& name:provider.appearance_order)catalog.appearance_order.push_back(ordinals.at({odh::WardrobeAssetKind::appearance,name}));
+ for(const auto& name:provider.names.appearance_order)catalog.appearance_order.push_back(ordinals.at({odh::WardrobeAssetKind::appearance,name}));
  std::set<std::string> texture_seen;
  const auto add_texture_order=[&](const std::string& name){
   if(name.size()<4||name.substr(name.size()-4)!=".bmp"||!texture_seen.insert(name).second)return;

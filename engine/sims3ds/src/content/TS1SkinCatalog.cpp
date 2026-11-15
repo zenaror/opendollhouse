@@ -80,7 +80,7 @@ bool CASCatalog::Build() {
     // Classify the declared suit names, keeping the original tone on the
     // selected appearance and the original texture on the generated Sim.
     std::map<std::pair<std::string, int>, std::vector<std::string>> meshes;
-    for (const auto& named : content->BCF.SkinHostBCF) {
+    for (const auto& named : content->BCF.AllSuitHosts()) {
         const auto& name = named.first;
         auto split = name.find('_');
         if (split == std::string::npos || split < 6 || !Digits3(name, 1) ||

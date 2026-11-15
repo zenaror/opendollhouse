@@ -36,13 +36,15 @@ struct SavedAppearanceResourceCatalog {
 };
 class SavedAppearanceResources {
 public:
+    enum class Declarations { All, VisualFirst };
     SavedAppearanceResources(const std::string& animation_far, const std::string& textures_far,
                              const std::string& skeleton_entry, const std::string& skeleton_name,
                              const std::string& skins_directory = {},
                              const std::vector<std::string>& far_sources = {},
                              const std::vector<std::string>& extra_skin_directories = {},
                              const std::vector<std::vector<std::filesystem::path>>* installed_skins = nullptr,
-                             const std::filesystem::path& name_cache = {});
+                             const std::filesystem::path& name_cache = {},
+                             Declarations declarations = Declarations::All);
     ~SavedAppearanceResources();
     SavedAppearanceResources(SavedAppearanceResources&&) noexcept;
     SavedAppearanceResources& operator=(SavedAppearanceResources&&) noexcept;

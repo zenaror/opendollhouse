@@ -112,7 +112,8 @@ int main(int argc, char** argv) {
     TS1AvatarContent::SetBasePath(base);
     auto content = TS1AvatarContent::Get();
     if (!content->EnsureInit()) { fprintf(stderr, "no TS1 avatar data under %s\n", base.c_str()); return 1; }
-    printf("index: %zu skeletons, %zu suits, %zu skills\n", content->BCF.SkelHostBCF.size(), content->BCF.SkinHostBCF.size(), content->BCF.AnimHostBCF.size());
+    const auto suitCount = content->BCF.AllSuitHosts().size();
+    printf("index: %zu skeletons, %zu suits, %zu skills\n", content->BCF.SkelHostBCF.size(), suitCount, content->BCF.AnimHostBCF.size());
 
     std::string charFile = Arg(argc, argv, "--char", "");
     std::string bodyStr, headStr, hands[6], skin = "lgt", type = "adult";

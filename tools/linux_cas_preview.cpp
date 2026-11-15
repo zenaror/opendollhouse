@@ -25,7 +25,8 @@ struct LinuxCasPreview::Impl {
             ColdResourceStage stage("portrait-metadata");
             resources=std::make_unique<SavedAppearanceResources>(animations,textures,
                 "adult-skeleton.cmx.bcf","adult",skins,archives,extra_skins,
-                installed_skins ? &*installed_skins : nullptr, name_cache);
+                installed_skins ? &*installed_skins : nullptr, name_cache,
+                installed_skins ? SavedAppearanceResources::Declarations::VisualFirst : SavedAppearanceResources::Declarations::All);
             installed_skins.reset();
         }
         return *resources;
@@ -329,7 +330,13 @@ const odh::BitmapImage* LinuxCasPreview::pie_portrait(const odh::AvatarBodyStrin
     try{
         if(!impl_->pie_renderer||impl_->pie_body!=key){
             ColdResourceStage stage("pie-assets");
-            auto renderer=std::make_unique<SceneRenderer>(impl_->appearance_resources().resolve_avatar_body(body));
+            auto scene=impl_->appearance_resources().resolve_avatar_body(body);
+            // The menu renders one neutral pose, even as the pointer turns its camera.
+            // Only in-world avatars switch between idle, pointing and closed hands.
+            scene.parts.erase(std::remove_if(scene.parts.begin(),scene.parts.end(),[](const ScenePart& part){
+                return part.hand && part.hand->gesture!=odh::HandGesture::idle;
+            }),scene.parts.end());
+            auto renderer=std::make_unique<SceneRenderer>(scene);
             impl_->pie_renderer=std::move(renderer);impl_->pie_body=std::move(key);impl_->pie_image.reset();
         }
         if(impl_->pie_image&&impl_->pie_center==center&&impl_->pie_target==target)return &*impl_->pie_image;

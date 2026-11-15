@@ -51,6 +51,15 @@ CharacterUiImages read_character_ui_images(const odh::View& view,CharacterUiImag
     odh::iff_chunks(view,[&](const odh::Chunk& chunk){if(chunk.type=="BMP_")append_image(out,seen,consumed,chunk.id,chunk.payload,limits);},iff_limits);
     return out;
 }
+CharacterUiImages read_character_ui_image(std::uint16_t id, const odh::View& payload, CharacterUiImageLimits limits) {
+    if(!limits.chunks || !limits.cell_extent || limits.cell_extent>128 || payload.size()>limits.iff_bytes)
+        throw odh::FormatError("character UI resource exceeds chunk, byte or cell limits");
+    CharacterUiImages out;
+    std::array<bool,5> seen{};
+    std::uint64_t consumed=0;
+    append_image(out,seen,consumed,id,payload,limits);
+    return out;
+}
 CharacterUiImages read_character_ui_images(const std::vector<CharacterUiImageResource>& resources,CharacterUiImageLimits limits){
     if(resources.size()>limits.chunks||!limits.cell_extent||limits.cell_extent>128)
         throw odh::FormatError("character UI resources exceed chunk or cell limits");

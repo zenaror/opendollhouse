@@ -313,19 +313,24 @@ void TS1BCFProvider::ReadIndex(const std::vector<uint8_t>& ndx) {
     }
 }
 
-void TS1BCFProvider::Init() {
+bool TS1BCFProvider::Init() {
     // TS1(sims) hardware pass: the three name maps as the last boot built them (bcfnames.cache, keyed by the avatar
     // index): reading every AnimationOut.ndx opens ~75 archives (one per download), ~1 s on the 3DS.
-    std::string namesCache, namesKey;
+    NamesCache.clear();
+    NamesKey.clear();
+    PendingSuitHosts.clear();
+    LooseNamesLoaded = false;
     if (!TS1AvatarContent::CacheDir.empty() && !BaseProvider->IndexKey.empty()) {
-        namesCache = TS1AvatarContent::CacheDir + "/bcfnames.cache";
-        namesKey = "STBCF2 " + BaseProvider->IndexKey;
+        NamesCache = TS1AvatarContent::CacheDir + "/bcfnames.cache";
+        NamesKey = "STBCF2 " + BaseProvider->IndexKey;
         std::vector<uint8_t> bytes;
-        if (FSO::Files::ReadWholeFile(namesCache, bytes)) {
+        if (FSO::Files::ReadWholeFile(NamesCache, bytes)) {
             const char* p = (const char*)bytes.data();
             const char* end = p + bytes.size();
             const char* nl = (const char*)memchr(p, '\n', (size_t)(end - p));
-            if (nl && std::string(p, nl) == namesKey) {
+            const std::string header = nl ? std::string(p, nl) : std::string();
+            const bool indexedOnly = header == NamesKey + " indexed";
+            if (nl && (header == NamesKey || indexedOnly)) {
                 p = nl + 1;
                 bool ok = true;
                 while (p < end) {
@@ -337,7 +342,10 @@ void TS1BCFProvider::Init() {
                     map.emplace(std::string(p + 2, t), std::string(t + 1, e));
                     p = nl ? nl + 1 : end;
                 }
-                if (ok && !SkelHostBCF.empty()) return;
+                if (ok && !SkelHostBCF.empty()) {
+                    LooseNamesLoaded = !indexedOnly;
+                    return true;
+                }
                 SkelHostBCF.clear(); SkinHostBCF.clear(); AnimHostBCF.clear();
             }
         }
@@ -347,8 +355,16 @@ void TS1BCFProvider::Init() {
         std::vector<uint8_t> data;
         if (BaseProvider->GetBytes(ndx, data)) ReadIndex(data);
     }
-    // The NDX supplies the shipped container identities. See below for
-    // the remaining suit declarations in files outside the index.
+    // A lot usually asks for suits and rigs already in the shipped index.
+    // Keep the loose and unindexed searches for an actual miss or a catalog.
+    if (SkelHostBCF.empty() && SkinHostBCF.empty()) AllSuitHosts();
+    else SaveNames();
+    return !SkelHostBCF.empty() || !SkinHostBCF.empty();
+}
+
+void TS1BCFProvider::EnsureLooseNames() {
+    if (LooseNamesLoaded) return;
+    LooseNamesLoaded = true;
     // Loose text CMX files (custom skins / downloads in Skins folders) are parsed - they are tiny.
     // TS1(sims): reading every loose CMX (~300 files with the expansion packs' SkinsBuy) costs ~300 SD card opens
     // on the first Sim of every boot: the names they define are cached in <cache>/cmxnames.cache, valid while the
@@ -407,31 +423,61 @@ void TS1BCFProvider::Init() {
         auto& map = n.Kind == 'A' ? AnimHostBCF : (n.Kind == 'S' ? SkinHostBCF : SkelHostBCF);
         if (!map.count(n.Name)) map[n.Name] = n.Cmx;
     }
-    // The shipped NDX covers most containers. Unlisted BCFs and archived
-    // CMXs can still declare suits whose logical names differ from the file.
+    CollectUnindexedHosts();
+    if (PendingSuitHosts.empty()) SaveNames();
+}
+
+void TS1BCFProvider::CollectUnindexedHosts() {
+    // The NDX and loose declarations take precedence. Only an actual request for
+    // an unlisted suit, or opening a clothing catalog, needs the remaining hosts.
     std::set<std::string> indexed;
     for (const auto* map : {&AnimHostBCF, &SkelHostBCF, &SkinHostBCF})
         for (const auto& item : *map) indexed.insert(item.second);
     for (const auto* extension : {".bcf", ".cmx"}) {
-        for (const auto& host : BaseProvider->ListExtension(extension)) {
-            if (indexed.count(host) || (EndsWith(host, ".cmx") && BaseProvider->IsLoose(host))) continue;
-            std::vector<uint8_t> bytes;
-            if (!BaseProvider->GetBytes(host, bytes)) continue;
-            try {
-                BCF file(bytes, EndsWith(host, ".cmx"));
-                for (const auto& suit : file.Appearances) SkinHostBCF.emplace(Lower(suit->Name), host);
-            } catch (const std::runtime_error&) {
-                fprintf(stderr, "[vitaboy] bad suit container %s\n", host.c_str());
-            }
+        for (auto& host : BaseProvider->ListExtension(extension)) {
+            if (!indexed.count(host) && !(EndsWith(host, ".cmx") && BaseProvider->IsLoose(host)))
+                PendingSuitHosts.push_back(std::move(host));
         }
     }
-    if (!namesCache.empty() && !SkelHostBCF.empty()) {
-        if (FILE* f = FSO::Files::SafeFile::BeginWrite(namesCache)) { // FIX(sims) SAVE
-            fprintf(f, "%s\n", namesKey.c_str());
+    // Pop in the original order: sorted BCF names, followed by sorted CMX names.
+    std::reverse(PendingSuitHosts.begin(), PendingSuitHosts.end());
+}
+
+void TS1BCFProvider::DiscoverSuits(const std::string* wanted) {
+    EnsureLooseNames();
+    if (PendingSuitHosts.empty() || (wanted && SkinHostBCF.count(*wanted))) return;
+    while (!PendingSuitHosts.empty()) {
+        auto host = std::move(PendingSuitHosts.back());
+        PendingSuitHosts.pop_back();
+        std::vector<uint8_t> bytes;
+        if (!BaseProvider->GetBytes(host, bytes)) continue;
+        try {
+            BCF file(bytes, EndsWith(host, ".cmx"));
+            for (const auto& suit : file.Appearances) SkinHostBCF.emplace(Lower(suit->Name), host);
+        } catch (const std::runtime_error&) {
+            fprintf(stderr, "[vitaboy] bad suit container %s\n", host.c_str());
+        }
+        if (wanted && SkinHostBCF.count(*wanted)) break;
+    }
+    if (PendingSuitHosts.empty()) {
+        std::vector<std::string>().swap(PendingSuitHosts);
+        SaveNames();
+    }
+}
+
+const std::unordered_map<std::string, std::string>& TS1BCFProvider::AllSuitHosts() {
+    DiscoverSuits(nullptr);
+    return SkinHostBCF;
+}
+
+void TS1BCFProvider::SaveNames() const {
+    if (!NamesCache.empty() && !SkelHostBCF.empty()) {
+        if (FILE* f = FSO::Files::SafeFile::BeginWrite(NamesCache)) { // FIX(sims) SAVE
+            fprintf(f, "%s%s\n", NamesKey.c_str(), LooseNamesLoaded && PendingSuitHosts.empty() ? "" : " indexed");
             for (auto& kv : SkelHostBCF) fprintf(f, "K\t%s\t%s\n", kv.first.c_str(), kv.second.c_str());
             for (auto& kv : SkinHostBCF) fprintf(f, "S\t%s\t%s\n", kv.first.c_str(), kv.second.c_str());
             for (auto& kv : AnimHostBCF) fprintf(f, "A\t%s\t%s\n", kv.first.c_str(), kv.second.c_str());
-            FSO::Files::SafeFile::EndWrite(namesCache, f);
+            FSO::Files::SafeFile::EndWrite(NamesCache, f);
         }
     }
 }
@@ -480,6 +526,7 @@ static std::string StripExt(const std::string& name, const char* ext) {
 
 Animation* TS1BCFProvider::GetAnimation(const std::string& name) {
     auto key = StripExt(name, ".anim"); //remove .anim
+    if (!LooseNamesLoaded && !AnimHostBCF.count(key)) EnsureLooseNames();
     auto it = AnimHostBCF.find(key);
     if (it == AnimHostBCF.end()) {
         // not indexed: try "<name>.cmx.bcf"
@@ -511,6 +558,7 @@ bool TS1BCFProvider::EnrichAnimation(Animation* anim) {
 
 Appearance* TS1BCFProvider::GetAppearance(const std::string& name) {
     auto key = StripExt(name, ".apr"); //remove .apr
+    if (!SkinHostBCF.count(key)) DiscoverSuits(&key);
     auto it = SkinHostBCF.find(key);
     auto exactSuit = [&](BCF* bcf) -> Appearance* {
         Appearance* found = nullptr;
@@ -541,6 +589,7 @@ Appearance* TS1BCFProvider::GetAppearance(const std::string& name) {
 
 Skeleton* TS1BCFProvider::GetSkeleton(const std::string& name) {
     auto key = StripExt(name, ".skel"); //remove .skel
+    if (!LooseNamesLoaded && !SkelHostBCF.count(key)) EnsureLooseNames();
     auto it = SkelHostBCF.find(key);
     if (it == SkelHostBCF.end()) return nullptr;
     auto bcf = GetBCF(it->second);
@@ -648,8 +697,7 @@ bool TS1AvatarContent::EnsureInit() {
     std::string base = s_BasePath;
     while (base.size() > 1 && (base.back() == '/' || base.back() == '\\')) base.pop_back();
     TS1Global.Init(base);
-    BCF.Init();
-    m_HaveData = !BCF.SkelHostBCF.empty() || !BCF.SkinHostBCF.empty();
+    m_HaveData = BCF.Init();
     Animation::KeyframeLoader = &LoadKeyframesHook;
     return m_HaveData;
 }

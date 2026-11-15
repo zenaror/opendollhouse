@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "content/TS1SkinCatalog.h"
+#include "files/FilePool.h"
 #include "vitaboy/content/TS1AvatarProvider.h"
 #include "vitaboy/Appearance.h"
 #include "vitaboy/Avatar.h"
@@ -55,9 +56,61 @@ std::string cmx(const std::vector<std::string>& names) {
     for(const auto& name:names) out+=name+"\n0\n0\n1\nHEAD\nfixture-mesh\n0\n0\n";
     return out+"0\n";
 }
+void checkLotSuitReads() {
+    TS1Provider emptyFiles;
+    TS1BCFProvider emptySuits(&emptyFiles);
+    check(!emptySuits.Init(), "empty install reported avatar data");
+    Fixture f;
+    const auto cache = f.root / "cache";
+    fs::create_directories(cache);
+    fs::create_directories(f.skins);
+    fs::create_directories(f.anim.parent_path());
+    auto pstr = [](const std::string& s) {return std::string(1, static_cast<char>(s.size())) + s;};
+    std::string index;
+    u32(index,1); index += pstr("adult") + pstr("rig");
+    u32(index,1); index += pstr("resident") + pstr("resident.cmx");
+    u32(index,0);
+    std::string resident;
+    u32(resident,0); u32(resident,1); resident += pstr("resident");
+    u32(resident,0); u32(resident,0); u32(resident,0); u32(resident,0);
+    const size_t padding = 128*1024;
+    file(f.skins/"download.cmx", cmx({"download","duplicate","resident"})+std::string(padding,' '));
+    file(f.skins/"extras.cmx","version 300\n1\ncustom-rig\n0\n0\n1\ncustom-wave\ncustom-keys\n0\n0\n0\n0\n0\n0\n");
+    far(f.anim, {{"Animation.ndx",index},{"resident.cmx.bcf",resident},
+                 {"aa.cmx",cmx({"visitor","duplicate"})},{"zz.cmx",cmx({"last","duplicate"})+std::string(padding,' ')}});
+    TS1AvatarContent::CacheDir = cache.string();
+    TS1AvatarContent::InstallSignature = "suit-demand";
+    auto bytes = []{return FSO::Files::FilePool::Stats.BytesRead;};
+    for (int boot=0; boot<3; ++boot) {
+        TS1Provider files;
+        files.Init(f.root.string());
+        TS1BCFProvider suits(&files);
+        const auto start = bytes();
+        suits.Init();
+        check(suits.GetAppearance("resident") != nullptr, "missing indexed resident");
+        check(bytes()-start < padding, "loading a resident read an unrelated custom suit");
+        if (boot == 0) continue; // leave a partial index for the next boot
+        check(suits.GetSkeleton("custom-rig.skel") && suits.GetAnimation("custom-wave.anim"),
+              "custom skeleton or animation missing after an indexed resident");
+        auto* download = suits.GetAppearance("download");
+        check(download != nullptr, "missing loose custom suit");
+        const auto beforeVisitor = bytes();
+        check(suits.GetAppearance("visitor.apr") != nullptr, "late visitor lost its unindexed suit");
+        check(bytes()-beforeVisitor < padding,"visitor lookup continued past the first matching host");
+        const auto beforeCatalog = bytes();
+        const auto& all = suits.AllSuitHosts();
+        check(all.at("duplicate") == "download.cmx" && all.at("last") == "zz.cmx" && all.at("resident") == "resident.cmx.bcf", "catalog lost unindexed suit precedence");
+        if (boot == 1) check(bytes()-beforeCatalog >= padding,"catalog did not finish the partial index");
+        else check(bytes() == beforeCatalog,"complete cached index rescanned custom suits");
+    }
+    TS1AvatarContent::CacheDir.clear();
+    TS1AvatarContent::InstallSignature.clear();
+}
+
 }
 int main() {
     try {
+        checkLotSuitReads();
         Fixture f;
         fs::create_directories(f.skins);fs::create_directories(f.anim.parent_path());fs::create_directories(f.tex.parent_path());
         far(f.anim,{{"rig.bcf",std::string(12,'\0')},{"c728fa_dual.cmx.bcf",std::string(12,'\0')}});
@@ -104,7 +157,7 @@ int main() {
         test("c728fa_dual",nullptr);
         test("c730fa_empty",nullptr);
         test("c729fa_exact","C729FA_Exact");
-        check(!provider->BCF.SkinHostBCF.count("c725fa_style"),"reading a legacy alias published it as a new suit");
+        check(!provider->BCF.AllSuitHosts().count("c725fa_style"),"reading a legacy alias published it as a new suit");
         const auto& light=catalog.Heads(CAS::CASAge::Adult,CAS::CASGender::Female,CAS::CASSkin::Light);
         const auto& medium=catalog.Heads(CAS::CASAge::Adult,CAS::CASGender::Female,CAS::CASSkin::Medium);
         auto has=[](const auto& list,const char* mesh,const char* texture){

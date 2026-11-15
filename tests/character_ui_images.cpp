@@ -48,6 +48,16 @@ void cases(){
         const auto result=read(iff({chunk(2002,bitmap(105,41,zero,top)),chunk(2003,bitmap(200,40,zero,top)),
             chunk(2004,bitmap(25,25,zero,top)),chunk(2005,bitmap(16,16,zero,top)),chunk(2006,bitmap(32,32,zero,top))}));
         need(result.faces.size()==3&&result.relations.size()==5,"authored frame counts/order");
+        for(const auto id:{2002,2003}){
+            const auto bytes=id==2002?bitmap(105,41,zero,top):bitmap(200,40,zero,top);
+            const auto single=read_character_ui_image(static_cast<std::uint16_t>(id),
+                odh::View(reinterpret_cast<const std::uint8_t*>(bytes.data()),bytes.size()));
+            const auto& cells=id==2002?single.faces:single.relations;
+            const auto& expected=id==2002?result.faces:result.relations;
+            need(cells.size()==expected.size(),"requested strip has wrong number of frames");
+            for(std::size_t i=0;i<cells.size();++i)
+                need(cells[i].pixels==expected[i].pixels,"requested strip differs from full character");
+        }
         for(const auto* strip:{&result.faces,&result.relations}){
             const auto width=strip==&result.faces?35u:40u,height=strip==&result.faces?41u:40u;
             for(unsigned frame=0;frame<strip->size();++frame){const auto& image=strip->at(frame);

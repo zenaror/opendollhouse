@@ -16,6 +16,8 @@ struct CharacterUiImageLimits {
 // The caller authenticates the character IFF before passing its bounded View.
 // Missing image resources are optional; malformed or duplicate selected IDs fail.
 CharacterUiImages read_character_ui_images(const odh::View&,CharacterUiImageLimits={});
+// Decode just the requested image from a loaded character resource.
+CharacterUiImages read_character_ui_image(std::uint16_t, const odh::View&, CharacterUiImageLimits={});
 // Current resource providers can retain an authoritative IFF in a FAR or in
 // memory. This DTO edge shares the exact same bounded image decoder and strip
 // splitting code; it never guesses a physical path from a logical IFF name.

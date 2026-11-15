@@ -275,9 +275,11 @@ odh_host::LivePanelSnapshot DesktopLiveSnapshot(LotSession& session,odh_host::Li
                 auto portrait=assets.portraits.find(neighbor->GUID);
                 if(portrait==assets.portraits.end()){
                     if(assets.portraits.size()>=256)assets.portraits.clear();
-                    std::vector<odh_host::CharacterUiImageResource> images;
-                    if(auto image=object->Resource->Get<BMP>(2003))images.push_back({2003,image->GetData()});
-                    auto decoded=odh_host::read_character_ui_images(images);
+                    odh_host::CharacterUiImages decoded;
+                    if(auto image=object->Resource->Get<BMP>(2003)){
+                        const auto& bytes=image->GetData();
+                        decoded=odh_host::read_character_ui_image(2003,odh::View(bytes.data(),bytes.size()));
+                    }
                     if(decoded.relations.empty())if(auto strings=object->Resource->Get<STR>(object->OBJ->BodyStringID)){
                         // Generated characters need the same native appearance
                         // service as the household HUD, not name initials.

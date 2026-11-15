@@ -114,10 +114,16 @@ struct OriginalPCUI::Impl {
         }
         if(characters.size()>=64)characters.erase(characters.begin());
         Faces f;f.input=std::move(input);
-        std::vector<odh_host::CharacterUiImageResource> resources;
-        for(auto image:a->Object->Resource->List<BMP>())if(image->ChunkID>=2002&&image->ChunkID<=2006)
-            resources.push_back({image->ChunkID,image->GetData()});
-        f.images=odh_host::read_character_ui_images(resources);
+        // The household bar needs only this resident's face strip. Other panels
+        // request their own images when opened.
+        auto* iff=a->Object->Resource->MainIff();
+        if(auto* strip=iff ? iff->Get<BMP>(2002) : nullptr){
+            for(auto* chunk:iff->SilentListAll())
+                if(chunk!=strip && chunk->ChunkID==2002 && chunk->ChunkType==BMP::TYPE)
+                    throw odh::FormatError("duplicate character UI image resource");
+            const auto& bytes=strip->GetData();
+            f.images=odh_host::read_character_ui_image(2002,odh::View(bytes.data(),bytes.size()));
+        }
         if(!f.images.faces.empty()){
             for(const auto& face:f.images.faces)f.canvases.push_back(canvas(face));
             last_source="authored BMP2002 guid="+std::to_string(guid)+" resource="+a->Object->Resource->Name;
