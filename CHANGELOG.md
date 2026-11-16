@@ -40,6 +40,9 @@ There is no stable public release yet.
   bar reads each resident's face strip independently.
 - Switch draws the lot and menus at 800×600 at every zoom level. Vita draws
   the lot at 400×300 at the two closer zooms and keeps the menus at 800×600.
+- The engine draws furniture at its original size with less work and reuses
+  unchanged control panel artwork. Vita and Switch also update smaller parts of
+  the screen when an object moves.
 - The handheld Buy catalog reads fewer files when opening a category. Importing
   a neighborhood also skips repeat checks on files the game has already found.
 - Documentation organized for milestone 1 players: installation, controls,
