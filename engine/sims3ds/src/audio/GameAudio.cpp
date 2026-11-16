@@ -162,7 +162,8 @@ void GameAudio::SetMusicMode(MusicMode mode) {
         if (mode == MusicMode::Neighborhood) m = MusicMode::OldTown;
         break;
     case NeighbourhoodKind::StudioTown:
-        if (mode == MusicMode::Neighborhood) m = MusicMode::StudioTown;
+        if (mode == MusicMode::Neighborhood) m = MusicMode::StudioTownTransition;
+        else if (mode == MusicMode::Buy || mode == MusicMode::Build) m = MusicMode::StudioTown;
         break;
     default: break;
     }

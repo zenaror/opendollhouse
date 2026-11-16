@@ -514,6 +514,8 @@ void App::AudioFrame(double dtMs) {
         if (_Mode == Mode::Loading) {
             if (!_LoadTravel && _Front && !_Front->CommunityLotLoading(_LoadHouse))
                 ga.BeginResidentialLoad();
+            else if (!_LoadTravel && _Front && _Front->Model().CurrentArea == front::Area::StudioTown)
+                ga.SetMusicMode(simaudio::MusicMode::Buy);
             else ga.SetMusicMode(simaudio::MusicMode::Load);
         }
         _AudioMode = _Mode;

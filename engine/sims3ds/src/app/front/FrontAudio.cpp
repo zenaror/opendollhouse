@@ -6,8 +6,8 @@
 // sims front end — the front end's music / UI sounds through the sound engine (src/audio/GameAudio.h,
 // written separately). Guarded: without src/audio the hooks do nothing.
 //
-// The neighbourhood screens use the music of their area (Music/Modes: Nhood, dt_nhood, Vacation, Superstar,
-// MakinMagic), the loading screen the load loop (bkground_load, Music/Modes/Load/loadloop.wav, as FreeSims'
+// The neighbourhood screens use their area's map music (including Music/Stations/Superstar),
+// the startup loading screen uses the load loop (bkground_load, Music/Modes/Load/loadloop.wav, as FreeSims'
 // LoadingScreen plays UIMusic.LoadLoop), Create-A-Family bkground_family, the credits bkground_credits.
 #include "app/front/FrontAudio.h"
 #if defined(__has_include)
@@ -31,7 +31,7 @@ void FrontMusic(const std::string& mode) {
     else if (mode == "Nhood") { a.SetNeighbourhood(NeighbourhoodKind::Main); a.SetMusicMode(MusicMode::Neighborhood); }
     else if (mode == "dt_nhood") { a.SetNeighbourhood(NeighbourhoodKind::Downtown); a.SetMusicMode(MusicMode::Downtown); }
     else if (mode == "Vacation") { a.SetNeighbourhood(NeighbourhoodKind::Vacation); a.SetMusicMode(MusicMode::Vacation); }
-    else if (mode == "Superstar") { a.SetNeighbourhood(NeighbourhoodKind::StudioTown); a.SetMusicMode(MusicMode::StudioTown); }
+    else if (mode == "Superstar") { a.SetNeighbourhood(NeighbourhoodKind::StudioTown); a.SetMusicMode(MusicMode::Neighborhood); }
     else if (mode == "MakinMagic") { a.SetNeighbourhood(NeighbourhoodKind::MagicTown); a.SetMusicMode(MusicMode::MagicTown); }
     else if (mode == "Family") a.SetMusicMode(MusicMode::Family);
     else if (mode == "Credits") a.SetMusicMode(MusicMode::Credits);

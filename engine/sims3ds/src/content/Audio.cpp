@@ -330,7 +330,7 @@ void Audio::BuildTables() {
         {11, "Music/Modes/Vacation/"},    // station_vacation (Vacation Island)
         {12, "Music/Stations/UnlCheap/"}, // station_unleashed (Old Town)
         {13, "Music/Modes/Superstar/"},   // station_superstar (Studio Town)
-        {14, "Music/Modes/Superstar/"},   // music_superstar_transition
+        {14, "Music/Stations/Superstar/"}, // music_superstar_transition: Studio map
         {15, "Music/Modes/MakinMagic/"},  // music_magictown (Magic Town)
         {16, "Music/Modes/MM_credits/"},  // music_magictown_credits
         {17, "Music/Modes/MM_Build/"},    // music_magictown_build

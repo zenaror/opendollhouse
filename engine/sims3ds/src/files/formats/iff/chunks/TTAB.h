@@ -99,7 +99,7 @@ public:
     int32_t JoiningIndex = 0;
     TSOFlags Flags2 = (TSOFlags)0x1f; //allow a lot of things
 
-    // TS1(sims): FreeSO — the motive entries with a non-zero ad range; populated by TTAB::InitAutoInteractions.
+    // TS1(sims): FreeSO — the motive entries with a non-zero minimum or range; populated by TTAB::InitAutoInteractions.
     std::vector<TTABMotiveEntry> ActiveMotiveEntries;
 
     InteractionMaskFlags MaskFlags() const
@@ -176,7 +176,7 @@ public:
 
     std::vector<std::unique_ptr<TTABInteraction>> Interactions;
     std::unordered_map<uint32_t, TTABInteraction*> InteractionByIndex;
-    // TS1(sims): FreeSO — interactions that advertise at least one motive (the only ones autonomy considers).
+    // Positive-autonomy rows; checks may supply ads absent from the raw table.
     std::vector<TTABInteraction*> AutoInteractions;
     void InitAutoInteractions();
 

@@ -44,19 +44,19 @@ using FSO::LotView::Model::LotTilePos;
 // These curves generally make motive changes more evident at lower values, and cap them at a specific value.
 // This prevents people from considering sleeping at 50% energy, but also allows other motives like fun to use a much higher cap.
 // "Happy" is calculated as an average of all "effective motive"s, including mood.
-// (In Hot Date and onwards this may be weighted by the Happy Weight curves)
+// The selected Complete Collection DVD averages the nine curves equally.
 //
 // For each interaction, we only evaluate it if it has the following properties:
-// - non-zero motive range for any advertisement
+// - positive autonomy threshold; a check tree may supply initially empty advertisements
 // - object is not "occupied"
 // - object has use count of 0 (or the interaction is joinable)
-// - if any advertisements have a non-zero minimum, they are only considered if the motive is below that minimum
+// - advertisement minima contribute a fixed amount; personality scales only the delta
 // Interaction check trees are evaluated to see if they are usable. "Auto" is passed to the tree as 1 in param 0, indicating this is an autonomous check.
 // When evaluating an interaction's check tree, it may change the motive ad range and minimum.
 //
 // For each interaction a new Happy score is calculated based on the motive deltas applied to the sim's current motives.
-// Motive delta is divided by 1000 for some reason. It matches numbers with TS 1.0.
-// Personality is applied by **some factor** based on your personality, if present. Likely 0-1 multiplier for personality, 0-2 for skill.
+// DVD action scoring uses (minimum + delta * personality / 1000) / 1000.
+// Without a personality selector it uses (minimum + delta) / 1000.
 // Remember to re-apply the interaction curves to the new motives here.
 //
 // Attenuation is very simple: Score / (1 + (Attenuation* Distance)). It is applied to the *distance from base happy*, which results in the final score.
@@ -85,14 +85,14 @@ const VMPersonDataVariable VMFindBestAction::VaryByTypes[23] = {
     VMPersonDataVariable::NeatPersonality,
     VMPersonDataVariable::NeatPersonality, //inverted
 
-    VMPersonDataVariable::UnusedAndDoNotUse, // cleaning skill -- 13
+    VMPersonDataVariable::SkillEfficiency, // original selector 13
     VMPersonDataVariable::CookingSkill, // cooking skill
     VMPersonDataVariable::CharismaSkill, // social skill *
     VMPersonDataVariable::MechanicalSkill, // repair skill *
-    VMPersonDataVariable::UnusedAndDoNotUse, // gardening skill
-    VMPersonDataVariable::UnusedAndDoNotUse, // music skill
+    VMPersonDataVariable::UnusedAndDoNotUse3, // original selector 17
+    VMPersonDataVariable::UnusedAndDoNotUse3, // original selector 18
     VMPersonDataVariable::CreativitySkill, // creativity skill
-    VMPersonDataVariable::UnusedAndDoNotUse, // literacy skill
+    VMPersonDataVariable::UnusedAndDoNotUse3, // original selector 20
     VMPersonDataVariable::BodySkill, // physical skill *
     VMPersonDataVariable::LogicSkill // logic skill
 };
@@ -168,10 +168,8 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
 
     // === HAPPY CALCULATION ===
 
-    auto newStyle = false;
-    // TODO: new style
-    float weights[9] = { 1, 1, 1, 1, 1, 1, 1, 1, 1 }; //TODO: weights from curves for new
-    (void)newStyle;
+    // The selected DVD scorer averages these nine curves equally.
+    float weights[9] = { 1, 1, 1, 1, 1, 1, 1, 1, 1 };
     float totalWeight = 0;
     for (int i = 0; i < 9; i++) totalWeight += weights[i];
     for (int i = 0; i < 9; i++) weights[i] /= totalWeight;
@@ -220,8 +218,6 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                 for (auto& x : obj->TreeTable->Interactions) if (x->JoiningIndex == (int32_t)id) { joinable = true; break; }
                 if (!joinable) continue;
             }
-            auto& advertisements = entry->ActiveMotiveEntries;
-            if (advertisements.size() == 0) continue; //no ads on this object.
             // FIX(sims) QA3: the TTAB autonomy threshold (Edith 'autonomy', 50 on 5400 entries, 100 on 3700) is never
             // reached by free will in TS1. CatGlobals disables the dog interactions it copied (Play With.../Fetch,
             // Wrestle, Dig, Sniff, Howl, Wriggle) only through it ('hide menu' test, threshold 50 -> 100), and the
@@ -263,12 +259,15 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                 // calculate score for this tree.
                 // start with the base happy value, and modify it for each motive changed.
                 float score = baseHappy;
-                for (size_t i = 0; i < advertisements.size(); i++) {
-                    auto motiveI = advertisements[i].MotiveIndex;
-                    auto& motiveScore = entry->MotiveEntries[motiveI];
-                    int16_t min = motiveScore.EffectRangeMinimum;
-                    int16_t max = motiveScore.EffectRangeMaximum; // FreeSO: EffectRangeDelta
-                    int16_t personality = (int16_t)motiveScore.PersonalityModifier;
+                for (int weightInd = 0; weightInd < 9; ++weightInd) {
+                    const auto motiveI = int(WeightMotives[weightInd]);
+                    int16_t min = 0, max = 0, personality = 0;
+                    if (motiveI < int(entry->MotiveEntries.size())) {
+                        const auto& motiveScore = entry->MotiveEntries[motiveI];
+                        min = motiveScore.EffectRangeMinimum;
+                        max = motiveScore.EffectRangeMaximum;
+                        personality = int16_t(motiveScore.PersonalityModifier);
+                    }
                     if (first.MotiveAdChanges != nullptr) {
                         // FIX(sims): C# TryGetValue(key, out min) zeroes the value when the key is missing, so a
                         // check tree that changed one ad wiped all the others. Only replace what the tree set.
@@ -278,19 +277,10 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                         f = ads.find((2 << 16) | motiveI); if (f != ads.end()) personality = f->second;
                     }
 
-                    if (max == 0 && min > 0) {
-                        //invalid delta. do from 0..delta instead (fix child-talk preference?)
-                        max = min;
-                        min = 0;
-                    }
-                    max += min; //it's a delta, add min to it
-
+                    if (min == 0 && max == 0) continue;
                     auto myMotive = caller->GetMotiveData((VMMotive)motiveI);
-                    if (min != 0 && myMotive > min) continue;
 
-                    // subtract the base contribution for this motive from happy
-                    auto weightInd = MotiveToWeight(motiveI);
-                    if (weightInd == -1) continue;
+                    // Only changed contributions need replacing in the average.
                     score -= happyParts[weightInd];
 
                     float personalityMul = 1;
@@ -301,13 +291,11 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                             if ((personality & 1) == 0) {
                                 personalityMul = 1 - personalityMul;
                             }
-                        } else {
-                            personalityMul *= 2;
                         }
                     }
 
                     // then add the new contribution for this motive.
-                    score += interactionCurve[weightInd].GetPoint(myMotive + (max * personalityMul) / 1000.0f) * weights[weightInd];
+                    score += interactionCurve[weightInd].GetPoint(myMotive + (min + max * personalityMul) / 1000.0f) * weights[weightInd];
                 }
 
                 // score relative to base

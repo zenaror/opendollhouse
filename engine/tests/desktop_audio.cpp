@@ -97,15 +97,17 @@ static void checkEditingMusic(const std::filesystem::path& root) {
     require(!std::filesystem::exists(root), "editing fixture must be new");
     std::filesystem::create_directories(root / "SoundData");
     std::ofstream(root / "SoundData/test.hot") <<
-        "[EventMappingEquate]\nkSetMusicMode=36\n[EventMapping]\nbkground_buy1=kSetMusicMode,1\nbkground_build=kSetMusicMode,2\nbkground_live=kSetMusicMode,0\nbkground_nhood1=kSetMusicMode,3\nbkground_fade=kSetMusicMode,9\n";
+        "[EventMappingEquate]\nkSetMusicMode=36\n[EventMapping]\nbkground_buy1=kSetMusicMode,1\nbkground_build=kSetMusicMode,2\nbkground_live=kSetMusicMode,0\nbkground_nhood1=kSetMusicMode,3\nbkground_fade=kSetMusicMode,9\nstation_superstar=kSetMusicMode,13\nmusic_superstar_transition=kSetMusicMode,14\n";
     auto track = std::make_shared<SoundBuffer>();
     track->Channels=1;track->Rate=48000;track->Samples.assign(48000,500);
-    for (const char* mode : {"Buy", "Build", "Nhood"}) {
+    for (const char* mode : {"Buy", "Build", "Nhood", "Superstar"}) {
         auto folder=root / "Music/Modes" / mode;
         std::filesystem::create_directories(folder);
         require(WriteWavFile((folder / "song1.wav").string(),*track),"editing test song");
 
     }
+    std::filesystem::create_directories(root / "Music/Stations/Superstar");
+    require(WriteWavFile((root / "Music/Stations/Superstar/map.wav").string(),*track),"Studio map song");
     auto& audio=GameAudio::Get();
     GameAudio::Config config; config.DataRoot=root.string(); config.OutputRate=48000;
     require(audio.Init(config),"editing audio init");
@@ -143,6 +145,19 @@ static void checkEditingMusic(const std::filesystem::path& root) {
     require(starts.size()==beforeFailure+1 && audio.ActiveVoices()>0 &&
             starts.back().find("bkground_nhood1:")==0,
             "quick load failure restores map music even while its previous song fades");
+    audio.SetNeighbourhood(NeighbourhoodKind::StudioTown);
+    audio.SetMusicMode(MusicMode::Neighborhood);advance(3200);
+    require(starts.back().find("music_superstar_transition:")==0 &&
+            audio.NowPlaying()=="Music/Stations/Superstar/","Studio map uses transition playlist");
+    audio.SetMusicMode(MusicMode::Buy);advance(3200);
+    require(starts.back().find("station_superstar:")==0 &&
+            audio.NowPlaying()=="Music/Modes/Superstar/","Studio editor uses its own playlist");
+    const auto studioTracks=starts.size();
+    audio.SetMusicMode(MusicMode::Build);advance(100);
+    require(starts.size()==studioTracks,"Studio Buy and Build preserve their shared song");
+    audio.SetMusicMode(MusicMode::Neighborhood);advance(3200);
+    require(starts.back().find("music_superstar_transition:")==0 &&
+            audio.NowPlaying()=="Music/Stations/Superstar/","returning to Studio map restores transition playlist");
     audio.Log={};audio.Shutdown();std::filesystem::remove_all(root);
 }
 

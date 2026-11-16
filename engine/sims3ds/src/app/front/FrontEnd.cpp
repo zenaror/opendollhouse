@@ -348,7 +348,8 @@ void FrontEnd::EnteredLot() {
     RequestedLot = -1;
     _LotLoadKey.clear(); // FIX(sims) FB1: the next load starts its loading screen afresh
     _State = State::InLot;
-    if (Music) Music(""); // live mode has no score (the radios and stereos play inside the lot)
+    // App::AudioFrame selects the entered lot mode. Keep any editor track
+    // already chosen during loading, instead of fading it a second time.
     _Nhood->ReleaseArt(); // TS1(sims): memory; ReturnFromLot / BeginLotPick rebuild it (NeighbourhoodScreen::Enter)
 }
 

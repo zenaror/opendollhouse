@@ -110,9 +110,12 @@ void TTAB::InitAutoInteractions()
         for (size_t j = 0; j < interaction->MotiveEntries.size(); j++)
         {
             interaction->MotiveEntries[j].MotiveIndex = (int32_t)j;
-            if (interaction->MotiveEntries[j].EffectRangeMaximum != 0) interaction->ActiveMotiveEntries.push_back(interaction->MotiveEntries[j]);
+            if (interaction->MotiveEntries[j].EffectRangeMinimum != 0 || interaction->MotiveEntries[j].EffectRangeMaximum != 0)
+                interaction->ActiveMotiveEntries.push_back(interaction->MotiveEntries[j]);
         }
-        if (interaction->ActiveMotiveEntries.size() > 0) AutoInteractions.push_back(interaction.get());
+        // The original enumerates positive autonomy entries before running
+        // their checks, which can supply advertisements absent from the table.
+        if (interaction->AutonomyThreshold > 0) AutoInteractions.push_back(interaction.get());
     }
 }
 
