@@ -486,6 +486,9 @@ std::vector<VMAvatar*> VMTS1Travel::Arrive(VM* vm, int16_t house, std::vector<st
                     if (found) { a->SetMotiveData(SimDataMotives[m], v); any = true; }
                     RemoveSimData(nid, (uint32_t)m);
                 }
+                // Incoming scalar SimData wins over the home lot snapshot.
+                // Start its next decay window without inventing a food gain.
+                if (any) a->SnapshotMotiveData();
                 bool fh = false, fm = false;
                 auto hh = GetSimData(nid, SLOT_HOURS, &fh), mm = GetSimData(nid, SLOT_MINUTES, &fm);
                 if (fh && fm) {

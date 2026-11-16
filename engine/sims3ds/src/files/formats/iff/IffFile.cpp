@@ -38,6 +38,7 @@
 #include "files/formats/iff/chunks/ARRY.h"
 #include "files/formats/iff/chunks/OBJM.h"
 #include "files/formats/iff/chunks/ODHI.h"
+#include "files/formats/iff/chunks/ODMP.h"
 #include "files/formats/iff/chunks/ODHN.h"
 #include "files/formats/iff/chunks/WALm.h"
 #include "files/formats/iff/chunks/FAMI.h"
@@ -86,6 +87,7 @@ const std::unordered_map<std::string, IffFile::ChunkFactory>& IffFile::CHUNK_TYP
         {"Arry", &MakeChunk<ARRY>},
         {"ObjM", &MakeChunk<OBJM>},
         {"ODHI", &MakeChunk<ODHI>},
+        {"ODMP", &MakeChunk<ODMP>},
         {"ODHN", &MakeChunk<ODHN>},
         {"WALm", &MakeChunk<WALm>},
         {"FLRm", &MakeChunk<FLRm>},

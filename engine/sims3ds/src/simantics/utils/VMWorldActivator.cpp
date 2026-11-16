@@ -695,7 +695,7 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
             if (importedGUIDs && importedGUIDs->HasTarget(guid) && hood &&
                 person.PersonData.size() > neighborWord && hood->GetNeighborIDForGUID(guid, neighbor))
                 person.PersonData[neighborWord] = neighbor;
-            ava->RestorePersonData(person.PersonData, person.MotiveData);
+            ava->RestorePersonData(person.PersonData, person.MotiveData, person.MotiveDataOld);
             // The decoded loader already restored this exact pose, including
             // OUT_OF_WORLD. Runtime continuation may supersede it after load.
             if (ava->Position() != LotTilePos::OUT_OF_WORLD) LastRestore.PersonsPlaced++;

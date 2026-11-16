@@ -12,6 +12,14 @@ namespace FSO { namespace SimAntics {
 class VM;
 class VMAvatar;
 namespace Model {
+// The classic engine keeps these records in registration order, including duplicates.
+struct VMTS1MotiveChange {
+    VMMotive Motive = VMMotive::Energy;
+    float TickDelta = 0;
+    float StopAt = 0;
+    void Tick(VMAvatar* avatar) const;
+};
+
 class VMMotiveChange {
 public:
     int16_t PerHourChange = 0;

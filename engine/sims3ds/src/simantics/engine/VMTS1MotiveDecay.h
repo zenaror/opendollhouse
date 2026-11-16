@@ -14,7 +14,8 @@ public:
     static const float Constants[17];
     static const Model::VMMotive DecrementMotives[7];
     std::array<int16_t, 7> MotiveFractions{}; //in 1/1000ths
-    int32_t LastMinute = 0;
+    int32_t LastMinute = 0; // legacy ODHI compatibility projection only
+    int64_t LastTick = 0;
     void Tick(VMAvatar* avatar, VMContext* context) override;
     int32_t ToFixed1000(float input) { return (int32_t)(input * 1000); }
     int32_t FracMul(int32_t input, int32_t frac) { return (int32_t)((int64_t)input * frac) / 1000; }

@@ -681,6 +681,7 @@ void WorldGlobalProvider::Init() {
     OwnedOtfs.clear();
     CurvesLoaded = false;
     Autonomy = {};
+    MotiveDecay = {};
     GlobalFar.reset();
     GlobalEntries.clear();
     const std::string& base = ContentManager->SimsCompleteDir;
@@ -701,6 +702,7 @@ void WorldGlobalProvider::Init() {
 void WorldGlobalProvider::InitCurves() {
     if (CurvesLoaded) return;
     AutonomyTunings autonomy;
+    std::array<MotiveDecayTunings, 3> motiveDecay;
     auto global = Get("global", true);
     // The DVD registers these named properties with constructor defaults, then
     // reads Global FCNS#2. Read once with the curves, from the same resource.
@@ -721,6 +723,39 @@ void WorldGlobalProvider::InitCurves() {
     }
 
     if (global == nullptr || global->Resource == nullptr) return;
+    for (int species = 0; species < 3; ++species) {
+        const uint16_t id = species == 0 ? 1 : (species == 1 ? 5 : 6);
+        auto chunk = global->Resource->Get<FSO::Files::Formats::IFF::Chunks::FCNS>(id);
+        if (!chunk) continue;
+        auto& t = motiveDecay[species];
+        for (const auto& record : chunk->Values.records) {
+            const auto& key = record.name; const auto value = record.value;
+            auto integer = [&] {
+                if (double(value) < std::numeric_limits<int>::min() || double(value) > std::numeric_limits<int>::max())
+                    throw std::runtime_error("Motive tuning exceeds integer bounds");
+                return int(value);
+            };
+            if (key == "energy span") t.EnergySpan = value;
+            else if (key == "wake hours") t.WakeHours = integer();
+            else if (key == "wake hour") t.WakeHour = integer();
+            else if (key == "energy drift") t.EnergyDrift = value;
+            else if (key == "hunger to bladder multiplier") t.HungerToBladder = value;
+            else if (key == "comfort decrement active") t.ComfortActive = value;
+            else if (key == "comfort decrement lazy") t.ComfortLazy = value;
+            else if (key == "hunger decrement ratio") t.HungerRatio = value;
+            else if (key == "social decrement base") t.SocialBase = value;
+            else if (key == "social decrement multiplier") t.SocialMultiplier = value;
+            else if (key == "ent decrement, awake") t.FunAwake = value;
+            else if (key == "ent multiplier, asleep") t.FunAsleepMultiplier = value;
+            else if (key == "hyg decrement, awake") t.HygieneAwake = value;
+            else if (key == "hyg decrement, asleep") t.HygieneAsleep = value;
+            else if (key == "bladder decrement, awake") t.BladderAwake = value;
+            else if (key == "bladder decrement, asleep") t.BladderAsleep = value;
+        }
+    }
+    if (motiveDecay[0].WakeHours == 0 || motiveDecay[0].WakeHours == 24)
+        throw std::runtime_error("Human motive tuning has zero awake or sleep span");
+
     auto curveFromSTR = [&](uint16_t id, bool cache) {
         std::vector<FSO::Common::TS1::TS1Curve> result;
         auto str = global->Resource->Get<FSO::Files::Formats::IFF::Chunks::STR>(id);
@@ -738,6 +773,7 @@ void WorldGlobalProvider::InitCurves() {
     HappyWeightChild = curveFromSTR(504, true);
     HouseScore = curveFromSTR(505, false);
     Autonomy = autonomy;
+    MotiveDecay = motiveDecay;
     CurvesLoaded = true;
 }
 

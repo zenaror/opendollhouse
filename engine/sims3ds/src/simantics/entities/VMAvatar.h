@@ -134,7 +134,7 @@ public:
     void PrepareForRestore(VMContext* context) override;
     void FinishRestore(VMContext* context) override;
     /// Saved data installation without action/UI callbacks; FinishRestore publishes visuals.
-    void RestorePersonData(const std::vector<int16_t>& person, const float (&motives)[16]);
+    void RestorePersonData(const std::vector<int16_t>& person, const float (&motives)[16], const float* oldMotives = nullptr);
     void Reset(VMContext* context) override;
     void Tick() override;
     /// Advance authored animation channels/events without a household tick.
@@ -146,11 +146,17 @@ public:
     virtual int16_t GetPersonData(Model::VMPersonDataVariable variable);
     virtual void SetMotiveChange(Model::VMMotive motive, int16_t PerHourChange, int16_t MaxValue);
     bool HasMotiveChange(Model::VMMotive motive);
-    /// TS1(sims): read-only view for the lot saver (utils/VMTS1LotSaver, OBJM motive deltas).
-    const Model::VMMotiveChange& GetMotiveChange(int index) const { return MotiveChanges[(size_t)(index & 15)]; }
+    const std::vector<Model::VMTS1MotiveChange>& GetTS1MotiveChanges() const { return TS1MotiveChanges; }
+    void RestoreTS1MotiveChanges(const std::vector<Model::VMTS1MotiveChange>& changes);
+    /// Compatibility summary (last matching record); TS1 persistence uses the ordered vector.
+    Model::VMMotiveChange GetMotiveChange(int index) const;
     virtual void ClearMotiveChanges();
     virtual bool SetPersonData(Model::VMPersonDataVariable variable, int16_t value);
-    virtual int16_t GetMotiveData(Model::VMMotive variable); //needs special conditions for ones like Mood.
+    virtual int16_t GetMotiveData(Model::VMMotive variable);
+    float GetMotiveDataFloat(Model::VMMotive variable) const;
+    float GetOldMotiveDataFloat(Model::VMMotive variable) const;
+    void SetMotiveDataFloat(Model::VMMotive variable, float value);
+    void SnapshotMotiveData();
     virtual bool SetMotiveData(Model::VMMotive variable, int16_t value);
 
     std::string ToString() override;
@@ -177,7 +183,9 @@ private:
     std::array<Model::VMMotiveChange, 16> MotiveChanges;
     std::unique_ptr<Entities::VMTS1MotiveDecay> MotiveDecay;
     std::array<int16_t, 101> PersonData; // C# allocates 100 but allows index 100 through the bounds check
-    std::array<int16_t, 16> MotiveData;
+    std::array<float, 16> MotiveData;
+    std::array<float, 16> OldMotiveData{};
+    std::vector<Model::VMTS1MotiveChange> TS1MotiveChanges;
     // TS1 cXPerson initializes five independent containment slots.
     std::array<VMEntity*, 5> Contained{};
     float _RadianDirection = 0;

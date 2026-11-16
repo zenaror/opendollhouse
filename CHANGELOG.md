@@ -23,6 +23,18 @@ Notable changes for players and contributors, following
 - Music diagnostics record the requested event and each track that actually
   starts, helping identify unexpected songs during screen and mode changes.
 
+### Fixed
+
+- Needs retain fractional values during simulation and saving. Sleep, comfort,
+  social needs, eating and mood follow the original calculations and game data.
+- Actions preserve simultaneous changes to the same need in their original
+  order. Clearing a change no longer leaves progress that can cause a sudden
+  jump when another action starts.
+- Updated saves preserve precise needs and active changes while keeping the
+  existing continuation format readable by older builds. Older builds still
+  apply their previous simulation rules; their resaved state is migrated when
+  reopened by the updated engine.
+
 ## [0.0.1](https://github.com/zenaror/opendollhouse/releases/tag/v0.0.1) — 2026-11-15
 
 First experimental release. Download availability and the source revisions

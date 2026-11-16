@@ -15,6 +15,7 @@
 #pragma once
 #include "common/TS1/TS1Curve.h" // TS1(sims)
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 #include <map>
@@ -250,6 +251,15 @@ public:
         float FamilyMinimum = 0.2f, VisitorMinimum = 0.05f, SittingMinimum = 0.2f;
         int RandomSelectionCount = 10;
     } Autonomy;
+    struct MotiveDecayTunings {
+        float EnergySpan = 180, EnergyDrift = .01f, HungerToBladder = .25f;
+        int WakeHours = 16, WakeHour = 7;
+        float ComfortActive = .4f, ComfortLazy = .6f, HungerRatio = .0014285714f;
+        float SocialBase = .1f, SocialMultiplier = .0004f;
+        float FunAwake = .25f, FunAsleepMultiplier = .5f;
+        float HygieneAwake = .15f, HygieneAsleep = .1f, BladderAwake = .3f, BladderAsleep = .2f;
+    };
+    std::array<MotiveDecayTunings, 3> MotiveDecay;
     bool CurvesLoaded = false;
     /// C# InitCurves (called from Content.Init in FreeSO). Here: called on first use (Global.iff must be loadable).
     void InitCurves();

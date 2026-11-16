@@ -179,7 +179,7 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
     float happyParts[9];
     float baseHappy = 0;
     for (int i = 0; i < 9; i++) {
-        happyParts[i] = interactionCurve[i].GetPoint(caller->GetMotiveData(WeightMotives[i])) * weights[i];
+        happyParts[i] = interactionCurve[i].GetPoint(caller->GetMotiveDataFloat(WeightMotives[i])) * weights[i];
         baseHappy += happyParts[i];
     }
 
@@ -278,7 +278,7 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                     }
 
                     if (min == 0 && max == 0) continue;
-                    auto myMotive = caller->GetMotiveData((VMMotive)motiveI);
+                    auto myMotive = caller->GetMotiveDataFloat((VMMotive)motiveI);
 
                     // Only changed contributions need replacing in the average.
                     score -= happyParts[weightInd];

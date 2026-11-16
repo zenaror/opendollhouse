@@ -3,6 +3,8 @@
 #include "simantics/utils/VMTS1ActionIcon.h"
 #include "simantics/engine/VMTS1Neighbourhood.h"
 #include "files/formats/iff/chunks/ODHI.h"
+#include "files/formats/iff/chunks/ODMP.h"
+#include "simantics/utils/VMTS1MotivePersistence.h"
 #include "files/formats/iff/IffRawFile.h"
 #include "files/formats/iff/IffFile.h"
 #include "files/Hash.h"
@@ -137,7 +139,8 @@ struct AvatarRecord {
     std::shared_ptr<VMAnimationState> carry;
     std::array<int16_t,101> person{};
     std::array<int16_t,16> motives{};
-    std::array<Model::VMMotiveChange,16> changes{};
+    std::array<MotivePersistence::LegacyChange,16> changes{};
+    MotivePersistence::State precision;
     std::array<int16_t,7> decayFractions{};
     int32_t decayMinute = 0, killTimeout = -1;
     int32_t leftHand = 0, rightHand = 0;
@@ -216,6 +219,64 @@ class InteractionCheckpointCodec {
 public:
     InteractionCheckpointCodec(VM& vm, Archive& archive, uint32_t version) : vm(vm), io(archive), version(version) {}
 
+    static int64_t motivePhase(const VMAvatar& avatar) { return avatar.MotiveDecay->LastTick; }
+
+    static MotivePersistence::State classicMotives(const OBJMPerson& person, int64_t lastTick) {
+        MotivePersistence::State state;
+        for (size_t i = 0; i < 16; ++i) {
+            MotivePersistence::ValidateCurrent(person.MotiveData[i]);
+            MotivePersistence::ValidateFloat(person.MotiveDataOld[i]);
+            state.current[i] = person.MotiveData[i]; state.old[i] = person.MotiveDataOld[i];
+        }
+        Require(person.MotiveDeltas.size() <= 32767, "too many classic motive changes");
+        for (const auto& delta : person.MotiveDeltas) {
+            Model::VMTS1MotiveChange change{Model::VMMotive(delta.Motive), delta.TickDelta, delta.StopAt};
+            MotivePersistence::ValidateChange(change);
+            state.changes.push_back(change);
+        }
+        state.lastTick = lastTick;
+        return state;
+    }
+
+    void prepareMotives(std::map<int16_t, Record>& records, IffFile& house,
+                        OBJM& objm, ODHI& native, int64_t savedTick) {
+        // ODHI is the only legacy authority. In particular, never add stale
+        // classic float residues to the native fractions decoded above.
+        for (auto& item : records) if (auto& avatar = item.second.avatar)
+            avatar->precision = MotivePersistence::Migrate(avatar->motives, avatar->changes,
+                                                          avatar->decayFractions, savedTick);
+        auto markers = house.List<ODMP>();
+        if (markers.empty()) return;
+        Require(markers.size() == 1 && markers.front()->ChunkID == 1, "ambiguous ODMP");
+        const auto marker = MotivePersistence::ReadMarker(markers.front()->Data, objm.SourceSignature,
+            Files::Hash::CalculateHash(native.Data), native.Data.size(), savedTick);
+        if (!marker.matching) return;
+        size_t avatarCount = 0;
+        for (const auto& item : records) if (item.second.avatar) ++avatarCount;
+        Require(marker.actors.size() == avatarCount, "motive marker participant count changed");
+        constexpr int neighbourIndex = int(Model::VMPersonDataVariable::NeighborId);
+        for (const auto& actor : marker.actors) {
+            const auto id = actor.first;
+            const auto guid = actor.second.guid;
+            const auto neighbour = actor.second.neighbour;
+            const auto phase = actor.second.lastTick;
+            auto record = records.find(id); auto classic = objm.ObjectData.find(id);
+            Require(record != records.end() &&
+                    record->second.avatar && classic != objm.ObjectData.end() && classic->second.Instance,
+                    "unmatched motive marker participant");
+            auto& saved = *record->second.avatar;
+            auto live = static_cast<VMAvatar*>(record->second.entity);
+            auto& instance = *classic->second.Instance;
+            Require(instance.HasPersonData && instance.OBJT && instance.OBJT->GUID == guid &&
+                    live->Object->OBJ->GUID == guid && saved.person[neighbourIndex] == neighbour &&
+                    live->GetPersonData(Model::VMPersonDataVariable::NeighborId) == neighbour &&
+                    instance.PersonData.PersonData.size() > size_t(neighbourIndex) &&
+                    instance.PersonData.PersonData[neighbourIndex] == neighbour,
+                    "motive marker actor identity changed");
+            Require(phase >= 0 && phase <= savedTick, "invalid motive marker phase");
+            saved.precision = classicMotives(instance.PersonData, phase);
+        }
+    }
 
     // FreeSO VMTS1ActivatorNew.ConvertThread/ConvertAvatar, adapted to the
     // integrated VM. This consumes the already decoded classic records; it
@@ -258,7 +319,7 @@ public:
             bool reset = false;
             std::vector<std::shared_ptr<VMAnimationState>> animations;
             std::shared_ptr<VMAnimationState> carry;
-            std::array<Model::VMMotiveChange,16> changes;
+            MotivePersistence::State precision;
         };
         std::vector<Candidate> candidates;
         for (const auto& saved : objm.ObjectData) {
@@ -381,16 +442,7 @@ public:
                     auto current = animation(person.Animation, person.AnimEventCount);
                     if (current) candidate.animations.push_back(current);
                     candidate.carry = animation(person.CarryAnimation, 0);
-                    for (int i = 0; i < 16; ++i) candidate.changes[i].Motive = Model::VMMotive(i);
-                    for (const auto& delta : person.MotiveDeltas) {
-                        Require(delta.Motive >= 0 && delta.Motive < 16 && std::isfinite(delta.TickDelta) &&
-                                std::isfinite(delta.StopAt), "invalid classic motive delta");
-                        const auto rate = std::round(double(delta.TickDelta) * 1800.);
-                        Require(rate >= -32768 && rate <= 32767 && delta.StopAt >= -32768 && delta.StopAt <= 32767,
-                                "classic motive delta out of range");
-                        auto& change = candidate.changes[delta.Motive];
-                        change.PerHourChange = int16_t(rate); change.MaxValue = int16_t(delta.StopAt);
-                    }
+                    candidate.precision = classicMotives(person, vm.Context->Clock->Ticks);
                 }
                 candidates.push_back(std::move(candidate));
             } catch (const std::exception& e) {
@@ -403,7 +455,10 @@ public:
             if (candidate.avatar) {
                 candidate.avatar->Animations = std::move(candidate.animations);
                 candidate.avatar->CarryAnimationState = std::move(candidate.carry);
-                candidate.avatar->MotiveChanges = std::move(candidate.changes);
+                candidate.avatar->MotiveData = candidate.precision.current;
+                candidate.avatar->OldMotiveData = candidate.precision.old;
+                candidate.avatar->TS1MotiveChanges = std::move(candidate.precision.changes);
+                candidate.avatar->MotiveDecay->LastTick = candidate.precision.lastTick;
             }
             candidate.entity->Thread = std::move(candidate.thread);
         }
@@ -811,9 +866,27 @@ public:
         Require(live.Avatar && live.MotiveDecay, "avatar has no animation or motive service");
         if (io.out) {
             a.animations = live.Animations; a.carry = live.CarryAnimationState;
-            a.person = live.PersonData; a.motives = live.MotiveData;
-            a.changes = live.MotiveChanges; a.decayFractions = live.MotiveDecay->MotiveFractions;
-            a.decayMinute = live.MotiveDecay->LastMinute; a.direction = live.RadianDirection();
+            a.person = live.PersonData;
+            for (size_t i = 0; i < 16; ++i) {
+                a.motives[i] = live.GetMotiveData(Model::VMMotive(i));
+                a.changes[i].motive = uint32_t(i);
+                a.changes[i].ticked = true;
+            }
+            // A one-slot legacy reader cannot execute duplicate float deltas.
+            // Emit a bounded last-record projection without residual debt; ObjM
+            // remains the sole precise representation selected by ODMP.
+            auto project = [](double value) {
+                Require(std::isfinite(value), "non-finite motive projection");
+                return int16_t(std::clamp(std::round(value), -32768., 32767.));
+            };
+            for (const auto& change : live.TS1MotiveChanges) {
+                MotivePersistence::ValidateChange(change);
+                auto& legacy = a.changes[size_t(change.Motive)];
+                legacy.rate = project(double(change.TickDelta) * 1800.);
+                legacy.stop = project(change.StopAt);
+            }
+            a.decayFractions.fill(0);
+            a.decayMinute = vm.Context->Clock->Minutes / 2; a.direction = live.RadianDirection();
             a.killTimeout = live.KillTimeout;
             a.velocity = live.Velocity;
             a.body=live.BodyOutfit(); a.head=live.HeadOutfit(); a.suits=live.DefaultSuits;
@@ -830,9 +903,9 @@ public:
         animation(a.carry);
         io.scalars(a.person); io.scalars(a.motives);
         for (auto& change : a.changes) {
-            io.value(change.PerHourChange); io.value(change.MaxValue); io.value(change.Motive);
-            Require(uint32_t(change.Motive) < 16, "invalid motive change");
-            io.value(change.Ticked); io.value(change.fractional);
+            io.value(change.rate); io.value(change.stop); io.value(change.motive);
+            Require(change.motive < 16, "invalid motive change");
+            io.value(change.ticked); io.value(change.residual);
         }
         io.scalars(a.decayFractions); io.value(a.decayMinute); io.value(a.direction);
         io.value(a.killTimeout); io.value(a.leftHand); io.value(a.rightHand);
@@ -980,8 +1053,13 @@ public:
             if (auto go = dynamic_cast<VMGameObject*>(e)) go->RefreshGraphic();
             if (r.avatar) {
                 auto& a = *r.avatar; auto live = static_cast<VMAvatar*>(e);
-                live->PersonData = a.person; live->MotiveData = a.motives; live->MotiveChanges = a.changes;
-                live->MotiveDecay->MotiveFractions = a.decayFractions; live->MotiveDecay->LastMinute = a.decayMinute;
+                live->PersonData = a.person;
+                live->MotiveData = a.precision.current; live->OldMotiveData = a.precision.old;
+                live->TS1MotiveChanges = std::move(a.precision.changes);
+                // Legacy accumulators have been consumed exactly once at prepare.
+                live->MotiveDecay->MotiveFractions.fill(0);
+                live->MotiveDecay->LastMinute = a.decayMinute;
+                live->MotiveDecay->LastTick = a.precision.lastTick;
                 live->Animations = std::move(a.animations); live->CarryAnimationState = std::move(a.carry);
                 live->RadianDirection(a.direction); live->Velocity=a.velocity; live->KillTimeout = a.killTimeout;
                 live->TS1Appearance.Body=std::move(a.bodyPart); live->TS1Appearance.Head=std::move(a.headPart);
@@ -1079,7 +1157,7 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
         Require(bool(e->Thread), "persistent instance has no execution thread " + std::to_string(e->ObjectID));
         codec.include(e);
     }
-    if (codec.participants.empty()) { house.Remove("ODHI", 1); return; }
+    if (codec.participants.empty()) { house.Remove("ODHI", 1); house.Remove("ODMP", 1); return; }
     if (departing) {
         auto caller = vm.GetObjectById(vm.Departure.caller);
         VerifyDeparture(vm, vm.Departure, caller ? caller->Thread.get() : nullptr);
@@ -1112,7 +1190,26 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
     data.WriteUInt32(done.size());
     data.WriteBytes(body.ToArray());
     Require(data.size() <= ODHI::MaxBytes, "snapshot exceeds limit");
-    house.Set("ODHI", 1, data.ToArray(), "OpenDollhouse interactions");
+    const auto objmHash = Files::Hash::CalculateHash(objm->Data);
+    const auto native = data.ToArray();
+    st::Writer marker(st::Endian::Little); Archive metadata(marker);
+    uint32_t schema = 1, classicHash = objmHash, nativeHash = Files::Hash::CalculateHash(native);
+    uint32_t nativeBytes = uint32_t(native.size());
+    metadata.value(schema); metadata.value(classicHash); metadata.value(nativeHash); metadata.value(nativeBytes);
+    uint32_t avatars = 0;
+    for (const auto& participant : codec.participants) if (dynamic_cast<VMAvatar*>(participant.second)) ++avatars;
+    metadata.value(avatars);
+    for (const auto& participant : codec.participants) if (auto avatar = dynamic_cast<VMAvatar*>(participant.second)) {
+        int16_t id = participant.first;
+        uint32_t guid = avatar->Object->OBJ->GUID;
+        int16_t neighbour = avatar->GetPersonData(Model::VMPersonDataVariable::NeighborId);
+        int64_t phase = InteractionCheckpointCodec::motivePhase(*avatar);
+        Require(phase >= 0 && phase <= clock.Ticks, "invalid saved motive phase");
+        metadata.value(id); metadata.value(guid); metadata.value(neighbour); metadata.value(phase);
+    }
+    Require(marker.size() <= ODMP::MaxBytes, "motive marker exceeds limit");
+    house.Set("ODHI", 1, native, "OpenDollhouse interactions");
+    house.Set("ODMP", 1, marker.ToArray(), "OpenDollhouse motive precision");
 }
 
 bool VMTS1InteractionCheckpoint::IsDeparture(IffFile& house) {
@@ -1182,6 +1279,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
         auto caller = records.find(departure.caller);
         VerifyDeparture(vm, departure, caller != records.end() ? caller->second.preparedThread.get() : nullptr);
     }
+    codec.prepareMotives(records, house, *objm, *chunks.front(), clock.Ticks);
     codec.publish(records);
     *vm.Context->Clock = clock;
     vm.Context->RandomSeed = seed;

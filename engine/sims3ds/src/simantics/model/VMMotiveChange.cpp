@@ -15,9 +15,24 @@
 #include "content/ContentManager.h"
 #include "simantics/model/TSOPlatform/VMTSOLotState.h"
 #include <cmath>
+#include <algorithm>
 #include <climits>
 
 namespace FSO { namespace SimAntics { namespace Model {
+
+void VMTS1MotiveChange::Tick(VMAvatar* avatar) const {
+    auto value = avatar->GetMotiveDataFloat(Motive);
+    // The DVD skips an already reached stop and clamps a crossing. No debt
+    // accumulates while stopped, and later records see the preceding result.
+    if (TickDelta < 0) {
+        if (value <= StopAt) return;
+        value = std::max(StopAt, value + TickDelta);
+    } else {
+        if (value >= StopAt) return;
+        value = std::min(StopAt, value + TickDelta);
+    }
+    avatar->SetMotiveDataFloat(Motive, value);
+}
 
 void VMMotiveChange::Clear() {
     PerHourChange = 0;
@@ -49,9 +64,7 @@ void VMMotiveChange::Tick(VMAvatar* avatar) {
 
 int32_t VMMotiveChange::ScaleRate(VM* vm, int32_t rate, VMMotive type) {
     if (vm->TS1) {
-        if (type == VMMotive::Energy && rate > 0) {
-            rate *= (int32_t)Entities::VMTS1MotiveDecay::Constants[0] / (24 - (int32_t)Entities::VMTS1MotiveDecay::Constants[1]);
-        }
+        // Classic registration stores rate / 1800 directly, for every motive.
         return rate;
     } else {
         if (rate < 0) return rate;

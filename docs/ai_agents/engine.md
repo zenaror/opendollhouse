@@ -38,6 +38,21 @@ For saving, start with `app/front/LotSave`, the neighborhood model and the
 both the house file and the character and neighborhood records. A successful
 write does not prove that the save will restore correctly.
 
+## Needs and action state
+
+`VMAvatar` keeps current and previous needs as floating point values. Use
+`GetMotiveDataFloat` for simulation and scoring. `GetMotiveData` provides the
+original rounded integer value for script expressions and interface consumers.
+Continuous changes form an ordered list: two changes to the same need can have
+different rates and limits, so they must not be collapsed into a single entry.
+
+Classic `ObjM` records store the precise values and changes. The native `ODHI`
+record retains the execution graph, with compatible integer projections for
+older readers. An optional `ODMP` record binds the precise state and decay phase
+to those two records. Restore one validated source of needs; do not combine the
+legacy projections and precise values. An older build can rewrite the records
+without updating `ODMP`, so stale metadata must not overwrite its new progress.
+
 ## Handheld rendering and file access
 
 | When playing | What the engine reuses |

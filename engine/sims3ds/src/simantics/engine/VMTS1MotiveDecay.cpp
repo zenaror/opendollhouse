@@ -8,6 +8,8 @@
 #include "simantics/entities/VMAvatar.h"
 #include "simantics/VMContext.h"
 #include "simantics/VMClock.h"
+#include "content/ContentManager.h"
+#include <algorithm>
 namespace FSO { namespace SimAntics { namespace Entities {
 using namespace FSO::SimAntics::Model;
 
@@ -36,80 +38,63 @@ const VMMotive VMTS1MotiveDecay::DecrementMotives[7] = {
 };
 
 void VMTS1MotiveDecay::Tick(VMAvatar* avatar, VMContext* context) {
-    auto roomScore = context->GetRoomScore(context->GetRoomAt(avatar->Position()));
-    avatar->SetMotiveData(VMMotive::Room, roomScore);
-    if (context->Clock->Minutes / 2 == LastMinute || avatar->GetValue(VMStackObjectVariable::Hidden) > 0) return;
-    auto hours = context->Clock->Hours;
-    LastMinute = context->Clock->Minutes / 2;
-    auto sleeping = (avatar->GetMotiveData(VMMotive::SleepState) != 0);
+    const auto now = context->Clock->Ticks;
+    if (now < LastTick) { LastTick = now; return; }
+    if (now - LastTick < 60) return;
+    // The caller stamps even a bypassed update. Resume never catches up a
+    // hidden or frozen person's missed intervals in a burst.
+    LastTick = now;
+    if (avatar->Dead || avatar->GetValue(VMStackObjectVariable::Hidden) != 0 ||
+        avatar->GetPersonData(VMPersonDataVariable::Cheats) != 0) return;
 
-    int moodSum = 0;
-
-    for (int i = 0; i < 7; i++) {
-        int frac = 0;
-        auto dm = DecrementMotives[i];
-        if (avatar->HasMotiveChange(dm) && dm != VMMotive::Energy) continue;
-        auto motive = avatar->GetMotiveData(dm);
-        auto r_Hunger = ToFixed1000(Constants[5]) * (100 + avatar->GetMotiveData(VMMotive::Hunger));
-        switch (i) {
-            case 0:
-                frac = r_Hunger; break;
-            case 1: {
-                auto active = avatar->GetPersonData(VMPersonDataVariable::ActivePersonality);
-                if (active > 666)
-                    frac = ToFixed1000(Constants[14]);
-                else if (active < 666)
-                    frac = ToFixed1000(Constants[15]);
-                else
-                    frac = ToFixed1000(Constants[16]);
-                break;
-            }
-            case 2:
-                frac = ToFixed1000(Constants[sleeping ? 11 : 10]); break;
-            case 3:
-                frac = ToFixed1000(Constants[sleeping ? 13 : 12]) + FracMul(r_Hunger, ToFixed1000(Constants[4])); break;
-            case 4:
-                // TS1(sims): FreeSO — try to wake the sim up if they're asleep on the wake hour, and they're well rested.
-                if (sleeping && hours == Constants[2] && motive >= Constants[0] - 100) {
-                    avatar->SetMotiveData(VMMotive::SleepState, 0);
-                }
-                if (sleeping) {
-                    // TS1(sims): FreeSO restores energy (-643*2/1000 per 2 minutes, ~39/hour) for sleep state -1. The
-                    // global 'failure sleep' (passing out on the floor or in a chair) sets sleep state -50 and loops until
-                    // energy > 0 with no motive change of its own, so with only -1 handled a Sim who passed out in a chair
-                    // never woke up. Inference: any negative sleep state is that kind of sleep.
-                    if (avatar->GetMotiveData(VMMotive::SleepState) < 0) frac = -643 * 2;
-                    else frac = (context->Clock->Hours >= Constants[2]) ? ToFixed1000(Constants[3]) : 0;
-                } else {
-                    frac = (ToFixed1000(Constants[0]) / (30 * (int)Constants[1]));
-                }
-                //energy span over wake hours. small energy drift applied if asleep during the day.
-                break;
-            case 5:
-                frac = (sleeping) ? 0 : ToFixed1000(Constants[8]);
-                break;
-            case 6:
-                frac = ToFixed1000(Constants[6]) +
-                    ToFixed1000(Constants[7]) * avatar->GetPersonData(VMPersonDataVariable::OutgoingPersonality);
-                break;
-        }
-
-        MotiveFractions[i] += (int16_t)frac;
-        if (MotiveFractions[i] >= 1000) {
-            motive -= (int16_t)(MotiveFractions[i] / 1000);
-            MotiveFractions[i] %= 1000;
-            if (motive < -100) motive = -100;
-            avatar->SetMotiveData(DecrementMotives[i], motive);
-        }
-        if (MotiveFractions[i] < 0) { // TS1(sims): FreeSO — negative decrements (energy while asleep on the floor) raise the motive
-            motive += (int16_t)(1 - MotiveFractions[i] / 1000);
-            MotiveFractions[i] += (int16_t)((1 - MotiveFractions[i] / 1000) * 1000);
-            avatar->SetMotiveData(DecrementMotives[i], motive);
-        }
-        moodSum += motive;
+    auto globals = Content::Content::Get()->WorldObjectGlobals.get();
+    globals->InitCurves();
+    const auto gender = avatar->GetPersonData(VMPersonDataVariable::Gender);
+    const int species = (gender & 2) ? 1 : ((gender & 4) ? 2 : 0);
+    const auto& t = globals->MotiveDecay[species];
+    auto read = [&](VMMotive m) { return avatar->GetMotiveDataFloat(m); };
+    auto write = [&](VMMotive m, float value) { avatar->SetMotiveDataFloat(m, value); };
+    const bool sleeping = read(VMMotive::SleepState) < 0;
+    auto energy = read(VMMotive::Energy);
+    if (sleeping) {
+        energy += species ? float(t.WakeHours) / 30.0f : (t.EnergySpan / float(24 - t.WakeHours)) / 30.0f;
+        if (context->Clock->Hours > t.WakeHour &&
+            int64_t(context->Clock->Hours) < int64_t(t.WakeHour) + t.WakeHours)
+            energy -= t.EnergyDrift;
+    } else {
+        energy -= species ? t.EnergySpan / 30.0f : (t.EnergySpan / float(t.WakeHours)) / 30.0f;
     }
-    moodSum += roomScore;
+    write(VMMotive::Energy, energy);
+    const float foodGain = read(VMMotive::Hunger) - avatar->GetOldMotiveDataFloat(VMMotive::Hunger);
+    if (foodGain > 0) write(VMMotive::Bladder, read(VMMotive::Bladder) - foodGain * t.HungerToBladder);
+    write(VMMotive::Comfort, read(VMMotive::Comfort) -
+          (float(avatar->GetPersonData(VMPersonDataVariable::ActivePersonality)) *
+           ((t.ComfortActive - t.ComfortLazy) * .001f) + t.ComfortLazy));
+    write(VMMotive::Hunger, read(VMMotive::Hunger) - (read(VMMotive::Hunger) + 100.0f) * t.HungerRatio);
+    if (!sleeping)
+        write(VMMotive::Social, read(VMMotive::Social) -
+              (float(avatar->GetPersonData(VMPersonDataVariable::OutgoingPersonality)) * t.SocialMultiplier + t.SocialBase));
+    write(VMMotive::Fun, sleeping ? t.FunAsleepMultiplier * read(VMMotive::Fun) : read(VMMotive::Fun) - t.FunAwake);
+    write(VMMotive::Hygiene, read(VMMotive::Hygiene) - (sleeping ? t.HygieneAsleep : t.HygieneAwake));
+    write(VMMotive::Bladder, read(VMMotive::Bladder) - (sleeping ? t.BladderAsleep : t.BladderAwake));
+    for (int i = 0; i < 16; ++i) write(VMMotive(i), std::max(-100.0f, std::min(100.0f, read(VMMotive(i)))));
+    avatar->SnapshotMotiveData();
 
-    avatar->SetMotiveData(VMMotive::Mood, (int16_t)(moodSum / 8));
+    // These are the DVD's HappyWeight record IDs, distinct from the nine
+    // action-contribution curves. Preserve its value==13 pet exclusion.
+    static const VMMotive moodMotives[] = {VMMotive::Hunger,VMMotive::Comfort,VMMotive::Hygiene,
+        VMMotive::Bladder,VMMotive::Fun,VMMotive::Room,VMMotive::Social};
+    const auto age = avatar->GetPersonData(VMPersonDataVariable::PersonsAge);
+    const auto& curves = age != 0 && age < 18 ? globals->HappyWeightChild : globals->HappyWeight;
+    if (curves.size() >= 7) {
+        float sum = 0, weightSum = 0;
+        for (int i = 0; i < 7; ++i) {
+            const auto value = read(moodMotives[i]);
+            if (avatar->GetPersonData(VMPersonDataVariable::Gender) >= 2 && value == 13.0f) continue;
+            const auto weight = curves[i].GetPoint(value);
+            sum += weight * value; weightSum += weight;
+        }
+        if (weightSum != 0) write(VMMotive::Mood, sum / weightSum);
+    }
 }
 }}}

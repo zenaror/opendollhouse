@@ -26,7 +26,7 @@ VMPrimitiveExitCode VMSetMotiveChange::Execute(VMStackFrame* context, VMPrimitiv
     auto operand = static_cast<VMSetMotiveChangeOperand*>(args);
     auto avatar = static_cast<VMAvatar*>(context->Caller);
 
-    if (operand->Once()) { }
+
 
     if (operand->ClearAll())
     {
@@ -36,17 +36,16 @@ VMPrimitiveExitCode VMSetMotiveChange::Execute(VMStackFrame* context, VMPrimitiv
     {
         auto rate = VMMemory::GetVariable(context, (VMVariableScope)operand->DeltaOwner, operand->DeltaData);
         auto MaxValue = VMMemory::GetVariable(context, (VMVariableScope)operand->MaxOwner, operand->MaxData);
-        if (operand->Once()) {
-            int16_t motive = avatar->GetMotiveData(operand->Motive);
-
-            if (((rate > 0) && (motive > MaxValue)) || ((rate < 0) && (motive < MaxValue))) { return VMPrimitiveExitCode::GOTO_TRUE; }
-            // ^ we're already over, do nothing. (do NOT clamp)
-
+        // In the original TS1 installer only ClearAll has meaning. Every
+        // registration appends an ordered continuous record, including Once.
+        if (context->VM()->TS1 || !operand->Once()) avatar->SetMotiveChange(operand->Motive, rate, MaxValue);
+        else {
+            auto motive = avatar->GetMotiveData(operand->Motive);
+            if ((rate > 0 && motive > MaxValue) || (rate < 0 && motive < MaxValue)) return VMPrimitiveExitCode::GOTO_TRUE;
             motive += rate;
-            if (((rate > 0) && (motive > MaxValue)) || ((rate < 0) && (motive < MaxValue))) { motive = MaxValue; }
+            if ((rate > 0 && motive > MaxValue) || (rate < 0 && motive < MaxValue)) motive = MaxValue;
             avatar->SetMotiveData(operand->Motive, motive);
         }
-        else avatar->SetMotiveChange(operand->Motive, rate, MaxValue);
     }
 
     return VMPrimitiveExitCode::GOTO_TRUE;

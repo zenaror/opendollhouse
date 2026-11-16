@@ -904,13 +904,9 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                 p.AnimEventCount = 0; p.Engaged = 0; p.RoutingState = OBJMRoutingState::None; p.RoutingFrameCount = 0;
                 p.LastInteraction = OBJMInteraction();
             }
-            // motives: keep the saved float when the VM value is its rounding (FreeSO: (short)Math.Round(motive))
             for (int i = 0; i < 16; i++) {
-                int16_t v = ava->GetMotiveData((VMMotive)i);
-                if (std::lround(p.MotiveData[i]) != v) {
-                    p.MotiveDataOld[i] = p.MotiveData[i];
-                    p.MotiveData[i] = (float)v;
-                }
+                p.MotiveData[i] = ava->GetMotiveDataFloat(VMMotive(i));
+                p.MotiveDataOld[i] = ava->GetOldMotiveDataFloat(VMMotive(i));
             }
             size_t pdCount = objm.Version > 0x45 ? 0x100 : 0x50;
             if (p.PersonData.size() < pdCount) p.PersonData.resize(pdCount, 0);
@@ -960,12 +956,10 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                     }
                 }
             }
-            // motive deltas: FreeSO MaxValue = StopAt, PerHourChange = round(TickDelta * 1800)
+            // Classic float records retain registration order and duplicates.
             p.MotiveDeltas.clear();
-            for (int i = 0; i < 16; i++) {
-                auto& mc = ava->GetMotiveChange(i);
-                if (mc.PerHourChange == 0) continue;
-                OBJMMotiveDelta d; d.Motive = i; d.TickDelta = mc.PerHourChange / 1800.0f; d.StopAt = mc.MaxValue;
+            for (const auto& mc : ava->GetTS1MotiveChanges()) {
+                OBJMMotiveDelta d; d.Motive = int(mc.Motive); d.TickDelta = mc.TickDelta; d.StopAt = mc.StopAt;
                 p.MotiveDeltas.push_back(d);
             }
         }

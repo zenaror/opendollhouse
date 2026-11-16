@@ -315,6 +315,7 @@ void VMAvatar::SetAvatarData(XmlCharacter* charInfo) {
     for (size_t i = 0; i < MotiveData.size(); i++) {
         MotiveData[i] = 75;
     }
+    SnapshotMotiveData();
 
     if (charInfo != nullptr && charInfo->Data.size() > 1) {
         SetPersonData(VMPersonDataVariable::CookingSkill, (int16_t)(charInfo->Data[0].Value));
@@ -362,20 +363,24 @@ void VMAvatar::PrepareForRestore(VMContext* context) {
     VMEntity::PrepareForRestore(context);
 }
 
-void VMAvatar::RestorePersonData(const std::vector<int16_t>& person, const float (&motives)[16]) {
+void VMAvatar::RestorePersonData(const std::vector<int16_t>& person, const float (&motives)[16], const float* oldMotives) {
     // Classic ObjM stores 80 words through version 0x45, then 256. Only
     // the supported prefix belongs to the runtime bank. The decoded snapshot
     // retains its extra words for the saver; do not reject or overwrite them.
     std::array<int16_t,101> restoredPerson{};
     std::copy_n(person.begin(), std::min(person.size(), restoredPerson.size()), restoredPerson.begin());
-    std::array<int16_t,16> restoredMotives{};
+    std::array<float,16> restoredMotives{}, restoredOld{};
     for (size_t i=0; i<restoredMotives.size(); ++i) {
         if (!std::isfinite(motives[i]) || motives[i] < -32768.0f || motives[i] > 32767.0f)
             throw std::runtime_error("ObjM: invalid saved motive");
-        restoredMotives[i] = int16_t(std::lround(motives[i]));
+        restoredMotives[i] = motives[i];
+        const auto oldValue = oldMotives ? oldMotives[i] : motives[i];
+        if (!std::isfinite(oldValue) || oldValue < -32768.0f || oldValue > 32767.0f)
+            throw std::runtime_error("ObjM: invalid old motive");
+        restoredOld[i] = oldValue;
     }
     PersonData=restoredPerson;
-    MotiveData=restoredMotives;
+    MotiveData=restoredMotives; OldMotiveData=restoredOld;
 }
 
 void VMAvatar::FinishRestore(VMContext* context) {
@@ -435,6 +440,7 @@ void VMAvatar::Init(VMContext* context) {
             MotiveData[i] = 75;
         }
         SetMotiveData(VMMotive::SleepState, 0); //max all motives except sleep state
+        SnapshotMotiveData();
         FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::InheritNeighbor(this, context->VM);
         VMEntity::Init(context);
         return;
@@ -452,6 +458,7 @@ void VMAvatar::Init(VMContext* context) {
     }
 
     SetMotiveData(VMMotive::SleepState, 0); //max all motives except sleep state
+    SnapshotMotiveData();
 
     SetPersonData(VMPersonDataVariable::NeatPersonality, 1000); //for testing wash hands after toilet
     SetPersonData(VMPersonDataVariable::OnlineJobID, 1); //for testing wash hands after toilet
@@ -623,8 +630,12 @@ void VMAvatar::Tick() {
         FSO::Vitaboy::Animator::RenderFrame(avatar->Avatar.get(), avatar->CarryAnimationState->Anim, (int)avatar->CarryAnimationState->CurrentFrame, 0.0f, 1.0f); //currently don't advance frames... I don't think any of them are animated anyways.
     }
 
-    for (int i = 0; i < 16; i++) {
-        MotiveChanges[i].Tick(this); //tick over motive changes
+    if (Thread && Thread->Context->VM->TS1) {
+        // Original SAnimator update precedes room assignment and ordered deltas.
+        SetMotiveDataFloat(VMMotive::Room, Thread->Context->GetRoomScore(Thread->Context->GetRoomAt(Position())));
+        for (const auto& change : TS1MotiveChanges) change.Tick(this);
+    } else {
+        for (auto& change : MotiveChanges) change.Tick(this);
     }
 
     // Native VM.Update publishes this full-tick pose directly to Draw. Apply
@@ -795,28 +806,52 @@ int16_t VMAvatar::GetPersonData(VMPersonDataVariable variable) {
     return PersonData[(uint16_t)variable];
 }
 
-void VMAvatar::SetMotiveChange(VMMotive motive, int16_t PerHourChange, int16_t MaxValue) {
-    auto& temp = MotiveChanges[(int)motive];
-    // TS1(sims): apply the translated VMMotiveChange::ScaleRate (dead code in FreeSims). For TS1 it scales
-    // positive energy rates by energy span / sleep hours (180 / (24 - 16)), so a night in bed restores the energy
-    // a day awake costs; without it Sims slept ~20 game hours and woke up still tired.
-    if (Thread != nullptr && Thread->Context->VM->TS1)
-        PerHourChange = (int16_t)Model::VMMotiveChange::ScaleRate(Thread->Context->VM, PerHourChange, motive);
-    if (temp.Ticked) {
-        temp.PerHourChange = PerHourChange;
-        temp.MaxValue = MaxValue;
-        temp.Ticked = false;
+void VMAvatar::SetMotiveChange(VMMotive motive, int16_t perHourChange, int16_t maxValue) {
+    if (Thread && Thread->Context->VM->TS1) {
+        const int id = int(motive);
+        if (!((id >= 5 && id <= 9) || id == 14 || id == 15))
+            throw std::runtime_error("Set motive change: unsupported classic motive");
+        TS1MotiveChanges.push_back({motive, float(perHourChange) * (1.0f / 1800.0f), float(maxValue)});
+        return;
     }
+    auto& temp = MotiveChanges[int(motive)];
+    if (temp.Ticked) {
+        temp.PerHourChange = perHourChange; temp.MaxValue = maxValue; temp.Ticked = false;
+    }
+}
+
+void VMAvatar::RestoreTS1MotiveChanges(const std::vector<Model::VMTS1MotiveChange>& changes) {
+    for (const auto& change : changes) {
+        const int id = int(change.Motive);
+        if (id < 0 || id >= 16 || !std::isfinite(change.TickDelta) || !std::isfinite(change.StopAt))
+            throw std::runtime_error("Invalid classic motive change");
+    }
+    TS1MotiveChanges = changes;
+}
+
+Model::VMMotiveChange VMAvatar::GetMotiveChange(int index) const {
+    const auto slot = size_t(index & 15);
+    if (!Thread || !Thread->Context->VM->TS1) return MotiveChanges[slot];
+    Model::VMMotiveChange result; result.Motive = VMMotive(slot);
+    for (const auto& change : TS1MotiveChanges) if (size_t(change.Motive) == slot) {
+        result.PerHourChange = int16_t(std::lround(std::clamp(double(change.TickDelta) * 1800.0, -32768.0, 32767.0)));
+        result.MaxValue = int16_t(std::lround(std::clamp(double(change.StopAt), -32768.0, 32767.0)));
+    }
+    return result;
 }
 
 bool VMAvatar::HasMotiveChange(VMMotive motive) {
-    return MotiveChanges[(int)motive].PerHourChange != 0;
+    if (Thread && Thread->Context->VM->TS1) {
+        for (const auto& change : TS1MotiveChanges)
+            if (change.Motive == motive && change.TickDelta != 0) return true;
+        return false;
+    }
+    return MotiveChanges[int(motive)].PerHourChange != 0;
 }
 
 void VMAvatar::ClearMotiveChanges() {
-    for (int i = 0; i < 16; i++) {
-        MotiveChanges[i].Clear();
-    }
+    TS1MotiveChanges.clear();
+    for (auto& change : MotiveChanges) change.Clear();
 }
 
 bool VMAvatar::SetPersonData(VMPersonDataVariable variable, int16_t value) {
@@ -844,14 +879,33 @@ bool VMAvatar::SetPersonData(VMPersonDataVariable variable, int16_t value) {
     return true;
 }
 
+float VMAvatar::GetMotiveDataFloat(VMMotive variable) const {
+    if (uint32_t(variable) >= MotiveData.size()) throw std::runtime_error("Motive Data out of bounds!");
+    return MotiveData[size_t(variable)];
+}
+
+float VMAvatar::GetOldMotiveDataFloat(VMMotive variable) const {
+    if (uint32_t(variable) >= OldMotiveData.size()) throw std::runtime_error("Motive Data out of bounds!");
+    return OldMotiveData[size_t(variable)];
+}
+
+void VMAvatar::SetMotiveDataFloat(VMMotive variable, float value) {
+    if (uint32_t(variable) >= MotiveData.size() || !std::isfinite(value))
+        throw std::runtime_error("Invalid motive value");
+    MotiveData[size_t(variable)] = value;
+}
+
+void VMAvatar::SnapshotMotiveData() { OldMotiveData = MotiveData; }
+
 int16_t VMAvatar::GetMotiveData(VMMotive variable) {
-    if ((uint16_t)variable > 15) throw std::runtime_error("Motive Data out of bounds!");
-    return MotiveData[(uint16_t)variable];
+    const auto value = GetMotiveDataFloat(variable);
+    if (!std::isfinite(value) || value <= -32768.5f || value >= 32767.5f)
+        throw std::runtime_error("Motive cannot be represented by a script integer");
+    return int16_t(std::lround(value));
 }
 
 bool VMAvatar::SetMotiveData(VMMotive variable, int16_t value) {
-    if ((uint16_t)variable > 15) throw std::runtime_error("Motive Data out of bounds!");
-    MotiveData[(uint16_t)variable] = (int16_t)std::max(std::min((int)value, 100), -100);
+    SetMotiveDataFloat(variable, float(value));
     return true;
 }
 
