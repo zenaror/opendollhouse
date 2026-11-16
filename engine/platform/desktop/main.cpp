@@ -650,6 +650,7 @@ int Run(Options options) {
     // Like the 3DS host, yield between complete VM updates. An overloaded
     // lot must service input and audio before trying to catch up again.
     config.VMBudgetMs = 14.0;
+    config.HalfResolutionLot = true;
     std::printf("[portable-perf] VM budget %.0f ms per frame\n", config.VMBudgetMs);
 #endif
     config.LogSteps = true;

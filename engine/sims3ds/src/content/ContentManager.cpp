@@ -507,6 +507,27 @@ OTFFile* WorldObjectProvider::LoadOtfFromArchives(const std::string& name) {
     return nullptr;
 }
 
+bool WorldObjectProvider::ReadCatalogObject(uint32_t guid, IffFile& iff, uint16_t& stringsId) {
+    if (WithSprites || Cache.count(guid)) return false;
+    const auto found = Entries.find(guid);
+    if (found == Entries.end()) return false;
+    const auto& ref = found->second;
+    if (ref.Source != GameObjectSource::Far || ref.FarIndex < 0 || size_t(ref.FarIndex) >= Archives.size()) return false;
+    const auto filename = ref.FileName + ".iff";
+    if (PIFFRegistry::GetPIFFs(filename)) return false;
+    const auto& archive = Archives[ref.FarIndex];
+    const auto entry = archive.EntriesByName.find(ToLowerInvariant(filename));
+    if (entry == archive.EntriesByName.end()) return false;
+    iff.ReadCatalogFromFile(archive.Path, entry->second.DataOffset, uint32_t(entry->second.DataLength));
+    for (auto* definition : iff.List<Chunks::OBJD>()) {
+        if (definition->GUID == guid) {
+            stringsId = definition->CatalogStringsID;
+            return true;
+        }
+    }
+    return false;
+}
+
 GameObject* WorldObjectProvider::Get(uint64_t id, bool ts1) {
     auto cached = Cache.find(id);
     if (cached != Cache.end()) return cached->second.get();

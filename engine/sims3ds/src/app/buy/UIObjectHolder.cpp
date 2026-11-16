@@ -253,7 +253,7 @@ void UIObjectHolder::Update(int mouseX, int mouseY, bool mouseIsDown) {
                 if (ShowTooltip) PlayUISound(UISounds::Error); // FIX(sims) SND: C# Update
             }
         } else {
-            auto tilePos = World->State.WorldSpace.GetTileAtPosWithScroll(st::Vector2((float)mouseX, (float)mouseY));
+            auto tilePos = World->State.WorldSpace.GetTileAtPosWithScroll(Session->ScenePoint(mouseX, mouseY));
             tilePos = st::Vector2(tilePos.X + Holding->TilePosOffset.X, tilePos.Y + Holding->TilePosOffset.Y);
             MoveSelected(tilePos, 1);
             LastError = Holding->CanPlace;
@@ -266,7 +266,7 @@ bool UIObjectHolder::PickUpAt(int x, int y) {
     //not holding an object, but one can be selected
     auto vm = Session->VM();
     auto World = Session->World();
-    auto hit = PickObjectAt(*World, &Session->LastFrame(), x, y, 3);
+    auto hit = Session->PickDisplayObject(x, y);
     int16_t newHover = hit.ObjectID;
     auto ent = newHover != 0 ? vm->GetObjectById(newHover) : nullptr;
     bool cheat = CheatState::Get().MoveObjects; // TS1(sims): move_objects on: Sims and every object
@@ -302,7 +302,7 @@ bool UIObjectHolder::PickUpAt(int x, int y) {
     Holding->CanDelete = canDelete || cheat; // TS1(sims): move_objects deletes anything
     Holding->Forced = cheat;
     Holding->MoveTarget = newHover;
-    auto tile = World->State.WorldSpace.GetTileAtPosWithScroll(st::Vector2((float)x, (float)y));
+    auto tile = World->State.WorldSpace.GetTileAtPosWithScroll(Session->ScenePoint(x, y));
     Holding->TilePosOffset = st::Vector2(objBasePos.x / 16.0f - tile.X, objBasePos.y / 16.0f - tile.Y);
     Holding->TilePos = st::Vector2(objBasePos.x / 16.0f, objBasePos.y / 16.0f);
     if (OnPickup) OnPickup(*Holding);
@@ -331,7 +331,7 @@ bool UIObjectHolder::PickUpSim(VMAvatar* av, int x, int y) {
     Holding->Forced = true;
     Holding->IsSim = true;
     Holding->MoveTarget = av->ObjectID;
-    auto tile = World->State.WorldSpace.GetTileAtPosWithScroll(st::Vector2((float)x, (float)y));
+    auto tile = World->State.WorldSpace.GetTileAtPosWithScroll(Session->ScenePoint(x, y));
     Holding->TilePosOffset = st::Vector2(pos.TileX() - tile.X + 0.5f, pos.TileY() - tile.Y + 0.5f);
     Holding->TilePos = st::Vector2(pos.TileX() + 0.5f, pos.TileY() + 0.5f);
     if (OnPickup) OnPickup(*Holding);

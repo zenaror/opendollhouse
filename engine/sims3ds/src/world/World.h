@@ -31,6 +31,11 @@ public:
     int32_t ScrollBounds = 20;
     /// TS1(sims): keep the view centre on the lot (see PreDraw); false = FreeSims' looser TSO bounds.
     bool TS1ScrollBounds = true;
+    // Number of display pixels per raster pixel; sprite drawing and picking use State.Zoom().
+    int PresentationScale = 1;
+    WorldZoom ViewZoom() const {
+        return PresentationScale == 2 && State.Zoom() != WorldZoom::Near ? WorldZoom(int(State.Zoom()) + 1) : State.Zoom();
+    }
     /// ADDED(sims): no scroll bounds at all while set (front/LotSave draws the house pictures in passes whose view
     /// centres lie off the lot)
     bool FreeCenter = false;

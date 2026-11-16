@@ -4,6 +4,7 @@
 #include "original_button_state.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <tuple>
 
 namespace odh_host {
@@ -17,6 +18,12 @@ void blit(RasterFrame& frame,const BitmapImage& image,BuyUiRect box,BuyUiRect cr
 }
 }
 using original_panel_detail::blit;
+static void blit(UiBitmapSurface frame,const BitmapImage& image,BuyUiRect box){
+    blit_color_keyed_bitmap(frame,image,box,std::nullopt,{255,0,255});
+}
+static void blit(UiBitmapSurface frame,const BitmapImage& image,BuyUiRect box,BuyUiRect crop){
+    blit_color_keyed_bitmap(frame,image,box,crop,{255,0,255});
+}
 OriginalControlPanelLayout original_control_panel_layout(std::uint32_t width,std::uint32_t height){
     if(width<320||width>3840||height<200||height>2160||static_cast<std::uint64_t>(width)*height>8294400)throw FormatError("original panel viewport outside native raster bounds");
     // Presentation-only budget matches the current desktop canvas API. This
@@ -114,7 +121,7 @@ void OriginalControlPanelArt::prepare_backdrop(const BitmapImage& image){
     }
     backdrop_runs_.emplace(&image,std::move(runs));
 }
-void OriginalControlPanelArt::draw_backdrop(RasterFrame& frame,const BitmapImage& image,BuyUiRect box) const{
+void OriginalControlPanelArt::draw_backdrop(UiBitmapSurface frame,const BitmapImage& image,BuyUiRect box) const{
     const auto found=backdrop_runs_.find(&image);
     if(found==backdrop_runs_.end() || box.width!=int(image.width) || box.height!=int(image.height)){
         blit(frame,image,box);return;
@@ -125,19 +132,22 @@ void OriginalControlPanelArt::draw_backdrop(RasterFrame& frame,const BitmapImage
         const int left=std::max(0,box.x+run.x),right=std::min(int(frame.width),box.x+run.x+run.width);
         if(left>=right)continue;
         const auto* src=image.pixels.data()+size_t(run.y)*image.width+size_t(left-box.x);
-        auto* dst=frame.pixels.data()+size_t(y)*frame.width+left;
-        if(!run.translucent){std::copy_n(src,right-left,dst);continue;}
-        for(int x=left;x<right;++x,++src,++dst){
+        auto* dst=frame.pixel(size_t(y)*frame.width+left);
+        if(!run.translucent){std::memcpy(dst,src,size_t(right-left)*4);continue;}
+        for(int x=left;x<right;++x,++src,dst+=4){
             const unsigned alpha=(*src)[3];
             for(unsigned c=0;c<3;++c)
-                (*dst)[c]=uint8_t(((*src)[c]*alpha+(*dst)[c]*(255-alpha)+127)/255);
-            (*dst)[3]=255;
+                dst[c]=uint8_t(((*src)[c]*alpha+dst[c]*(255-alpha)+127)/255);
+            dst[3]=255;
         }
     }
 }
 const BitmapImage& OriginalControlPanelArt::at(const std::string& key)const{return art_.at(key);}
 const BitmapImage* OriginalControlPanelArt::find(const std::string& key)const{return art_.find(key);}
 void OriginalControlPanelArt::draw_button(RasterFrame& frame,const std::string& key,const BuyUiRect& box,unsigned state)const{
+    draw_button(UiBitmapSurface::from(frame),key,box,state);
+}
+void OriginalControlPanelArt::draw_button(UiBitmapSurface frame,const std::string& key,const BuyUiRect& box,unsigned state)const{
     const auto& image=at(key);if(state>3||image.width<4||image.width%4)throw FormatError("original four-state button strip is invalid");
     const auto span=static_cast<std::int32_t>(image.width/4);blit(frame,image,box,{span*static_cast<std::int32_t>(state),0,span,static_cast<std::int32_t>(image.height)});
 }
@@ -221,8 +231,11 @@ OriginalPanelAction OriginalControlPanelArt::hit(const OriginalControlPanelLayou
     return OriginalPanelAction::none;
 }
 void OriginalControlPanelArt::draw(RasterFrame& frame,OriginalPanelMode mode,OriginalPanelState state)const{
+    draw(UiBitmapSurface::from(frame),mode,state);
+}
+void OriginalControlPanelArt::draw(UiBitmapSurface frame,OriginalPanelMode mode,OriginalPanelState state)const{
     const auto l=original_control_panel_layout(frame.width,frame.height);
-    if(frame.pixels.size()!=std::uint64_t(frame.width)*frame.height)
+    if(!frame.rgba || frame.pixel_count!=std::uint64_t(frame.width)*frame.height)
         throw FormatError("UI bitmap destination frame is malformed");
     // Opaque backing under the transparent edge of UniversalBack. It ends
     // at authored x220, adjoining PanelBack at its original pixel size. Draw it first

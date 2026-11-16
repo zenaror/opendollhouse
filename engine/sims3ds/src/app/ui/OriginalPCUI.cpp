@@ -260,7 +260,26 @@ struct OriginalPCUI::Impl {
 OriginalPCUI::OriginalPCUI(const std::string& root):P(new Impl(root)){}
 OriginalPCUI::~OriginalPCUI()=default;
 OriginalPCUI& OriginalPCUI::Get(){static std::unique_ptr<OriginalPCUI> instance;auto root=FSO::Content::Content::Get()->SimsCompleteDir;if(!instance||instance->P->root!=root)instance.reset(new OriginalPCUI(root));return *instance;}
-void OriginalPCUI::DrawPanel(Canvas& c,odh_host::OriginalPanelMode mode,const odh_host::OriginalPanelState& state){P->last_state=state;P->last_layout=odh_host::original_control_panel_layout(c.Width,c.Height);if(mode!=odh_host::OriginalPanelMode::live){P->last_state.live_tabs.fill(false);P->last_state.inventory_enabled=false;P->last_state.simulation_speed.reset();}P->copy_in(c,c.Height-183,183);P->panel.draw(P->surface,mode,state);P->copy_out(c,c.Height-183,183);}
+void OriginalPCUI::DrawPanel(Canvas& c,odh_host::OriginalPanelMode mode,const odh_host::OriginalPanelState& state){
+    P->last_state=state;
+    P->last_layout=odh_host::original_control_panel_layout(c.Width,c.Height);
+    if(mode!=odh_host::OriginalPanelMode::live){
+        P->last_state.live_tabs.fill(false);
+        P->last_state.inventory_enabled=false;
+        P->last_state.simulation_speed.reset();
+    }
+#if (defined(__vita__) || defined(__SWITCH__)) && defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    // Canvas packs R in the low byte. Both handhelds can paint the original
+    // RGBA art over the current world without importing and exporting the HUD.
+    odh::UiBitmapSurface target{static_cast<uint32_t>(c.Width),static_cast<uint32_t>(c.Height),
+        reinterpret_cast<unsigned char*>(c.Px.data()),c.Px.size()};
+    P->panel.draw(target,mode,state);
+#else
+    P->copy_in(c,c.Height-183,183);
+    P->panel.draw(P->surface,mode,state);
+    P->copy_out(c,c.Height-183,183);
+#endif
+}
 const Canvas* OriginalPCUI::Face(Avatar* a,int frame){if(!a||!a->Object||!a->Object->Resource)return nullptr;auto& f=P->faces(a);return &f.canvases[std::clamp(frame,0,int(f.canvases.size())-1)];}
 void OriginalPCUI::DrawPortrait(Canvas& c,odh::UiBitmapRect r,bool selected,Avatar* a){if(!a)return;auto& f=P->faces(a);const auto* image=f.images.faces.empty()?&*f.generated:&f.images.faces[0];const Rect bounds{r.x,r.y,r.width,r.height};original::Raster(c,P->surface,bounds);const auto contains=[&](const std::optional<std::array<int,2>>& p){return p&&r.contains((*p)[0],(*p)[1]);};const auto state=odh_host::original_button_frame(true,selected,contains(P->last_state.pointer),contains(P->last_state.press_origin));P->panel.draw_portrait_state(P->surface,r,state,image,true);original::Copy(P->surface,c,bounds);}
 std::vector<odh_host::QueueTile> OriginalPCUI::QueueTiles(Avatar* a,int width,int height){

@@ -325,7 +325,7 @@ void UIBuildMode::PointerUpdate() {
         }
         if (P.Down) { _WasHeld=true; L->Buy->DesktopQueryVisible=false; }
         if (P.Up) _WasHeld=false;
-        ControlState.MouseX = P.X; ControlState.MouseY = P.Y;
+        ControlState.MouseX = P.X / L->S->SceneScale(); ControlState.MouseY = P.Y / L->S->SceneScale();
         ControlState.CtrlDown = Erase; ControlState.ShiftDown = Shift;
         // TS1(sims): the terrain tool keeps raising while the stylus is held: it needs Update every frame
         if (P.Down) Control->MouseDown(ControlState);
@@ -593,7 +593,7 @@ void UIBuildMode::DrawTerrainMarkers(Canvas& top) {
         if (!edge) continue;
         float alt = bp ? bp->InterpAltitude(st::Vector3((float)x, (float)y, 0)) : 0.0f;
         auto sp = TileToScreen(*world, st::Vector3((float)x, (float)y, (lvl - 1) * 2.95f + alt));
-        int sx = (int)sp.X, sy = (int)sp.Y;
+        int sx = int(sp.X * L->S->SceneScale()), sy = int(sp.Y * L->S->SceneScale());
         top.FillTriangle(sx - 4, sy, sx, sy - 3, sx + 4, sy, RGBA(0, 0, 0, 160));
         top.FillTriangle(sx - 4, sy, sx, sy + 3, sx + 4, sy, RGBA(0, 0, 0, 160));
         top.FillTriangle(sx - 3, sy, sx, sy - 2, sx + 3, sy, col);

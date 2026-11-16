@@ -32,7 +32,10 @@ There is no stable public release yet.
 - When entering a home, the game looks up the outfits its residents wear.
   Custom outfits outside the game index are discovered as needed. The household
   bar reads each resident's face strip independently.
-- Reduced repeated drawing and file access when playing a lot on Vita and Switch.
+- On Vita and Switch, the two closer zoom levels draw the lot at 400×300
+  while menus and text stay at 800×600. The widest zoom keeps the entire view.
+- The handheld Buy catalog reads fewer files when opening a category. Importing
+  a neighborhood also skips repeat checks on files the game has already found.
 - Documentation organized for milestone 1 players: installation, controls,
   saves, help and limitations. Public contribution instructions are separate
   in `docs/ai_agents/`.

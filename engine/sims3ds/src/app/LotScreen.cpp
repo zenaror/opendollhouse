@@ -5,6 +5,7 @@
  */
 // sims app — see LotScreen.h
 #include "app/LotScreen.h"
+#include "app/LotScenePresentation.h"
 #ifndef __3DS__
 #include "original_button_state.hpp"
 #endif
@@ -1250,7 +1251,7 @@ void LotScreen::DrawQueueTop(VMAvatar* sim) {
     }
 }
 
-void LotScreen::DrawHeadlines() {
+void LotScreen::DrawHeadlines(Canvas& scene) {
     auto world = S->World();
     int zoom = (int)world->State.Zoom();
     int level = world->State.Level();
@@ -1267,12 +1268,12 @@ void LotScreen::DrawHeadlines() {
         if (!S->EntityScreenPos(e, x, y, lift)) continue;
         int w, h;
         r->Size(zoom, w, h);
-        if (x < -w || y < -h || x > Top->Width + w || y > Top->Height + h) continue;
+        if (x < -w || y < -h || x > scene.Width + w || y > scene.Height + h) continue;
         // Sims: the balloon sits above the head and the plumbob; keep it on screen (TS1 balloons never leave the view)
         float zs = zoom == 3 ? 2.0f : (zoom == 2 ? 1.0f : 0.5f);
         int by = av ? (int)y - h / 2 - (int)(14 * zs) : (int)y;
         by = std::max(h / 2 + 2, by);
-        r->Draw(*Top, (int)x, by, zoom);
+        r->Draw(scene, (int)x, by, zoom);
     }
 }
 
@@ -1285,7 +1286,7 @@ void LotScreen::DrawPopups() {
         float x = Top->Width / 2.0f, y = Top->Height / 2.0f;
         if (p.X > -100) {
             auto sp = TileToScreen(*world, st::Vector3(p.X, p.Y, (p.Head ? p.Z : (world->State.Level() - 1) * 2.95f / 3.0f) + p.Lift));
-            x = sp.X; y = sp.Y;
+            x = sp.X * S->SceneScale(); y = sp.Y * S->SceneScale();
         } else if (p.SX >= 0) { x = (float)p.SX; y = (float)p.SY; }
         y -= (float)(t * 36.0);
         char buf[48];
@@ -1320,10 +1321,10 @@ void LotScreen::DrawCursor() {
     }
 }
 
-void LotScreen::DrawTop() {
+void LotScreen::DrawLotScene(Canvas& scene) {
     auto& s = *S;
     auto& f = s.LastFrame();
-    if (f.Width == Top->Width && f.Height == Top->Height) std::copy(f.Color.begin(), f.Color.end(), Top->Px.begin());
+    std::copy(f.Color.begin(), f.Color.end(), scene.Px.begin());
     auto sim = s.SelectedSim();
 #ifndef __3DS__
     // The live cursor already owns the bounded pick and current interaction
@@ -1337,16 +1338,16 @@ void LotScreen::DrawTop() {
             if(target->MultitileGroup)for(auto part:target->MultitileGroup->Objects) {
                 if(part && !part->Dead)ids.push_back(part->ObjectID);
             } else ids.push_back(target->ObjectID);
-            DrawObjectHover(*s.World(),f,*Top,DesktopHover->object_mask,ids);
+            DrawObjectHover(*s.World(),f,scene,DesktopHover->object_mask,ids);
         }
     }
 #endif
     bool live = CurrentMode == Mode::Live || CurrentMode == Mode::Options;
     if (live) {
-        DrawHeadlines();
+        DrawHeadlines(scene);
         // plumbob over the selected Sim (TS1)
 #ifndef __3DS__
-        if(Desktop) DrawOriginalSelectedCrystal(*Top,*s.World(),f,sim,Time);
+        if(Desktop) DrawOriginalSelectedCrystal(scene,*s.World(),f,sim,Time);
         else
 #endif
         if (sim != nullptr && sim->Position().Level <= s.World()->State.Level()) {
@@ -1359,16 +1360,42 @@ void LotScreen::DrawTop() {
                 int w = std::max(3, (int)(6 * zs)), h = std::max(5, (int)(10 * zs));
                 py += (int)(std::sin((float)Time / 300.0f) * 1.5f * zs);
                 // TS1(sims): spinning, shaded 3-D plumbob (one turn every 2.4 s)
-                DrawPlumbob(*Top, (float)px, (float)py, (float)w, (float)h, (float)std::fmod(Time / 2400.0, 1.0) * 6.2831853f);
+                DrawPlumbob(scene, (float)px, (float)py, (float)w, (float)h, (float)std::fmod(Time / 2400.0, 1.0) * 6.2831853f);
             }
         }
         if (!Desktop && Pie.IsOpen && PieMarkX >= 0) {
             int r = 6 + (int)(2 * std::sin((float)Time / 120.0f));
-            Top->StrokeCircle((int)PieMarkX, (int)PieMarkY, r, RGBA(255, 255, 255, 230));
-            Top->StrokeCircle((int)PieMarkX, (int)PieMarkY, r + 1, RGBA(0, 0, 0, 150));
+            scene.StrokeCircle((int)PieMarkX, (int)PieMarkY, r, RGBA(255, 255, 255, 230));
+            scene.StrokeCircle((int)PieMarkX, (int)PieMarkY, r + 1, RGBA(0, 0, 0, 150));
         }
-        if (CurrentMode == Mode::Live) DrawQueueTop(sim);
     }
+}
+
+void LotScreen::DrawTop() {
+    auto& s = *S;
+    const auto& frame = s.LastFrame();
+    if (frame.Width * s.SceneScale() != Top->Width || frame.Height * s.SceneScale() != Top->Height ||
+        frame.Color.size() != size_t(frame.Width) * frame.Height || Top->Px.size() != size_t(Top->Width) * Top->Height) return;
+    if (s.SceneScale() == 2 && CurrentMode != Mode::Live && CurrentMode != Mode::Options) {
+        ExpandLotScene2x(frame.Color.data(),Top->Px.data(),frame.Width,frame.Height);
+    } else if (s.SceneScale() == 2) {
+        // Borrow the output pixels for the small scene and its depth-tested
+        // overlays. Expand backwards in the same allocation before drawing UI.
+        Canvas scene;
+        scene.Width = frame.Width;
+        scene.Height = frame.Height;
+        scene.Px.swap(Top->Px);
+        struct RestorePixels {
+            Canvas& output;
+            Canvas& scene;
+            ~RestorePixels() { output.Px.swap(scene.Px); }
+        } restore{*Top, scene};
+        DrawLotScene(scene);
+        ExpandLotScene2x(scene.Px.data(),scene.Px.data(),scene.Width,scene.Height);
+    } else {
+        DrawLotScene(*Top);
+    }
+    if (CurrentMode == Mode::Live) DrawQueueTop(s.SelectedSim());
     DrawPopups();
     PanelOf(this)->DrawTop(*Top);
     if (!TopTip.empty() && Time < TopTipUntil) {
@@ -1410,9 +1437,10 @@ void LotScreen::DrawCheatOverlays() {
                 std::vector<st::Vector2> pts;
                 float z = (av->Position().Level - 1) * 2.95f;
                 if (rf->WalkTo) for (auto& p : *rf->WalkTo) pts.push_back(TileToScreen(*world, st::Vector3(p.X / 16.0f, p.Y / 16.0f, z)));
+                for (auto& point : pts) point = point * float(S->SceneScale());
                 if (C.DrawRoutes) {
                     float sx, sy;
-                    if (S->EntityScreenPos(av, sx, sy, 0.0f) && !pts.empty()) Top->Line((int)sx, (int)sy, (int)pts[0].X, (int)pts[0].Y, RGBA(255, 255, 0, 220));
+                    if (S->EntityScreenPos(av, sx, sy, 0.0f) && !pts.empty()) Top->Line(int(sx * S->SceneScale()), int(sy * S->SceneScale()), (int)pts[0].X, (int)pts[0].Y, RGBA(255, 255, 0, 220));
                     for (size_t i = 1; i < pts.size(); i++) Top->Line((int)pts[i - 1].X, (int)pts[i - 1].Y, (int)pts[i].X, (int)pts[i].Y, RGBA(255, 255, 0, 220));
                 }
                 if (C.RouteBalloons) for (auto& p : pts) {
@@ -1427,7 +1455,7 @@ void LotScreen::DrawCheatOverlays() {
     }
     if (C.TileInfo) {
         auto arch = vm->Context->Architecture();
-        auto tile = world->State.WorldSpace.GetTileAtPosWithScroll(st::Vector2((float)CursorX, (float)CursorY));
+        auto tile = world->State.WorldSpace.GetTileAtPosWithScroll(S->ScenePoint(CursorX, CursorY));
         int tx = (int)std::floor(tile.X), ty = (int)std::floor(tile.Y), lv = world->State.Level();
         char b[160];
         if (arch && tx >= 0 && ty >= 0 && tx < arch->Width && ty < arch->Height) {
@@ -1519,10 +1547,12 @@ bool LotScreen::ScriptObjectPos(const std::string& name, int& x, int& y, std::st
         float lift = dynamic_cast<VMAvatar*>(e) ? 1.2f : 0.4f;
         if (!s.EntityScreenPos(e, cx, cy, lift)) continue;
         if (e->Position().Level != world->State.Level()) continue;
+        cx *= s.SceneScale(); cy *= s.SceneScale();
         if (cx < 30 || cy < 30 || cx > Top->Width - 30 || cy > Top->Height - 30) {
             s.CenterOn(e);
             s.Draw();
             if (!s.EntityScreenPos(e, cx, cy, lift)) continue;
+            cx *= s.SceneScale(); cy *= s.SceneScale();
         }
         int16_t want_id = e->ObjectID;
         int16_t leader = (e->MultitileGroup != nullptr) ? e->MultitileGroup->GetInteractionGroupLeader(e)->ObjectID : want_id;
@@ -1533,7 +1563,7 @@ bool LotScreen::ScriptObjectPos(const std::string& name, int& x, int& y, std::st
                 if (tx < 0 || ty < 0 || tx >= Top->Width || ty >= Top->Height) continue;
                 int bx, by; TopToView((float)tx, (float)ty, bx, by);
                 int rtx, rty; ViewToTop(bx, by, rtx, rty);
-                auto hit = PickObjectAt(*world, &s.LastFrame(), rtx, rty, 3);
+                auto hit = s.PickDisplayObject(rtx, rty);
                 if (hit.ObjectID == 0) continue;
                 auto he = s.VM()->GetObjectById(hit.ObjectID);
                 int16_t hl = (he && he->MultitileGroup) ? he->MultitileGroup->GetInteractionGroupLeader(he)->ObjectID : hit.ObjectID;

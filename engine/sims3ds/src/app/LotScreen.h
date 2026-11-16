@@ -208,7 +208,8 @@ private:
     void DrawGadget(Canvas& c);
     void DrawDialog();
     void DrawQueueTop(FSO::SimAntics::VMAvatar* sim);
-    void DrawHeadlines();
+    void DrawLotScene(Canvas& scene);
+    void DrawHeadlines(Canvas& scene);
     void DrawPopups();
     void DrawCursor();
     void TrackBudget();

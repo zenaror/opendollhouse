@@ -231,10 +231,13 @@ static std::vector<DirEntry> ReadDirectory(const std::string& dir, bool* opened,
     if (opened) *opened = true;
     if (reusable) *reusable = true;
     for (;;) {
-        if (reusable) errno = 0;
+        if (opened || reusable) errno = 0;
         const auto* e = readdir(d);
         if (!e) {
-            if (reusable && errno != 0) *reusable = false;
+            if (errno != 0) {
+                if (opened) *opened = false;
+                if (reusable) *reusable = false;
+            }
             break;
         }
         DirEntry de;

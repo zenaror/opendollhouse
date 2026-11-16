@@ -36,5 +36,63 @@ inline odh_host::MotivePanelResult DrawNeeds(Canvas& canvas,odh::RasterFrame& sc
     Copy(scratch,canvas,bounds);
     return result;
 }
+
+// Lives with the immutable localized artwork and labels for one data root.
+// Compare the underlying pixels as well as the values: UI art can be
+// translucent and the world behind the panel may have moved since last time.
+class PortableNeedsCache {
+public:
+    bool draw(Canvas& canvas,odh::RasterFrame& scratch,const odh_host::StatusHud& status,
+            std::uint8_t language,const odh::BitmapImage* art,const odh_host::OriginalControlPanelLayout& layout,
+            const std::array<std::string,8>* labels,const std::string* heading,
+            const odh_host::OriginalMotivePanelGeometry& geometry,const std::array<int,8>& arrows){
+        const auto area=NeedsPaintBounds(canvas,geometry);
+        const auto count=size_t(area.W)*area.H;
+        // The two rectangles together occupy at most 256 KiB.
+        if(!count || count>32768){
+            valid=false;
+            DrawNeeds(canvas,scratch,status,language,art,layout,labels,heading,geometry,arrows);
+            return false;
+        }
+        // Geometry is derived solely from the viewport, the language and the
+        // original artwork. Pet and human panels have separate label tables.
+        bool matches=valid && width==canvas.Width && height==canvas.Height && last_language==language &&
+            area.X==last_area.X && area.Y==last_area.Y && area.W==last_area.W && area.H==last_area.H &&
+            last_labels==labels && last_heading==heading && last_art==art && last_arrows==arrows &&
+            last_needs==status.needs && last_room==status.room_score;
+        const auto row=[&](int y){return canvas.Px.data()+size_t(area.Y+y)*canvas.Width+area.X;};
+        for(int y=0;matches && y<area.H;++y)
+            matches=std::memcmp(row(y),background.data()+size_t(y)*area.W,size_t(area.W)*4)==0;
+        if(matches){
+            for(int y=0;y<area.H;++y)
+                std::memcpy(row(y),painted.data()+size_t(y)*area.W,size_t(area.W)*4);
+            return true;
+        }
+        valid=false;
+        background.resize(count);
+        painted.resize(count);
+        for(int y=0;y<area.H;++y)
+            std::memcpy(background.data()+size_t(y)*area.W,row(y),size_t(area.W)*4);
+        DrawNeeds(canvas,scratch,status,language,art,layout,labels,heading,geometry,arrows);
+        for(int y=0;y<area.H;++y)
+            std::memcpy(painted.data()+size_t(y)*area.W,row(y),size_t(area.W)*4);
+        width=canvas.Width; height=canvas.Height; last_area=area; last_language=language; last_art=art;
+        last_labels=labels; last_heading=heading; last_arrows=arrows;
+        last_needs=status.needs; last_room=status.room_score; valid=true;
+        return false;
+    }
+private:
+    bool valid=false;
+    int width=0,height=0;
+    Rect last_area;
+    std::uint8_t last_language=0;
+    const std::array<std::string,8>* last_labels=nullptr;
+    const std::string* last_heading=nullptr;
+    const odh::BitmapImage* last_art=nullptr;
+    std::array<int,8> last_arrows{};
+    decltype(odh_host::StatusHud::needs) last_needs;
+    decltype(odh_host::StatusHud::room_score) last_room;
+    std::vector<std::uint32_t> background,painted;
+};
 }}
 #endif

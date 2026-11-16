@@ -459,13 +459,24 @@ const UICatalog::Details& UICatalog::GetDetails(const UICatalogElement& e) {
     switch (e.Special) {
         case UICatalogElement::SpecialType::None: {
 #ifndef __3DS__
-            // The provider owns override/PIFF precedence and lazy bytes. Reading
-            // a new bare FAR slice here would bypass its selected patch set.
-            auto selected=content->WorldObjects->Get(e.GUID,true);
-            if(!selected||!selected->OBJ||!selected->Resource)break;
-            const auto strings=selected->OBJ->CatalogStringsID;
+            auto& provider = *content->WorldObjects;
+            uint16_t strings = 0;
+            FSO::Content::GameIffResource* resource = nullptr;
+#if defined(__vita__) || defined(__SWITCH__)
+            struct CatalogResource final : FSO::Content::GameIffResource {
+                IffFile file;
+                IffFile* MainIff() override { return &file; }
+            } catalog;
+            if (provider.ReadCatalogObject(e.GUID, catalog.file, strings)) resource = &catalog;
+#endif
+            if (!resource) {
+                auto* selected = provider.Get(e.GUID, true);
+                if (!selected || !selected->OBJ || !selected->Resource) break;
+                resource = selected->Resource;
+                strings = selected->OBJ->CatalogStringsID;
+            }
             Chunks::CTSS* ctss=nullptr;
-            try { ctss=selected->Resource->Get<Chunks::CTSS>(strings); } catch (...) { ctss=nullptr; }
+            try { ctss=resource->Get<Chunks::CTSS>(strings); } catch (...) { ctss=nullptr; }
 #else
             // TS1(sims): portable catalog reads only its resource map + CTSS/BMP.
             std::string path;
@@ -497,13 +508,13 @@ const UICatalog::Details& UICatalog::GetDetails(const UICatalogElement& e) {
             }
             Chunks::BMP* bmp = nullptr;
 #ifndef __3DS__
-            try { bmp = selected->Resource->Get<Chunks::BMP>(strings); } catch (...) { bmp = nullptr; }
+            try { bmp = resource->Get<Chunks::BMP>(strings); } catch (...) { bmp = nullptr; }
 #else
             try { bmp = iff.Get<Chunks::BMP>(e.CatalogStringsID); } catch (...) { bmp = nullptr; }
 #endif
             if (bmp) DecodeCatalogArtwork(bmp, d.Icon, d.IconActive);
 #ifndef __3DS__
-            else if(!DecodeUniqueAuthoredCatalog(selected->Resource->MainIff(), d.Icon, d.IconActive))
+            else if(!DecodeUniqueAuthoredCatalog(resource->MainIff(), d.Icon, d.IconActive))
                 PreparedCatalogIcon(e.GUID,d.Icon);
 #else
             else DecodeUniqueAuthoredCatalog(&iff, d.Icon, d.IconActive);

@@ -525,7 +525,7 @@ void UIBuyMode::PointerUpdate() {
     if (H.Holding) {
         if (P.FromTouch) {
             // ADDED(sims): the stylus is the hover; a second tap on the ghost's tile is the click
-            auto tile = L->S->World()->State.WorldSpace.GetTileAtPosWithScroll(st::Vector2((float)P.X, (float)P.Y));
+            auto tile = L->S->World()->State.WorldSpace.GetTileAtPosWithScroll(L->S->ScenePoint(P.X, P.Y));
             int tx = (int)std::floor(tile.X + H.Holding->TilePosOffset.X), ty = (int)std::floor(tile.Y + H.Holding->TilePosOffset.Y);
             if (P.Down) _TapPlaceArmed = (tx == _LastTileX && ty == _LastTileY);
             if (P.Held || P.Down) {
@@ -554,7 +554,7 @@ void UIBuyMode::PointerUpdate() {
     if (P.Click) {
         // hand tool: pick up what is under the pointer (move / sell)
         if (H.PickUpAt(P.X, P.Y)) {
-            auto tile = L->S->World()->State.WorldSpace.GetTileAtPosWithScroll(st::Vector2((float)P.X, (float)P.Y));
+            auto tile = L->S->World()->State.WorldSpace.GetTileAtPosWithScroll(L->S->ScenePoint(P.X, P.Y));
             _LastTileX = (int)std::floor(tile.X + H.Holding->TilePosOffset.X); _LastTileY = (int)std::floor(tile.Y + H.Holding->TilePosOffset.Y);
             H.Update(P.X, P.Y, false);
             DesktopQueryVisible=L->Desktop;

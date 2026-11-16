@@ -310,6 +310,10 @@ if(ODH_BUILD_DESKTOP)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(odh-handheld-lot-scene tests/handheld_lot_scene.cpp)
+  target_link_libraries(odh-handheld-lot-scene PRIVATE odh_engine)
+  add_test(NAME handheld-lot-scene COMMAND odh-handheld-lot-scene)
+
   add_executable(odh-handheld-language-contract tests/handheld_language.cpp)
   target_include_directories(odh-handheld-language-contract PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
   target_link_libraries(odh-handheld-language-contract PRIVATE odh_engine)

@@ -50,6 +50,10 @@ game. These steps show which work the engine repeats. In the portrait-loading
 entry, `live_dirs_reused` counts folders the game could reuse from memory
 instead of reading them again from the card.
 
+On Vita and Switch, `[portable-perf] lot scene` records the size used to draw
+the lot. The two closer zoom levels use 400×300. Menus and text still use the
+800×600 game screen. Mention the zoom level if a slowdown changes with zoom.
+
 `[lot-entry]` lines separate the first house frame into preparation, input,
 simulation, drawing and audio. They appear once per house entry, helping locate
 a loading delay without adding information to the game screen.

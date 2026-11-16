@@ -165,6 +165,10 @@ public:
     GameObject* Get(uint64_t id, bool ts1);
     GameObject* Get(uint32_t type, uint32_t fileID, bool ts1) { (void)type; return Get((uint64_t)fileID, ts1); }
 
+    // Try a short-lived view of the selected archive object. Live objects, loose
+    // files and patched resources retain the normal provider's resolution.
+    bool ReadCatalogObject(uint32_t guid, IffFile& iff, uint16_t& stringsId);
+
     void AddObject(GameObject* obj);
     void AddObject(IffFile* iff, Chunks::OBJD* obj, int32_t farIndex);
     void RemoveObject(uint32_t GUID);

@@ -25,6 +25,8 @@ namespace Files { namespace Formats { namespace IFF { class IffFile; } } }
 
 namespace simapp {
 
+struct PickResult;
+
 /// One pie menu choice (C# UIPieMenuItem / VMPieMenuInteraction).
 struct PieChoice {
     std::string Name;      // full name ("Category/Sub/Item" splits into levels)
@@ -85,6 +87,11 @@ public:
     // A confirmed residential purchase hands the same open IFF to the live loader.
     bool LoadForDemolition(int houseNumber, std::string& error);
     bool OpenHouse(int houseNumber, bool travel, std::string& error);
+    void SetHalfResolutionLot(bool enabled) { _HalfResolutionLot = enabled; }
+    int SceneScale() const;
+    st::Vector2 ScenePoint(int x, int y) const { return st::Vector2(float(x) / SceneScale(), float(y) / SceneScale()); }
+    int DisplayZoom() const;
+    PickResult PickDisplayObject(int x, int y, int radius = 3);
     bool ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std::string& error, bool travel = false);
 
     // Fixed for this opening, independent of later spawn/death roster changes.
@@ -168,6 +175,8 @@ private:
     std::unique_ptr<FSO::SimAntics::VM> _VM;
     std::unique_ptr<FSO::Files::Formats::IFF::IffFile> _House;
     FSO::LotView::Framebuffer Frame;
+    bool _HalfResolutionLot = false;
+    int _DisplayWidth = 0, _DisplayHeight = 0;
     std::vector<bool> _RoomCuts;           // C# LastCuts: the room cut the rectangle is applied to
     st::Rectangle _MouseCutRect;           // C# MouseCutRect
     bool _LastRectCutNotable = false;      // C# LastRectCutNotable

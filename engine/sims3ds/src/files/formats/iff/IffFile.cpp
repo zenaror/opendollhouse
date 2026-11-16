@@ -271,6 +271,15 @@ struct RsmpEntry { std::string Type; uint32_t Offset; uint16_t ID, Flags; std::s
 
 void IffFile::ReadFromFile(const std::string& path, int64_t base, uint32_t length, bool deferHeavy, const char* onlyType)
 {
+    ReadMappedFile(path, base, length, deferHeavy, onlyType, false);
+}
+
+void IffFile::ReadCatalogFromFile(const std::string& path, int64_t base, uint32_t length) {
+    ReadMappedFile(path, base, length, true, nullptr, true);
+}
+
+void IffFile::ReadMappedFile(const std::string& path, int64_t base, uint32_t length, bool deferHeavy,
+                             const char* onlyType, bool catalog) {
     using FSO::Files::FilePool;
     std::string err;
     auto readAt = [&](uint32_t off, uint32_t len, std::vector<uint8_t>& out) {
@@ -354,7 +363,11 @@ void IffFile::ReadFromFile(const std::string& path, int64_t base, uint32_t lengt
         return deferHeavy && (t == "SPR2" || t == "SPR#" || t == "BMP_" || t == "STR#" || t == "CTSS" || t == "TTAs" ||
                               t == "DGRP" || t == "FWAV" || t == "TPRP" || t == "THMB");
     };
-    if (onlyType != nullptr) {
+    if (catalog) {
+        entries.erase(std::remove_if(entries.begin(), entries.end(), [](const RsmpEntry& e) {
+            return e.Type != "OBJD" && e.Type != "CTSS" && e.Type != "BMP_";
+        }), entries.end());
+    } else if (onlyType != nullptr) {
         entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const RsmpEntry& e) { return e.Type != onlyType; }), entries.end());
         // FIX(sims) memory: heavy types stay deferred with onlyType too (work.iff "STR#" for the job dialog tokens kept
         // the raw bytes of every career's strings: 4 MB; now one seek + read per job looked up)

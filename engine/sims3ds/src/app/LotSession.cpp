@@ -132,9 +132,16 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
     const auto resident = hood ? hood->GetFamilyForHouse(int16_t(houseNumber)) : nullptr;
     _AllowsLive = LotOpeningAllowsLive(travel,hood && hood->GetZoning(int16_t(houseNumber)) != 0,
         resident && !resident->FamilyGUIDs.empty());
+    _DisplayWidth = viewW;
+    _DisplayHeight = viewH;
+    const int scale = _HalfResolutionLot && viewW % 2 == 0 && viewH % 2 == 0 ? 2 : 1;
+    viewW /= scale;
+    viewH /= scale;
     _World.reset(new FSO::LotView::World(viewW, viewH));
+    _World->PresentationScale = scale;
     Blueprint = nullptr; // The session cutaway binding is ready only after LoadFromIff returns.
     Frame.Resize(viewW, viewH);
+    if (_HalfResolutionLot) std::printf("[portable-perf] lot scene %dx%d, display %dx%d, zoom 2\n", viewW, viewH, _DisplayWidth, _DisplayHeight);
     _World->SetScrollBuffer(scrollBuffer);
     VM::UseWorld(true);
     _Ctx.reset(new VMContext(_World.get()));
@@ -283,7 +290,7 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
         _VM->SetGlobalValue(3, 0); _VM->SetGlobalValue(9, 0);
         _VM->SetGlobalValue(10, int16_t(houseNumber));
         _VM->SetGlobalValue(13, 0); _VM->SetGlobalValue(14, 0);
-        _World->State.Zoom(WorldZoom::Medium);
+        _World->State.Zoom(SceneScale() == 2 ? WorldZoom::Far : WorldZoom::Medium);
         _World->State.Rotation(WorldRotation::TopLeft);
         _World->State.Level(1);
         return true;
@@ -384,7 +391,7 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
 
     auto arch = _Ctx->Architecture();
     auto& st = _World->State;
-    st.Zoom(WorldZoom::Medium);
+    st.Zoom(SceneScale() == 2 ? WorldZoom::Far : WorldZoom::Medium);
     st.Rotation(WorldRotation::TopLeft);
     st.Level(1);
     // centre on the house (walls of level 1), else the lot
@@ -670,11 +677,32 @@ void LotSession::Rotate(int dir) {
     UpdateCutaway();
 }
 
+int LotSession::SceneScale() const {
+    return _World ? _World->PresentationScale : 1;
+}
+
+int LotSession::DisplayZoom() const {
+    return int(_World->ViewZoom());
+}
+
 void LotSession::Zoom(int dir) {
     auto& st = _World->State;
-    int z = (int)st.Zoom() + (dir > 0 ? 1 : -1); // Far = 1, Medium = 2, Near = 3
+    const int z = DisplayZoom() + (dir > 0 ? 1 : -1);
     if (z < 1 || z > 3) return;
-    st.Zoom((WorldZoom)z);
+    // Far is the smallest authored sprite set. Use it at 1:1 at the widest
+    // zoom so all three zoom levels keep their original field of view.
+    const int scale = _HalfResolutionLot && z > 1 && _DisplayWidth % 2 == 0 && _DisplayHeight % 2 == 0 ? 2 : 1;
+    if (SceneScale() != scale) {
+        _World->PresentationScale = scale;
+        Frame.Resize(_DisplayWidth / scale, _DisplayHeight / scale);
+        st.SetDimensions(st::Vector2(float(Frame.Width), float(Frame.Height)));
+        st.CenterTile(st.CenterTile());
+        _World->InvalidatePreciseZoom();
+        std::printf("[portable-perf] lot scene %dx%d, display %dx%d, zoom %d\n", Frame.Width, Frame.Height, _DisplayWidth, _DisplayHeight, z);
+    }
+    const auto assetZoom = WorldZoom(z - (scale == 2 ? 1 : 0));
+    if (st.Zoom() == assetZoom) return; // same sprites, only the framebuffer changed
+    st.Zoom(assetZoom);
     // TS1(sims): sprite memory. An object's SPR2 holds the frames of all three zooms and decoded frames stay in
     // memory (near ones are 4x the medium ones: +17 MB on a full house). The zoom change above cleared the world's
     // texture cache and invalidated every object renderer, so no decoded pixels are referenced right now: drop them
@@ -704,11 +732,11 @@ void LotSession::ScrollScreen(float dxPx, float dyPx) {
     // World::Scroll moves by basis vectors (FreeSims: GetScrollBasis); one unit of basis[0] is
     // TilePxWidth * multiplier pixels across, basis[1] the same distance down.
     auto& ws = _World->State.WorldSpace;
-    int multiplier = ((1 << (3 - (int)_World->State.Zoom())) * 3) / 2;
+    int multiplier = ((1 << (3 - DisplayZoom())) * 3) / 2;
     float unitX = ws.TilePxWidth * multiplier;       // pixels per basis[0] unit
     float unitY = ws.TilePxHeight * multiplier * 2;  // pixels per basis[1] unit ((2,2) tiles down)
     if (unitX <= 0 || unitY <= 0) return;
-    _World->Scroll(st::Vector2(dxPx / unitX, dyPx / unitY));
+    _World->Scroll(st::Vector2(dxPx / (unitX * SceneScale()), dyPx / (unitY * SceneScale())));
 }
 
 void LotSession::CenterOn(VMEntity* e) {
@@ -753,7 +781,7 @@ void LotSession::UpdateMouseCut(bool shown, int screenX, int screenY) {
     auto& st = _World->State;
     st::Rectangle newCut; // C#: an empty rectangle while there is no mouse (touch only)
     if (shown && CursorCutaway) {
-        auto mouseTilePos = st.WorldSpace.GetTileAtPosWithScroll(st::Vector2((float)screenX, (float)screenY));
+        auto mouseTilePos = st.WorldSpace.GetTileAtPosWithScroll(ScenePoint(screenX, screenY));
         newCut = st::Rectangle((int)(mouseTilePos.X - 2.5), (int)(mouseTilePos.Y - 2.5), 5, 5);
         newCut.X -= Utils::VMArchitectureTools::CutCheckDir[(int)st.Rotation()][0] * 2;
         newCut.Y -= Utils::VMArchitectureTools::CutCheckDir[(int)st.Rotation()][1] * 2;
@@ -790,13 +818,18 @@ static void ToChoices(const std::vector<VMPieMenuInteraction>& menu, std::vector
     }
 }
 
+PickResult LotSession::PickDisplayObject(int x, int y, int radius) {
+    return PickObjectAt(*_World, &Frame, x / SceneScale(), y / SceneScale(),
+                        (radius + SceneScale() - 1) / SceneScale());
+}
+
 VMEntity* LotSession::PieTargetAt(int x, int y, std::vector<PieChoice>& pie, bool& isGoto, int16_t& pickedId) {
     pie.clear();
     isGoto = false;
     pickedId = 0;
     auto active = SelectedSim();
     if (active == nullptr) return nullptr;
-    auto hit = PickObjectAt(*_World, &Frame, x, y, 3);
+    auto hit = PickDisplayObject(x, y);
     pickedId = hit.ObjectID;
     VMEntity* obj = nullptr;
     if (hit.ObjectID > 0) {
@@ -809,7 +842,7 @@ VMEntity* LotSession::PieTargetAt(int x, int y, std::vector<PieChoice>& pie, boo
     }
     // empty floor (or an object without interactions): the goto object on that tile, if walkable
     if (GotoObject == nullptr) return obj;
-    auto tile = _World->State.WorldSpace.GetTileAtPosWithScroll(st::Vector2((float)x, (float)y));
+    auto tile = _World->State.WorldSpace.GetTileAtPosWithScroll(ScenePoint(x, y));
     LotTilePos targetPos = LotTilePos::FromBigTile((int16_t)std::floor(tile.X), (int16_t)std::floor(tile.Y), _World->State.Level());
     if (_Ctx->IsOutOfBounds(targetPos) || _Ctx->SolidToAvatars(targetPos).Solid) targetPos = LotTilePos::OUT_OF_WORLD;
     GotoObject->SetPosition(targetPos, Direction::NORTH, _Ctx.get());

@@ -57,6 +57,7 @@ public:
     // Only controls with loaded original art and an enabled host capability
     // emit actions; unavailable tabs and speed controls remain disabled.
     OriginalPanelAction hit(const OriginalControlPanelLayout&,std::int32_t,std::int32_t,OriginalPanelState={})const;
+    void draw(odh::UiBitmapSurface,OriginalPanelMode,OriginalPanelState)const;
     void draw_portrait(odh::RasterFrame&,BuyUiRect,bool selected,const odh::BitmapImage* head,bool authored_icon=false) const;
     void draw_portrait_state(odh::RasterFrame&,BuyUiRect,unsigned frame,const odh::BitmapImage* head,bool authored_icon=false) const;
     void draw_button(odh::RasterFrame&,const std::string& archive_key,const BuyUiRect&,unsigned state=0)const;
@@ -68,7 +69,8 @@ private:
     // Decoded panel artwork is immutable for this owner's lifetime.
     std::map<const odh::BitmapImage*,std::vector<BackdropRun>> backdrop_runs_;
     void prepare_backdrop(const odh::BitmapImage&);
-    void draw_backdrop(odh::RasterFrame&,const odh::BitmapImage&,BuyUiRect) const;
+    void draw_button(odh::UiBitmapSurface,const std::string&,const BuyUiRect&,unsigned)const;
+    void draw_backdrop(odh::UiBitmapSurface,const odh::BitmapImage&,BuyUiRect) const;
     OriginalUiArt art_;
 };
 // Shared colour-keyed drawing edge retained from the original panel consumer.

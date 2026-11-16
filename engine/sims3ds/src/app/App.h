@@ -40,6 +40,7 @@ public:
 
     struct Config {
         bool Desktop = false;
+        bool HalfResolutionLot = false; // authored smaller sprites for a single-screen handheld
         uint8_t LanguageCode = 1;      // TS1 STR language; fixed before loading localized resources
         int DesktopWidth = 800, DesktopHeight = 600;
         std::string DataRoot;          // the install tree: <DataRoot>/GameData, <DataRoot>/UserData

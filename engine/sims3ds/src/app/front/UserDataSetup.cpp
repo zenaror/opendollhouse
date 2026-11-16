@@ -121,16 +121,12 @@ void UserDataSetup::Configure(const std::string& dataRoot, const std::string& sa
     _Next = _TotalBytes = _DoneBytes = 0;
 }
 
-static size_t FileSize(const std::string& p) {
-    struct stat st;
-    if (stat(p.c_str(), &st) != 0) return 0;
-    return (size_t)st.st_size;
-}
-
 void UserDataSetup::Add(const std::string& src, const std::string& dst, const std::string& group) {
-    if (!FileExists(src)) return;
+    struct stat info;
+    if (stat(src.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) return;
     Job j;
-    j.Src = src; j.Dst = dst; j.Size = FileSize(src); j.Group = group.empty() ? _PlanningDir : group;
+    j.Src = src; j.Dst = dst; j.Size = static_cast<size_t>(info.st_size);
+    j.Group = group.empty() ? _PlanningDir : group;
     _Jobs.push_back(j);
     _TotalBytes += j.Size;
 }
@@ -192,9 +188,8 @@ void UserDataSetup::Plan(int index, const std::string& source, bool fresh) {
     // invitations to restore defaults from a different neighbourhood.
     if (!fresh) {
         PlanCopyTree(source, dst, dst);
-        // Directory enumeration may already have scheduled these files. The
-        // known-name fallback is still needed on no-dirent hosts, but must not
-        // copy and durably commit the same destination a second time.
+#ifndef ST_USE_DIRENT
+        // Without directory enumeration, finish the import by probing known names.
         std::set<std::string> queued;
         for(const auto& job:_Jobs)if(!job.Marker)queued.insert(job.Dst);
         const auto keepImport=[&](const std::string& path){return keep(path)&&queued.insert(path).second;};
@@ -207,6 +202,7 @@ void UserDataSetup::Plan(int index, const std::string& source, bool fresh) {
             char n[32]; snprintf(n, sizeof n, "/Houses/House%02d.iff", h);
             if (keepImport(dst + n)) Add(source + n, dst + n, dst);
         }
+#endif
         finish(); return;
     }
     // the neighbourhood itself

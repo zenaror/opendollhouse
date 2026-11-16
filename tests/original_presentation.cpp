@@ -161,6 +161,34 @@ void needs(){
         check(untouched,"Needs never writes outside declared envelope");
     }
 }
+void portable_needs_cache(){
+    original::PortableNeedsCache cache;
+    auto input=background(800,600,7);
+    const auto layout=odh_host::original_control_panel_layout(input.Width,input.Height);
+    auto geometry=odh_host::original_motive_panel_geometry(input.Width,input.Height,layout,1,nullptr);
+    odh_host::StatusHud status; status.needs.emplace(); status.room_score=13;
+    odh::RasterFrame scratch;
+    std::array<int,8> arrows{};
+    std::array<std::string,8> pet_labels{};
+    const std::array<std::string,8>* labels=nullptr;
+    auto compare=[&](bool expected_hit){
+        auto control=input,handheld=input;
+        original::DrawNeeds(control,scratch,status,1,nullptr,layout,labels,nullptr,geometry,arrows);
+        const bool hit=cache.draw(handheld,scratch,status,1,nullptr,layout,labels,nullptr,geometry,arrows);
+        check(hit==expected_hit && control.Px==handheld.Px,"portable Needs cache respects state and backdrop");
+    };
+    compare(false); compare(true);
+    status.room_score=0; compare(false); compare(true);
+    (*status.needs)[3]=-100; compare(false);
+    arrows[0]=250; compare(false);
+    labels=&pet_labels; compare(false);
+    const auto bounds=original::NeedsPaintBounds(input,geometry);
+    input.Px[size_t(bounds.Y)*input.Width+bounds.X]^=127;
+    compare(false); compare(true);
+    geometry.panel.x=bounds.X-2; geometry.panel.width=bounds.W+2;
+    compare(false); compare(true);
+    input.Px[0]^=127; compare(true);
+}
 void portraits_and_queue(){
     Fixture fixture;odh_host::OriginalControlPanelArt art(fixture.path);odh_host::OriginalQueueView queue(fixture.path);
     odh::BitmapImage head{35,41,32,true,std::vector<Pixel>(35*41),0};
@@ -216,5 +244,5 @@ int main(int argc,char**){try{
 #else
     std::cout<<"backend=existing-host-text\n";
 #endif
-    portrait_blend();transfers();retained_tooltip();needs();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
+    portrait_blend();transfers();retained_tooltip();needs();portable_needs_cache();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

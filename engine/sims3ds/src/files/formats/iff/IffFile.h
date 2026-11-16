@@ -82,6 +82,12 @@ public:
     /// full read when the file has no usable rsmp. Throws on read errors like Read().
     /// onlyType: read just the chunks of this type (e.g. "OBJD" for the object index; nothing else is registered).
     void ReadFromFile(const std::string& path, int64_t base, uint32_t length, bool deferHeavy, const char* onlyType = nullptr);
+    // A transient catalog view needs only object IDs, localized descriptions and pictures.
+    void ReadCatalogFromFile(const std::string& path, int64_t base, uint32_t length);
+private:
+    void ReadMappedFile(const std::string& path, int64_t base, uint32_t length, bool deferHeavy,
+                        const char* onlyType, bool catalog);
+public:
     /// TS1(sims): a read-only install file (walls.iff, floors.iff, Build.iff, Sprites.iff, *.wll, *.flr) read
     /// with ReadFromFile (pictures and strings stay on disk until used). Never for files the game rewrites (saves).
     static std::unique_ptr<IffFile> OpenReadOnly(const std::string& path);

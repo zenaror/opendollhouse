@@ -1,6 +1,7 @@
 #include "odh/ui_bitmap.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 
 namespace odh {
@@ -23,14 +24,15 @@ struct BitmapAxis {
     }
 };
 
-bool composite_bitmap_pixel(std::array<std::uint8_t,4>& output,
+bool composite_bitmap_pixel(unsigned char* output,
         const std::array<std::uint8_t,4>& pixel, bool rgba,
         const std::optional<std::array<std::uint8_t,3>>& color_key) {
     if(color_key&&pixel[0]==(*color_key)[0]&&pixel[1]==(*color_key)[1]&&pixel[2]==(*color_key)[2])return false;
     const unsigned alpha=rgba?pixel[3]:255;
     if(!alpha)return false;
     if(alpha==255) {
-        output={pixel[0],pixel[1],pixel[2],255};
+        std::memcpy(output,pixel.data(),3);
+        output[3]=255;
     } else {
         for(unsigned channel=0;channel<3;++channel)
             output[channel]=static_cast<std::uint8_t>((unsigned(pixel[channel])*alpha+
@@ -49,13 +51,13 @@ std::size_t blit_color_keyed_bitmap(RasterFrame& destination,
         static_cast<std::int32_t>(source.height)},std::nullopt,color_key);
 }
 
-static std::size_t blit_bitmap(RasterFrame& destination,const BitmapImage& source,UiBitmapRect box,
+static std::size_t blit_bitmap(UiBitmapSurface destination,const BitmapImage& source,UiBitmapRect box,
         std::optional<UiBitmapRect> source_crop,std::optional<std::array<std::uint8_t,3>> color_key) {
     const auto destination_pixels = static_cast<std::uint64_t>(destination.width) * destination.height;
     const auto source_pixels = static_cast<std::uint64_t>(source.width) * source.height;
     if (!destination.width || !destination.height ||
         destination_pixels > std::numeric_limits<std::size_t>::max() ||
-        destination.pixels.size() != static_cast<std::size_t>(destination_pixels))
+        !destination.rgba || destination.pixel_count != static_cast<std::size_t>(destination_pixels))
         throw FormatError("UI bitmap destination frame is malformed");
     if (!source.width || !source.height ||
         source_pixels > std::numeric_limits<std::size_t>::max() ||
@@ -83,11 +85,11 @@ static std::size_t blit_bitmap(RasterFrame& destination,const BitmapImage& sourc
             static_cast<std::uint32_t>(box.height),static_cast<std::uint32_t>(crop.y));
         for(std::int64_t dy=top;dy<bottom;++dy,sy.advance()) {
             const auto* source_row=source.pixels.data()+std::size_t(sy.index)*source.width;
-            auto* output=destination.pixels.data()+std::size_t(dy)*destination.width+static_cast<std::size_t>(left);
-            const auto* end=output+static_cast<std::size_t>(right-left);
+            auto* output=destination.pixel(std::size_t(dy)*destination.width+static_cast<std::size_t>(left));
+            const auto* end=output+4*static_cast<std::size_t>(right-left);
             auto sx=first_x;
-            for(;output!=end;++output,sx.advance())
-                copied+=composite_bitmap_pixel(*output,source_row[sx.index],rgba,color_key);
+            for(;output!=end;output+=4,sx.advance())
+                copied+=composite_bitmap_pixel(output,source_row[sx.index],rgba,color_key);
         }
         return copied;
     }
@@ -100,8 +102,8 @@ static std::size_t blit_bitmap(RasterFrame& destination,const BitmapImage& sourc
             const auto& pixel=source.pixels[static_cast<std::size_t>(source_y)*source.width+static_cast<std::size_t>(source_x)];
             // BMP remains opaque/color-keyed.32-bit UI TGA retains its actual
             // alpha, including antialiased curved edges, over the scene.
-            auto& output = destination.pixels[static_cast<std::size_t>(destination_y) * destination.width +
-                static_cast<std::size_t>(destination_x)];
+            auto* output = destination.pixel(static_cast<std::size_t>(destination_y) * destination.width +
+                static_cast<std::size_t>(destination_x));
             copied+=composite_bitmap_pixel(output,pixel,rgba,color_key);
         }
     }
@@ -110,12 +112,16 @@ static std::size_t blit_bitmap(RasterFrame& destination,const BitmapImage& sourc
 
 std::size_t blit_color_keyed_bitmap(RasterFrame& destination,const BitmapImage& source,UiBitmapRect box,
         std::optional<UiBitmapRect> crop,std::array<std::uint8_t,3> key){
+    return blit_bitmap(UiBitmapSurface::from(destination),source,box,crop,key);
+}
+std::size_t blit_color_keyed_bitmap(UiBitmapSurface destination,const BitmapImage& source,UiBitmapRect box,
+        std::optional<UiBitmapRect> crop,std::array<std::uint8_t,3> key){
     return blit_bitmap(destination,source,box,crop,key);
 }
 std::size_t blit_rgba_bitmap(RasterFrame& destination,const BitmapImage& source,UiBitmapRect box,
         std::optional<UiBitmapRect> crop){
     if(source.bit_count!=32)throw FormatError("RGBA UI bitmap requires32-bit pixels");
-    return blit_bitmap(destination,source,box,crop,std::nullopt);
+    return blit_bitmap(UiBitmapSurface::from(destination),source,box,crop,std::nullopt);
 }
 
 } // namespace odh

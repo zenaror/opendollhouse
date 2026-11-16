@@ -406,6 +406,7 @@ void App::Frame(const AppInput& inRaw, double dtMs) {
             auto s = std::move(_Front->PurchasedSession);
             const bool purchased = s && s->HouseNumber == _LoadHouse && !_LoadTravel;
             if (!purchased) s = std::make_unique<LotSession>();
+            s->SetHalfResolutionLot(_Cfg.HalfResolutionLot);
             std::string err;
             double tl = Now();
             bool travel = _LoadTravel;

@@ -180,7 +180,7 @@ void UILiveMode::PointerUpdate() {
     // hover is queried separately, after camera/tool ownership is settled.
     if (!L->Desktop && !P.FromTouch && L->CursorShown && (P.X != _HoverCheckX || P.Y != _HoverCheckY)) {
         _HoverCheckX=P.X;_HoverCheckY=P.Y;
-        const auto hit=PickObjectAt(*L->S->World(),&L->S->LastFrame(),P.X,P.Y,1);
+        const auto hit=L->S->PickDisplayObject(P.X,P.Y,1);
         _CursorArt=!hit.ObjectID?"Shared/cursors/LiveNothing.cur":
             hit.IsAvatar?"Shared/cursors/LivePerson.cur":"Shared/cursors/LiveObjectAvail.cur";
     }
@@ -210,11 +210,12 @@ void UILiveMode::UpdateDesktopCursor() {
     // Reuse the already rendered surface to notice local scene changes. A few
     // pixel samples and the entity count need no new pick buffer/render pass.
     std::uint64_t scene=vm->Entities.size();
-    for(int y=p.Y-2;y<=p.Y+2;y+=2)for(int x=p.X-2;x<=p.X+2;x+=2)
+    const int sceneX=p.X/L->S->SceneScale(), sceneY=p.Y/L->S->SceneScale();
+    for(int y=sceneY-2;y<=sceneY+2;y+=2)for(int x=sceneX-2;x<=sceneX+2;x+=2)
         if(x>=0 && y>=0 && x<frame.Width && y<frame.Height)
             scene=(scene^frame.Color[size_t(y)*frame.Width+x])*1099511628211ull;
     if(_CursorRefresh.PickDue(L->Time,p.X,p.Y,camera,scene)) {
-        const auto id=PickObjectAt(*L->S->World(),&frame,p.X,p.Y,3).ObjectID;
+        const auto id=L->S->PickDisplayObject(p.X,p.Y).ObjectID;
         _DesktopPick.Capture(id,vm->GetObjectById(id));
     }
     auto* target=vm->GetObjectById(_DesktopPick.ID());

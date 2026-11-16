@@ -62,7 +62,7 @@ void DrawOriginalSelectedCrystal(Canvas& canvas, FSO::LotView::World& world,
     if(!crystal)return;
     // These are the preserved person.cpp rules: local ROOT Y=3 (one tile),
     // X basis pi/2, authored scale 1, mood index 3, one revolution per 2s.
-    if(scene.Width!=canvas.Width || scene.Height!=canvas.Height || scene.Depth.size()!=canvas.Px.size())return;
+    if(scene.Width!=canvas.Width || scene.Height!=canvas.Height || scene.Depth.size()!=size_t(scene.Width)*scene.Height || canvas.Px.size()<scene.Depth.size())return;
     std::array<uint32_t,2> origin{};
     const auto layer=crystal->render(camera,head,float(std::fmod(milliseconds*pi/1000.,2*pi)),
         selected->GetMotiveData(FSO::SimAntics::Model::VMMotive::Mood),1,{0,0,1},{float(pi/2),0,0},{},&origin);

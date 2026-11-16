@@ -139,7 +139,7 @@ void World::GetScrollBasis(st::Vector2 output[2]) {
             output[0] = st::Vector2(1, 1);
             break;
     }
-    int multiplier = ((1 << (3 - (int)State.Zoom())) * 3) / 2;
+    int multiplier = ((1 << (3 - int(ViewZoom()))) * 3) / 2;
     output[0] = output[0] * (float)multiplier;
     output[1] = output[1] * (float)multiplier;
 }
@@ -152,7 +152,7 @@ void World::Update() {
 void World::PreDraw() {
     //bound the scroll so we can't see gray space.
     float boundfactor = 0.5f;
-    switch (State.Zoom()) {
+    switch (ViewZoom()) {
         case WorldZoom::Near: boundfactor = 1.20f; break;
         case WorldZoom::Medium: boundfactor = 1.05f; break;
         default: break;
@@ -169,7 +169,7 @@ void World::PreDraw() {
         // the tile under the middle of the screen (CenterTile sits CadgeBaseLine pixels off it)
         st::Vector2 mid(State.WorldSpace.WorldPxWidth / 2.0f, State.WorldSpace.WorldPxHeight / 2.0f);
         auto shown = State.WorldSpace.GetTileAtPosWithScroll(mid) - State.CenterTile() + tile;
-        float m = (State.Zoom() == WorldZoom::Far) ? 6.0f : (State.Zoom() == WorldZoom::Medium ? 4.0f : 3.0f);
+        float m = (ViewZoom() == WorldZoom::Far) ? 6.0f : (ViewZoom() == WorldZoom::Medium ? 4.0f : 3.0f);
         float w = (float)Blueprint->Width, h = (float)Blueprint->Height;
         st::Vector2 clamped(std::min(w - m, std::max(m, shown.X)), std::min(h - m, std::max(m, shown.Y)));
         tile = tile + (clamped - shown);
