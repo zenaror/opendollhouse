@@ -10,6 +10,11 @@ The Sims as the reference for the PC presentation. Differences and bugs remain;
 see the [version status](../status.md). Testing one feature does not establish
 parity for the whole game.
 
+Work on milestone 2.1 compares existing features directly with the original
+PC Complete Collection DVD. The initial Newbie household comparison includes
+autonomy, interactions, UI, music and save continuation. Completed individual
+checks are reported with each change.
+
 ## Where to start
 
 1. Read [AGENTS.md](../../AGENTS.md) and check existing changes in the clone

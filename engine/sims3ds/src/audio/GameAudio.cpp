@@ -54,9 +54,17 @@ bool GameAudio::Init(const Config& cfg, std::unique_ptr<AudioBackend> backend, b
     }
     HITVM::Init(_Mixer.get());
     auto vm = HITVM::Get();
-    vm->EventLog = [this](const std::string& evt, const std::string& info) { if (Log) Log(evt + ": " + info); };
+    vm->EventLog = [this](const std::string& evt, const std::string& info) {
+        if (Log) Log(evt + ": " + info);
+        // Track starts happen at transitions or song boundaries, not each frame.
+        // Keep the selected file visible in device logs as well as host tools.
+        if (info.compare(0, 12, "music-start ") == 0)
+            std::printf("[music-track] event=%s %s\n", evt.c_str(), info.c_str());
+    };
     // music the lot itself asks for (the community-lot controllers' station_* events): live mode returns to it
     vm->OnMusicEvent = [this](const std::string& evt) {
+        std::printf("[music-event] source=%s neighbourhood=%d event=%s\n",
+            _Requesting ? "screen" : "lot", static_cast<int>(_Nhood), evt.c_str());
         if (_Requesting) return;
         _LotMusicEvent = evt;
         _ModeSet = false; // the next SetMusicMode call takes effect again

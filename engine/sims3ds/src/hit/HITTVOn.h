@@ -30,6 +30,7 @@ private:
     float TrackVolume = 1.0f; // TS1(sims): the station track's volume (TVs 750/1024, radios 900/1024)
 
     int FadeOut = -1;
+    bool FinishAtSongEnd = false;
 
 public:
     void Kill();
@@ -45,6 +46,7 @@ private:
 
 public:
     void Fade();
+    void FinishSong(bool finish) { FinishAtSongEnd = finish; }
     bool Fading() const { return FadeOut != -1; }
 
 private:

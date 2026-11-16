@@ -70,6 +70,7 @@ bool HITTVOn::Tick()
     if (Instance == 0 || mixer == nullptr || !mixer->IsPlaying(Instance))
     {
         if (FadeOut > 0) return true; // fading out: don't start the next song
+        if (FinishAtSongEnd) { Kill(); return false; }
         if (PlayNext()) return true;
         else {
             Dead = true;
@@ -191,11 +192,13 @@ bool HITTVOn::PlayNext()
         if (Text::ToLower(sound.substr(sound.size() >= 4 ? sound.size() - 4 : 0)) == ".wav")
         {
             stream = simaudio::WavStream::Open(sound);
-            loop = (Sounds.size() == 1); // Music/Modes/Load/loadloop.wav loops seamlessly
+            loop = (Sounds.size() == 1 && Station == "Music/Modes/Load/"); // Only the loading loop repeats in place.
         }
         else stream = simaudio::Mp3Stream::Open(sound);
         if (stream == nullptr) return false;
         Instance = mixer->PlayStream(std::move(stream), CurrentVolume(), EverHadOwners ? Pan : 0.0f, loop, (int)VolGroup);
+        if (Instance != 0 && VM->EventLog)
+            VM->EventLog(Name, "music-start " + sound);
         return Instance != 0;
     }
     else

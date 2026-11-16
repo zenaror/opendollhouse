@@ -179,12 +179,27 @@ std::shared_ptr<HITSound> HITVM::PlaySoundEvent(std::string evt)
     evt = Text::ToLower(evt);
     std::shared_ptr<HITThread> InterruptBlocker;  //the thread we have to wait for to finish before we begin.
 
+    const auto editMusic = [](const std::string& name) {
+        return name == "bkground_buy1" || name == "bkground_build";
+    };
+    // The DVD keeps the current editing song across Buy/Build changes. If the
+    // player comes back before it ends, cancel the pending change of playlist.
+    if (MusicEvent && !MusicEvent->Dead && !MusicEvent->Fading() &&
+        evt == MusicEvent->Name && editMusic(evt) && NextMusic && editMusic(NextMusic->Name)) {
+        NextMusic->Kill();
+        NextMusic.reset();
+        MusicEvent->FinishSong(false);
+        if (OnMusicEvent) OnMusicEvent(evt);
+        return MusicEvent;
+    }
+
     auto ae = ActiveEvents.find(evt);
     if (ae != ActiveEvents.end())
     {
         auto aevt = ae->second;
 
-        if (aevt->Dead) ActiveEvents.erase(ae); //if the last event is dead, remove and make a new one
+        const bool fadingEdit = aevt == MusicEvent && editMusic(evt) && MusicEvent->Fading();
+        if (aevt->Dead || fadingEdit) ActiveEvents.erase(ae); // a fading editing song needs a new player when re-entered
         else
         {
             auto athread = std::dynamic_pointer_cast<HITThread>(aevt);
@@ -271,7 +286,11 @@ std::shared_ptr<HITSound> HITVM::PlaySoundEvent(std::string evt)
             thread->VolGroup = HITVolumeGroup::MUSIC;
             ActiveEvents[evt] = thread;
             if (NextMusic != nullptr) NextMusic->Kill();
-            if (MusicEvent != nullptr) MusicEvent->Fade();
+            if (MusicEvent != nullptr) {
+                if (!MusicEvent->Fading() && editMusic(evt) && editMusic(MusicEvent->Name))
+                    MusicEvent->FinishSong(true);
+                else MusicEvent->Fade();
+            }
             NextMusic = thread;
             return thread;
         }

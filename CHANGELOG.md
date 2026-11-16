@@ -3,6 +3,15 @@
 Notable changes for players and contributors, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- Changing between Buy and Build keeps the current song playing until it
+  finishes, as observed in the original Complete Collection.
+- Music diagnostics record the requested event and each track that actually
+  starts, helping identify unexpected songs during screen and mode changes.
+
 ## [0.0.1](https://github.com/zenaror/opendollhouse/releases/tag/v0.0.1) — 2026-11-15
 
 First experimental release. Download availability and the source revisions

@@ -91,6 +91,47 @@ static void checkLoadingMusic(const std::filesystem::path& root) {
     std::filesystem::remove_all(root);
 }
 
+// Tiny streams expose song-boundary behavior without waiting for retail tracks.
+static void checkEditingMusic(const std::filesystem::path& root) {
+    using namespace simaudio;
+    require(!std::filesystem::exists(root), "editing fixture must be new");
+    std::filesystem::create_directories(root / "SoundData");
+    std::ofstream(root / "SoundData/test.hot") <<
+        "[EventMappingEquate]\nkSetMusicMode=36\n[EventMapping]\nbkground_buy1=kSetMusicMode,1\nbkground_build=kSetMusicMode,2\nbkground_live=kSetMusicMode,0\n";
+    auto track = std::make_shared<SoundBuffer>();
+    track->Channels=1;track->Rate=48000;track->Samples.assign(48000,500);
+    for (const char* mode : {"Buy", "Build"}) {
+        auto folder=root / "Music/Modes" / mode;
+        std::filesystem::create_directories(folder);
+        require(WriteWavFile((folder / "song1.wav").string(),*track),"editing test song");
+
+    }
+    auto& audio=GameAudio::Get();
+    GameAudio::Config config; config.DataRoot=root.string(); config.OutputRate=48000;
+    require(audio.Init(config),"editing audio init");
+    std::vector<std::string> starts;
+    audio.Log=[&](const std::string& event){if(event.find(": music-start ")!=std::string::npos)starts.push_back(event);};
+    auto advance=[&](int milliseconds) {
+        int16_t pcm[960];
+        for(int elapsed=0;elapsed<milliseconds;elapsed+=10){audio.Update(10);audio.Mixer()->Mix(pcm,480);}
+    };
+    audio.SetMusicMode(MusicMode::Buy);advance(100);
+    require(starts.size()==1,"Buy starts one track");
+    audio.SetMusicMode(MusicMode::Build);advance(200);
+    require(starts.size()==1,"Build preserves the current Buy song");
+    audio.SetMusicMode(MusicMode::Buy);advance(1100);
+    require(starts.size()==2 && starts.back().find("bkground_buy1:")==0,"returning to Buy cancels pending Build");
+    audio.SetMusicMode(MusicMode::Build);advance(1100);
+    require(starts.size()==3 && starts.back().find("bkground_build:")==0,"Build playlist starts at next song boundary");
+    audio.SetMusicMode(MusicMode::Buy);advance(100);
+    require(starts.size()==3,"Buy preserves the current Build song");
+    audio.SetMusicMode(MusicMode::Live);advance(100);
+    audio.SetMusicMode(MusicMode::Build);advance(3500);
+    require(starts.size()>3 && starts.back().find("bkground_build:")==0,
+            "Live cancels pending Buy and re-entering Build restarts after fade");
+    audio.Log={};audio.Shutdown();std::filesystem::remove_all(root);
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (argc != 2) return 2;
@@ -174,6 +215,7 @@ int main(int argc, char** argv) {
         mixer.StopAll();
         std::filesystem::remove(path);
         checkLoadingMusic(directory / "startup");
+        checkEditingMusic(directory / "editing");
         SDL_Quit();
         std::cout << "continuous audio: " << mixed << " frames during 300ms main stall; lifecycle, voice operations, PCM stream/end/loop and decoder fault passed\n";
         return 0;
