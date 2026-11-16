@@ -34,6 +34,7 @@
 #include "app/WorldPicking.h"
 #include "app/ui/UIGraphics.h"
 #include "app/ui/GameText.h"
+#include "app/ui/OriginalMoneyHeadline.h"
 #include "app/ui/UIModePanel.h"
 #include "app/ui/UIUCP.h"
 #include "app/ui/UIOptionsPanel.h"
@@ -586,25 +587,19 @@ void LotScreen::MoneyPopupAt(int amount, int topX, int topY) {
     _LastBudget = S->Budget();
 }
 
-// FreeSO VMAvatar.ShowMoneyHeadline (person data MoneyAmmountOverHead / scope MoneyOverHead32Bit): the behaviour asks
-// for the amount over the Sim's head. A funds change of the same amount shown just before (TrackBudget) moves there
-// instead of appearing twice.
+// Live-mode overhead amounts are explicitly requested by the object's behavior.
 void LotScreen::PollMoneyHeadlines() {
     for (auto e : S->VM()->Entities) {
         auto av = dynamic_cast<VMAvatar*>(e);
         if (av == nullptr) continue;
-        auto it = _MoneyHeadlineSerial.find(av->ObjectID);
-        if (it == _MoneyHeadlineSerial.end()) { _MoneyHeadlineSerial[av->ObjectID] = av->MoneyHeadlineSerial; continue; }
-        if (it->second == av->MoneyHeadlineSerial) continue;
-        it->second = av->MoneyHeadlineSerial;
+        auto& previous = _MoneyHeadlineSerial[av->ObjectID];
+        if (previous == av->MoneyHeadlineSerial) continue;
+        previous = av->MoneyHeadlineSerial;
         int amount = av->MoneyHeadlineValue;
         if (amount == 0 || av->WorldUI == nullptr) continue;
         auto pos = av->WorldUI->DrawPosition();
         float lift = (av->GetPersonData(FSO::SimAntics::Model::VMPersonDataVariable::PersonsAge) < 18) ? 1.7f : 2.3f;
-        bool merged = false;
-        for (auto& p : _Popups)
-            if (!p.Head && p.Amount == amount && Time - p.Start < 1500) { p.X = pos.X; p.Y = pos.Y; p.Z = pos.Z; p.Lift = lift; p.Head = true; merged = true; break; }
-        if (merged || _Popups.size() >= 6) continue;
+        if (_Popups.size() >= 6) continue;
         Popup p;
         p.Amount = amount; p.Start = Time; p.X = pos.X; p.Y = pos.Y; p.Z = pos.Z; p.Lift = lift; p.Head = true;
         _Popups.push_back(p);
@@ -616,18 +611,10 @@ void LotScreen::TrackBudget() {
     int b = S->Budget();
     if (_LastBudget < 0) { _LastBudget = b; return; }
     if (b != _LastBudget) {
-        // already over a Sim's head (money headline of the same amount just now): no second popup
-        for (auto& p : _Popups) if (p.Head && p.Amount == b - _LastBudget && Time - p.Start < 1500) { _LastBudget = b; return; }
-        // TS1: job pay, bills, sold paintings... appear as "+§n" over the Sim that earned/spent it
-        int delta = b - _LastBudget;
-        VMEntity* at = nullptr;
-        // the family member whose current interaction is the likely source (carpool, mailbox, easel...)
-        for (auto sim : S->Family) {
-            if (sim == nullptr || sim->Thread == nullptr || sim->Thread->Queue.empty()) continue;
-            auto callee = sim->Thread->Queue[0]->Callee;
-            if (callee != nullptr && callee != sim && callee->Position().TileX() >= 0) { at = callee; break; }
-        }
-        MoneyPopup(delta, at);
+        // The price over a Sim and the household ledger are separate. A fridge
+        // can show a positive price while debiting that amount from the family.
+        const int delta = b - _LastBudget;
+        _LastBudget = b;
         if (Log) { char buf[64]; snprintf(buf, sizeof buf, "funds %+d -> %d\n", delta, b); *Log += buf; }
     }
 }
@@ -1289,17 +1276,11 @@ void LotScreen::DrawPopups() {
             x = sp.X * S->SceneScale(); y = sp.Y * S->SceneScale();
         } else if (p.SX >= 0) { x = (float)p.SX; y = (float)p.SY; }
         y -= (float)(t * 36.0);
-        char buf[48];
-        int a = std::abs(p.Amount);
-        std::string digits = std::to_string(a), grouped;
-        int c = 0;
-        for (int k = (int)digits.size() - 1; k >= 0; k--) { grouped.insert(grouped.begin(), digits[(size_t)k]); if (++c % 3 == 0 && k > 0) grouped.insert(grouped.begin(), ','); }
-        snprintf(buf, sizeof buf, "%s\xA7%s", p.Amount > 0 ? "+" : "-", grouped.c_str());
-        int alpha = t < 0.7 ? 255 : (int)(255 * (1.0 - t) / 0.3);
-        uint32_t col = p.Amount > 0 ? RGBA(90, 255, 90, alpha) : RGBA(255, 80, 70, alpha);
-        int w = TextWidth(FontId::Title, buf);
+        const int alpha = t < 0.7 ? 255 : int(255 * (1.0 - t) / 0.3);
+        const auto headline = original::FormatMoneyHeadline(p.Amount, p.Head, alpha);
+        const int w = TextWidth(FontId::Title, headline.text);
         int tx = std::max(2, std::min(Top->Width - w - 2, (int)x - w / 2)); // FIX(sims) QA2: never cut off at the screen edge
-        DrawTextShadow(*Top, FontId::Title, tx, (int)y, buf, col, RGBA(0, 0, 0, alpha * 3 / 4));
+        DrawTextShadow(*Top, FontId::Title, tx, (int)y, headline.text, headline.color, RGBA(0, 0, 0, alpha * 3 / 4));
         i++;
     }
 }

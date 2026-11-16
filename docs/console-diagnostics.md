@@ -51,8 +51,9 @@ entry, `live_dirs_reused` counts folders the game could reuse from memory
 instead of reading them again from the card.
 
 On Vita and Switch, `[portable-perf] lot scene` records the size used to draw
-the lot. The two closer zoom levels use 400×300. Menus and text still use the
-800×600 game screen. Mention the zoom level if a slowdown changes with zoom.
+the lot. Switch uses 800×600 at all three zoom levels. Vita uses 400×300 at
+the two closer zoom levels and 800×600 at the widest. Both draw menus and text
+at 800×600. Mention the zoom level if a slowdown changes with zoom.
 
 `[lot-entry]` lines separate the first house frame into preparation, input,
 simulation, drawing and audio. They appear once per house entry, helping locate

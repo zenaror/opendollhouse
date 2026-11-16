@@ -83,7 +83,11 @@ into a console or Windows executable.
 Packaging scripts are in `engine/cmake/` and `tools/`. Read a script and its
 instructions before using it; it may prepare dependencies or generate large
 files. Use separate output directories for each configuration and target.
-Do not edit sources during a build or while collecting a package's inputs.
+Freeze the source revision before compiling or collecting package inputs. If a
+shared header changed while compilation was running, discard the affected
+build outputs or start from a fresh build directory for each affected target.
+An incremental build can report success even when one file was compiled with an
+older class layout. Test the resulting package before replacing a debug build.
 
 Only one person or agent should own a build directory at a time. For parallel
 work, isolate both sources and outputs, or wait until integration finishes.

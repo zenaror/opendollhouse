@@ -32,8 +32,8 @@ There is no stable public release yet.
 - When entering a home, the game looks up the outfits its residents wear.
   Custom outfits outside the game index are discovered as needed. The household
   bar reads each resident's face strip independently.
-- On Vita and Switch, the two closer zoom levels draw the lot at 400×300
-  while menus and text stay at 800×600. The widest zoom keeps the entire view.
+- Switch draws the lot and menus at 800×600 at every zoom level. Vita draws
+  the lot at 400×300 at the two closer zooms and keeps the menus at 800×600.
 - The handheld Buy catalog reads fewer files when opening a category. Importing
   a neighborhood also skips repeat checks on files the game has already found.
 - Documentation organized for milestone 1 players: installation, controls,
@@ -55,6 +55,10 @@ There is no stable public release yet.
   This does not confirm that choppy audio on the devices has been resolved.
 
 ### Fixed
+
+- Fixed a Vita crash when a sound played from a Sim on a lot.
+- Collecting MagiCoins shows their count in magenta. Buying food from a fridge
+  shows the price once, while the household pays the usual amount.
 
 - Vita and Switch reuse pixels already on screen when only part of the picture
   changes. The engine also skips drawing triangles for parts of Sims that

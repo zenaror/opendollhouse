@@ -141,7 +141,9 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
     _World->PresentationScale = scale;
     Blueprint = nullptr; // The session cutaway binding is ready only after LoadFromIff returns.
     Frame.Resize(viewW, viewH);
-    if (_HalfResolutionLot) std::printf("[portable-perf] lot scene %dx%d, display %dx%d, zoom 2\n", viewW, viewH, _DisplayWidth, _DisplayHeight);
+#if defined(__vita__) || defined(__SWITCH__)
+    std::printf("[portable-perf] lot scene %dx%d, display %dx%d, zoom 2\n", viewW, viewH, _DisplayWidth, _DisplayHeight);
+#endif
     _World->SetScrollBuffer(scrollBuffer);
     VM::UseWorld(true);
     _Ctx.reset(new VMContext(_World.get()));
