@@ -12,6 +12,9 @@
 #include "content/TS1NeighbourProvider.h"
 #include "files/formats/iff/PIFFRegistry.h"
 #include "files/formats/iff/chunks/STR.h"
+#include "files/formats/iff/chunks/FCNS.h"
+#include <limits>
+#include <cmath>
 #include "content/TS1JobProvider.h"
 #include "vitaboy/content/TS1AvatarProvider.h" // HOOK(vitaboy)
 #include <cstdio>
@@ -677,6 +680,7 @@ void WorldGlobalProvider::Init() {
     OwnedIffs.clear();
     OwnedOtfs.clear();
     CurvesLoaded = false;
+    Autonomy = {};
     GlobalFar.reset();
     GlobalEntries.clear();
     const std::string& base = ContentManager->SimsCompleteDir;
@@ -696,8 +700,26 @@ void WorldGlobalProvider::Init() {
 // TS1(sims): FreeSO WorldGlobalProvider.InitCurves / CurveFromSTR.
 void WorldGlobalProvider::InitCurves() {
     if (CurvesLoaded) return;
-    CurvesLoaded = true;
+    AutonomyTunings autonomy;
     auto global = Get("global", true);
+    // The DVD registers these named properties with constructor defaults, then
+    // reads Global FCNS#2. Read once with the curves, from the same resource.
+    if (global && global->Resource) {
+        if (auto tuning = global->Resource->Get<FSO::Files::Formats::IFF::Chunks::FCNS>(2)) {
+            for (const auto& record : tuning->Values.records) {
+                if (record.name == "min autonomy score for family") autonomy.FamilyMinimum = record.value;
+                else if (record.name == "min autonomy score for visitors") autonomy.VisitorMinimum = record.value;
+                else if (record.name == "min autonomy score for sitting") autonomy.SittingMinimum = record.value;
+                else if (record.name == "random selection count") {
+                    if (double(record.value) < std::numeric_limits<int>::min() ||
+                        double(record.value) > std::numeric_limits<int>::max())
+                        throw std::runtime_error("Autonomy random selection count exceeds integer bounds");
+                    autonomy.RandomSelectionCount = static_cast<int>(record.value);
+                }
+            }
+        }
+    }
+
     if (global == nullptr || global->Resource == nullptr) return;
     auto curveFromSTR = [&](uint16_t id, bool cache) {
         std::vector<FSO::Common::TS1::TS1Curve> result;
@@ -715,6 +737,8 @@ void WorldGlobalProvider::InitCurves() {
     InteractionScoreChild = curveFromSTR(503, true);
     HappyWeightChild = curveFromSTR(504, true);
     HouseScore = curveFromSTR(505, false);
+    Autonomy = autonomy;
+    CurvesLoaded = true;
 }
 
 GameGlobal* WorldGlobalProvider::Get(const std::string& filenameIn, bool ts1) {

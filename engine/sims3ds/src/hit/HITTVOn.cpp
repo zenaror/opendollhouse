@@ -57,7 +57,10 @@ bool HITTVOn::Tick()
     if (FadeOut > 0)
     {
         FadeOut--;
-        if (Instance != 0 && mixer != nullptr) mixer->SetVolumePan(Instance, std::max(0.0f, ((FadeOut - 60) / 120.0f)) * CurrentVolume(), 0.0f);
+        if (Instance != 0 && mixer != nullptr) {
+            const float gain = FadeLength ? float(FadeOut) / FadeLength : std::max(0.0f, (FadeOut - 60) / 120.0f);
+            mixer->SetVolumePan(Instance, gain * CurrentVolume(), 0.0f);
+        }
         if (FadeOut == 0)
         {
             Kill();
@@ -122,9 +125,10 @@ std::string HITTVOn::CleanPath(const std::string& path)
     return IsTV ? Text::ToLower(path) : path;
 }
 
-void HITTVOn::Fade()
+void HITTVOn::Fade(int ticks)
 {
-    if (FadeOut == -1) FadeOut = 60 * 3;
+    if (ticks > 0) { FadeLength = ticks; FadeOut = ticks; }
+    else if (FadeOut == -1) FadeOut = 60 * 3;
 }
 
 void HITTVOn::LoadStation(const std::string& path)

@@ -7,6 +7,11 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Entering a residential house from the map fades out the map music instead
+  of restarting the opening music. The fade timing is still being compared.
+- Autonomous choices use the original lottery among the best eligible actions,
+  with the group size affected by Logic. The selected game data supplies the
+  tuning values. Other differences in autonomous behavior remain under review.
 - Changing between Buy and Build keeps the current song playing until it
   finishes, as observed in the original Complete Collection.
 - Music diagnostics record the requested event and each track that actually

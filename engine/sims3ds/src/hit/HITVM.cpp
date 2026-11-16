@@ -198,8 +198,8 @@ std::shared_ptr<HITSound> HITVM::PlaySoundEvent(std::string evt)
     {
         auto aevt = ae->second;
 
-        const bool fadingEdit = aevt == MusicEvent && editMusic(evt) && MusicEvent->Fading();
-        if (aevt->Dead || fadingEdit) ActiveEvents.erase(ae); // a fading editing song needs a new player when re-entered
+        const bool fadingMusic = aevt == MusicEvent && MusicEvent->Fading();
+        if (aevt->Dead || fadingMusic) ActiveEvents.erase(ae); // re-entering a fading music mode needs a new player
         else
         {
             auto athread = std::dynamic_pointer_cast<HITThread>(aevt);
@@ -496,6 +496,10 @@ void HITVM::NotePlayed(HITThread* thread, uint32_t patch)
         auto p = content ? content->GetPatch(patch, thread->ResGroup) : nullptr;
         EventLog(thread->Name, "note " + std::to_string(patch) + (p ? " " + p->Filename : std::string()));
     }
+}
+
+void HITVM::FadeMusic(int ticks) {
+    if (MusicEvent) MusicEvent->Fade(ticks);
 }
 
 std::string HITVM::MusicStation() const

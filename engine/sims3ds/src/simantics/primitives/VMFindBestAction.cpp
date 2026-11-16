@@ -175,7 +175,8 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
     float totalWeight = 0;
     for (int i = 0; i < 9; i++) totalWeight += weights[i];
     for (int i = 0; i < 9; i++) weights[i] /= totalWeight;
-    double minScore = (caller->GetPersonData(VMPersonDataVariable::Posture) > 0) ? 1e-6 : 1e-7;
+    const auto& tuning = global->Autonomy;
+    const double minScore = visitor ? tuning.VisitorMinimum : tuning.FamilyMinimum;
 
     float happyParts[9];
     float baseHappy = 0;
@@ -318,7 +319,7 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                 score = score / (1 + atten * distance);
                 if (DebugCandidate) DebugCandidate(caller, obj, first.Name, true, score);
 
-                if (score > minScore) {
+                if (score >= minScore) {
                     for (auto& item : pie) {
                         item.Score = score;
                         item.Callee = obj;
@@ -333,24 +334,24 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
         }
     }
     std::stable_sort(validActions.begin(), validActions.end(), [](const VMPieMenuInteraction& a, const VMPieMenuInteraction& b) { return a.Score > b.Score; });
-    auto sorted = TakeTopActions(validActions, 4);
+    // DVD 0045dea5 uses a uniform choice among the best N records. Logic
+    // reduces N by one for each 2000 skill points; the selected Global sets N.
+    const auto count = static_cast<int>(std::min<int64_t>(validActions.size(),
+        std::max<int64_t>(1, int64_t(tuning.RandomSelectionCount) -
+            caller->GetPersonData(VMPersonDataVariable::LogicSkill) / 2000)));
+    auto sorted = TakeTopActions(validActions, count);
     if (sorted.empty()) return VMPrimitiveExitCode::GOTO_FALSE;
     auto selection = sorted[0];
-    if (!selection.Entry->AutoFirst()) {
-        // weighted random selection
-        float totalScore = 0;
-        for (auto& x : sorted) totalScore += x.Score;
-        auto random = context->VM()->Context->NextRandom(10000);
+    // The original AutoFirst path has an additional context predicate whose
+    // mapping remains under investigation. Preserve this existing exception.
+    if (!selection.Entry->AutoFirst())
+        selection = sorted[context->VM()->Context->NextRandom(static_cast<int>(sorted.size()))];
+    // Sitting is checked after the lottery in the DVD. A weak chosen action
+    // leaves the Sim idle; filtering it before drawing changes the lottery.
+    if (caller->GetPersonData(VMPersonDataVariable::Posture) > 0 &&
+        selection.Score < tuning.SittingMinimum)
+        return VMPrimitiveExitCode::GOTO_FALSE;
 
-        float randomTotal = 0;
-        for (size_t i = 0; i < sorted.size(); i++) {
-            randomTotal += (sorted[i].Score / totalScore) * 10000;
-            if (random <= randomTotal) {
-                selection = sorted[i];
-                break;
-            }
-        }
-    }
 
     std::vector<int16_t> pushArgs = { selection.Param0, 0, 0, 0 };
     auto qaction = selection.Callee->GetAction(selection.ID, context->Caller, context->VM()->Context, &pushArgs);

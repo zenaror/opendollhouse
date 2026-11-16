@@ -80,6 +80,8 @@ public:
 
     /// Mode music, with the original cross-fade. Repeating the current mode does not restart it.
     void SetMusicMode(MusicMode mode);
+    // Residential entry fades the map's score without replaying the boot loop.
+    void BeginResidentialLoad();
     /// Any kSetMusicMode event by name ("bkground_buy1", "station_dtnhood", "music_magictown_build").
     void SetMusicEvent(const std::string& evt);
     MusicMode CurrentMusicMode() const { return _Mode; }

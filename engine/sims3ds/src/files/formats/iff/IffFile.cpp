@@ -26,6 +26,7 @@
 #include "files/formats/iff/chunks/SLOT.h"
 #include "files/formats/iff/chunks/GLOB.h"
 #include "files/formats/iff/chunks/BCON.h"
+#include "files/formats/iff/chunks/FCNS.h"
 #include "files/formats/iff/chunks/TTAB.h"
 #include "files/formats/iff/chunks/OBJf.h"
 #include "files/formats/iff/chunks/TTAs.h"
@@ -72,6 +73,7 @@ const std::unordered_map<std::string, IffFile::ChunkFactory>& IffFile::CHUNK_TYP
         {"SLOT", &MakeChunk<SLOT>},
         {"GLOB", &MakeChunk<GLOB>},
         {"BCON", &MakeChunk<BCON>},
+        {"FCNS", &MakeChunk<FCNS>},
         {"TTAB", &MakeChunk<TTAB>},
         {"OBJf", &MakeChunk<OBJf>},
         {"TTAs", &MakeChunk<TTAs>},

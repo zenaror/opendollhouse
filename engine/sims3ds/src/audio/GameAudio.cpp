@@ -177,6 +177,13 @@ void GameAudio::SetMusicMode(MusicMode mode) {
     _ModeSet = true;
 }
 
+void GameAudio::BeginResidentialLoad() {
+    if (!_Ready) return;
+    SetMusicMode(MusicMode::Fade);
+    // The DVD's map score falls silent about half a second after house entry.
+    HITVM::Get()->FadeMusic(30);
+}
+
 void GameAudio::SetMusicEvent(const std::string& evt) {
     if (!_Ready) return;
     if (_BootMusicVoice) {

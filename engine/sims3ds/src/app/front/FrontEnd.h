@@ -114,6 +114,7 @@ public:
     void DrawLotLoading(int house, Canvas& top, Canvas& bottom);
     /// True when a desktop residential load keeps the previously completed canvas.
     bool ShouldRetainLotLoadingFrame(int house, bool travel) const;
+    bool CommunityLotLoading(int house) const;
     /// Expansion-pack travel (src/simantics/engine/VMTS1Travel.h): the lot selection dialogs (types 5/7/8/11/13)
     /// show the destination map (LotMapForDialog id: 2 Downtown, 3 Vacation, 4/1/8 the neighbourhood (Old Town),
     /// 5 Studio Town, 7 Magic Town) in pick mode; done(house) or done(-1) when cancelled.
@@ -158,7 +159,6 @@ public:
     std::string Log;
 
 private:
-    bool CommunityLotLoading(int house) const;
     bool ShowLotLoadingIndicator() const;
     void PaintLotLoad(const std::string& key, const char* art, Canvas& top, Canvas& bottom);
     FramePresentation _DrawnFrame;

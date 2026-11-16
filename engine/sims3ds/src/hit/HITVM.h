@@ -123,6 +123,7 @@ public:
     void NotePlayed(HITThread* thread, uint32_t patch);
     int ThreadCount() const { return (int)Threads.size(); }
     std::string MusicStation() const;
+    void FadeMusic(int ticks);
     int EventsPlayed = 0, NotesPlayed = 0;
 };
 

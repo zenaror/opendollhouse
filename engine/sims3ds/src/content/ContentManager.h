@@ -246,6 +246,10 @@ public:
     std::vector<FSO::Common::TS1::TS1Curve> InteractionScore;
     std::vector<FSO::Common::TS1::TS1Curve> InteractionScoreChild;
     std::vector<FSO::Common::TS1::TS1Curve> HouseScore;
+    struct AutonomyTunings {
+        float FamilyMinimum = 0.2f, VisitorMinimum = 0.05f, SittingMinimum = 0.2f;
+        int RandomSelectionCount = 10;
+    } Autonomy;
     bool CurvesLoaded = false;
     /// C# InitCurves (called from Content.Init in FreeSO). Here: called on first use (Global.iff must be loadable).
     void InitCurves();

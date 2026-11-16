@@ -503,7 +503,7 @@ void App::PumpLoadAudio() {
 }
 
 // Sound (src/audio/README.md): runs the HIT VM, and follows the screen with the music like TS1 (neighbourhood
-// tune in the chooser, loadloop while loading, no score in live mode, buy/build music), plus the speed clicks and
+// tune in the chooser, fading that tune for house entry, no score in live mode, buy/build music), plus the speed clicks and
 // the pie menu's pop. Edge-triggered, so screens that call GameAudio themselves are not overridden every frame.
 void App::AudioFrame(double dtMs) {
     auto& ga = simaudio::GameAudio::Get();
@@ -511,7 +511,11 @@ void App::AudioFrame(double dtMs) {
     if (!ga.Ready()) return;
     if (_Mode != _AudioMode) {
         // Mode::Front: the front end plays its own screens' music (front/FrontAudio.cpp)
-        if (_Mode == Mode::Loading) ga.SetMusicMode(simaudio::MusicMode::Load);
+        if (_Mode == Mode::Loading) {
+            if (!_LoadTravel && _Front && !_Front->CommunityLotLoading(_LoadHouse))
+                ga.BeginResidentialLoad();
+            else ga.SetMusicMode(simaudio::MusicMode::Load);
+        }
         _AudioMode = _Mode;
         _AudioLotMode = -1;
         _AudioSpeed = -1;
