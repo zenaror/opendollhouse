@@ -25,6 +25,13 @@ The selected upstream revisions and credits are in [references](../references.md
 FreeSO also contains The Sims Online behavior; do not assume that every shared
 routine belongs to The Sims 1.
 
+For milestone 2, use the original PC Complete Collection DVD as the reference.
+Compare a full player action in the same lot, mode and starting conditions,
+including what happens on entry, during play, and after saving and reopening.
+Use the original game data or executable to resolve a specific unanswered
+question. Record unverified differences separately. A missing option in an
+existing feature belongs to 2.1; a wholly absent system belongs to 2.2.
+
 Two scope concessions apply to milestone 1: features missing from both selected
 Simitone references may wait until milestone 2, and an action in progress may
 restart when loading. Neither permits lost or duplicated residents, possessions,
@@ -51,6 +58,10 @@ stays the same. Redraw the affected area when a value, selection, hover state,
 animation, language or layout changes. Transparent edges must still show the
 current scene underneath. Check a changing screen against a full redraw before
 reporting a performance improvement.
+
+Aim for at least 30 FPS during gameplay on each platform. Compare the same lot
+and camera on hardware with simulation updates and player input. Record stalls
+and loading times separately; a five-second average can hide dropped frames.
 
 Keep essential actions, simulation rules and saved progress shared. A family
 saved on one port should reopen on another with its residents, possessions and

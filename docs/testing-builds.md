@@ -1,24 +1,19 @@
 # Choose a package
 
-The available test builds are **experimental**. They may contain bugs and run
-at different speeds on different devices. There is no stable public release yet.
+Choose the file for your system under **Assets** on the [v0.0.1 release page](https://github.com/zenaror/opendollhouse/releases/tag/v0.0.1).
+These builds are experimental. Read the package instructions before updating.
 
 ## Find the package
 
-If you received a build, choose the file for your system and read its included
-`README.md`. It gives the package date and its known limits.
-
-In a checkout used to prepare builds, current packages are kept under
-`build/releases/debug/`, with one folder per platform. These are build outputs
-and do not come with a clone of the repository. This guide does not announce a
-public download link.
+The folder column is for people working from a source checkout. Local builds
+are stored under `build/releases/debug/`.
 
 | System | Folder | File to install or extract |
 | --- | --- | --- |
 | Linux x86_64 | `linux` | `OpenDollhouse-Linux-debug.tar.gz` |
 | Windows x86_64 | `windows` | `OpenDollhouse-windows-x86_64.tar.gz` |
 | macOS Intel | `macos-intel` | `OpenDollhouse-macos-x86_64-launcher.tar.gz` |
-| macOS Apple Silicon | `macos-arm64` | `OpenDollhouse-macos-arm64-launcher.tar.gz` |
+| macOS Apple Silicon | `macos-arm64` | Separate test build; no arm64 Mac download in v0.0.1 |
 | Android ARM64 | `android` | `OpenDollhouse-arm64-debug.apk` |
 | New Nintendo 3DS | `new3ds` | `OpenDollhouse-new3ds.zip` |
 | PlayStation Vita | `psvita` | `OpenDollhouse.vpk` |

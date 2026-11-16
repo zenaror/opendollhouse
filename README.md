@@ -19,9 +19,7 @@ folder: an ISO alone is not enough. The engine does not require the original
 executable or an inserted CD. Full Legacy Collection compatibility has not yet
 been confirmed.
 
-1. Obtain the test package for your system. Packages prepared in a development
-   checkout are in `build/releases/debug/<platform>/`; these generated files
-   are not included in a clone of the source repository.
+1. Download the package for your system from the [v0.0.1 release](https://github.com/zenaror/opendollhouse/releases/tag/v0.0.1).
 2. On Linux and Windows, extract the entire `odl-launcher` folder into the game
    installation, next to `GameData` and `UIGraphics`. On macOS, keep the
    `odh-launcher` folder name used by the package.
@@ -30,10 +28,9 @@ been confirmed.
 
 **[Installation instructions for each platform →](docs/installation.md)**
 
-Experimental packages exist for Linux, Windows, macOS Intel/Apple Silicon,
-Android, New 3DS, Vita and Switch. Testing varies by platform; a package does
-not guarantee performance or every feature on that device. There is no stable
-public release yet. Old 3DS support is desired, but no package is available.
+The release includes Linux, Windows, Intel Mac, Android, New 3DS, Vita and
+Switch downloads. An Apple Silicon test build exists separately. Old 3DS
+support is a future goal. Testing varies by device.
 See [which package to use](docs/testing-builds.md).
 
 ## Playing and getting help

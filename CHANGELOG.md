@@ -2,9 +2,11 @@
 
 Notable changes for players and contributors, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-There is no stable public release yet.
 
-## Unreleased
+## [0.0.1](https://github.com/zenaror/opendollhouse/releases/tag/v0.0.1) — 2026-11-15
+
+First experimental release. Download availability and the source revisions
+used for each platform are listed in the release notes.
 
 ### Added
 

@@ -5,10 +5,7 @@ experimental: Linux is playable, but differences and bugs remain. Confirmation
 on other systems varies. Check the
 [platform status](status.md#other-platforms) before installing.
 
-Use the package provided by the project for your system. In a checkout used to
-prepare builds, local test packages are kept in
-`build/releases/debug/<platform>`. Each folder has a `README.md` with instructions
-for that package. See also [test builds](testing-builds.md).
+Choose the [package for your platform](testing-builds.md) and keep its files together.
 To compile it yourself, see the [build guide](ai_agents/building.md).
 
 ## Prepare the game files
@@ -163,7 +160,8 @@ Execution on native Windows still needs confirmation.
 
 ## macOS: Apple Silicon and Intel
 
-Choose the package matching your computer:
+The v0.0.1 download is for Intel Macs. If you received the separate Apple
+Silicon test build, the same installation steps apply.
 
 | Mac | Package |
 | --- | --- |
@@ -278,10 +276,9 @@ VitaShell may show the same location as `ux0:data/OpenDollhouse/game`.
 - **Saves:** `ux0:/data/OpenDollhouse/saves`.
 - **Log:** `ux0:/data/OpenDollhouse/cache/opendollhouse.log`.
 
-An earlier build opened the neighborhood on the device. The current build
-corrects the 4:3 fit and includes front touch and triggers on the rear touchpad
-halves; see [controls](controls.md#vita-rear-touchpad). These changes and
-performance still need confirmation on Vita.
+Use the front screen for touch and the two halves of the rear touchpad for
+triggers. See [Vita controls](controls.md#vita-rear-touchpad) and
+[performance on the console](status.md#other-platforms).
 
 The source files and `SUPORTE-relink` files supplied with the VPK support
 development and redistribution. You do not need to install them to play;
@@ -346,10 +343,8 @@ SD:/switch/OpenDollhouse/
 - **Saves:** `SD:/switch/OpenDollhouse/saves`.
 - **Log:** `SD:/switch/OpenDollhouse/cache/opendollhouse.log`.
 
-An earlier build opened the neighborhood on the device. The current build
-corrects the stretched image and includes controls, touch and performance logs;
-these changes still need to be tested again on Switch. The emulator attempt
-ended before the map and does not confirm gameplay for this build.
+The Switch build supports touch and controllers and writes performance logs.
+See [performance on the console](status.md#other-platforms).
 
 See the [controls](controls.md#switch-vita-and-android-with-a-controller) and
 [performance reporting guide](console-diagnostics.md). Release the triggers

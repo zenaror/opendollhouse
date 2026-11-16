@@ -40,27 +40,27 @@ prove performance on the real device.
 | Windows x86_64 | The current build opened the neighborhood and Create-a-Sim in Wine and exited normally. Native Windows testing is still needed. |
 | macOS Intel and Apple Silicon | Packages include a first-run language choice and remember it; no fixed language. Compilation and package checks do not replace a Mac runtime test, which is still needed. |
 | Android ARM64 | An earlier build opened on a device. The current APK includes external controller support and periodic performance logs; it still needs another device test. |
-| New Nintendo 3DS | Earlier emulator checks opened a house and used touch. The logging update reached the map and recorded performance without a `debug` file. Hardware performance and exit behavior still need confirmation. |
-| PlayStation Vita | Hardware testing reported a house-loading crash, input stalls and choppy audio. The crash and empty-log fixes passed an occupied-house/log test in Vita3K. Performance and controls still need confirmation on the device with this update. |
-| Nintendo Switch | Device feedback reports reaching a lot, with very slow lot loading and delayed action menus. Optimization is still needed. The emulator exited before the map; controller support still needs focused device confirmation. |
+| New Nintendo 3DS | Hardware logs show live gameplay. The exact package used was not recorded. |
+| PlayStation Vita | A player entered an occupied lot, saved and exited on the console. Play remained below the 30 FPS target. |
+| Nintendo Switch | A player entered an occupied lot, opened the action menu, saved and exited on the console. |
 | Old Nintendo 3DS (desired) | No game package available to install; New 3DS results do not establish support. |
 
 Current packages are listed in [which package to use](testing-builds.md).
-Vita and Switch images were adjusted to keep a centered 4:3 aspect ratio.
-The builds also include logs to investigate slow performance. This change does
-not prove that the devices' performance problems have been resolved.
+The gameplay target is **at least 30 FPS** on each device. In a physical test
+of the same occupied house, five-second readings while the simulation was
+running ranged from **54–59 FPS on Switch** and **7–11 FPS on Vita**. Both
+devices saved and exited. The logs did not identify the exact build; other
+lots can run differently, and these readings can hide brief stalls.
 
 ## Limitations affecting tests
 
-- Vita and Switch loading time and audio still need measurement on the devices
-  with the current packages.
+- Vita players may experience long waits entering lots and saving. Audio
+  smoothness and input response still need checking during longer sessions.
 - Switch controllers have a limitation when physically disconnected. Release
   buttons before disconnecting; restart the game if an input remains active.
-- The updated Vita log worked in Vita3K. A physical-device log is still needed
-  to investigate input stalls and choppy audio; emulator speed is not a device
-  performance measurement.
-- Builds are specific to each system. A New 3DS package is not confirmation
-  of Old 3DS compatibility.
+- Player reports include gaps in cutaway walls and startup music playing
+  when opening a Studio Town lot for editing. Both await comparison with
+  the original Complete Collection.
 
 See [installation](installation.md) and [controls](controls.md) for usage steps.
 This page describes the current version; it does not promise dates or complete
