@@ -858,7 +858,9 @@ VMEntity* LotSession::PieTargetAt(int x, int y, std::vector<PieChoice>& pie, boo
 bool LotSession::PushInteraction(VMEntity* target, bool isGoto, const PieChoice& choice) {
     auto caller = SelectedSim();
     if (caller == nullptr || target == nullptr || caller->Thread == nullptr) return false;
-    if ((int)caller->Thread->Queue.size() >= Engine::VMThread::MAX_USER_ACTIONS) return false;
+    // The TS1 enqueue operation may discard a lower-priority suffix even
+    // when its ring is full. Let that operation decide whether input fits.
+    if (!_VM->TS1 && caller->Thread->Queue.size() >= size_t(Engine::VMThread::MAX_USER_ACTIONS)) return false;
     if (isGoto) {
         // VMNetGotoCmd: a fresh goto object at the tile, the interaction is pushed on it
         auto pos = target->Position();

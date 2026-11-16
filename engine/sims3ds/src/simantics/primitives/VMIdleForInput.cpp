@@ -13,6 +13,7 @@
 #include "simantics/engine/VMSimanticsException.h"
 #include "simantics/engine/scopes/VMVariableScope.h"
 #include "simantics/entities/VMEntity.h"
+#include "simantics/entities/VMAvatar.h"
 #include "simantics/VM.h"
 #include "simantics/VMContext.h"
 
@@ -24,6 +25,27 @@ using FSO::SimAntics::Engine::Utils::VMMemory;
 VMPrimitiveExitCode VMIdleForInput::Execute(VMStackFrame* context, VMPrimitiveOperand* args) //TODO: Behaviour for being notified out of idle and interaction canceling
 {
     auto operand = static_cast<VMIdleForInputOperand*>(args);
+
+    if (context->VM()->TS1 && dynamic_cast<VMAvatar*>(context->Caller)) {
+        if (operand->StackVarToDec < 0 || size_t(operand->StackVarToDec) >= context->Args.size())
+            throw VMSimanticsException("Idle For Input: parameter out of range", context);
+        auto& counter = context->Args[size_t(operand->StackVarToDec)];
+        if (context->Thread->TS1ShouldNotifyIdle()) {
+            context->Caller->SetFlag(VMEntityFlags::NotifiedByIdleForInput, true);
+            if (operand->AllowPush) {
+                auto result = context->Thread->AttemptTS1Push(context);
+                if (result == VMPrimitiveExitCode::CONTINUE) counter = 0;
+                return result;
+            }
+            return VMPrimitiveExitCode::GOTO_TRUE;
+        }
+        if (counter != 0) {
+            counter = int16_t(uint16_t(counter) - 1u);
+            return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+        }
+        context->Caller->SetFlag(VMEntityFlags::NotifiedByIdleForInput, false);
+        return VMPrimitiveExitCode::GOTO_TRUE;
+    }
 
     // TS1(sims): FreeSO — decrement first (the C# scheduler may skip ticks; here every tick runs, so it is 1).
     if (operand->StackVarToDec >= 0 && operand->StackVarToDec < (int)context->Args.size()) context->Args[operand->StackVarToDec] -= 1;

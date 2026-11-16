@@ -100,12 +100,13 @@ int main(){try{
     VM::UseWorld(false);
     Scenario("check-order-and-lockout",[]{
         Fixture f;f.Add(0,50,9000,true);f.Add(1,50,9000,true);f.Add(2,50,9000,true);
-        Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE,"real chooser must queue a candidate");
+        Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE,"real chooser must select a candidate");
         Require(f.order==std::vector<int>({4202,4201,4200}),"autonomous checks must traverse TTAB in reverse table order");
         auto after=f.context.RandomSeed;f.context.RandomSeed=1234;f.context.NextRandom(13);f.context.NextRandom(12);f.context.NextRandom(11);f.context.NextRandom(3);
         Require(f.context.RandomSeed==after,"three row checks precede the selection draw");
-        Require(f.actor->Thread->Queue.size()==1&&f.actor->Thread->Queue.front()->Priority==2,
-            "selection reaches the actual autonomous action queue");
+        Require(f.actor->Thread->Queue.empty() && f.frame.StackObject==f.target.get() &&
+                f.actor->GetValue(VMStackObjectVariable::TreeTableEntry)>=0,
+            "selection records its target and index without enqueueing an action");
         f.target->SetValue(VMStackObjectVariable::LockoutCount,1);
         Require(f.Choose()==VMPrimitiveExitCode::GOTO_FALSE&&f.order.empty(),"locked objects are rejected before checks");
     });
@@ -137,14 +138,14 @@ int main(){try{
         content->Neighborhood->ZoningDictionary={{1,0},{2,1}};
         f.vm.SetGlobalValue(10,lot);f.actor->SetPersonData(VMPersonDataVariable::PersonType,personType);
         for(auto& row:f.table.Interactions){row->AllowVisitors(true);row->AutoFirst(autoFirst);}
-        Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE,"lot/person/AutoFirst matrix queues an eligible candidate");
+        Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE,"lot/person/AutoFirst matrix selects an eligible candidate");
         const bool deterministic=(lot==0||lot==1)&&(personType!=0||autoFirst);
         const auto after=f.context.RandomSeed;
         f.context.RandomSeed=1234;
         const auto index=deterministic?0:f.context.NextRandom(3);
         Require(after==f.context.RandomSeed,"residential AutoFirst and nonfamily paths alone omit the selection draw");
         const int ids[3]={1,0,2};
-        Require(f.actor->Thread->Queue.front()->InteractionNumber==ids[index],"lottery result reaches the queued action with original tie order");
+        Require(f.actor->GetValue(VMStackObjectVariable::TreeTableEntry)==ids[index],"lottery result records the selected action with original tie order");
         content->Neighborhood.reset();
     });
     Scenario("age-curves-and-sitting",[]{

@@ -221,6 +221,54 @@ public:
 
     static int64_t motivePhase(const VMAvatar& avatar) { return avatar.MotiveDecay->LastTick; }
 
+    // ObjM already stores the original per-frame primitive state. ODHI8 is
+    // bound to those exact ObjM bytes; restore this existing companion field
+    // without adding bytes to the native graph or breaking older readers.
+    void preparePrimitiveStates(std::map<int16_t, Record>& records, const OBJM& classic, const OBJT* types) {
+        std::map<int16_t, uint32_t> owners;
+        if (types) for (const auto& type : types->Entries) owners[type.TypeID] = type.GUID;
+        for (auto& entry : records) {
+            auto& thread = *entry.second.preparedThread;
+            const auto found = classic.ObjectData.find(entry.first);
+            if (found != classic.ObjectData.end() && found->second.Instance) {
+                const auto& saved = found->second.Instance->Stack;
+                std::vector<std::shared_ptr<VMStackFrame>> frames;
+                for (const auto& frame : thread.Stack) if (!frame->IsRoutingFrame()) frames.push_back(frame);
+                bool matched = saved.size() == frames.size();
+                for (size_t i = 0; matched && i < saved.size(); ++i) {
+                    const auto& source = saved[i]; const auto& frame = frames[i];
+                    const auto owner = owners.find(source.CodeOwnerObjType);
+                    matched = owner != owners.end() && frame->CodeOwner && frame->CodeOwner->OBJ &&
+                        frame->CodeOwner->OBJ->GUID == owner->second && frame->Routine->ID == uint16_t(source.TreeID) &&
+                        frame->InstructionPointer == uint16_t(source.NodeID) && frame->StackObjectID() == source.StackObjectID &&
+                        source.Parameters.size() <= frame->Args.size() && source.Locals.size() <= frame->Locals.size() &&
+                        std::equal(source.Parameters.begin(), source.Parameters.end(), frame->Args.begin()) &&
+                        std::equal(source.Locals.begin(), source.Locals.end(), frame->Locals.begin());
+                }
+                // Some legacy internal/social records deliberately retain an
+                // older classic projection while ODHI owns their live graph.
+                // Never apply state from mismatched frames to that graph.
+                if (matched) for (size_t i = 0; i < frames.size(); ++i) frames[i]->PrimitiveState = saved[i].PrimitiveState;
+            }
+            // Older native writers projected every primitive state to zero.
+            // An existing non-immediate child owned by opcode17 proves that
+            // this parent successfully handed over and must retry. A top-frame
+            // historical retry after child return cannot be reconstructed.
+            size_t action = 0;
+            for (size_t i = 0; i < thread.Stack.size(); ++i) {
+                const auto& child = thread.Stack[i];
+                if (child->SpecialResult != VMSpecialResult::Interaction) continue;
+                Require(action < thread.Queue.size(), "primitive state action boundary is unavailable");
+                const auto record = thread.Queue[action++];
+                if (i && !thread.Stack[i-1]->IsRoutingFrame() &&
+                    thread.Stack[i-1]->GetCurrentInstruction().Opcode == 17 &&
+                    (record->Flags & TTABFlags::RunImmediately) == 0 && thread.Stack[i-1]->PrimitiveState == 0)
+                    thread.Stack[i-1]->PrimitiveState = 1;
+            }
+        }
+    }
+
+
     static MotivePersistence::State classicMotives(const OBJMPerson& person, int64_t lastTick) {
         MotivePersistence::State state;
         for (size_t i = 0; i < 16; ++i) {
@@ -365,6 +413,7 @@ public:
                             "classic frame " + std::to_string(i) + " has invalid PC");
                     frame->InstructionPointer = uint16_t(source.NodeID);
                     frame->Caller = frame->Callee = live;
+                    frame->PrimitiveState = source.PrimitiveState;
                     frame->StackObjectRawID = source.StackObjectID;
                     frame->StackObject = vm.GetObjectById(source.StackObjectID);
                     frame->Args = source.Parameters;
@@ -393,12 +442,32 @@ public:
                         result->Flags2 = TSOFlags(0);
                         if (result->Callee->TreeTableStrings)
                             result->Name = result->Callee->TreeTableStrings->GetString(source.TTAIndex);
-                        result->Flags = TTABFlags::FSOSkipPermissions;
+                        // Active actions resume without a fresh permission
+                        // test. Pending records are rechecked only when Idle
+                        // actually consumes them, as in the original engine.
+                        auto available = result->Callee->GetAction(source.TTAIndex, live, vm.Context);
+                        if (available) {
+                            result->CheckRoutine = available->CheckRoutine;
+                            result->Flags = available->Flags;
+                            result->Flags2 = available->Flags2;
+                        }
                         if (source.Flags & int(OBJMInteractionFlags::PushHeadContinuation))
                             result->Flags = result->Flags | TTABFlags::FSOPushHead;
+                        if (source.Flags & int(OBJMInteractionFlags::CarryNameOver))
+                            result->Flags = result->Flags | TTABFlags::TS1InheritActionName;
                         result->UserQueued = (source.Flags & int(OBJMInteractionFlags::UserInitiated)) != 0;
                         result->Cancelled = (source.Flags & int(OBJMInteractionFlags::UserInterrupted)) != 0;
                         if (source.Icon) result->IconOwner(entity(source.Icon));
+                        // DVD cancellation injects this standard person action
+                        // with an explicit null icon. Other classic null icons
+                        // retain their existing target fallback until proved.
+                        if (!source.Icon && source.TTAIndex == 33 && source.TargetID == live->ObjectID) {
+                            auto cleanup = live->GetAction(33, live, vm.Context);
+                            if (cleanup) {
+                                result->CheckRoutine = cleanup->CheckRoutine;
+                                result->Flags = cleanup->Flags | TTABFlags::TS1HideQueueIcon;
+                            }
+                        }
                         return result;
                     };
                     const bool active = person.ActiveInteraction.IsValid();
@@ -413,9 +482,6 @@ public:
                     if (!thread.Queue.empty()) {
                         do { ++thread.ActionUID; } while (uids.count(thread.ActionUID));
                     }
-                    const int priority = candidate.avatar->GetPersonData(Model::VMPersonDataVariable::Priority);
-                    for (size_t i = active ? 1 : 0; active && i < thread.Queue.size(); ++i)
-                        if (thread.Queue[i]->Priority > priority) thread.Queue[0]->Cancelled = true;
                     int boundaries = 0;
                     for (const auto& use : person.ObjectUses) {
                         Require(use.StackLength > 0 && size_t(use.StackLength) <= inst.Stack.size(),
@@ -1279,6 +1345,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
         auto caller = records.find(departure.caller);
         VerifyDeparture(vm, departure, caller != records.end() ? caller->second.preparedThread.get() : nullptr);
     }
+    codec.preparePrimitiveStates(records, *objm, house.Get<OBJT>(0));
     codec.prepareMotives(records, house, *objm, *chunks.front(), clock.Ticks);
     codec.publish(records);
     *vm.Context->Clock = clock;

@@ -16,14 +16,9 @@ using namespace FSO::SimAntics::Engine;
 VMPrimitiveExitCode VMGosubFoundAction::Execute(VMStackFrame* context, VMPrimitiveOperand* /*args*/)
 {
     if (!context->VM()->TS1) return VMPrimitiveExitCode::GOTO_TRUE; // TSO: opcode 30 was "syslog" (no-op)
-    // TS1(sims): FreeSO VMGosubFoundAction.
-    auto active = context->Thread->ActiveAction();
-    if (active != nullptr) context->StackObject = active->Callee;
-    //if we're main, attempt to run a queued interaction. We just idle if this fails.
-    if (!context->ActionTree && context->Thread->AttemptPush()) {
-        return VMPrimitiveExitCode::CONTINUE; //control handover; when it ends we run again next tick (FreeSO)
-    }
-    return VMPrimitiveExitCode::GOTO_FALSE;
+    // DVD opcode30 executes the selection saved by opcode3. It neither takes
+    // a pending command nor repeats its permission/check tree.
+    return context->Thread->ExecuteTS1SelectedAction(context);
 }
 
 void VMGosubFoundActionOperand::Read(const uint8_t* /*bytes*/) { }

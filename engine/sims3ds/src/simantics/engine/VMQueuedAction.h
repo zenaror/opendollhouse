@@ -37,7 +37,8 @@ public:
     VMEntity* Callee = nullptr;
     VMEntity* StackObject = nullptr; //set to callee for interactions
 
-    VMEntity* IconOwner() const { return (_IconOwner == nullptr) ? Callee : _IconOwner; } //defaults to callee
+    bool HasHiddenIcon() const { return (Flags & FSO::Files::Formats::IFF::Chunks::TTABFlags::TS1HideQueueIcon) != 0; }
+    VMEntity* IconOwner() const { return HasHiddenIcon() ? nullptr : ((_IconOwner == nullptr) ? Callee : _IconOwner); } //defaults to callee
     void IconOwner(VMEntity* value) { _IconOwner = value; }
 
     FSO::Content::GameObject* CodeOwner = nullptr; //used to access local resources from BHAVs like strings
@@ -47,8 +48,8 @@ public:
     int32_t InteractionNumber = -1; //this interaction's number... This is needed for create object callbacks
                                     //for This Interaction but entry point functions don't have this...
                                     //suggests init and main don't use action queue.
-    /** FreeSims name kept (PORTING.md). TS1(sims): carries FreeSO's NotifyIdle semantics — "should this queue
-     ** item notify idle for input? (happens if priority is 0 or less than followups)" — set by VMThread's queue code. **/
+    /// TS1 record flag256: explicitly interrupted by the player (red X).
+    /// Input notification and forced head continuation are separate decisions.
     bool Cancelled = false;
     /// FIX(sims): queued by the player (pie menu). The TS1 'queue skip lower priority' rule in EnqueueAction leaves it.
     bool UserQueued = false;

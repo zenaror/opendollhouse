@@ -25,6 +25,12 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Corrected priority, waiting and cancellation in ordinary action queues.
+  Cancelling a pending command removes it; a running action finishes its cleanup.
+  Internal cancellation commands stay out of the player's action bar.
+- Loading an original-game queue no longer marks an action as cancelled merely
+  because another command has a higher priority. Saves retain the instruction's
+  waiting state in the existing continuation format.
 - Autonomous choices respect each Sim's action thresholds and rank needs
   without rounding. Action order, tied scores, species and burning-object
   checks follow the original rules in the corrected selection paths.

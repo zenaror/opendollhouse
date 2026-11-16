@@ -781,7 +781,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             for (size_t k = 0; k < np && k < f->Args.size(); k++) sf.Parameters[k] = f->Args[k];
             sf.Locals.assign(nl, 0);
             for (size_t k = 0; k < nl && k < f->Locals.size(); k++) sf.Locals[k] = f->Locals[k];
-            sf.PrimitiveState = 0;
+            sf.PrimitiveState = f->PrimitiveState;
             // FreeSO: CodeOwnerGUID = objt.Entries[frame.CodeOwnerObjType - 1].GUID
             const OBJD* owner = (f->CodeOwner && f->CodeOwner->OBJ) ? f->CodeOwner->OBJ : objd;
             sf.CodeOwnerObjType = (int16_t)typeOf(owner->GUID, owner);
@@ -927,7 +927,8 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                 r.Attenuation = 0;
                 int32_t fl = 0;
                 if ((a->Flags & TTABFlags::FSOPushHead) > 0) fl |= (int32_t)OBJMInteractionFlags::PushHeadContinuation;
-                if (a->Priority >= (int16_t)FSO::SimAntics::Engine::VMQueuePriority::UserDriven) fl |= (int32_t)OBJMInteractionFlags::UserInitiated;
+                if ((a->Flags & TTABFlags::TS1InheritActionName) > 0) fl |= (int32_t)OBJMInteractionFlags::CarryNameOver;
+                if (!a->HasHiddenIcon() && a->Priority >= (int16_t)FSO::SimAntics::Engine::VMQueuePriority::UserDriven) fl |= (int32_t)OBJMInteractionFlags::UserInitiated;
                 if (a->Cancelled) fl |= (int32_t)OBJMInteractionFlags::UserInterrupted; // FreeSO: NotifyIdle <- UserInterrupted
                 r.Flags = fl;
                 return r;

@@ -114,6 +114,12 @@ public:
 
     /// Checks to see if it can push an interaction, and pushes it. Returns true on success, false on failure.
     bool AttemptPush();
+    /// Execute opcode3's stored TS1 target/index without queue arbitration.
+    /// The existing queue still records the installed active action for UI/save.
+    VMPrimitiveExitCode ExecuteTS1SelectedAction(VMStackFrame* context);
+    /// Original person Idle For Input examines only the next pending record.
+    bool TS1ShouldNotifyIdle() const;
+    VMPrimitiveExitCode AttemptTS1Push(VMStackFrame* context);
     void TryRunImmediately();
     /// TS1(sims): FreeSO — go all the way back to the stack frame that Allow Push'd us.
     void AbortCurrentInteraction();
@@ -130,7 +136,7 @@ public:
     bool Push(std::shared_ptr<VMStackFrame> frame); // C# (FreeSO) returns false for empty routines
 
     /// Add an item to the action queue
-    void EnqueueAction(std::shared_ptr<VMQueuedAction> invocation);
+    bool EnqueueAction(std::shared_ptr<VMQueuedAction> invocation);
     void CancelAction(uint16_t actionUID);
 
     /// Returns null (nullptr) when the action is not allowed, otherwise the (possibly empty) list of action strings.

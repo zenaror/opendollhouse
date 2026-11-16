@@ -88,7 +88,7 @@ static void classicContract() {
   inst.Stack.push_back(frame(4096,1));
  }
  auto& personInst=*snapshot.ObjectData[20].Instance;personInst.HasPersonData=true;
- personInst.Stack.insert(personInst.Stack.begin(),frame(4097,0));personInst.Stack[0].Locals.clear();
+ personInst.Stack.insert(personInst.Stack.begin(),frame(4097,0));personInst.Stack[0].Locals.clear();personInst.Stack[0].PrimitiveState=1;
  auto& person=personInst.PersonData;
  person.ActiveInteraction.TTAIndex=0;person.ActiveInteraction.UID=65535;person.ActiveInteraction.TargetID=10;person.ActiveInteraction.ActionTreeID=4096;
  person.ActiveInteraction.Flags=int(OBJMInteractionFlags::UserInitiated);person.ActiveInteraction.Priority=50;
@@ -104,6 +104,7 @@ static void classicContract() {
  check(furniture.Thread->Stack[0]->StackObject==nullptr&&furniture.Thread->Stack[0]->StackObjectID()==32000,"classic scalar stack object survives without inventing a lot instance");
  check(actor.Thread->ActiveQueueBlock==0&&actor.Thread->Queue.size()==2&&actor.Thread->Queue[0]->UID==65535&&actor.Thread->Queue[1]->UID==0&&actor.Thread->ActionUID==1,"classic active and pending queues retain IDs with safe wraparound allocation");
  check(actor.Thread->Stack[1]->SpecialResult==VMSpecialResult::Interaction&&actor.Thread->Stack[1]->ActionTree&&actor.Thread->Stack[1]->Callee==&furniture&&actor.Thread->Queue[0]->UserQueued,"classic object use rebuilds actual interaction boundary and callee");
+ check(actor.Thread->Stack[0]->PrimitiveState==1,"classic original frame primitive state survives independently of ActionTree");
  printf("classic restored posture=%d users=%d motive_rate=%d\n",actor.GetPersonData(Model::VMPersonDataVariable::Posture),furniture.GetValue(Model::VMStackObjectVariable::UseCount),actor.GetMotiveChange(int(Model::VMMotive::Fun)).PerHourChange);
  check(actor.GetPersonData(Model::VMPersonDataVariable::Posture)==1,"classic posture survives without reset cleanup");
  check(furniture.GetValue(Model::VMStackObjectVariable::UseCount)==1,"classic object use is retained by restored action");
@@ -252,6 +253,47 @@ static void dialogContract() {
  rejects([&]{write(*actor.Thread,8);},"unsupported TSO async state remains rejected");
  actor.Thread->BlockingState.reset();actor.Thread->EODConnection=eod;
  rejects([&]{write(*actor.Thread,8);},"unsupported EOD connection remains rejected");
+ // The iconless standard cancellation action uses an existing saved flag,
+ // not an idle scheduling mode or a new ODHI field. Both accepted layouts
+ // must preserve the explicit null icon rather than invent a target portrait.
+ actor.Thread->EODConnection.reset();
+ auto hidden=std::make_shared<VMQueuedAction>();
+ hidden->Callee=hidden->StackObject=&actor;hidden->CodeOwner=&object;
+ hidden->ActionRoutine=vm.Assemble(dialog);hidden->Args.assign(4,0);
+ hidden->InteractionNumber=33;hidden->Priority=50;hidden->UID=123;
+ hidden->Flags=TTABFlags::TS1HideQueueIcon;hidden->Mode=VMQueueMode::Normal;
+ actor.Thread->Queue={hidden};actor.Thread->ActiveQueueBlock=-1;
+ for(uint32_t version:{uint32_t(7),uint32_t(8)}){
+  const auto encoded=write(*actor.Thread,version);auto loaded=read(encoded,version);
+  const auto action=loaded->Queue.at(0);
+  check(action->HasHiddenIcon()&&!action->IconOwner()&&!PersistedActionIcon(vm,*action)&&
+        action->Mode==VMQueueMode::Normal&&action->InteractionNumber==33&&action->Priority==50,
+        "iconless cleanup preserves ordinary scheduling and null icon through existing saved layout");
+  check(write(*loaded,version)==encoded,"iconless queue state writes back without layout drift");
+ }
+ hidden->Flags=TTABFlags(0);
+ check(hidden->IconOwner()==&actor,"ordinary missing custom icon retains target fallback");
+ actor.Thread->Queue.clear();
+ OBJT stateTypes;stateTypes.Entries.push_back(classicType(definition.GUID,23));
+ OBJM companion;companion.Decoded=true;auto& source=companion.ObjectData[10];source.Instance=std::make_shared<OBJMInstance>();source.Instance->OBJT=&stateTypes.Entries[0];
+ OBJMStackFrame sourceFrame;sourceFrame.TreeID=4096;sourceFrame.NodeID=0;sourceFrame.StackObjectID=10;sourceFrame.CodeOwnerObjType=23;
+ source.Instance->Stack={sourceFrame};
+ const auto unchangedBody=write(*actor.Thread,8);
+ for(int state:{0,1}){
+  actor.Thread->Stack[0]->PrimitiveState=state;
+  check(write(*actor.Thread,8)==unchangedBody,"primitive state does not change ODHI8 byte layout");
+  std::map<int16_t,Record> candidates;auto& candidate=candidates[10];candidate.entity=&actor;candidate.preparedThread=read(unchangedBody,8);
+  source.Instance->Stack[0].PrimitiveState=state;
+  st::Writer unused;Archive archive(unused);InteractionCheckpointCodec codec(vm,archive,8);
+  codec.preparePrimitiveStates(candidates,companion,&stateTypes);
+  check(candidate.preparedThread->Stack[0]->PrimitiveState==state,"matched classic companion restores exact zero/one primitive state");
+ }
+ source.Instance->Stack[0].TreeID=4999;
+ std::map<int16_t,Record> mismatched;auto& oldProjection=mismatched[10];oldProjection.entity=&actor;oldProjection.preparedThread=read(unchangedBody,8);
+ st::Writer ignored;Archive ignoredArchive(ignored);InteractionCheckpointCodec overlay(vm,ignoredArchive,8);
+ overlay.preparePrimitiveStates(mismatched,companion,&stateTypes);
+ check(oldProjection.preparedThread->Stack[0]->PrimitiveState==0&&oldProjection.preparedThread->Stack[0]->Routine->ID==4096,
+       "mismatched legacy classic projection never overlays a valid native execution graph");
  vm.Entities.clear();vm.ObjectsById.clear();
 }
 

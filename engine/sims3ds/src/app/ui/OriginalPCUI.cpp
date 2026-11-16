@@ -313,14 +313,16 @@ std::vector<odh_host::QueueTile> OriginalPCUI::QueueTiles(Avatar* a,int width,in
     if(!a||!a->Thread)return {};
     odh::InteractionQueueSnapshot snapshot{};snapshot.actor_id=a->ObjectID;snapshot.actor_generation=snapshot.run_generation=1;
     const auto& actions=a->Thread->Queue;
-    for(const auto& q:actions){odh::InteractionActionSnapshot item{};item.uid=q->UID;item.priority=q->Priority;item.notify_idle=q->Cancelled;
+    for(size_t index=0;index<actions.size();++index){const auto& q=actions[index];odh::InteractionActionSnapshot item{};item.uid=q->UID;item.priority=q->Priority;item.notify_idle=q->Cancelled;
         using M=FSO::SimAntics::Engine::VMQueueMode;
-        item.mode=q->Mode==M::Idle?odh::InteractionQueueMode::idle:q->Mode==M::ParentIdle?odh::InteractionQueueMode::parent_idle:q->Mode==M::ParentExit?odh::InteractionQueueMode::parent_exit:odh::InteractionQueueMode::normal;
+        item.mode=(index<size_t(std::max(0,int(a->Thread->ActiveQueueBlock)))||q->HasHiddenIcon()||q->Mode==M::Idle)?odh::InteractionQueueMode::idle:q->Mode==M::ParentIdle?odh::InteractionQueueMode::parent_idle:q->Mode==M::ParentExit?odh::InteractionQueueMode::parent_exit:odh::InteractionQueueMode::normal;
         snapshot.actions.push_back(item);
     }
     int active=a->Thread->ActiveQueueBlock;
     if(active>=0&&size_t(active)<actions.size())snapshot.active=odh::InteractionActiveSnapshot{actions[size_t(active)]->UID,0,{}};
-    return odh_host::original_queue_layout(snapshot,width,height,a->GetPersonData(FSO::SimAntics::Model::VMPersonDataVariable::Priority));
+    auto tiles=odh_host::original_queue_layout(snapshot,width,height,a->GetPersonData(FSO::SimAntics::Model::VMPersonDataVariable::Priority));
+    if(active>0)for(auto& tile:tiles)tile.active=tile.action_index==size_t(active);
+    return tiles;
 }
 void OriginalPCUI::DrawQueue(Canvas& c,Avatar* a){
     if(!a||!a->Thread)return;

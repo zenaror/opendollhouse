@@ -120,20 +120,8 @@ int VMFindBestAction::MotiveToWeight(int motive) {
 VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
     auto callerAvatar = dynamic_cast<VMAvatar*>(context->Caller);
     if (callerAvatar == nullptr) throw VMSimanticsException("Find Best Action: caller is not an avatar (invalid cast).", context);
-    auto thread = context->Caller->Thread.get();
-
-    //if we already have some action, do nothing
-    auto myPriority = callerAvatar->GetPersonData(VMPersonDataVariable::Priority);
-    for (auto& x : thread->Queue) {
-        if (x->Priority > myPriority) {
-            context->StackObject = x->Callee;
-            return VMPrimitiveExitCode::GOTO_TRUE;
-        }
-    }
-
-    // Preserve queued manual/script priorities above before consulting the
-    // player's free-will preference. Visitors and pets still choose normally
-    // (FreeSO Alex a3c6c5a, VMFindBestAction.Execute).
+    // DVD opcode3 selects an interaction; pending player commands are handled
+    // by Idle For Input, not substituted for an autonomous selection here.
     const auto personType = callerAvatar->GetPersonData(VMPersonDataVariable::PersonType);
     const bool visitor = personType != 0;
     if (!context->VM()->FreeWillEnabled && personType != 1 && !callerAvatar->IsPet())
@@ -349,18 +337,14 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
         return VMPrimitiveExitCode::GOTO_FALSE;
 
 
-    std::vector<int16_t> pushArgs = { selection.Param0, 0, 0, 0 };
-    auto qaction = selection.Callee->GetAction(selection.ID, context->Caller, context->VM()->Context, &pushArgs);
-    if (qaction != nullptr) {
-        qaction->Priority = (int16_t)VMQueuePriority::Autonomous;
-        if (!selection.Name.empty()) qaction->Name = selection.Name; // the chosen action string (e.g. "Talk.../Gossip")
-        context->Caller->Thread->EnqueueAction(qaction);
-        context->StackObject = selection.Callee;
-        if (context->VM()->OnAutonomyChoice) context->VM()->OnAutonomyChoice(context->Caller, sorted, selection); // sims diagnostic hook
-        return VMPrimitiveExitCode::GOTO_TRUE;
-    } else {
-        return VMPrimitiveExitCode::GOTO_FALSE;
-    }
+    // DVD 0045e3e8 stores only the TTAB index and frame target. Scripts can
+    // reset the idle pose before opcode30 resolves and executes the action.
+    // Both fields are already part of the classic and native saved state.
+    caller->SetValue(VMStackObjectVariable::TreeTableEntry, static_cast<int16_t>(selection.ID));
+    context->StackObject = selection.Callee;
+    context->StackObjectRawID = selection.Callee->ObjectID;
+    if (context->VM()->OnAutonomyChoice) context->VM()->OnAutonomyChoice(context->Caller, sorted, selection);
+    return VMPrimitiveExitCode::GOTO_TRUE;
 }
 
 VMPrimitiveExitCode VMFindBestAction::Execute(VMStackFrame* context, VMPrimitiveOperand* /*args*/) {

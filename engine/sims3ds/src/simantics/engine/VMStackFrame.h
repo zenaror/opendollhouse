@@ -58,6 +58,9 @@ public:
      ** Set by "idle for input, allow push", when an interaction is selected.
      ** Used to stop recursive interactions, is only false when within "main". **/
     bool ActionTree = false;
+    /// Original frame state (+8); Idle For Input sets 1 while retrying after
+    /// a pushed child. Independent of belonging to an interaction tree.
+    int32_t PrimitiveState = 0;
 
     /** Used to get strings and other resources (for primitives) from the code owner, as it may not be the callee but instead a semiglobal or global. **/
     FSO::Content::GameIffResource* ScopeResource() const { return CodeOwner->Resource; }

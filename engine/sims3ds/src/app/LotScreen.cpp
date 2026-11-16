@@ -1202,6 +1202,7 @@ void LotScreen::DrawQueueTop(VMAvatar* sim) {
     int x = Desktop ? 8 : 4, shown = 0;bool seenParent=false;
     for (size_t i = 0; i < sim->Thread->Queue.size() && shown < 8; i++) {
         auto& a = sim->Thread->Queue[i];
+        if (int(i) < sim->Thread->ActiveQueueBlock || a->HasHiddenIcon()) continue;
         if(Desktop) {
             if(a->Mode==Engine::VMQueueMode::Idle || (i && a->Mode==Engine::VMQueueMode::ParentExit))continue;
             if(a->Mode==Engine::VMQueueMode::ParentIdle) {if(seenParent)continue;seenParent=true;}

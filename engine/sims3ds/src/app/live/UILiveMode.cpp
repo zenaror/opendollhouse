@@ -314,6 +314,7 @@ void UILiveMode::DrawQueue(Canvas& c, const Rect& r, VMAvatar* sim) {
     int y = r.Y + 2;
     for (size_t i = 0; i < sim->Thread->Queue.size() && _QueueUIDs.size() < 3; i++) {
         auto& a = sim->Thread->Queue[i];
+        if (int(i) < sim->Thread->ActiveQueueBlock || a->HasHiddenIcon()) continue;
         if (a->Mode == Engine::VMQueueMode::ParentExit || a->Mode == Engine::VMQueueMode::Idle) continue;
         Rect qr(r.X + (r.W - slot) / 2, y, slot, slot);
         bool active = _QueueUIDs.empty();

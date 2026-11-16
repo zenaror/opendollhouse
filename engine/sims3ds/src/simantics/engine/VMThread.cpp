@@ -9,6 +9,7 @@
 
 #include "simantics/engine/VMTS1Neighbourhood.h"
 #include "files/formats/iff/chunks/FAMI.h"
+#include "content/TS1NeighbourProvider.h"
 #include <algorithm>
 #include "simantics/engine/VMThread.h"
 #include "simantics/engine/VMRoutingFrame.h"
@@ -141,6 +142,10 @@ VMThread::VMThread(VMContext* context, VMEntity* entity, int32_t stackSize) {
 // Priority). Interactions that fail their check are dropped. FreeSims always took Queue[0].
 bool VMThread::AttemptPush() {
     auto avatar = dynamic_cast<VMAvatar*>(Entity);
+    if (Context->VM->TS1 && avatar != nullptr) {
+        if (!TS1ShouldNotifyIdle()) return false;
+        return AttemptTS1Push(Stack.empty() ? nullptr : Stack.back().get()) == VMPrimitiveExitCode::CONTINUE;
+    }
     int32_t priorityCompare = (avatar == nullptr) ? 0 : avatar->GetPersonData(VMPersonDataVariable::Priority);
     if (priorityCompare <= 2) priorityCompare -= 1; //autonomous interactions fall through to other ones
     QueueDirty = true;
@@ -158,6 +163,106 @@ bool VMThread::AttemptPush() {
         }
     }
     return false;
+}
+
+// DVD 0045d92c. The native queue retains active records before its pending
+// records; only the first pending record represents the original ring front.
+bool VMThread::TS1ShouldNotifyIdle() const {
+    const auto avatar = dynamic_cast<VMAvatar*>(Entity);
+    if (!avatar || avatar->GetPersonData(VMPersonDataVariable::NonInterruptable) != 0) return false;
+    const auto next = size_t(ActiveQueueBlock + 1);
+    if (next < Queue.size() && Queue[next] &&
+        (Queue[next]->Priority > avatar->GetPersonData(VMPersonDataVariable::Priority) ||
+         (Queue[next]->Flags & TTABFlags::FSOPushHead) != 0)) return true;
+    const auto lot = Context->VM->GetGlobalValue(10);
+    bool residential = lot == 0;
+    if (lot != 0) {
+        auto hood = FSO::Content::Content::Get()->Neighborhood.get();
+        if (hood) {
+            const auto zone = hood->ZoningDictionary.find(lot);
+            residential = zone != hood->ZoningDictionary.end() && zone->second == 0;
+        }
+    }
+    return residential && avatar->GetPersonData(VMPersonDataVariable::PersonType) < 2 &&
+        (avatar->GetMotiveDataFloat(VMMotive::Hunger) < -99.0f ||
+         avatar->GetMotiveDataFloat(VMMotive::Bladder) < -99.0f ||
+         (avatar->GetMotiveDataFloat(VMMotive::Energy) < -99.0f &&
+          avatar->GetPersonData(VMPersonDataVariable::Gender) <= 1));
+}
+
+VMPrimitiveExitCode VMThread::AttemptTS1Push(VMStackFrame* context) {
+    const auto next = size_t(ActiveQueueBlock + 1);
+    if (next >= Queue.size()) return VMPrimitiveExitCode::GOTO_TRUE;
+    const auto action = Queue[next];
+    if (context && context->PrimitiveState == 1 && (action->Flags & TTABFlags::FSOPushHead) == 0)
+        return VMPrimitiveExitCode::GOTO_TRUE;
+    // A failed front record is discarded for this tick, not followed by a
+    // synchronous scan of every later item. The original retries opcode17.
+    Queue.erase(Queue.begin() + next);
+    QueueDirty = true;
+    bool available = true;
+    if (action->Mode == VMQueueMode::Normal && action->InteractionNumber >= 0 && action->Callee && !action->Callee->Dead) {
+        auto authored = action->Callee->GetAction(action->InteractionNumber, Entity, Context);
+        available = bool(authored);
+        if (authored) {
+            action->CheckRoutine = authored->CheckRoutine;
+            const auto runtime = action->Flags & (TTABFlags::FSOPushHead | TTABFlags::FSOPushTail |
+                TTABFlags::FSODirectControl | TTABFlags::TS1HideQueueIcon | TTABFlags::TS1InheritActionName);
+            action->Flags = authored->Flags | static_cast<TTABFlags>(runtime);
+            action->Flags2 = authored->Flags2;
+        }
+    }
+    if (!available || !action->Callee || action->Callee->Dead || !action->ActionRoutine ||
+        action->ActionRoutine->Instructions.empty() || CheckAction(action) == nullptr || !ExecuteAction(action)) {
+        if (action->Callee && !action->Callee->Dead)
+            action->Callee->ExecuteEntryPoint(4, Context, true, Entity);
+        return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    }
+    Queue.insert(Queue.begin() + next, action);
+    ++ActiveQueueBlock;
+    Entity->SetFlag(VMEntityFlags::InteractionCanceled, false);
+    if (context) {
+        context->PrimitiveState = 1;
+        context->StackObject = action->Callee;
+        context->StackObjectRawID = action->Callee->ObjectID;
+    }
+    return VMPrimitiveExitCode::CONTINUE;
+}
+
+// DVD 0045a9c5 / 0045e707: Gosub Found Action resolves the selected entry
+// afresh and starts its action function. It does not re-run its test function,
+// transfer a dynamic-menu parameter or reorder pending player commands.
+VMPrimitiveExitCode VMThread::ExecuteTS1SelectedAction(VMStackFrame* context) {
+    const auto targetID = context->StackObjectID();
+    if (targetID == 0) throw VMSimanticsException("Gosub Found Action: no selected object", context);
+    auto target = Context->VM->GetObjectById(targetID);
+    if (target == nullptr || target->Dead || target->TreeTable == nullptr) return VMPrimitiveExitCode::GOTO_FALSE;
+    const auto index = Entity->GetValue(VMStackObjectVariable::TreeTableEntry);
+    const auto found = target->TreeTable->InteractionByIndex.find(uint32_t(int32_t(index)));
+    if (found == target->TreeTable->InteractionByIndex.end())
+        throw VMSimanticsException("Gosub Found Action: selected interaction is unavailable", context);
+    const auto entry = found->second;
+    auto tree = target->GetBHAVWithOwner(entry->ActionFunction, Context);
+    if (tree == nullptr || tree->bhav == nullptr) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    auto action = std::make_shared<VMQueuedAction>();
+    action->Callee = action->StackObject = target;
+    action->CodeOwner = tree->owner;
+    action->ActionRoutine = Context->VM->Assemble(tree->bhav);
+    action->Args.assign(4, 0);
+    action->InteractionNumber = index;
+    action->Priority = int16_t(VMQueuePriority::Autonomous);
+    // This invocation came directly from opcode30, not the special enqueue
+    // path. A TTAB immediate flag must not change its child-return policy.
+    action->Flags = static_cast<TTABFlags>(entry->Flags & ~TTABFlags::RunImmediately);
+    action->Flags2 = entry->Flags2;
+    if (target->TreeTableStrings) action->Name = target->TreeTableStrings->GetString(index);
+    if (!action->ActionRoutine || action->ActionRoutine->Instructions.empty() || !ExecuteAction(action))
+        return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    action->UID = ActionUID++;
+    Queue.insert(Queue.begin() + (ActiveQueueBlock + 1), action);
+    ++ActiveQueueBlock;
+    QueueDirty = true;
+    return VMPrimitiveExitCode::CONTINUE;
 }
 
 // TS1(sims): FreeSO VMThread.TryRunImmediately.
@@ -344,6 +449,17 @@ void VMThread::Tick(int32_t instructionBudget, bool resetOnError) {
 // Priority, and only for the items after the active queue block.
 void VMThread::EvaluateQueuePriorities() {
     if (ActiveQueueBlock == -1 || ActiveQueueBlock >= (int)Queue.size()) return;
+    if (Context->VM->TS1 && dynamic_cast<VMAvatar*>(Entity)) {
+        // The red X is record flag256, set by cancellation, not by a higher
+        // pending priority. Keep the existing routing adapter notified without
+        // conflating its flag with the original saved cancellation state.
+        for (int i = ActiveQueueBlock + 1; i < int(Queue.size()); ) {
+            if (!Queue[i]->Callee || Queue[i]->Callee->Dead) Queue.erase(Queue.begin() + i);
+            else ++i;
+        }
+        Entity->SetFlag(VMEntityFlags::InteractionCanceled, TS1ShouldNotifyIdle());
+        return;
+    }
     auto active = Queue[ActiveQueueBlock];
     auto avatar = dynamic_cast<VMAvatar*>(Entity);
     int32_t CurrentPriority = (avatar == nullptr) ? active->Priority : (int32_t)avatar->GetPersonData(VMPersonDataVariable::Priority);
@@ -530,6 +646,9 @@ void VMThread::MoveToInstruction(VMStackFrame* frame, uint8_t instruction, bool 
         return;
     }
 
+    // DVD 00474e97 clears primitive state on a completed instruction branch,
+    // while CONTINUE/next-tick retries retain it.
+    if (Context->VM->TS1) frame->PrimitiveState = 0;
     // A return can unwind an interaction and request a yield from Pop.
     // Seed the branch policy before dispatch, as in both pinned FreeSO versions.
     ContinueExecution = continueExecution;
@@ -584,9 +703,15 @@ void VMThread::Pop(VMPrimitiveExitCode result) {
     {
         auto interaction = ActiveAction();
         EndCurrentInteraction();
-        // FreeSO (VMTS1ActivatorNew notes): "Gosub found action and idle for input will ignore results from
-        // interactions" — the calling primitive runs again next tick.
-        result = (interaction == nullptr || (interaction->Flags & TTABFlags::RunImmediately) == 0) ? VMPrimitiveExitCode::CONTINUE_NEXT_TICK : VMPrimitiveExitCode::CONTINUE;
+        // DVD 00474cae advances a Gosub Found Action parent by the child's
+        // result. Idle For Input marks a retrying parent and ignores that result.
+        // PrimitiveState is carried by the existing classic frame companion.
+        const bool originalParent = Context->VM->TS1 && !Stack.empty() &&
+            !Stack.back()->IsRoutingFrame() &&
+            (interaction == nullptr || (interaction->Flags & TTABFlags::RunImmediately) == 0);
+        if (!originalParent || Stack.back()->PrimitiveState != 0)
+            result = (interaction == nullptr || (interaction->Flags & TTABFlags::RunImmediately) == 0)
+                ? VMPrimitiveExitCode::CONTINUE_NEXT_TICK : VMPrimitiveExitCode::CONTINUE;
     } else if (discardResult == VMSpecialResult::Retry) {
         result = VMPrimitiveExitCode::CONTINUE;
     }
@@ -620,7 +745,7 @@ bool VMThread::Push(std::shared_ptr<VMStackFrame> frame) {
 
 /// Add an item to the action queue
 // TS1(sims): FreeSO VMThread.EnqueueAction (TS1: no leapfrog, queue skip of lower priority items).
-void VMThread::EnqueueAction(std::shared_ptr<VMQueuedAction> invocation) {
+bool VMThread::EnqueueAction(std::shared_ptr<VMQueuedAction> invocation) {
     invocation->UID = ActionUID++;
     QueueDirty = true;
     if (!IsCheck && (invocation->Flags & TTABFlags::RunImmediately) > 0) {
@@ -634,7 +759,51 @@ void VMThread::EnqueueAction(std::shared_ptr<VMQueuedAction> invocation) {
         invocation->Mode = VMQueueMode::Idle; //hide
         //invocation.Priority = short.MinValue; (FreeSO; FreeSims set it)
         this->Queue.push_back(invocation);
-        return;
+        return true;
+    }
+    // DVD 0045d377 keeps an eight-record pending ring. These are ordinary
+    // original records; legacy generated parent modes keep their adapter below.
+    const size_t pending = size_t(ActiveQueueBlock + 1);
+    const bool ordinary = invocation->Mode == VMQueueMode::Normal &&
+        std::all_of(Queue.begin() + pending, Queue.end(), [](const auto& action) {
+            return action && action->Mode == VMQueueMode::Normal;
+        });
+    if (Context->VM->TS1 && ordinary) {
+        const auto count = Queue.size() - pending;
+        const bool forced = (invocation->Flags & TTABFlags::FSOPushHead) != 0;
+        if ((invocation->Flags & TTABFlags::TS1InheritActionName) != 0 && forced) {
+            if (const auto active = ActiveAction()) invocation->Name = active->Name;
+        }
+        if (forced) {
+            // The original's full-ring continuation path retains only six
+            // old records alongside the new head (seven total), without the
+            // ordinary skipped-entry notifications.
+            if (count >= 8) Queue.erase(Queue.begin() + pending + 6, Queue.end());
+            Queue.insert(Queue.begin() + pending, invocation);
+        } else {
+            auto position = Queue.size();
+            while (position > pending && Queue[position - 1]->Priority < invocation->Priority) --position;
+            std::vector<std::shared_ptr<VMQueuedAction>> prefix(Queue.begin() + pending, Queue.begin() + position);
+            std::vector<VMQueuedAction> saved;
+            for (const auto& action : prefix) saved.push_back(*action);
+            // Notifications run synchronously against the old live ring. A
+            // callback may mutate it; reacquire each item by index. Restore the
+            // copied prefix only afterwards, as in the original ring rebuild.
+            for (size_t i = position; i < Queue.size(); ++i) {
+                const auto action = Queue[i];
+                if (action->Callee && !action->Callee->Dead)
+                    action->Callee->ExecuteEntryPoint(4, Context, true, Entity);
+            }
+            Queue.resize(std::min(Queue.size(), size_t(ActiveQueueBlock + 1)));
+            for (size_t i = 0; i < prefix.size(); ++i) {
+                *prefix[i] = saved[i];
+                Queue.push_back(prefix[i]);
+            }
+            if (Queue.size() - size_t(ActiveQueueBlock + 1) >= 8) return false;
+            Queue.push_back(invocation);
+        }
+        EvaluateQueuePriorities();
+        return true;
     }
     auto leapfrog = Context->VM->TS1 ? (TTABFlags)0 : TTABFlags::Leapfrog;
 
@@ -650,7 +819,7 @@ void VMThread::EnqueueAction(std::shared_ptr<VMQueuedAction> invocation) {
             {
                 this->Queue.insert(Queue.begin() + i, invocation); //insert before this. will come before parent exit and pals.
                 EvaluateQueuePriorities();
-                return;
+                return true;
             }
         }
         this->Queue.push_back(invocation); //right at the end! (somehow)
@@ -676,13 +845,14 @@ void VMThread::EnqueueAction(std::shared_ptr<VMQueuedAction> invocation) {
                     }
                 }
                 EvaluateQueuePriorities();
-                return;
+                return true;
             }
             if (Queue[i]->Mode == VMQueueMode::ParentExit) hitParentEnd = true;
         }
         this->Queue.insert(Queue.begin() + std::min((size_t)(ActiveQueueBlock + 1), Queue.size()), invocation); //this is more important than all other queued items that are not running, so stick this to run next.
     }
     EvaluateQueuePriorities();
+    return true;
 }
 
 // TS1(sims): FreeSO VMThread.CancelAction (TS1 runs the callee's "queue skipped" entry point, 4).
@@ -692,6 +862,45 @@ void VMThread::CancelAction(uint16_t actionUID) {
     for (size_t i = 0; i < Queue.size(); i++) if (Queue[i]->UID == actionUID) { interaction = Queue[i]; index = (int)i; break; }
     if (interaction != nullptr) {
         QueueDirty = true;
+        if (Context->VM->TS1 && interaction->Mode == VMQueueMode::Normal) {
+            if (index > ActiveQueueBlock) {
+                std::vector<std::shared_ptr<VMQueuedAction>> kept;
+                std::vector<VMQueuedAction> saved;
+                for (size_t i = size_t(ActiveQueueBlock + 1); i < Queue.size(); ++i) {
+                    const auto item = Queue[i];
+                    if (item->UID == actionUID) {
+                        if (item->Callee && !item->Callee->Dead)
+                            item->Callee->ExecuteEntryPoint(4, Context, true, Entity);
+                    } else {
+                        kept.push_back(item);
+                        saved.push_back(*item);
+                    }
+                }
+                Queue.resize(std::min(Queue.size(), size_t(ActiveQueueBlock + 1)));
+                for (size_t i = 0; i < kept.size(); ++i) {
+                    *kept[i] = saved[i];
+                    Queue.push_back(kept[i]);
+                }
+            } else {
+                interaction->Cancelled = true;
+                // DVD 0045d764 leaves the active record priority unchanged.
+                // Lower the current priority and request the authored cleanup
+                // action when no pending record already wakes Idle For Input.
+                if (auto avatar = dynamic_cast<VMAvatar*>(Entity))
+                    avatar->SetPersonData(VMPersonDataVariable::Priority, 0);
+                Entity->SetFlag(VMEntityFlags::InteractionCanceled, true); // routing adapter
+                if (!TS1ShouldNotifyIdle()) {
+                    auto cancel = Entity->GetAction(33, Entity, Context);
+                    if (cancel) {
+                        cancel->Args.assign(4, 0);
+                        cancel->Priority = int16_t(VMQueuePriority::UserDriven);
+                        cancel->Flags |= TTABFlags::TS1HideQueueIcon;
+                        EnqueueAction(cancel);
+                    }
+                }
+            }
+            return;
+        }
         interaction->Cancelled = true;
         //cancel any idle parents after this interaction
 
@@ -738,6 +947,7 @@ bool VMThread::ExecuteAction(std::shared_ptr<VMQueuedAction> action) {
 // TS1(sims): FreeSO VMThread.CheckTS1Action.
 std::unique_ptr<std::vector<VMPieMenuInteraction>> VMThread::CheckTS1Action(std::shared_ptr<VMQueuedAction> action, bool autonomous) {
     std::unique_ptr<std::vector<VMPieMenuInteraction>> result(new std::vector<VMPieMenuInteraction>());
+    if (!action->Callee || action->Callee->Dead || action->Callee->GetFlag(VMEntityFlags::Burning)) return nullptr;
 
     auto avatar = dynamic_cast<VMAvatar*>(Entity);
     if (avatar != nullptr && (action->Flags & TTABFlags::FSOSkipPermissions) == 0) //just let everyone use the CSR interactions

@@ -20,7 +20,8 @@ public:
     void DrawPauseLabel(Canvas&,const std::string& rawCaption);
     void DrawPortrait(Canvas&,odh::UiBitmapRect,bool selected,FSO::SimAntics::VMAvatar*);
     const Canvas* Face(FSO::SimAntics::VMAvatar*,int frame=0);
-    std::vector<odh_host::QueueTile> QueueTiles(FSO::SimAntics::VMAvatar*,int width,int height);
+    // Queue identities and layout need no decoded UI artwork.
+    static std::vector<odh_host::QueueTile> QueueTiles(FSO::SimAntics::VMAvatar*,int width,int height);
     void DrawQueue(Canvas&,FSO::SimAntics::VMAvatar*);
     void DrawPieHead(Canvas&,FSO::SimAntics::VMAvatar*,
         std::array<std::int32_t,2> center,std::array<std::int32_t,2> target);

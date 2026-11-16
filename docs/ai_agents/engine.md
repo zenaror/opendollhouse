@@ -80,10 +80,28 @@ role are separate fields; a family pet does not become human because its role
 is zero. Likewise, an object burning and an object being in use are different
 flags. Authored checks decide whether an in-use object admits an interaction.
 
-The native action queue remains an adapter around selection and execution.
-Matching the chooser does not establish original cancellation or interruption
-timing. Queue changes need checks of player input, action handover, saving and
-continuation, including actions that are already running.
+Selection and execution are separate. `Find Best Action` stores the selected
+interaction in ObjectData `TreeTableEntry` and its target in the stack frame.
+`Gosub Found Action` executes that selection and returns the action's result.
+It does not take the next player command or repeat the interaction's test.
+`Idle For Input` checks the first pending command before handing control to it.
+
+Each frame also has a `PrimitiveState`. An idle instruction that resumes after
+a nested action is different from a newly entered idle instruction. This state
+must not be inferred from `ActionTree`, which describes general action
+membership. The classic `ObjM` stack record already has a field for it.
+
+Cancelling a pending command removes it and notifies its target. Cancelling the
+active command leaves the action available for authored cleanup. When necessary,
+the original person scripts supply an internal cancellation action; it must not
+appear as an extra player command. Keep UI indices and UIDs connected to the
+actual queue even when internal or suspended actions are hidden.
+
+The native queue still adapts original records to nested engine frames. Queue
+changes need checks of player input, action handover, saving and continuation,
+including actions that are already running. Matching the chooser or passing an
+isolated queue test does not establish original interruption timing in every
+situation.
 
 ## Handheld rendering and file access
 

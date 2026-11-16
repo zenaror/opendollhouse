@@ -45,6 +45,10 @@ enum class TTABFlags : int32_t
     // TS1AllowDogs in The Sims 1 data).
     FSOSkipPermissions = 1 << 28,
     FSODirectControl = 1 << 27,
+    // Runtime adapter only, never an authored TS1 TTAB bit. The original can
+    // queue an iconless cleanup action; preserve it in the existing saved flags.
+    TS1HideQueueIcon = 1 << 26,
+    TS1InheritActionName = 1 << 25, // original record flag64; runtime adapter
 };
 FSO_FLAGS_ENUM(TTABFlags)
 
