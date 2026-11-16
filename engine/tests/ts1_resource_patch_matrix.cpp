@@ -120,5 +120,55 @@ int main(int argc,char**argv){try{require(argc==2||argc==3,"usage: matrix NEW_PR
  for(auto ext:{".wll",".flr"})test(std::string("wallfloor-cold-warm-overlay-clear-")+ext,[&]{auto coldList=TS1ExpansionContent::ListArchiveItems(c,ext);require(coldList.size()==1&&coldList[0].Name=="selected"&&coldList[0].Price==23,"cold overlay");auto cacheBytes=read(cache/(std::string("wallfloor")+std::string(ext).substr(1)+".cache"));auto warm=TS1ExpansionContent::ListArchiveItems(c,ext);require(warm[0].Name=="selected","warm overlay");auto iff=TS1ExpansionContent::LoadArchiveIff(c,TS1ExpansionContent::MakeReference(warm[0]));require(iff->Get<STR>(0)->GetString(0)==warm[0].Name,"lazy selected resource");iff.reset();PIFFRegistry::Init("");auto unselected=TS1ExpansionContent::ListArchiveItems(c,ext);require(unselected[0].Name=="base"&&unselected[0].Price==10,"clear restores base");require(read(cache/(std::string("wallfloor")+std::string(ext).substr(1)+".cache"))==cacheBytes,"base cache polluted");PIFFRegistry::Init(patches.string());});
  test("loose-index-final-load-override-new-GUID",[&]{auto loose=raw();loose.Set("OBJD",1,obj(500));bytes(data/"Downloads/loose.iff",loose.Write());patch(patches/"loose.piff","loose.iff",{},2,{donor("OBJD",2,obj(900))});setup(true);require(c->WorldObjects->Get(uint32_t(900),true)&&c->WorldObjects->Get(uint32_t(500),true),"loose selected added GUID");require(c->WorldObjects->Entries.at(500).Source==FSO::Content::GameObjectSource::Standalone,"loose override");});
  test("final-object-OTF-unavailable-visible-and-unrelated-negative",[&]{setup(true);fs::remove(patches/"same.otf");rejects([&]{c->WorldObjects->Get(uint32_t(300),true);},"missing selected object OTF");auto f=raw();f.Set("STR#",0,base);IffFile unrelated;unrelated.Read(f.Write());unrelated.SetFilename("unrelated.iff");require(unrelated.Get<STR>(0)->GetString(0)=="base","unrelated resource patched");});
+ test("NPC costume and localized name, character file and patch", [&] {
+  const fs::path install = root / "npc-install", npcCache = root / "npc-cache";
+  fs::create_directories(npcCache);
+  auto stringsFor = [](const std::string& portugueseBody) {
+   st::Writer w(st::Endian::Little);
+   w.WriteInt16(-3); w.WriteUInt16(24);
+   for (const int language : {1, 14}) {
+    for (int i = 0; i < 12; ++i) {
+     w.WriteByte(language);
+     std::string value;
+     if (i == 1) value = language == 1 ? "authored-costume" : portugueseBody;
+     if (i == 11) value = language == 1 ? "Mystery" : "Misterio";
+     w.WriteNullTerminatedString(value); w.WriteByte(0);
+    }
+   }
+   return w.ToArray();
+  };
+  auto npc = raw();
+  npc.Set("OBJD", 1, obj(0xabad00, true)); // synthetic OBJD uses BodyStringID zero
+  const auto packaged = stringsFor("unused-template");
+  npc.Set("STR#", 0, packaged);
+  far(install / "ExpansionPack7/ExpansionPack7.far", {{"actor.iff", npc.Write()}});
+  c->SimsCompleteDir = install.string();
+  c->CacheDir = npcCache.string();
+  STR::DefaultLangCode = STRLangCode::Portuguese;
+  PIFFRegistry::Init("");
+  auto load = [&] {
+   auto* actor = c->WorldObjects->Get(uint32_t(0xabad00), true);
+   require(actor != nullptr, "missing NPC fixture");
+   return actor->Resource->Get<STR>(actor->OBJ->BodyStringID);
+  };
+  c->WorldObjects->Init(false);
+  auto* body = load();
+  require(body && body->GetString(1) == "authored-costume" && body->GetString(11) == "Misterio", "base NPC outfit or localized name lost");
+  require(body->GetString(1, STRLangCode::Portuguese) == "unused-template", "original resource row changed");
+  const auto custom = stringsFor("custom-costume");
+  auto dir = root / "npc-patch";
+  patch(dir / "actor.piff", "actor.iff", {replace("STR#", 0, packaged, custom)});
+  PIFFRegistry::Init(dir.string());
+  c->WorldObjects->Init(false);
+  require(load()->GetString(1) == "custom-costume", "localized PIFF override lost");
+  PIFFRegistry::Init("");
+  c->WorldObjects->Init(false);
+  npc.Set("STR#", 0, stringsFor("saved-costume"));
+  auto personal = root / "UserData/Characters/User00001.iff";
+  bytes(personal, npc.Write());
+  c->WorldObjects->AddStandaloneIff(personal.string(), true, true);
+  require(load()->GetString(1) == "saved-costume", "character file costume lost");
+  STR::DefaultLangCode = STRLangCode::EnglishUS;
+ });
  PIFFRegistry::Init("");std::cout<<"MATRIX_COMPLETE cases="<<cases<<" fixtures-only\n";return 0;
  }catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<"\n";return 1;}}

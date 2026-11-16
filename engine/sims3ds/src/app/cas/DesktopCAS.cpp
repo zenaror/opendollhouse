@@ -21,13 +21,12 @@ const uint32_t Label=RGBA(187,198,195),Disabled=RGBA(62,89,86);
 #ifndef __3DS__
 struct OriginalCASDialog {
     odh::DialogState State;
-    original::DialogArt Skin;
     odh_host::VmDialogAppearance Appearance;
     OriginalCASDialog(const std::string& title,const std::string& message,const std::vector<std::string>& labels){
         State.prompt.title=original::UIString(title);State.prompt.message=original::UIString(message);
         State.instruction.operands[5]=labels.size()==1?0:labels.size()==2?1:2;
         if(!labels.empty())State.prompt.yes=original::UIString(labels[0]);if(labels.size()>1)State.prompt.no=original::UIString(labels[1]);if(labels.size()>2)State.prompt.cancel=original::UIString(labels[2]);
-        Appearance=Skin.appearance;
+        Appearance=original::DialogAppearance();
         if(!labels.empty())Appearance.ok=State.prompt.yes;
     }
 };
@@ -211,8 +210,11 @@ void CASScreen::DrawDesktop(Canvas& c) {
         OriginalCASDialog presentation(_Dialog.Title,_Dialog.Text,_Dialog.Buttons);
         if(_MouseX>=0&&_MouseY>=0)presentation.Appearance.response_pointer=std::array<int,2>{{_MouseX,_MouseY}};
         if(_Touching&&_Pressed.compare(0,3,"dlg")==0)presentation.Appearance.pressed_response=std::size_t(std::atoi(_Pressed.c_str()+3));
-        auto frame=original::Raster(c);auto result=odh_host::draw_vm_dialog(frame,presentation.State,original::TextLanguage(),_DialogFirstLine,presentation.Appearance);
-        _DialogFirstLine=std::min(_DialogFirstLine,int(result.max_first_line));original::Copy(frame,c);
+        const auto layout=odh_host::vm_message_dialog_layout(c.Width,c.Height,presentation.State,original::TextLanguage(),presentation.Appearance);
+        if(layout){
+            const auto result=original::PaintDialog(c,presentation.State,original::TextLanguage(),_DialogFirstLine,presentation.Appearance,*layout);
+            _DialogFirstLine=std::min(_DialogFirstLine,int(result.max_first_line));
+        }
     }
 #endif
 }

@@ -72,6 +72,7 @@ public:
     // Read provenance only. Personal text distinguishes UTF-8 formats from
     // language-tagged legacy bytes without guessing from their characters.
     int16_t SourceFormat = -3;
+    bool UseBaseNpcAppearance = false;
 
     STR();
 

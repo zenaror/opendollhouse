@@ -102,6 +102,11 @@ struct FamilyPickerPresentation {
         const std::string& localized_action,const std::string& localized_archive,const std::string& localized_cancel,
         const std::string& localized_no_family_title,const std::string& localized_no_family_message,
         const NeighborhoodPortraitProvider&)const;
+    // Paint only UI colors into an existing 800x600 surface; no depth buffer is needed.
+    void draw_color(odh::RasterFrame&,const OriginalUiArt*,std::uint8_t language,const std::string& localized_title,
+        const std::string& localized_action,const std::string& localized_archive,const std::string& localized_cancel,
+        const std::string& localized_no_family_title,const std::string& localized_no_family_message,
+        const NeighborhoodPortraitProvider&)const;
 };
 } // namespace odh_host
 

@@ -9,6 +9,7 @@
 #include "app/front/TS1Font.h"
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 #ifndef __3DS__
 #include "neighborhood_presentation.hpp"
 #include "original_ui_art.hpp"
@@ -23,10 +24,40 @@ namespace simapp { namespace front {
 
 
 #ifndef __3DS__
+// Only retain the visible rows. Exported families can reuse a resident's GUID,
+// so equality includes the actual portrait for that row, not just its ID.
+struct PaintedFamilyRow {
+    using Fields=std::tuple<int,std::string,uint8_t,bool,bool,int,int,int,int>;
+    Fields fields;
+    std::vector<std::pair<uint32_t,Canvas>> portraits;
+
+    static auto values(const FamilyInfo& row){
+        return std::tie(row.ChunkID,row.Name,row.SourceLanguage,row.TextUTF8,row.TextAmbiguous,
+                        row.Budget,row.NetWorth,row.Friends,row.MagiCoins);
+    }
+    explicit PaintedFamilyRow(const FamilyInfo& row):fields(values(row)){
+        for(const auto& member:row.Members)portraits.emplace_back(member.GUID,member.Face);
+    }
+    bool matches(const FamilyInfo& row)const{
+        if(fields!=values(row) || portraits.size()!=row.Members.size())return false;
+        for(std::size_t i=0;i<portraits.size();++i){
+            const auto& face=portraits[i].second;
+            const auto& member=row.Members[i];
+            if(portraits[i].first!=member.GUID || face.Width!=member.Face.Width ||
+               face.Height!=member.Face.Height || face.Px!=member.Face.Px)return false;
+        }
+        return true;
+    }
+};
 struct FamilyPicker::DesktopPresentation {
     odh_host::FamilyPickerPresentation View;
     std::vector<odh::FamilyEntry> Families;
     odh::BitmapImage Portrait{};
+    std::vector<PaintedFamilyRow> Rows;
+    using Page=std::tuple<int,int,std::size_t,uint8_t,bool,bool,bool,bool>;
+    std::optional<Page> PaintedPage;
+    std::optional<std::size_t> Hover,Press;
+    odh::RasterFrame Surface{};
     std::unique_ptr<odh_host::OriginalUiArt> Art;
 };
 void FamilyPicker::SyncDesktopPresentation() {
@@ -111,9 +142,12 @@ void FamilyPicker::LoadArt() {
     const float S=Desktop?1.0f:0.4f;
     _ArtDesktop=Desktop;
     auto& ui = ResGraphics::Get();
-    ui.LoadScaled("kPickFamilyBkg", S, _Bkg);
+    // The single-screen picker uses the unscaled original art in DesktopPresentation.
+    // The reduced background and rows are only consumed on the dual screens.
+    _Bkg={};_Item={};
+    if(!Desktop)ui.LoadScaled("kPickFamilyBkg", S, _Bkg);
     Canvas item;
-    if (ui.Load("kPickFamilyItemBkg", item)) {
+    if (!Desktop && ui.Load("kPickFamilyItemBkg", item)) {
         // 3 frames stacked vertically (normal, pressed, selected) -> scale each
         int fh = item.Height / 3, dw = (int)(item.Width * S + 0.5f), dh = (int)(fh * S + 0.5f);
         _Item.Resize(dw, dh * 3);
@@ -165,6 +199,14 @@ std::vector<const FamilyInfo*> FamilyPicker::Families() const {
     std::vector<const FamilyInfo*> r;
     for (auto& e : Imports) r.push_back(&e.Info);
     return r;
+}
+
+void FamilyPicker::Close() {
+    Open=false;
+#ifndef __3DS__
+    _Original.reset();
+    _DesktopCanvas={};
+#endif
 }
 
 void FamilyPicker::ShowImport(NhoodModel* model, std::vector<ImportEntry> entries) {
@@ -277,12 +319,39 @@ void FamilyPicker::DrawPanel(Canvas& c) {
     auto& T = FrontStrings::Get();
 #ifndef __3DS__
     if(Desktop){
-        SyncDesktopPresentation();auto& p=*_Original;auto& v=p.View;
-        auto frame=v.draw(p.Art.get(),original::TextLanguage(),original::LegacyToUTF8(ImportMode?T.Get(151,6,"Import Family"):T.Get(128,8,"SELECT A FAMILY")),
-            original::LegacyToUTF8(ImportMode?T.Get(151,6,"Import Family"):T.Get(128,3,"Move In Family")),original::LegacyToUTF8(T.Get(128,4,"Delete Family")),
-            original::LegacyToUTF8(T.Get(128,5,"Cancel")),original::LegacyToUTF8(T.Get(128,13,"Create a Family?")),original::LegacyToUTF8(T.Get(128,14,"You can't afford it.")),
-            {});
-        original::Copy(frame,c);return;
+        if(!_Original)_Original=std::make_shared<DesktopPresentation>();
+        auto& p=*_Original;auto& v=p.View;
+        const auto language=original::TextLanguage();
+        const auto* selected=_Sel>=0 && _Sel<int(_List.size())?_List[_Sel]:nullptr;
+        const bool canMove=selected && (ImportMode || TargetLot<0 ||
+            (_M && _M->CanMoveIn(selected->ChunkID,TargetLot)==NhoodModel::MoveResult::Ok));
+        const bool canArchive=selected && !ImportMode && _M && selected->House==0 && !_M->FamilyAway(selected->ChunkID);
+        const bool magicTown=!ImportMode && _M && _M->CurrentArea==Area::MagicTown;
+        const DesktopPresentation::Page page{_Scroll,_Sel,_List.size(),language,ImportMode,magicTown,canMove,canArchive};
+        const auto first=std::min(_List.size(),std::size_t(std::max(0,_Scroll)));
+        const auto count=std::min(_List.size()-first,v.page_size);
+        const bool changed=p.PaintedPage!=page || p.Rows.size()!=count ||
+            !std::equal(p.Rows.begin(),p.Rows.end(),_List.begin()+first,
+                [](const PaintedFamilyRow& old,const FamilyInfo* current){return old.matches(*current);});
+        if(changed)SyncDesktopPresentation();
+        const auto hover=v.pointer?v.target_at((*v.pointer)[0],(*v.pointer)[1]):std::nullopt;
+        const auto press=v.activation.pressed();
+        if(changed || hover!=p.Hover || press!=p.Press){
+            v.draw_color(p.Surface,p.Art.get(),language,
+                original::LegacyToUTF8(ImportMode?T.Get(151,6,"Import Family"):T.Get(128,8,"SELECT A FAMILY")),
+                original::LegacyToUTF8(ImportMode?T.Get(151,6,"Import Family"):T.Get(128,3,"Move In Family")),
+                original::LegacyToUTF8(T.Get(128,4,"Delete Family")),original::LegacyToUTF8(T.Get(128,5,"Cancel")),
+                original::LegacyToUTF8(T.Get(128,13,"Create a Family?")),original::LegacyToUTF8(T.Get(128,14,"You can't afford it.")),{});
+            p.Hover=hover;p.Press=press;
+            if(changed){
+                p.Rows.clear();
+                for(std::size_t i=0;i<count;++i)p.Rows.emplace_back(*_List[first+i]);
+                p.PaintedPage=page;
+            }
+        }
+        // A dialog may have covered part of the last frame. Restore the retained
+        // picker behind it without laying out text or redrawing portraits.
+        original::Copy(p.Surface,c);return;
     }
 #endif
     if (_Bkg.Width > 0) c.Blit(_Bkg.Px.data(), _Bkg.Width, _Bkg.Height, 0, 0, false);

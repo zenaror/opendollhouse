@@ -204,8 +204,8 @@ odh_host::LivePanelSnapshot DesktopLiveSnapshot(LotSession& session,odh_host::Li
     auto sim=session.SelectedSim();out.has_selected_person=sim&&!sim->Dead;
     if(!out.has_selected_person)return out;
     auto content=FSO::Content::Content::Get();
-    for(size_t i=0;i<out.skills.size();++i)out.skills[i]=sim->GetPersonData(VMPersonDataVariable(odh_host::live_skill_indices[i]));
-    for(size_t i=0;i<out.personality.size();++i)out.personality[i]=sim->GetPersonData(VMPersonDataVariable(odh_host::live_personality_indices[i]));
+    if(tab==odh_host::LivePanelTab::career)for(size_t i=0;i<out.skills.size();++i)out.skills[i]=sim->GetPersonData(VMPersonDataVariable(odh_host::live_skill_indices[i]));
+    if(tab==odh_host::LivePanelTab::personality)for(size_t i=0;i<out.personality.size();++i)out.personality[i]=sim->GetPersonData(VMPersonDataVariable(odh_host::live_personality_indices[i]));
     if(tab==odh_host::LivePanelTab::interests&&!sim->IsPet())
         out.interests=odh_host::live_interests_snapshot([&](unsigned word)->std::optional<int16_t>{
             return word<=100?std::optional<int16_t>{sim->GetPersonData(VMPersonDataVariable(word))}:std::nullopt;

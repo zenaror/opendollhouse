@@ -284,13 +284,23 @@ odh::RasterFrame FamilyPickerPresentation::draw(const OriginalUiArt* art,std::ui
     const std::string& localized_action,const std::string& localized_archive,const std::string& localized_cancel,
     const std::string& localized_no_family_title,const std::string& localized_no_family_message,
     const NeighborhoodPortraitProvider& portraits)const{
+    odh::RasterFrame frame{};
+    draw_color(frame,art,language,localized_title,localized_action,localized_archive,localized_cancel,
+               localized_no_family_title,localized_no_family_message,portraits);
+    frame.depth.assign(frame.pixels.size(),std::numeric_limits<float>::infinity());
+    return frame;
+}
+void FamilyPickerPresentation::draw_color(odh::RasterFrame& frame,const OriginalUiArt* art,std::uint8_t language,const std::string& localized_title,
+    const std::string& localized_action,const std::string& localized_archive,const std::string& localized_cancel,
+    const std::string& localized_no_family_title,const std::string& localized_no_family_message,
+    const NeighborhoodPortraitProvider& portraits)const{
     const auto* background=art?art->find(magic_town?"Nbhd/PickBkgMagic.bmp":"Nbhd/PickBkg.bmp"):nullptr;
     if(!background&&art)background=art->find("Nbhd/PickBkg.bmp");
     const auto* rows=art?art->find("Nbhd/FamilyPickItemBkg.bmp"):nullptr;
-        odh::RasterFrame frame{};frame.width=800;frame.height=600;
+        frame.width=800;frame.height=600;
         if(background)frame.pixels=background->pixels;
         else frame.pixels.assign(800*600,{0,0,82,255});
-        frame.depth.assign(frame.pixels.size(),std::numeric_limits<float>::infinity());
+
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
         TextOverlayStyle text;text.background={0,0,0,0};text.padding=1;text.centered=true;
         text.x=0;text.y=4;text.width=800;text.height=35;text.font_size_px=21;
@@ -359,7 +369,7 @@ odh::RasterFrame FamilyPickerPresentation::draw(const OriginalUiArt* art,std::ui
             ui_button(frame,art,"NghUI/Previous.bmp",previous_box,state(5,first!=0),"‹",language);
             ui_button(frame,art,"NghUI/Next.bmp",next_box,state(6,first+page_size<choices.size()),"›",language);
         }
-        return frame;
+
  }
 } // namespace odh_host
 

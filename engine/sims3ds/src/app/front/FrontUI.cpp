@@ -238,7 +238,6 @@ bool FrontDialog::Draw(Canvas& c) {
         return true;
     }
     if(_Desktop) {
-        original::DialogArt skin;
         odh::DialogState state;
         state.prompt.title=original::UIString(Title);
         state.prompt.message=original::UIString(Message);
@@ -246,21 +245,20 @@ bool FrontDialog::Draw(Canvas& c) {
         if(!Buttons.empty())state.prompt.yes=original::UIString(Buttons[0].Label);
         if(Buttons.size()>1)state.prompt.no=original::UIString(Buttons[1].Label);
         if(Buttons.size()>2)state.prompt.cancel=original::UIString(Buttons[2].Label);
-        auto appearance=skin.appearance;
+        auto appearance=original::DialogAppearance();
         appearance.response_pointer=_Pointer;
         for(size_t i=0;i<Buttons.size();++i)if(Buttons[i].Pressed())appearance.pressed_response=i;
         appearance.ok=state.prompt.yes;
         for(size_t i=0;i<Buttons.size();++i)if(Buttons[i].Pressed())state.selected_button=uint8_t(i);
         const auto layout=odh_host::vm_message_dialog_layout(c.Width,c.Height,state,original::TextLanguage(),appearance);
-        if(layout)for(size_t i=0;i<Buttons.size();++i){
+        if(!layout)return false;
+        for(size_t i=0;i<Buttons.size();++i){
             const auto rect=odh_host::vm_dialog_button_rect(*layout,state.instruction.operands[5],i);
             Buttons[i].R=Rect(rect.x,rect.y,rect.width,rect.height);
         }
-        auto frame=original::Raster(c);
-        const auto result=odh_host::draw_vm_dialog(frame,state,original::TextLanguage(),_FirstLine,appearance);
+        const auto result=original::PaintDialog(c,state,original::TextLanguage(),_FirstLine,appearance,*layout);
         _MaxFirstLine=int(result.max_first_line);_FirstLine=std::min(_FirstLine,_MaxFirstLine);
-        original::Copy(frame,c);
-        return bool(layout);
+        return true;
     }
 #endif
     c.Dim(0, 0, c.Width, c.Height, 120);

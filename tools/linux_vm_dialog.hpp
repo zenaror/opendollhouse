@@ -61,4 +61,8 @@ std::optional<std::uint8_t> vm_dialog_button_hit(const VmMessageDialogLayout&,st
 TextOverlayResult draw_vm_dialog(odh::RasterFrame&,const odh::DialogState&,
     std::uint8_t language,std::size_t first_line=0,const VmDialogAppearance& appearance={});
 
+// Paint an already measured window into its own tile, keeping display-size text metrics.
+TextOverlayResult draw_vm_dialog_tile(odh::RasterFrame&,const odh::DialogState&,
+    std::uint8_t language,std::size_t first_line,VmDialogAppearance,VmMessageDialogLayout,bool compact_display);
+
 } // namespace odh_host

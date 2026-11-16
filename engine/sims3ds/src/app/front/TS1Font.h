@@ -31,6 +31,7 @@ public:
 #endif
     bool Loaded() const { return !_Atlas.empty(); }
     int Width(const std::string& s) const;
+    Rect InkBounds(const std::string&) const;
     int LineHeight() const { return _Line; }
     int Draw(Canvas& c, int x, int y, const std::string& s, uint32_t color) const;
 
@@ -52,6 +53,7 @@ int TextH(TS1Size s);
 /// Draws Latin-1 text with its top at y; shadow (if non-zero alpha) is drawn 1px down-right first.
 int Text(Canvas& c, TS1Size s, int x, int y, const std::string& text, uint32_t color, uint32_t shadow = 0);
 void TextCentered(Canvas& c, TS1Size s, const Rect& r, const std::string& text, uint32_t color, uint32_t shadow = 0);
+void DrawPanelLabel(Canvas&, TS1Size, const Rect&, const std::string&, uint32_t color);
 std::vector<std::string> Wrap(TS1Size s, const std::string& text, int maxWidth);
 std::string Fit(TS1Size s, const std::string& text, int maxWidth);
 

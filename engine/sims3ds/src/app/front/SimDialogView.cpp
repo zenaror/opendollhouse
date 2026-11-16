@@ -826,8 +826,7 @@ bool SimDialogView::DrawDesktop(LotSession& s,LotScreen& lot,Canvas& canvas) {
         if(selected!=dialog.Choices.end()&&selected->Portrait.Width)illustration=&selected->Portrait;
     }
     state.input=_DesktopInput;
-    original::DialogArt skin;
-    auto& appearance=skin.appearance;
+    auto appearance=original::DialogAppearance();
     appearance.response_pointer=lot.DesktopPointerPosition(true);
     if(_DesktopPressed>=0)appearance.pressed_response=std::size_t(_DesktopPressed);
     appearance.center_title=true;appearance.phonebook_cancel_button=_DesktopType==10;appearance.tutorial_corner=_DesktopType==4;
@@ -835,10 +834,8 @@ bool SimDialogView::DrawDesktop(LotSession& s,LotScreen& lot,Canvas& canvas) {
     if(illustration)appearance.illustration=&image;
     const auto layout=odh_host::vm_message_dialog_layout(canvas.Width,canvas.Height,state,original::TextLanguage(),appearance);
     if(!layout)return false;
-    auto frame=original::Raster(canvas);
-    auto page=odh_host::draw_vm_dialog(frame,state,original::TextLanguage(),_DesktopFirstLine,appearance);
+    auto page=original::PaintDialog(canvas,state,original::TextLanguage(),_DesktopFirstLine,appearance,*layout);
     _DesktopMaxFirstLine=int(page.max_first_line);_DesktopFirstLine=int(page.first_line);
-    original::Copy(frame,canvas);
     // Derive the input rectangles through the same original hit function used
     // by painting. Engine response codes remain attached to the existing ticket.
     _DesktopChoiceRects.clear();

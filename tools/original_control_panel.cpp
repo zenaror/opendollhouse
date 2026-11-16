@@ -2,6 +2,7 @@
 // Extracted from buy_mode_view.cpp; the existing portable panel implementation.
 #include "original_control_panel.hpp"
 #include "original_button_state.hpp"
+#include "retained_panel_art.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -234,30 +235,51 @@ void OriginalControlPanelArt::draw(RasterFrame& frame,OriginalPanelMode mode,Ori
     draw(UiBitmapSurface::from(frame),mode,state);
 }
 void OriginalControlPanelArt::draw(UiBitmapSurface frame,OriginalPanelMode mode,OriginalPanelState state)const{
+    draw(frame,mode,state,nullptr);
+}
+void OriginalControlPanelArt::draw(UiBitmapSurface frame,OriginalPanelMode mode,OriginalPanelState state,RetainedPanelArt* retained)const{
     const auto l=original_control_panel_layout(frame.width,frame.height);
     if(!frame.rgba || frame.pixel_count!=std::uint64_t(frame.width)*frame.height)
         throw FormatError("UI bitmap destination frame is malformed");
+    // Current handheld canvases are at most 800 pixels wide. Keep larger
+    // surfaces on the existing renderer instead of growing the portable cache.
+    if(frame.width>800)retained=nullptr;
+    if(retained)retained->begin();
+    const auto paint=[&](const BitmapImage& image,BuyUiRect box,BuyUiRect crop){
+        if(retained)retained->add(image,box,crop);
+        else blit(frame,image,box,crop);
+    };
+    const auto backdrop=[&](const BitmapImage& image,BuyUiRect box){
+        if(retained)retained->add(image,box,{0,0,int(image.width),int(image.height)});
+        else draw_backdrop(frame,image,box);
+    };
+    const auto control=[&](const std::string& key,BuyUiRect box,unsigned selected){
+        const auto& image=at(key);
+        if(selected>3||image.width<4||image.width%4)throw FormatError("original four-state button strip is invalid");
+        const int width=int(image.width/4);
+        paint(image,box,{width*int(selected),0,width,int(image.height)});
+    };
     // Opaque backing under the transparent edge of UniversalBack. It ends
     // at authored x220, adjoining PanelBack at its original pixel size. Draw it first
     // so it cannot cover UniversalBack's teal curve and button surrounds.
     if(const auto* backing=art_.find("cpanel\\backgrounds\\backpatch.bmp"))
-        draw_backdrop(frame,*backing,{static_cast<int>(std::lround(168*l.scale)),l.base.y,
+        backdrop(*backing,{static_cast<int>(std::lround(168*l.scale)),l.base.y,
             static_cast<int>(std::lround(52*l.scale)),l.base.height});
     // PanelBack's authored rounded corner must cover the backing overlap.
     // Reversing these layers exposes BackPatch's straight right edge as a tip.
     const auto& panel_back=at("cpanel\\backgrounds\\panelback.bmp");
-    draw_backdrop(frame,panel_back,l.panel_background);
+    backdrop(panel_back,l.panel_background);
     // Larger desktop canvases retain authored UI pixels. Continue the actual
     // background's right edge across the additional panel area, rather than
     // exposing the world behind a bitmap authored for a 1024px display.
     const int right=l.panel_background.x+l.panel_background.width;
-    if(right<int(frame.width))blit(frame,panel_back,
+    if(right<int(frame.width))paint(panel_back,
         {right,l.panel_background.y,int(frame.width)-right,l.panel_background.height},
         {int(panel_back.width)-1,0,1,int(panel_back.height)});
     const auto baseline=static_cast<float>(frame.height)-600*l.scale;
-    const auto patch=[&](const char* key,int h,int inset=0){const auto& image=at(key);draw_backdrop(frame,image,{static_cast<std::int32_t>(std::lround(inset*l.scale)),static_cast<std::int32_t>(std::lround(baseline+(600-h)*l.scale)),static_cast<std::int32_t>(std::lround(image.width*l.scale)),static_cast<std::int32_t>(std::lround(h*l.scale))});};
+    const auto patch=[&](const char* key,int h,int inset=0){const auto& image=at(key);backdrop(image,{static_cast<std::int32_t>(std::lround(inset*l.scale)),static_cast<std::int32_t>(std::lround(baseline+(600-h)*l.scale)),static_cast<std::int32_t>(std::lround(image.width*l.scale)),static_cast<std::int32_t>(std::lround(h*l.scale))});};
     const auto* universal=art_.find("cpanel\\backgrounds\\universalback.tga");
-    if(universal)draw_backdrop(frame,*universal,l.left_patch);
+    if(universal)backdrop(*universal,l.left_patch);
     // UniversalBack supplies the base, not LivePatch's white curve and grey
     // connector. The authored live overlay starts seven pixels to its right.
     if(mode==OriginalPanelMode::live||mode==OriginalPanelMode::options)patch("cpanel\\backgrounds\\livepatch.bmp",153,7);
@@ -276,12 +298,12 @@ void OriginalControlPanelArt::draw(UiBitmapSurface frame,OriginalPanelMode mode,
         };
         return original_button_frame(base!=3,base==1,contains(state.pointer),contains(state.press_origin));
     };
-    draw_button(frame,"cpanel\\buttons\\people.bmp",l.modes[0],visual("cpanel\\buttons\\people.bmp",l.modes[0],state.live_enabled?(mode==OriginalPanelMode::live?1:0):3));
-    draw_button(frame,"cpanel\\buttons\\objects.bmp",l.modes[1],visual("cpanel\\buttons\\objects.bmp",l.modes[1],state.build_buy_enabled?(mode==OriginalPanelMode::buy?1:0):3));
-    draw_button(frame,"cpanel\\buttons\\arch.bmp",l.modes[2],visual("cpanel\\buttons\\arch.bmp",l.modes[2],state.build_buy_enabled?(mode==OriginalPanelMode::build?1:0):3));
-    const auto optional_image=[&](const char* key,const BuyUiRect& box){if(const auto* image=art_.find(key))blit(frame,*image,box);};
+    control("cpanel\\buttons\\people.bmp",l.modes[0],visual("cpanel\\buttons\\people.bmp",l.modes[0],state.live_enabled?(mode==OriginalPanelMode::live?1:0):3));
+    control("cpanel\\buttons\\objects.bmp",l.modes[1],visual("cpanel\\buttons\\objects.bmp",l.modes[1],state.build_buy_enabled?(mode==OriginalPanelMode::buy?1:0):3));
+    control("cpanel\\buttons\\arch.bmp",l.modes[2],visual("cpanel\\buttons\\arch.bmp",l.modes[2],state.build_buy_enabled?(mode==OriginalPanelMode::build?1:0):3));
+    const auto optional_image=[&](const char* key,const BuyUiRect& box){if(const auto* image=art_.find(key))paint(*image,box,{0,0,int(image->width),int(image->height)});};
     if(!universal)optional_image("cpanel\\backgrounds\\camerapatch.bmp",l.camera_patch);
-    const auto button=[&](const char* leaf,const BuyUiRect& box,unsigned selected){const auto key=std::string("cpanel\\buttons\\")+leaf+".bmp";if(art_.find(key))draw_button(frame,key,box,visual(key,box,selected));};
+    const auto button=[&](const char* leaf,const BuyUiRect& box,unsigned selected){const auto key=std::string("cpanel\\buttons\\")+leaf+".bmp";if(art_.find(key))control(key,box,visual(key,box,selected));};
     button("rotleft",l.rotate_left,0);button("rotright",l.rotate_right,0);
     button("zoomin",l.zoom_in,0);button("zoomout",l.zoom_out,0);
     button("nocut",l.walls_up,!state.walls_down&&!state.cutaway.value_or(false)?1:0);button("nowall",l.walls_down,state.walls_down?1:0);
@@ -291,7 +313,7 @@ void OriginalControlPanelArt::draw(UiBitmapSurface frame,OriginalPanelMode mode,
     button("camera",l.camera,3);button("options",l.options,state.options_enabled?(state.options_open?1:0):3);
     if(const auto* pause=art_.find("cpanel\\buttons\\pause.bmp")){
         const auto width=static_cast<int>(pause->width/4);
-        blit(frame,*pause,l.pause,{width*int(visual("cpanel\\buttons\\pause.bmp",l.pause,state.paused?1:0)),0,width,std::min(15,static_cast<int>(pause->height))});
+        paint(*pause,l.pause,{width*int(visual("cpanel\\buttons\\pause.bmp",l.pause,state.paused?1:0)),0,width,std::min(15,static_cast<int>(pause->height))});
     }
     // UIDesktopUCP maps the three speed choices to actual VM multipliers
     // 1/3/10. Pausing selects Pause, not the remembered running-speed button.
@@ -318,12 +340,13 @@ void OriginalControlPanelArt::draw(UiBitmapSurface frame,OriginalPanelMode mode,
                 const auto rows=steps*5,source_y=positive?25-rows:0;
                 const auto top=box.y+source_y*box.height/25;
                 const auto bottom=box.y+(source_y+rows)*box.height/25;
-                blit(frame,*gauge,{box.x,top,box.width,bottom-top},{0,source_y,27,rows});
+                paint(*gauge,{box.x,top,box.width,bottom-top},{0,source_y,27,rows});
             }
         }
         const char* tabs[]={"mood","relationship","job","personality","interest","house"};
         for(unsigned n=0;n<6;++n)button(tabs[n],l.tabs[n],state.live_tabs[n]?(!state.inventory_selected&&static_cast<unsigned>(state.live_tab)==n?1:0):3);
         button("gift",{l.tabs[3].x,l.tabs[5].y,l.tabs[5].width,l.tabs[5].height},state.inventory_enabled?(state.inventory_selected?1:0):3);
     }
+    if(retained)retained->draw(frame,{0,l.left_patch.y,int(frame.width),int(frame.height)-l.left_patch.y});
 }
 } // namespace odh_host

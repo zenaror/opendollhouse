@@ -40,7 +40,13 @@ static void CheckCanvasUpload() {
     upload.paintedCursor=cursor;
     pixels[180*w+50]^=0x12;
     pixels.back()^=0x34;
-    verify((16+16+8)*w*4);
+    verify((4*3 + 1 + 1)*sizeof(Uint32));
+    verify(0);
+    // A changing control overlaps the old cursor and crosses a band boundary.
+    Check(SDL_UpdateTexture(texture.get(),&cursor,fakeCursor,4*4)==0,"repaint cursor");
+    upload.paintedCursor=cursor;
+    pixels[31*w+239]^=0x45;
+    verify(5*5*sizeof(Uint32));
     verify(0);
     for(std::size_t i=0;i<pixels.size();++i) pixels[i]^=0x876543;
     verify(pixels.size()*4);

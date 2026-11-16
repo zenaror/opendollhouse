@@ -46,8 +46,10 @@ void LotScreen::DrawDesktop() {
     state.walls_down=S->WallsMode==1;state.cutaway=S->WallsMode==0;
     state.options_enabled=true;state.options_open=CurrentMode==Mode::Options;
     state.can_level_up=S->World()->State.Level()<2;state.can_level_down=S->World()->State.Level()>1;
-    const auto interest_snapshot=original::DesktopLiveSnapshot(*S,LT::interests);
-    state.live_tabs={true,true,true,true,odh_host::live_panel_capabilities(interest_snapshot)[4],true};
+    const auto selected=S->SelectedSim();
+    // The VM supplies every interest word for each living human. Fetch the
+    // values only when the player actually opens the interests tab.
+    state.live_tabs={true,true,true,true,selected && !selected->Dead && !selected->IsPet(),true};
     if(Live->CurrentTab==UILiveMode::Tab::Interests&&!state.live_tabs[4]){
         Live->CurrentTab=UILiveMode::Tab::Mood;Live->_InterestScroll=0;
     }
@@ -55,7 +57,6 @@ void LotScreen::DrawDesktop() {
     switch(Live->CurrentTab){case UILiveMode::Tab::Job:state.live_tab=LT::career;break;case UILiveMode::Tab::Personality:state.live_tab=LT::personality;break;case UILiveMode::Tab::Relationships:state.live_tab=LT::relationships;break;case UILiveMode::Tab::House:state.live_tab=LT::house;break;case UILiveMode::Tab::Interests:state.live_tab=LT::interests;break;default:state.live_tab=LT::needs;}
     if(auto sim=S->SelectedSim())state.mood=sim->GetMotiveData(FSO::SimAntics::Model::VMMotive::Mood);
     PM mode=CurrentMode==Mode::Live?PM::live:CurrentMode==Mode::Options?PM::options:CurrentMode==Mode::Buy?PM::buy:PM::build;
-    const auto selected=S->SelectedSim();
     if(CurrentMode!=Mode::Live||!selected||selected->Dead||Live->CurrentTab!=UILiveMode::Tab::Inventory)
         Live->_DesktopInventory.ClosePopup();
     if(CurrentMode!=Mode::Live||!selected||selected->Dead||Live->CurrentTab!=UILiveMode::Tab::Job||
@@ -75,8 +76,8 @@ void LotScreen::DrawDesktop() {
     hit(layout.options,"mode_options");hit(layout.pause,"speed0");
     hit(layout.speeds[0],"speed1");hit(layout.speeds[1],"speed2");hit(layout.speeds[2],"speed3");
     original::OfferDesktopControlHelp(c,*this);
-    front::TextCentered(c,front::TS1Size::S9,Rect(83,535+dy,82,14),UIUCP::ClockText(*this),RGBA(0,255,100));
-    if(S->HasFamilyBudget())front::TextCentered(c,front::TS1Size::S11,Rect(96,577+dy,92,18),UIUCP::Money(S->Budget()),RGBA(0,255,100));
+    front::DrawPanelLabel(c,front::TS1Size::S9,Rect(83,535+dy,82,14),UIUCP::ClockText(*this),RGBA(0,255,100));
+    if(S->HasFamilyBudget())front::DrawPanelLabel(c,front::TS1Size::S11,Rect(96,577+dy,92,18),UIUCP::Money(S->Budget()),RGBA(0,255,100));
     if (CurrentMode == Mode::Live) {
         Live->UpdateMotiveDisplay();
         // The same preserved queue layout supplies drawing and current UID hits.
@@ -128,7 +129,7 @@ void LotScreen::DrawDesktop() {
                     Live->DrawJob(c,detail,sim);
             }
             else original::DrawDesktopLivePanel(c,*this,state.live_tab,
-                state.live_tab==LT::interests?interest_snapshot:original::DesktopLiveSnapshot(*S,state.live_tab),
+                original::DesktopLiveSnapshot(*S,state.live_tab),
                 Live->_RelScroll,Live->_InterestScroll,Live->_DesktopCareer);
         }
     } else if(CurrentMode==Mode::Options) Options->Draw(c,Rect(220,500+dy,580,100));

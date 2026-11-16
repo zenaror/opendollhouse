@@ -88,8 +88,12 @@ There is no stable public release yet.
   work and action-menu image copies on Vita and Switch, preserving the original
   layout. Added measurements for the first frame when entering a house.
   Physical-device performance still needs confirmation with the updated builds.
-- Reduced repeated HUD image conversions and copies while preserving its pixels,
-  portrait button states, needs arrows and language-specific layout.
+- Vita and Switch reuse unchanged control-panel artwork and send smaller screen
+  updates for highlights, portraits and counters. The family picker reuses its
+  current page until the contents or selection change. Dialogs in the neighborhood,
+  family editor and live mode reuse their original artwork.
+- Fixed the magic starter package delivery in translated games: the Mystery Man
+  now wears his own costume and keeps his localized name.
 - Vita house-loading crash caused by unsupported integer formatting in its
   system library. Log capture now handles both kinds of SDK output streams;
   periodic input measurements help investigate stalls on the device.

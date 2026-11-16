@@ -20,6 +20,8 @@
 #include "catalog_info_text.hpp"
 #include "catalog_object_thumbnail.hpp"
 #include "original_button_state.hpp"
+#include "retained_panel_art.hpp"
+#include "app/ui/RetainedRegion.h"
 #include "files/formats/iff/chunks/DGRP.h"
 #include "files/formats/iff/chunks/SPR2.h"
 #include <cstring>
@@ -59,6 +61,9 @@ odh::AvatarBodyStrings body_input(Avatar* a){
 struct OriginalPCUI::Impl {
     std::string root,last_source;
     odh_host::OriginalControlPanelArt panel;
+#if defined(__vita__) || defined(__SWITCH__)
+    odh_host::RetainedPanelArt panel_layer;
+#endif
     odh_host::OriginalQueueView queue;
     odh_host::CatalogInfoView catalog;
     odh_host::CatalogInfoScrollState catalog_scroll;
@@ -74,7 +79,12 @@ struct OriginalPCUI::Impl {
     std::string pause_key;
     Canvas pause_label;
     odh_host::OriginalPanelState last_state{};odh_host::OriginalControlPanelLayout last_layout{};
-    struct Faces {std::string source,input;odh_host::CharacterUiImages images;std::vector<Canvas> canvases;std::optional<odh::BitmapImage> generated;};
+    struct Faces {std::string source,input;odh_host::CharacterUiImages images;std::vector<Canvas> canvases;std::optional<odh::BitmapImage> generated;
+#if defined(__vita__) || defined(__SWITCH__)
+        original::RetainedRegion cell;
+        unsigned last_frame=4;
+#endif
+    };
     std::map<uint32_t,Faces> characters;
     std::map<uint32_t,std::optional<odh::BitmapImage>> icons;
     struct AvatarIcon {std::vector<uint8_t> bytes;std::optional<odh::BitmapImage> image;};
@@ -273,7 +283,7 @@ void OriginalPCUI::DrawPanel(Canvas& c,odh_host::OriginalPanelMode mode,const od
     // RGBA art over the current world without importing and exporting the HUD.
     odh::UiBitmapSurface target{static_cast<uint32_t>(c.Width),static_cast<uint32_t>(c.Height),
         reinterpret_cast<unsigned char*>(c.Px.data()),c.Px.size()};
-    P->panel.draw(target,mode,state);
+    P->panel.draw(target,mode,state,&P->panel_layer);
 #else
     P->copy_in(c,c.Height-183,183);
     P->panel.draw(P->surface,mode,state);
@@ -281,7 +291,25 @@ void OriginalPCUI::DrawPanel(Canvas& c,odh_host::OriginalPanelMode mode,const od
 #endif
 }
 const Canvas* OriginalPCUI::Face(Avatar* a,int frame){if(!a||!a->Object||!a->Object->Resource)return nullptr;auto& f=P->faces(a);return &f.canvases[std::clamp(frame,0,int(f.canvases.size())-1)];}
-void OriginalPCUI::DrawPortrait(Canvas& c,odh::UiBitmapRect r,bool selected,Avatar* a){if(!a)return;auto& f=P->faces(a);const auto* image=f.images.faces.empty()?&*f.generated:&f.images.faces[0];const Rect bounds{r.x,r.y,r.width,r.height};original::Raster(c,P->surface,bounds);const auto contains=[&](const std::optional<std::array<int,2>>& p){return p&&r.contains((*p)[0],(*p)[1]);};const auto state=odh_host::original_button_frame(true,selected,contains(P->last_state.pointer),contains(P->last_state.press_origin));P->panel.draw_portrait_state(P->surface,r,state,image,true);original::Copy(P->surface,c,bounds);}
+void OriginalPCUI::DrawPortrait(Canvas& c,odh::UiBitmapRect r,bool selected,Avatar* a){
+    if(!a)return;
+    auto& f=P->faces(a);
+    const auto* image=f.images.faces.empty()?&*f.generated:&f.images.faces[0];
+    const Rect bounds{r.x,r.y,r.width,r.height};
+    const auto contains=[&](const std::optional<std::array<int,2>>& p){return p&&r.contains((*p)[0],(*p)[1]);};
+    const auto state=odh_host::original_button_frame(true,selected,contains(P->last_state.pointer),contains(P->last_state.press_origin));
+    const auto paint=[&]{
+        original::Raster(c,P->surface,bounds);
+        P->panel.draw_portrait_state(P->surface,r,state,image,true);
+        original::Copy(P->surface,c,bounds);
+    };
+#if defined(__vita__) || defined(__SWITCH__)
+    f.cell.draw(c,bounds,state==f.last_frame,paint);
+    f.last_frame=state;
+#else
+    paint();
+#endif
+}
 std::vector<odh_host::QueueTile> OriginalPCUI::QueueTiles(Avatar* a,int width,int height){
     if(!a||!a->Thread)return {};
     odh::InteractionQueueSnapshot snapshot{};snapshot.actor_id=a->ObjectID;snapshot.actor_generation=snapshot.run_generation=1;

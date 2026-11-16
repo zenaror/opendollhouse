@@ -46,6 +46,12 @@ scheduling to suit the device. For example, a touch menu can show the resident's
 portrait while the PC menu turns the resident's head toward the pointer.
 The 3DS can use both screens.
 
+Across the interface, reuse artwork and composed controls while their appearance
+stays the same. Redraw the affected area when a value, selection, hover state,
+animation, language or layout changes. Transparent edges must still show the
+current scene underneath. Check a changing screen against a full redraw before
+reporting a performance improvement.
+
 Keep essential actions, simulation rules and saved progress shared. A family
 saved on one port should reopen on another with its residents, possessions and
 progress intact. When changing how a lot loads or saves, test an edited lot

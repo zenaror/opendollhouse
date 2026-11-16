@@ -4,6 +4,7 @@
 #include "files/formats/iff/chunks/NBRS.h"
 #include "core/io.h"
 #include "app/ui/OriginalDialogButtons.h"
+#include "app/ui/OriginalDialogArt.h"
 #include "phonebook_candidates.hpp"
 #include "linux_vm_dialog.hpp"
 #include "app/ui/OriginalTextBackend.h"
@@ -106,4 +107,38 @@ static void selector_buttons_and_ticket(){
     require(dialog.ChoiceSourceResolved&&dialog.ChoiceCallerState.expired()&&!dialog.MatchesChoiceSource(340,34,thread.get(),replacementState),"unbound old phonebook captured a later replacement wait");
     require(!state->Responded&&!replacementState->Responded,"checking phonebook authority changed VM dialog state");
 }
-int main(){try{wire_order();contacts_and_response();message_buttons();selector_buttons_and_ticket();std::cout<<"phonebook/dialog grouped contract passed: NBRS order+values, eligibility, authority, response/cancel, Message operands\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+static void dialog_tile_matches_full_display() {
+    simapp::original::InstallTextBackendIfNeeded();
+    odh::BitmapImage tiles, buttons, picture;
+    const auto make_art=[](odh::BitmapImage& image,int width,int height){
+        image.width=width;image.height=height;image.bit_count=32;
+        for(int y=0;y<height;++y)for(int x=0;x<width;++x){
+            const std::uint8_t alpha=x%3?255:0;
+            image.pixels.push_back({std::uint8_t(x),std::uint8_t(y),80,alpha});
+        }
+    };
+    make_art(tiles,36,36);make_art(buttons,260,33);make_art(picture,22,17);
+    for (const int height : {200,600}) for(const int type : {0,1,2,3,4,10}){
+        simapp::Canvas canvas(height==200?400:800,height);
+        for(std::size_t i=0;i<canvas.Px.size();++i)
+            canvas.Px[i]=simapp::RGBA(i%251,(i+height)%239,i%223);
+        odh::DialogState state;
+        state.instruction.operands[5]=type;
+        state.prompt.title="Title";state.prompt.message="Same popup, with a changing background.";
+        state.input=type==10?"2":"Input";
+        if(type==10)state.prompt.choices={{"First",1},{"Second",2}};
+        VmDialogAppearance skin;skin.panel_tiles=&tiles;skin.button_strip=&buttons;skin.illustration=&picture;
+        skin.tutorial_corner=type==4;skin.phonebook_cancel_button=type==10;
+        const auto layout=vm_message_dialog_layout(canvas.Width,canvas.Height,state,1,skin);
+        require(bool(layout),"missing test dialog layout");
+        const auto button=vm_dialog_button_rect(*layout,type,0);
+        skin.response_pointer=std::array<int,2>{{button.x+1,button.y+1}};
+        auto reference=simapp::original::Raster(canvas);
+        const auto full=draw_vm_dialog(reference,state,1,0,skin);
+        const auto local=simapp::original::PaintDialog(canvas,state,1,0,skin,*layout);
+        require(simapp::original::Raster(canvas).pixels==reference.pixels,"dialog tile changed screen pixels");
+        require(full.visible_lines==local.visible_lines && full.max_first_line==local.max_first_line,
+                "dialog tile changed scrolling");
+    }
+}
+int main(){try{wire_order();contacts_and_response();message_buttons();selector_buttons_and_ticket();dialog_tile_matches_full_display();std::cout<<"phonebook/dialog grouped contract passed: NBRS order+values, eligibility, authority, response/cancel, Message operands\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

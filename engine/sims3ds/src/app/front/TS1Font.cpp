@@ -7,6 +7,7 @@
 #include "app/front/TS1Font.h"
 #include "app/front/ResGraphics.h"
 #include "app/Font.h"
+#include "app/ui/RetainedRegion.h"
 #include <algorithm>
 #include <cstdio>
 
@@ -72,6 +73,20 @@ int TS1Font::Width(const std::string& s) const {
     return w;
 }
 
+Rect TS1Font::InkBounds(const std::string& text) const {
+    int pen=0,left=0,right=0,top=0,bottom=0;
+    for(unsigned char ch:text) {
+        if(ch<32)continue;
+        const auto& g=_G[ch];
+        if(ch!=' ' && g.W && g.H) {
+            left=std::min(left,pen+g.Left); right=std::max(right,pen+g.Left+g.W);
+            top=std::min(top,int(g.Top)); bottom=std::max(bottom,g.Top+g.H);
+        }
+        pen+=Advance(ch);
+    }
+    return {left,top,right-left,bottom-top};
+}
+
 int TS1Font::Draw(Canvas& c, int x, int y, const std::string& s, uint32_t color) const {
     for (unsigned char ch : s) {
         if (ch < 32) continue; // \r and other control bytes in the game's strings
@@ -100,6 +115,7 @@ int TS1Font::Draw(Canvas& c, int x, int y, const std::string& s, uint32_t color)
 static TS1Font g_Fonts[7];
 static const int kSizes[7] = { 9, 10, 11, 12, 14, 16, 20 };
 static bool g_Loaded = false;
+static unsigned g_FontGeneration=0;
 
 static int SlotOf(TS1Size s) {
     for (int i = 0; i < 7; i++) if (kSizes[i] == (int)s) return i;
@@ -107,6 +123,7 @@ static int SlotOf(TS1Size s) {
 }
 
 bool LoadTS1Fonts() {
+    ++g_FontGeneration;
     auto& ui = ResGraphics::Get();
     g_Loaded = false;
     if (!ui.IsOpen()) return false;
@@ -154,6 +171,36 @@ int Text(Canvas& c, TS1Size s, int x, int y, const std::string& text, uint32_t c
 void TextCentered(Canvas& c, TS1Size s, const Rect& r, const std::string& text, uint32_t color, uint32_t shadow) {
     int w = TextW(s, text), h = TextH(s);
     Text(c, s, r.X + (r.W - w) / 2, r.Y + (r.H - h) / 2, text, color, shadow);
+}
+
+void DrawPanelLabel(Canvas& c,TS1Size size,const Rect& box,const std::string& text,uint32_t color) {
+#if defined(__vita__) || defined(__SWITCH__)
+    if(const auto* font=FontFor(size)) {
+        // One bounded cell for the clock and one for family funds. The
+        // original font bearings can extend past the nominal label rectangle.
+        struct Label {
+            original::RetainedRegion pixels;
+            std::string text;
+            Rect ink;
+            int width=0;
+            const TS1Font* font=nullptr;
+            unsigned generation=0;
+            uint32_t color=0;
+        };
+        static Label labels[2];
+        auto& label=labels[size==TS1Size::S9?0:1];
+        const bool same=label.font==font && label.generation==g_FontGeneration && label.text==text && label.color==color;
+        if(!same) {
+            label.ink=font->InkBounds(text);label.width=font->Width(text);
+            label.text=text;label.color=color;label.font=font;label.generation=g_FontGeneration;
+        }
+        const int x=box.X+(box.W-label.width)/2,y=box.Y+(box.H-font->LineHeight())/2;
+        auto area=label.ink;area.X+=x;area.Y+=y;
+        label.pixels.draw(c,area,same,[&]{font->Draw(c,x,y,text,color);});
+        return;
+    }
+#endif
+    TextCentered(c,size,box,text,color);
 }
 
 std::vector<std::string> Wrap(TS1Size s, const std::string& text, int maxWidth) {

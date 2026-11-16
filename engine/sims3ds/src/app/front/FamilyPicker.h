@@ -39,7 +39,7 @@ public:
     std::vector<ImportEntry> Imports;
     std::function<void(const std::string& path)> OnImport;
     void ShowImport(NhoodModel* model, std::vector<ImportEntry> entries);
-    void Close() { Open = false; }
+    void Close();
     /// Input on the touch screen (the dialog layer is handled by the caller first).
     void Update(const AppInput& in);
     void DrawBottom(Canvas& bottom);

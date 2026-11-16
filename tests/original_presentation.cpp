@@ -2,6 +2,8 @@
 #include "app/ui/OriginalNeedsPresentation.h"
 #include "app/ui/OriginalHover.h"
 #include "original_control_panel.hpp"
+#include "retained_panel_art.hpp"
+#include "app/ui/RetainedRegion.h"
 #include "original_queue_view.hpp"
 #include "original_tooltip_view.hpp"
 #ifdef ODH_PRESENTATION_GAME_FONT_BACKEND
@@ -189,6 +191,50 @@ void portable_needs_cache(){
     compare(false); compare(true);
     input.Px[0]^=127; compare(true);
 }
+void retained_handheld_layers(){
+    Fixture fixture;
+    odh_host::OriginalControlPanelArt art(fixture.path);
+    odh_host::RetainedPanelArt retained;
+    for(const int width:{640,800})for(int i=0;i<28;++i){
+        Canvas input=background(width,480,unsigned(i));
+        auto expected=old_raster(input),actual=expected;
+        odh_host::OriginalPanelState state;
+        state.live_tabs.fill(true);state.mood=int16_t(i/3-4);state.paused=(i/3)%2;
+        state.simulation_speed=i/6%2?1:3;state.pointer=std::array<int,2>{75+i/4,328};
+        const auto mode=odh_host::OriginalPanelMode(i/7);
+        art.draw(expected,mode,state);
+        art.draw(odh::UiBitmapSurface::from(actual),mode,state,&retained);
+        check(expected.pixels==actual.pixels,"retained common panel differs on changing scene or state");
+    }
+    odh::BitmapImage edges{3,1,32,true,{{{35,6,209,17},{0,255,0,200},{255,0,255,255}}},0};
+    for(int i=0;i<3;++i){
+        Canvas input=background(50,10,unsigned(i));
+        auto expected=old_raster(input),actual=expected;
+        retained.begin();
+        for(const auto box:{odh::UiBitmapRect{0,0,40,7},{4,1,40,7}}){
+            retained.add(edges,box,{0,0,3,1});
+            odh::blit_color_keyed_bitmap(expected,edges,box,std::nullopt,{255,0,255});
+        }
+        retained.draw(odh::UiBitmapSurface::from(actual),{0,0,50,10});
+        check(expected.pixels==actual.pixels,"retained overlapping translucent edges");
+    }
+    bool rejected=false;
+    retained.begin();retained.add(edges,{0,0,8,8},{4,0,3,1});
+    try{auto frame=old_raster(background(50,10,0));retained.draw(odh::UiBitmapSurface::from(frame),{0,0,50,10});}
+    catch(const odh::FormatError&){rejected=true;}
+    check(rejected,"retained panel accepted an invalid source crop");
+    original::RetainedRegion region;
+    const Rect box{2,1,12,5};Canvas scene=background(20,10,17);
+    for(int i=0;i<6;++i){
+        if(i==3)scene.Px[24]^=1;
+        Canvas reference=scene,actual=scene;
+        const auto color=i<2?RGBA(17,159,35,200):RGBA(17,25,35,30);
+        reference.FillRect(box,color);
+        const bool hit=region.draw(actual,box,i!=0&&i!=2,[&]{actual.FillRect(box,color);});
+        check(actual.Px==reference.Px,"resident or label region changed pixels");
+        check(hit==(i==1 || i>=4),"resident or label region invalidation");
+    }
+}
 void portraits_and_queue(){
     Fixture fixture;odh_host::OriginalControlPanelArt art(fixture.path);odh_host::OriginalQueueView queue(fixture.path);
     odh::BitmapImage head{35,41,32,true,std::vector<Pixel>(35*41),0};
@@ -244,5 +290,5 @@ int main(int argc,char**){try{
 #else
     std::cout<<"backend=existing-host-text\n";
 #endif
-    portrait_blend();transfers();retained_tooltip();needs();portable_needs_cache();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
+    portrait_blend();transfers();retained_tooltip();needs();portable_needs_cache();retained_handheld_layers();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

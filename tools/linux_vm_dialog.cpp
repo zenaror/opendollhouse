@@ -222,7 +222,7 @@ static void draw_original_dialog_panel(odh::RasterFrame& frame,const VmMessageDi
 static TextOverlayResult draw_dialog_body(odh::RasterFrame& frame,std::string_view title,
         std::string_view message,std::uint8_t language,
         std::size_t first_line,bool text_input,std::optional<int> body_bottom_limit,
-        const VmDialogAppearance& appearance,const std::optional<VmMessageDialogLayout>& layout) {
+        const VmDialogAppearance& appearance,const std::optional<VmMessageDialogLayout>& layout, bool compact_input) {
     if(!layout||frame.pixels.size()!=static_cast<std::size_t>(frame.width)*frame.height||
        title.size()>4096||message.empty()||message.size()>4096)
         throw std::invalid_argument("VM message dialog input is outside its bounded profile");
@@ -237,7 +237,6 @@ static TextOverlayResult draw_dialog_body(odh::RasterFrame& frame,std::string_vi
     TextOverlayStyle style;
     style.x=layout->x+18;style.width=layout->width-36;style.padding=2;
     style.foreground={246,244,231,255};style.background={68,72,75,0};
-    const bool compact_input=frame.height<240;
     const auto icon=layout->illustration;
     if(icon.width)odh::blit_color_keyed_bitmap(frame,*appearance.illustration,icon,
         std::nullopt,{255,0,255});
@@ -322,7 +321,7 @@ TextOverlayResult draw_vm_message_dialog(odh::RasterFrame& frame,std::string_vie
     odh::DialogState state;state.prompt.title=title;state.prompt.message=message;
     state.instruction.operands[5]=text_input?3:0;
     const auto bounds=vm_message_dialog_layout(frame.width,frame.height,state,language,appearance);
-    const auto page=draw_dialog_body(frame,title,message,language,first_line,text_input,body_bottom_limit,appearance,bounds);
+    const auto page=draw_dialog_body(frame,title,message,language,first_line,text_input,body_bottom_limit,appearance,bounds,frame.height<240);
     const auto layout=*bounds;
     draw_response(frame,response_box(layout,1,0),ok_label,language,false,appearance);
     if(!body_bottom_limit)draw_scroll_status(frame,layout,page,language,text_input?3:0);
@@ -370,8 +369,9 @@ std::optional<std::uint8_t> vm_dialog_button_hit(const VmMessageDialogLayout& la
         if(response_box(layout,count,n).contains(x,y))return static_cast<std::uint8_t>(n);
     return {};
 }
-TextOverlayResult draw_vm_dialog(odh::RasterFrame& frame,const odh::DialogState& state,
-        std::uint8_t language,std::size_t first_line,const VmDialogAppearance& appearance){
+static TextOverlayResult paint_vm_dialog(odh::RasterFrame& frame,const odh::DialogState& state,
+        std::uint8_t language,std::size_t first_line,const VmDialogAppearance& appearance,
+        const std::optional<VmMessageDialogLayout>& layout, bool compact){
     const auto type=state.instruction.operands[5];
     const auto default_label=[](std::string_view supplied,std::string_view fallback){
         return supplied.empty()?fallback:supplied;
@@ -381,10 +381,9 @@ TextOverlayResult draw_vm_dialog(odh::RasterFrame& frame,const odh::DialogState&
     if(first.empty())first=type==1||type==2?default_label(appearance.yes,"Yes"):default_label(appearance.ok,"OK");
     if(odh::dialog_selector_type(type)&&state.prompt.choices.empty()&&!(type==10&&appearance.phonebook_cancel_button))
         first=state.prompt.cancel.empty()?cancel:std::string_view(state.prompt.cancel);
-    const auto layout=vm_message_dialog_layout(frame.width,frame.height,state,language,appearance);
     const auto has_rows=layout&&odh::dialog_selector_type(type)&&!state.prompt.choices.empty();
     const auto page=draw_dialog_body(frame,state.prompt.title,state.prompt.message.empty()?" ":state.prompt.message,
-        language,first_line,type==3,has_rows?std::optional<int>(choice_top(*layout)):std::nullopt,appearance,layout);
+        language,first_line,type==3,has_rows?std::optional<int>(choice_top(*layout)):std::nullopt,appearance,layout,compact);
     if(!layout)return page;
     const auto count=layout->response_count?layout->response_count:vm_dialog_button_count(type);
     const std::array<std::string_view,3> labels{{first,
@@ -427,5 +426,29 @@ TextOverlayResult draw_vm_dialog(odh::RasterFrame& frame,const odh::DialogState&
     draw_scroll_status(frame,*layout,page,language,type);
     return page;
 }
+
+TextOverlayResult draw_vm_dialog(odh::RasterFrame& frame,const odh::DialogState& state,
+        std::uint8_t language,std::size_t first_line,const VmDialogAppearance& appearance){
+    const auto layout=vm_message_dialog_layout(frame.width,frame.height,state,language,appearance);
+    return paint_vm_dialog(frame,state,language,first_line,appearance,layout,frame.height<240);
+}
+
+TextOverlayResult draw_vm_dialog_tile(odh::RasterFrame& tile,const odh::DialogState& state,
+        std::uint8_t language,std::size_t first_line,VmDialogAppearance appearance,
+        VmMessageDialogLayout layout,bool compact_display){
+    if(tile.width!=std::uint32_t(layout.width) || tile.height!=std::uint32_t(layout.height))
+        throw std::invalid_argument("VM dialog tile must match its measured bounds");
+    if(appearance.response_pointer){
+        const auto x=(*appearance.response_pointer)[0],y=(*appearance.response_pointer)[1];
+        if(x<layout.x || y<layout.y || x>=layout.x+layout.width || y>=layout.y+layout.height)
+            appearance.response_pointer.reset();
+        else appearance.response_pointer=std::array<int,2>{{x-layout.x,y-layout.y}};
+    }
+    layout.ok_x-=layout.x;layout.ok_y-=layout.y;
+    layout.illustration.x-=layout.x;layout.illustration.y-=layout.y;
+    layout.x=0;layout.y=0;
+    return paint_vm_dialog(tile,state,language,first_line,appearance,layout,compact_display);
+}
+
 
 } // namespace odh_host

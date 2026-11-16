@@ -11,6 +11,7 @@
 #include "core/io.h"
 #include "content/TS1NeighbourProvider.h"
 #include "files/formats/iff/PIFFRegistry.h"
+#include "files/formats/iff/chunks/STR.h"
 #include "content/TS1JobProvider.h"
 #include "vitaboy/content/TS1AvatarProvider.h" // HOOK(vitaboy)
 #include <cstdio>
@@ -586,6 +587,13 @@ GameObject* WorldObjectProvider::Get(uint64_t id, bool ts1) {
         if (winner == Entries.end() || winner->second.FileName != reference.FileName ||
             winner->second.FarIndex != reference.FarIndex) continue;
         if (Cache.find(objd->GUID) != Cache.end()) continue;
+        if (ts1 && objd->ObjectType == Chunks::OBJDType::Person && reference.FarIndex >= 0 &&
+            ToLowerInvariant(RelativeToInstall(Archives[reference.FarIndex].Path)) == "expansionpack7/expansionpack7.far") {
+            auto body = resource->Get<Chunks::STR>(objd->BodyStringID);
+            if (body && !body->AddedByPatch && body->RuntimeInfo == FSO::Files::Formats::IFF::ChunkRuntimeState::Normal &&
+                resource->MainIff()->RuntimeInfo.Patches.empty())
+                body->UseBaseNpcAppearance = true;
+        }
         std::unique_ptr<GameObject> item(new GameObject());
         item->GUID = objd->GUID;
         item->OBJ = objd;

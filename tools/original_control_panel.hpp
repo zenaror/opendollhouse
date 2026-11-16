@@ -11,6 +11,7 @@
 #include <string>
 
 namespace odh_host {
+class RetainedPanelArt;
 inline constexpr const char* original_panel_category_art[8]={"cpanel\\catalog\\buyfseating.bmp","cpanel\\catalog\\buyfsurfaces.bmp",
     "cpanel\\catalog\\buyfappliances.bmp","cpanel\\catalog\\buyfelectronics.bmp","cpanel\\catalog\\buyfplumbing.bmp",
     "cpanel\\catalog\\buyfdecorative.bmp","cpanel\\catalog\\buyfmisc.bmp","cpanel\\catalog\\buyflighting.bmp"};
@@ -58,6 +59,7 @@ public:
     // emit actions; unavailable tabs and speed controls remain disabled.
     OriginalPanelAction hit(const OriginalControlPanelLayout&,std::int32_t,std::int32_t,OriginalPanelState={})const;
     void draw(odh::UiBitmapSurface,OriginalPanelMode,OriginalPanelState)const;
+    void draw(odh::UiBitmapSurface,OriginalPanelMode,OriginalPanelState,RetainedPanelArt*)const;
     void draw_portrait(odh::RasterFrame&,BuyUiRect,bool selected,const odh::BitmapImage* head,bool authored_icon=false) const;
     void draw_portrait_state(odh::RasterFrame&,BuyUiRect,unsigned frame,const odh::BitmapImage* head,bool authored_icon=false) const;
     void draw_button(odh::RasterFrame&,const std::string& archive_key,const BuyUiRect&,unsigned state=0)const;

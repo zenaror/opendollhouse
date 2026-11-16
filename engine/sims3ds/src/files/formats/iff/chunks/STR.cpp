@@ -98,16 +98,20 @@ std::string STR::GetString(int32_t index)
 
 std::string STR::GetString(int32_t index, STRLangCode language)
 {
-    auto item = GetStringEntry(index, language);
-    if (item != nullptr)
-    {
-        return item->Value;
-    }
-    return std::string(); //null
+    std::string value;
+    TryGetString(index, language, value);
+    return value;
 }
 
 bool STR::TryGetString(int32_t index, STRLangCode language, std::string& out)
 {
+    // In Makin' Magic, translated NPC tables contain models copied from
+    // other characters. Select the authored rig and wardrobe for play but
+    // keep name lists (11), explicit language reads and raw rows intact.
+    if (UseBaseNpcAppearance && language == STRLangCode::Default &&
+        ((index >= 0 && index <= 10) || (index >= 12 && index <= 22) || (index >= 27 && index <= 34)) &&
+        GetStringEntry(index, STRLangCode::EnglishUS))
+        language = STRLangCode::EnglishUS;
     auto item = GetStringEntry(index, language);
     if (item != nullptr)
     {
