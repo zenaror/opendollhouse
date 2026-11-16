@@ -123,4 +123,10 @@ void DGRPRenderer::Draw(WorldState& world) {
     }
 }
 
+bool DGRPRenderer::HasPartialAlpha() const {
+    for (const auto& item : Items)
+        if (_2DWorldBatch::HasPartialAlpha(item.Sprite.Pixel)) return true;
+    return false;
+}
+
 }}}

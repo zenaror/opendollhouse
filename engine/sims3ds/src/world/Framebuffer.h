@@ -13,6 +13,8 @@
 #include <limits>
 #include <algorithm>
 #include <cstring>
+#include <new>
+#include "core/math.h"
 
 namespace FSO { namespace LotView {
 
@@ -28,6 +30,81 @@ public:
     std::vector<uint16_t> Room;
     /// Room id for pixels lit by the outside colour (terrain, roofs).
     static const uint16_t OUTSIDE_LIGHT_ROOM = 65532;
+    // Cached RGB is premultiplied. Mixed light domains are replayed with each
+    // fragment lit before blending; no room id is reserved for this state.
+    std::vector<uint64_t> Prelit;
+    bool HasPrelit = false; // conservative layer dependency, reset by a full clear
+    bool PrelitAll = false; // allocation failure: cache the whole layer lit
+    bool ResolvePrelit = false; // replay preserves the newly discovered mask
+    size_t NewPrelitPixels = 0;
+    const st::Color* CacheLight = nullptr;
+    st::Color CacheOutsideLight = st::Color::White();
+    bool DeferredOutsideTint = false; // direct replay preserves clamp-then-outside-tint order
+    static constexpr int TRANSPARENCY_TILE = 16;
+    // Conservative coverage, independent of the lighting dependency above.
+    // Partial clears retain blocks; a full clear rebuilds exact coverage.
+    std::vector<uint64_t> Transparency;
+    bool TransparencyAll = false;
+    int TransparencyColumns() const { return (Width + TRANSPARENCY_TILE - 1) / TRANSPARENCY_TILE; }
+    int TransparencyRows() const { return (Height + TRANSPARENCY_TILE - 1) / TRANSPARENCY_TILE; }
+    bool IsTransparentTile(size_t tile) const {
+        return TransparencyAll || (!Transparency.empty() && (Transparency[tile >> 6] & (uint64_t{1} << (tile & 63))));
+    }
+    void MarkTransparency(size_t pixel) {
+        if (TransparencyAll) return;
+        if (Transparency.empty()) {
+            const size_t tiles = size_t(TransparencyColumns()) * TransparencyRows();
+            try { Transparency.assign((tiles + 63) / 64, 0); }
+            catch (const std::bad_alloc&) { TransparencyAll = true; return; }
+        }
+        const size_t tile = (pixel / Width / TRANSPARENCY_TILE) * TransparencyColumns() +
+            (pixel % Width / TRANSPARENCY_TILE);
+        Transparency[tile >> 6] |= uint64_t{1} << (tile & 63);
+    }
+    void ShiftTransparency(int sx, int sy) {
+        if (TransparencyAll || Transparency.empty()) return;
+        auto previous = std::move(Transparency);
+        Transparency.clear();
+        const int columns = TransparencyColumns(), rows = TransparencyRows();
+        for (int y = 0; y < rows && !TransparencyAll; ++y) for (int x = 0; x < columns; ++x) {
+            const size_t tile = size_t(y) * columns + x;
+            if (!(previous[tile >> 6] & (uint64_t{1} << (tile & 63)))) continue;
+            const int x0 = std::max(0, x * TRANSPARENCY_TILE + sx);
+            const int y0 = std::max(0, y * TRANSPARENCY_TILE + sy);
+            const int x1 = std::min(Width, (x + 1) * TRANSPARENCY_TILE + sx);
+            const int y1 = std::min(Height, (y + 1) * TRANSPARENCY_TILE + sy);
+            for (int yy = y0 / TRANSPARENCY_TILE; yy * TRANSPARENCY_TILE < y1; ++yy)
+                for (int xx = x0 / TRANSPARENCY_TILE; xx * TRANSPARENCY_TILE < x1; ++xx)
+                    MarkTransparency(size_t(yy * TRANSPARENCY_TILE) * Width + xx * TRANSPARENCY_TILE);
+        }
+    }
+    bool IsPrelit(size_t pixel) const {
+        return PrelitAll || (!Prelit.empty() && (Prelit[pixel >> 6] & (uint64_t{1} << (pixel & 63))));
+    }
+    void MarkPrelit(size_t pixel) {
+        HasPrelit = true;
+        if (PrelitAll) return;
+        if (Prelit.empty()) {
+            try { Prelit.assign((Color.size() + 63) / 64, 0); }
+            catch (const std::bad_alloc&) { PrelitAll = true; ++NewPrelitPixels; return; }
+        }
+        auto& bits = Prelit[pixel >> 6];
+        const auto bit = uint64_t{1} << (pixel & 63);
+        if (!(bits & bit)) { bits |= bit; ++NewPrelitPixels; }
+    }
+    void ClearPrelit(size_t pixel) {
+        if (!ResolvePrelit && !PrelitAll && !Prelit.empty())
+            Prelit[pixel >> 6] &= ~(uint64_t{1} << (pixel & 63));
+    }
+    void ResetPrelit() {
+        if (ResolvePrelit) return;
+        Prelit.clear(); HasPrelit = PrelitAll = false; NewPrelitPixels = 0;
+        Transparency.clear(); TransparencyAll = false;
+    }
+    st::Color CachedLight(uint16_t room) const {
+        if (!CacheLight || room == 65535) return st::Color::White();
+        return room == OUTSIDE_LIGHT_ROOM ? CacheOutsideLight : CacheLight[room];
+    }
     /// Clip rectangle for the rasterizers (_2DWorldBatch sprites, TriangleRaster), exclusive max. World2D uses it to
     /// redraw only the strip of a cached layer that scrolled into view.
     int32_t ClipX0 = 0, ClipY0 = 0, ClipX1 = 0x7FFFFFFF, ClipY1 = 0x7FFFFFFF;
@@ -40,6 +117,8 @@ public:
             std::fill(Color.begin() + (size_t)y * Width + x0, Color.begin() + (size_t)y * Width + x1, rgba);
             std::fill(Depth.begin() + (size_t)y * Width + x0, Depth.begin() + (size_t)y * Width + x1, std::numeric_limits<float>::infinity());
             if (!Room.empty()) std::fill(Room.begin() + (size_t)y * Width + x0, Room.begin() + (size_t)y * Width + x1, (uint16_t)65535);
+            if (!Prelit.empty() && !ResolvePrelit && !PrelitAll)
+                for (int32_t x = x0; x < x1; ++x) ClearPrelit((size_t)y * Width + x);
         }
     }
 
@@ -52,11 +131,14 @@ public:
         Color.assign((size_t)w * h, 0);
         Depth.assign((size_t)w * h, std::numeric_limits<float>::infinity());
         if (!Room.empty()) Room.assign((size_t)w * h, 65535);
+        ResolvePrelit = false;
+        ResetPrelit();
     }
 
     /// Enables/disables the per-pixel room ids (deferred lighting).
-    void EnableRoom(bool on) { if (on) Room.assign(Color.size(), 65535); else { Room.clear(); Room.shrink_to_fit(); } }
+    void EnableRoom(bool on) { if (on) Room.assign(Color.size(), 65535); else { Room.clear(); Room.shrink_to_fit(); } ResetPrelit(); }
     void Clear(uint32_t rgba) {
+        ResetPrelit();
         std::fill(Color.begin(), Color.end(), rgba);
         if (!Room.empty()) std::fill(Room.begin(), Room.end(), (uint16_t)65535);
         std::fill(Depth.begin(), Depth.end(), std::numeric_limits<float>::infinity());

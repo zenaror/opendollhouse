@@ -68,6 +68,7 @@ public:
     Texture2D* GetTexture(FSO::Files::Formats::IFF::Chunks::SPR2Frame* item);
     WorldTexture GetWorldTexture(FSO::Files::Formats::IFF::Chunks::SPR2Frame* item);
     void ClearTextureCache();
+    static bool HasPartialAlpha(Texture2D* texture);
 
     /// Statistics of the last End() (for tools).
     int32_t SpritesDrawn = 0;

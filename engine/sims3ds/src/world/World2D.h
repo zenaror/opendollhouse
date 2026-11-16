@@ -8,7 +8,8 @@
 // Same layering as FreeSims: three static layers (terrain+floors, walls+roof, static objects) are rendered into
 // off-screen colour+depth buffers ("scroll buffers", viewport + SCROLL_BUFFER pixels, re-rendered only when
 // damaged) and dynamic objects (moved/animated in the last 120 frames) are drawn on top through the z-buffer every
-// frame.
+// frame. Overlapping translucent groups are instead composed together in
+// authored order and retained until their visual inputs or background change.
 // FSO_CPP (3DS performance):
 //  * The depth in the layers is absolute world depth, so scrolling shifts the cached pixels and only the strip that
 //    scrolled into view is rendered (clipped), instead of re-rendering every layer when the view leaves the buffer
@@ -21,6 +22,7 @@
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
+#include <array>
 #include "core/math.h"
 #include "world/Framebuffer.h"
 
@@ -47,7 +49,12 @@ public:
     /// colour of pixels nothing is drawn on (World.ClearColor)
     uint32_t ClearColor = Framebuffer::Pack(0, 0, 0, 255);
 
-    void Init(FSO::LotView::Model::Blueprint* blueprint) { this->Blueprint = blueprint; Invalidate(); }
+    void Init(FSO::LotView::Model::Blueprint* blueprint) {
+        this->Blueprint = blueprint;
+        FrameObjects.clear(); PreviousObjects.clear(); HaveObjectView = false;
+        ResolveTiles.clear(); ResolveRegions.clear(); ResolveAllObjects = false;
+        Invalidate();
+    }
 
     /// Prep work before screen is painted
     void PreDraw(WorldState& state);
@@ -64,6 +71,9 @@ public:
     int32_t StaticRedraws = 0;   // full layer renders
     int32_t StripRedraws = 0;    // partial (scrolled-in strip) layer renders
     int32_t DirtyRedraws = 0;    // partial object layer renders (an object changed layer / was removed)
+    int32_t PrelitReplays = 0;   // mixed-domain clips replayed when their cache changes
+    int32_t CompositeReplays = 0; // ambiguous coverage rebuilt against final depth
+    int64_t CompositeReplayPixels = 0;
     int64_t StripPixels = 0;     // pixels of those partial renders
 
 private:
@@ -73,6 +83,7 @@ private:
     ScrollBuffer StaticWall;
     Framebuffer Composite;
     bool CompositeValid = false;
+    bool FullCompositeDamage = false; // partial mask-allocation fallback promoted its layer
     const Framebuffer* RetainedTarget = nullptr;
     st::Point RetainedOffset;
     std::vector<st::Point> RestoreRows; // left/right limits of last frame's dynamic pixels
@@ -81,6 +92,9 @@ private:
     int32_t TicksSinceLight = 0;
     bool LastDrawRoofs = false;
     std::vector<uint32_t> LastRoomColors;
+    std::vector<uint32_t> RenderRoomColors;
+    uint32_t RenderOutside = 0;
+    bool RenderLighting = true;
     /// world-pixel bounds of every object painted into the static object layer (keys may be deleted components:
     /// never dereferenced, only looked up)
     std::unordered_map<const WorldComponent*, st::Rectangle> StaticBounds;
@@ -91,8 +105,30 @@ private:
     ScrollBuffer& LayerBuffer(int layer) { return layer == FLOOR ? StaticFloor : (layer == WALL ? StaticWall : StaticObjects); }
     /// Renders a layer into its buffer; clip == nullptr: whole buffer (cleared first), else only that rect.
     void RenderLayer(int layer, WorldState& state, const st::Rectangle* clip);
-    /// Merges the layers into the composite inside rect (buffer coordinates).
-    void BuildComposite(const st::Rectangle& rect);
+    /// Merges layers and resolves ambiguous coverage inside rect (buffer coordinates).
+    void BuildComposite(const st::Rectangle& rect, WorldState& state);
+    void ResolveComposite(const st::Rectangle& rect, WorldState& state);
+    struct ObjectView {
+        Components::ObjectComponent* Object = nullptr;
+        const void* Graphic = nullptr;
+        const void* Definition = nullptr;
+        st::Vector3 Position;
+        st::Rectangle Bounds;
+        uint64_t Flags = 0, Flags2 = 0;
+        int64_t Identity = 0;
+        int ObjectID = 0, Room = 0, Level = 0, Direction = 0;
+        bool Visible = false, Hidden = false, Rejected = false, Partial = false, Eligible = false;
+        bool Resolved = false; // previous group membership, not part of the visual key
+        bool Changed = false;
+        bool operator==(const ObjectView& other) const;
+    };
+    std::vector<ObjectView> FrameObjects, PreviousObjects;
+    std::array<uint64_t,16> FrameView{}, PreviousView{};
+    std::vector<uint8_t> ResolveTiles;
+    std::vector<st::Rectangle> ResolveRegions;
+    bool HaveObjectView = false, ObjectViewFallback = false, ResolveAllObjects = false;
+    bool CaptureObjects(WorldState& state, bool& memberChanged);
+    bool PrepareResolvedGroups(bool& memberChanged);
     static void ShiftBuffer(Framebuffer& fb, int32_t sx, int32_t sy);
     void MergeLayer(const Framebuffer& src, Framebuffer& dst, const st::Rectangle& rect) const;
     const st::Color* AmbientLight = nullptr; // Blueprint.RoomColors at composite time

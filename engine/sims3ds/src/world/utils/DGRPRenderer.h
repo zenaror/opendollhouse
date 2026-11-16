@@ -53,6 +53,7 @@ public:
 
     void ValidateSprite(WorldState& world);
     void Draw(WorldState& world);
+    bool HasPartialAlpha() const;
 
 private:
     FSO::Files::Formats::IFF::Chunks::DGRP* DrawGroup;

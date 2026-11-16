@@ -28,6 +28,7 @@ enum class WorldObjectRenderLayer { STATIC, DYNAMIC };
 class WorldObjectRenderInfo {
 public:
     WorldObjectRenderLayer Layer = WorldObjectRenderLayer::STATIC;
+    bool Composited = false; // complete visible bounds belong to a resolved cached group
 };
 
 namespace Components {
@@ -71,6 +72,8 @@ public:
 
     // Buy-mode ghost feedback only; never saved or applied to the real object.
     void SetPlacementRejected(bool rejected);
+    bool PlacementRejected() const { return dgrp.PlacementRejected; }
+    bool HasPartialAlpha(WorldState& world);
 
     void ValidateSprite(WorldState& world);
     st::Vector2 GetScreenPos(WorldState& world);

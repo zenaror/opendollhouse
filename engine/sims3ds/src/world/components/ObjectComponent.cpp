@@ -159,6 +159,11 @@ void ObjectComponent::ValidateSprite(WorldState& world) {
     dgrp.ValidateSprite(world);
 }
 
+bool ObjectComponent::HasPartialAlpha(WorldState& world) {
+    ValidateSprite(world);
+    return dgrp.HasPartialAlpha();
+}
+
 st::Vector2 ObjectComponent::GetScreenPos(WorldState& world) {
     return world.WorldSpace.GetScreenFromTile(DrawPosition()) + world.WorldSpace.GetScreenOffset() + PosCenterOffsets[(int)world.Zoom() - 1];
 }

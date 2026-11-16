@@ -26,6 +26,194 @@ static WorldObjectRenderInfo* GetRenderInfo(WorldComponent* component) {
     return (obj == nullptr) ? nullptr : &obj->renderInfo;
 }
 
+bool World2D::ObjectView::operator==(const ObjectView& o) const {
+    return Object == o.Object && Graphic == o.Graphic && Definition == o.Definition && Position == o.Position &&
+        Bounds.X == o.Bounds.X && Bounds.Y == o.Bounds.Y && Bounds.Width == o.Bounds.Width &&
+        Bounds.Height == o.Bounds.Height && Flags == o.Flags && Flags2 == o.Flags2 &&
+        Identity == o.Identity && ObjectID == o.ObjectID && Room == o.Room && Level == o.Level &&
+        Direction == o.Direction && Visible == o.Visible && Hidden == o.Hidden &&
+        Rejected == o.Rejected && Partial == o.Partial && Eligible == o.Eligible;
+}
+
+bool World2D::CaptureObjects(WorldState& state, bool& memberChanged) {
+    const auto bits = [](float value) { uint32_t result; std::memcpy(&result, &value, 4); return uint64_t(result); };
+    const auto& bounds = state.ThumbnailGroundBounds;
+    FrameView = {{uint64_t(state.DrawOOB) | (uint64_t(state.RenderingThumbnail) << 1) |
+        (uint64_t(state.SimpleTerrain) << 2) | (uint64_t(state.DrawRoofs) << 3) |
+        (uint64_t(state.DynamicCutaway) << 4), uint64_t(bounds.X), uint64_t(bounds.Y),
+        uint64_t(bounds.Width), uint64_t(bounds.Height), uint64_t(state.Zoom()), uint64_t(state.Rotation()),
+        uint64_t(state.Level()), uint64_t(state.BuildMode()), bits(state.PreciseZoom()),
+        bits(state.WorldSpace.WorldPxWidth), bits(state.WorldSpace.WorldPxHeight),
+        bits(state.WorldSpace.CadgeWidth), bits(state.WorldSpace.CadgeBaseLine),
+        bits(state.WorldSpace.TilePxWidthHalf), bits(state.WorldSpace.TilePxHeightHalf)}};
+    bool changed = !HaveObjectView || FrameView != PreviousView;
+    const bool hadMembers = ResolveAllObjects || std::any_of(PreviousObjects.begin(), PreviousObjects.end(),
+        [](const ObjectView& view) { return view.Resolved; });
+    if (changed && hadMembers) memberChanged = true;
+    ObjectViewFallback = false;
+    try {
+        FrameObjects.clear();
+        FrameObjects.reserve(Blueprint->Objects.size());
+        for (auto* obj : Blueprint->Objects) {
+            ObjectView view;
+            view.Object = obj; view.ObjectID = obj->ObjectID; view.Identity = obj->ID;
+            view.Resolved = obj->renderInfo.Composited;
+            const auto position = obj->DrawPosition();
+            bool eligible = obj->Visible && !obj->CutawayHidden() && obj->Level <= state.Level() &&
+                (state.DrawOOB || !(position.X < -2043 && position.Y < -2043));
+            if (state.RenderingThumbnail && bounds.Width > 0)
+                eligible &= position.X >= bounds.Left() && position.X < bounds.Right() &&
+                    position.Y >= bounds.Top() && position.Y < bounds.Bottom();
+            if (eligible) {
+                obj->ValidateSprite(state);
+                view.Bounds = ObjectScreenBounds(obj, state);
+                eligible = view.Bounds.Width > 0 && view.Bounds.X < Origin.X + Composite.Width &&
+                    view.Bounds.Y < Origin.Y + Composite.Height && view.Bounds.Right() > Origin.X &&
+                    view.Bounds.Bottom() > Origin.Y;
+            }
+            view.Eligible = eligible;
+            if (eligible) {
+                view.Position = position; view.Graphic = obj->DGRP; view.Definition = obj->Obj;
+                view.Flags = obj->DynamicSpriteFlags; view.Flags2 = obj->DynamicSpriteFlags2;
+                view.Room = obj->Room; view.Level = obj->Level; view.Direction = int(obj->Direction);
+                view.Visible = obj->Visible; view.Hidden = obj->CutawayHidden();
+                view.Rejected = obj->PlacementRejected(); view.Partial = obj->HasPartialAlpha(state);
+            } else view.Bounds = {};
+            const size_t index = FrameObjects.size();
+            view.Changed = !HaveObjectView || index >= PreviousObjects.size() || !(view == PreviousObjects[index]);
+            if (view.Changed) {
+                changed = true;
+                // Object order matters for overlapping translucent sources.
+                if (hadMembers && index < PreviousObjects.size() &&
+                    (view.Object != PreviousObjects[index].Object ||
+                     view.ObjectID != PreviousObjects[index].ObjectID ||
+                     view.Identity != PreviousObjects[index].Identity ||
+                     view.Definition != PreviousObjects[index].Definition)) memberChanged = true;
+            }
+            FrameObjects.push_back(view);
+        }
+        if (FrameObjects.size() != PreviousObjects.size()) {
+            changed = true;
+            memberChanged |= hadMembers;
+        }
+    } catch (const std::bad_alloc&) {
+        FrameObjects.clear(); ObjectViewFallback = true; memberChanged = true; return true;
+    }
+    return changed;
+}
+
+bool World2D::PrepareResolvedGroups(bool& memberChanged) {
+    const int tile = Framebuffer::TRANSPARENCY_TILE;
+    const int columns = (Composite.Width + tile - 1) / tile;
+    const int rows = (Composite.Height + tile - 1) / tile;
+    const bool wasAll = ResolveAllObjects;
+    std::vector<st::Rectangle> previousRegions;
+    previousRegions.swap(ResolveRegions);
+    ResolveAllObjects = false;
+    for (auto* obj : Blueprint->Objects) obj->renderInfo.Composited = false;
+    try {
+        if (ObjectViewFallback) throw std::bad_alloc();
+        ResolveTiles.assign(size_t(columns) * rows, 0);
+        for (auto* layer : {&StaticFloor.Buffer, &StaticWall.Buffer, &StaticObjects.Buffer}) {
+            if (layer->Width != Composite.Width || layer->Height != Composite.Height) continue;
+            if (layer->TransparencyAll) throw std::bad_alloc(); // bounded whole-composite fallback
+            if (layer->Transparency.empty()) continue;
+            for (size_t i = 0; i < ResolveTiles.size(); ++i)
+                if (layer->IsTransparentTile(i)) ResolveTiles[i] = 1;
+        }
+        const auto extent = [&](const ObjectView& view) {
+            const auto& b = view.Bounds;
+            const int x0 = std::clamp((b.X - int(Origin.X) - 2) / tile, 0, columns);
+            const int y0 = std::clamp((b.Y - int(Origin.Y) - 2) / tile, 0, rows);
+            const int x1 = std::clamp((b.Right() - int(Origin.X) + 2 + tile - 1) / tile, 0, columns);
+            const int y1 = std::clamp((b.Bottom() - int(Origin.Y) + 2 + tile - 1) / tile, 0, rows);
+            return st::Rectangle(x0, y0, x1 - x0, y1 - y0);
+        };
+        const auto mark = [&](const st::Rectangle& r) {
+            bool added = false;
+            for (int y = r.Top(); y < r.Bottom(); ++y) for (int x = r.Left(); x < r.Right(); ++x) {
+                auto& selected = ResolveTiles[size_t(y) * columns + x];
+                if (!selected) { selected = 1; added = true; }
+            }
+            return added;
+        };
+        // Dynamic translucent sources also seed groups. This preserves their
+        // authored order relative to cached opaque and translucent neighbours.
+        for (const auto& view : FrameObjects) if (view.Eligible && view.Partial) mark(extent(view));
+        bool extended = true;
+        while (extended) {
+            extended = false;
+            for (auto& view : FrameObjects) if (view.Eligible) {
+                const auto r = extent(view);
+                bool touches = false;
+                for (int y = r.Top(); y < r.Bottom() && !touches; ++y)
+                    for (int x = r.Left(); x < r.Right(); ++x)
+                        if (ResolveTiles[size_t(y) * columns + x]) { touches = true; break; }
+                if (touches) {
+                    extended |= mark(r);
+                    view.Object->renderInfo.Composited = true;
+                }
+            }
+        }
+        ResolveRegions.clear();
+        for (int y = 0; y < rows; ++y) for (int x = 0; x < columns;) {
+            if (!ResolveTiles[size_t(y) * columns + x]) { ++x; continue; }
+            const int begin = x;
+            while (x < columns && ResolveTiles[size_t(y) * columns + x]) ++x;
+            auto previous = std::find_if(ResolveRegions.begin(), ResolveRegions.end(), [&](const st::Rectangle& r) {
+                return r.X == begin * tile && r.Width == (x - begin) * tile && r.Bottom() == y * tile;
+            });
+            if (previous != ResolveRegions.end()) previous->Height += tile;
+            else ResolveRegions.emplace_back(begin * tile, y * tile, (x - begin) * tile, tile);
+        }
+        for (auto& r : ResolveRegions) {
+            r.Width = std::min(r.Width, Composite.Width - r.X);
+            r.Height = std::min(r.Height, Composite.Height - r.Y);
+        }
+        // Each crop traverses terrain/wall source geometry. Bound that work:
+        // dense fragmented coverage uses one conservative bounding crop, with
+        // complete bounds of every additional touched object included too.
+        if (ResolveRegions.size() > 8) {
+            int x0 = Composite.Width, y0 = Composite.Height, x1 = 0, y1 = 0;
+            for (const auto& r : ResolveRegions) {
+                x0 = std::min(x0, r.Left()); y0 = std::min(y0, r.Top());
+                x1 = std::max(x1, r.Right()); y1 = std::max(y1, r.Bottom());
+            }
+            bool expanded = true;
+            while (expanded) {
+                expanded = false;
+                for (const auto& view : FrameObjects) if (view.Eligible) {
+                    const int bx0 = std::max(0, view.Bounds.X - int(Origin.X) - 2);
+                    const int by0 = std::max(0, view.Bounds.Y - int(Origin.Y) - 2);
+                    const int bx1 = std::min(Composite.Width, view.Bounds.Right() - int(Origin.X) + 2);
+                    const int by1 = std::min(Composite.Height, view.Bounds.Bottom() - int(Origin.Y) + 2);
+                    if (bx0 >= x1 || by0 >= y1 || bx1 <= x0 || by1 <= y0) continue;
+                    view.Object->renderInfo.Composited = true;
+                    const int nx0 = std::min(x0, bx0), ny0 = std::min(y0, by0);
+                    const int nx1 = std::max(x1, bx1), ny1 = std::max(y1, by1);
+                    expanded |= nx0 != x0 || ny0 != y0 || nx1 != x1 || ny1 != y1;
+                    x0 = nx0; y0 = ny0; x1 = nx1; y1 = ny1;
+                }
+            }
+            ResolveRegions.assign(1, st::Rectangle(x0, y0, x1 - x0, y1 - y0));
+        }
+        for (const auto& view : FrameObjects)
+            if (view.Resolved != view.Object->renderInfo.Composited) memberChanged = true;
+        if (ResolveRegions.size() != previousRegions.size()) memberChanged = true;
+        else for (size_t i = 0; i < ResolveRegions.size(); ++i) {
+            const auto& a = ResolveRegions[i]; const auto& b = previousRegions[i];
+            if (a.X != b.X || a.Y != b.Y || a.Width != b.Width || a.Height != b.Height) memberChanged = true;
+        }
+        if (wasAll) memberChanged = true;
+    } catch (const std::bad_alloc&) {
+        ResolveAllObjects = true;
+        ResolveTiles.clear(); ResolveRegions.clear();
+        for (auto* obj : Blueprint->Objects) obj->renderInfo.Composited = true;
+        memberChanged = true;
+    }
+    return ResolveAllObjects || !ResolveRegions.empty();
+}
+
 void World2D::PreDraw(WorldState& state) {
     if (Blueprint == nullptr) return;
     auto pxOffset = state.WorldSpace.GetScreenOffset();
@@ -170,8 +358,30 @@ void World2D::PreDraw(WorldState& state) {
         Blueprint->Terrain->RegenTerrain(state, Blueprint);
 
     int32_t bw = (int32_t)state.WorldSpace.WorldPxWidth + SCROLL_BUFFER, bh = (int32_t)state.WorldSpace.WorldPxHeight + SCROLL_BUFFER;
+    AmbientLight = state.RenderingThumbnail ? nullptr : Blueprint->RoomColors.data();
+    // Exterior geometry shares the settled palette/cadence of outside sprites.
+    OutsideLight = state.RenderingThumbnail ? st::Color::White() :
+        (Blueprint->Light.size() > 1 ? Blueprint->RoomColors[1] : state.OutsideColor);
+    if (OutsideLight.A == 0) OutsideLight = st::Color::White();
+    bool paletteChanged = RenderLighting != (AmbientLight != nullptr) ||
+        RenderOutside != OutsideLight.PackedValue() || RenderRoomColors.size() != Blueprint->Light.size();
+    if (!paletteChanged) for (size_t i = 0; i < RenderRoomColors.size(); ++i)
+        if (RenderRoomColors[i] != Blueprint->RoomColors[i].PackedValue()) { paletteChanged = true; break; }
+    if (paletteChanged) {
+        RenderLighting = AmbientLight != nullptr;
+        RenderOutside = OutsideLight.PackedValue();
+        RenderRoomColors.resize(Blueprint->Light.size());
+        for (size_t i = 0; i < RenderRoomColors.size(); ++i) RenderRoomColors[i] = Blueprint->RoomColors[i].PackedValue();
+        relight = true;
+        // Only layers which contain resolved light mixtures depend on the
+        // palette during rasterization. Opaque/single-domain layers stay unlit.
+        redrawFloor |= StaticFloor.Buffer.HasPrelit;
+        redrawWall |= StaticWall.Buffer.HasPrelit;
+        redrawStaticObjects |= StaticObjects.Buffer.HasPrelit;
+    }
     bool sizeChanged = Composite.Width != bw || Composite.Height != bh;
     auto newOrigin = GetBufferOrigin(pxOffset);
+    const bool bufferShifted = HaveOrigin && newOrigin != Origin;
     bool anyInvalid = !StaticFloor.Valid || !StaticWall.Valid || !StaticObjects.Valid || !CompositeValid || !HaveOrigin;
     if (sizeChanged || anyInvalid) {
         redrawFloor = redrawWall = redrawStaticObjects = true;
@@ -179,9 +389,6 @@ void World2D::PreDraw(WorldState& state) {
     }
     bool redraw[3] = { redrawFloor, redrawWall, redrawStaticObjects };
     bool compositeAll = sizeChanged || anyInvalid || redrawFloor || redrawWall || redrawStaticObjects || relight;
-    AmbientLight = state.RenderingThumbnail ? nullptr : Blueprint->RoomColors.data();
-    OutsideLight = state.OutsideColor;
-    if (OutsideLight.A == 0) OutsideLight = st::Color::White();
     if (sizeChanged) Composite.Resize(bw, bh);
 
     // scrolling: shift the cached pixels, render only what scrolled in
@@ -212,15 +419,15 @@ void World2D::PreDraw(WorldState& state) {
         if (redraw[l]) { RenderLayer(l, state, nullptr); StaticRedraws++; }
         else for (auto& r : strips) { RenderLayer(l, state, &r); StripRedraws++; StripPixels += (int64_t)r.Width * r.Height; }
     }
-    if (compositeAll) BuildComposite(st::Rectangle(0, 0, bw, bh));
-    else for (auto& r : strips) BuildComposite(r);
+    std::vector<st::Rectangle> compositeRects;
+    if (!compositeAll) compositeRects = strips;
     if (!redraw[WALL] && cutRect.Width > 0) {
         int32_t x0 = std::max<int32_t>(0, cutRect.X - (int32_t)Origin.X), y0 = std::max<int32_t>(0, cutRect.Y - (int32_t)Origin.Y);
         int32_t x1 = std::min<int32_t>(bw, cutRect.X + cutRect.Width - (int32_t)Origin.X), y1 = std::min<int32_t>(bh, cutRect.Y + cutRect.Height - (int32_t)Origin.Y);
         if (x1 > x0 && y1 > y0) {
             st::Rectangle r(x0, y0, x1 - x0, y1 - y0);
             RenderLayer(WALL, state, &r); DirtyRedraws++; StripPixels += (int64_t)r.Width * r.Height;
-            if (!compositeAll) BuildComposite(r);
+            if (!compositeAll) compositeRects.push_back(r);
         }
     }
     if (!redraw[OBJECTS] && !objDirty.empty()) {
@@ -235,14 +442,65 @@ void World2D::PreDraw(WorldState& state) {
         }
         if (area * 2 > (int64_t)bw * bh) {
             RenderLayer(OBJECTS, state, nullptr); StaticRedraws++;
-            if (!compositeAll) BuildComposite(st::Rectangle(0, 0, bw, bh));
+            compositeAll = true;
         } else {
             for (auto& r : rects) {
                 RenderLayer(OBJECTS, state, &r); DirtyRedraws++; StripPixels += (int64_t)r.Width * r.Height;
-                if (!compositeAll) BuildComposite(r);
+                if (!compositeAll) compositeRects.push_back(r);
             }
         }
     }
+    bool memberChanged = false;
+    const bool hadGroups = ResolveAllObjects || !ResolveRegions.empty();
+    const bool objectsChanged = CaptureObjects(state, memberChanged);
+    if (compositeAll || !compositeRects.empty() || objectsChanged || bufferShifted || !HaveObjectView)
+        PrepareResolvedGroups(memberChanged);
+    // With an unchanged group topology, a member can only alter pixels inside
+    // its old/new drawing bounds. Reconstruct that footprint against all source
+    // contributors; global, identity and topology changes retain the full path.
+    if (!compositeAll && !memberChanged && !bufferShifted && !FullCompositeDamage &&
+        HaveObjectView && !ObjectViewFallback && !ResolveAllObjects && FrameView == PreviousView &&
+        FrameObjects.size() == PreviousObjects.size()) {
+        try {
+            for (size_t i = 0; i < FrameObjects.size(); ++i) {
+                const auto& current = FrameObjects[i]; const auto& old = PreviousObjects[i];
+                if (!current.Changed || !old.Resolved || !current.Object->renderInfo.Composited) continue;
+                const int x0 = std::max(0, std::min(old.Bounds.Left(), current.Bounds.Left()) - int(Origin.X) - 2);
+                const int y0 = std::max(0, std::min(old.Bounds.Top(), current.Bounds.Top()) - int(Origin.Y) - 2);
+                const int x1 = std::min(bw, std::max(old.Bounds.Right(), current.Bounds.Right()) - int(Origin.X) + 2);
+                const int y1 = std::min(bh, std::max(old.Bounds.Bottom(), current.Bounds.Bottom()) - int(Origin.Y) + 2);
+                if (x1 > x0 && y1 > y0) {
+                    const auto same = std::find_if(compositeRects.begin(), compositeRects.end(), [&](const st::Rectangle& r) {
+                        return r.X == x0 && r.Y == y0 && r.Width == x1 - x0 && r.Height == y1 - y0;
+                    });
+                    if (same == compositeRects.end()) compositeRects.emplace_back(x0, y0, x1 - x0, y1 - y0);
+                }
+            }
+        } catch (const std::bad_alloc&) { compositeAll = true; }
+    }
+    // Buffer-relative groups move with the retained composite. A changed origin
+    // or membership needs their complete visible bounds painted before dynamic
+    // draws can be omitted.
+    compositeAll |= memberChanged || (bufferShifted && hadGroups) || FullCompositeDamage;
+    if (!compositeAll && !ResolveRegions.empty() && compositeRects.size() > 1) {
+        int x0 = bw, y0 = bh, x1 = 0, y1 = 0;
+        for (const auto& r : compositeRects) {
+            x0 = std::min(x0, r.Left()); y0 = std::min(y0, r.Top());
+            x1 = std::max(x1, r.Right()); y1 = std::max(y1, r.Bottom());
+        }
+        // One damage crop avoids traversing source geometry once per changed
+        // member. The existing region cap still bounds the number of replays.
+        compositeRects[0] = st::Rectangle(x0, y0, x1 - x0, y1 - y0);
+        compositeRects.resize(1);
+    }
+    if (compositeAll) BuildComposite(st::Rectangle(0, 0, bw, bh), state);
+    else for (const auto& r : compositeRects) BuildComposite(r, state);
+    FullCompositeDamage = false;
+    if (!ObjectViewFallback) {
+        for (auto& view : FrameObjects) view.Resolved = view.Object->renderInfo.Composited;
+        PreviousObjects.swap(FrameObjects);
+        PreviousView = FrameView; HaveObjectView = true;
+    } else HaveObjectView = false;
     CompositeValid = true;
     _2d->Target = nullptr;
 }
@@ -319,6 +577,11 @@ void World2D::RenderLayer(int layer, WorldState& state, const st::Rectangle* cli
     auto _2d = state._2D;
     auto& buf = LayerBuffer(layer);
     auto& fb = buf.Buffer;
+    const bool resolving = fb.ResolvePrelit;
+    const bool alreadyAll = fb.PrelitAll;
+    fb.NewPrelitPixels = 0;
+    fb.CacheLight = _2d->AmbientLight;
+    fb.CacheOutsideLight = OutsideLight;
     int32_t bw = Composite.Width, bh = Composite.Height;
     if (clip == nullptr) {
         if (layer == OBJECTS) StaticBounds.clear();
@@ -342,12 +605,12 @@ void World2D::RenderLayer(int layer, WorldState& state, const st::Rectangle* cli
                 Blueprint->Terrain->DrawInto(state, fb);
             }
             _2d->Begin(state.Camera());
-            Blueprint->FloorComp->Draw(state);
+            if (Blueprint->Floors) Blueprint->FloorComp->Draw(state);
             _2d->End();
             break;
         case WALL:
             _2d->Begin(state.Camera());
-            Blueprint->WallComp->Draw(state);
+            if (Blueprint->Walls && Blueprint->WallsAt) Blueprint->WallComp->Draw(state);
             _2d->End();
             // FSO_CPP: World3D drew the roof every frame when State.DrawRoofs; here it lives in the cached wall layer.
             if (state.DrawRoofs) Blueprint->RoofComp.DrawInto(state, fb);
@@ -381,6 +644,19 @@ void World2D::RenderLayer(int layer, WorldState& state, const st::Rectangle* cli
     }
     fb.ResetClip();
     _2d->Target = nullptr;
+    if (!resolving && (fb.NewPrelitPixels || fb.PrelitAll)) {
+        // Replay from the first fragment: lighting an already mixed RGB value
+        // cannot recover its individual ordinary/luminous contributions.
+        fb.ResolvePrelit = true;
+        // A failed mask allocation changes the meaning of every pixel in this
+        // layer. Promote a partial update, including the final composite.
+        const bool promote = clip != nullptr && fb.PrelitAll && !alreadyAll;
+        if (promote) FullCompositeDamage = true;
+        try { RenderLayer(layer, state, promote ? nullptr : clip); }
+        catch (...) { fb.ResolvePrelit = false; throw; }
+        fb.ResolvePrelit = false;
+        ++PrelitReplays;
+    }
 }
 
 void World2D::ShiftBuffer(Framebuffer& fb, int32_t sx, int32_t sy) {
@@ -394,9 +670,19 @@ void World2D::ShiftBuffer(Framebuffer& fb, int32_t sx, int32_t sy) {
         std::memmove(&fb.Color[(size_t)dy * W + dstX], &fb.Color[(size_t)syRow * W + srcX], (size_t)n * sizeof(uint32_t));
         std::memmove(&fb.Depth[(size_t)dy * W + dstX], &fb.Depth[(size_t)syRow * W + srcX], (size_t)n * sizeof(float));
         if (!fb.Room.empty()) std::memmove(&fb.Room[(size_t)dy * W + dstX], &fb.Room[(size_t)syRow * W + srcX], (size_t)n * sizeof(uint16_t));
+        if (!fb.Prelit.empty() && !fb.PrelitAll) {
+            // Traverse like memmove when rows also overlap horizontally.
+            for (int j = 0; j < n; ++j) {
+                const int i = sx > 0 ? n - 1 - j : j;
+                const size_t dst = (size_t)dy * W + dstX + i;
+                const bool lit = fb.IsPrelit((size_t)syRow * W + srcX + i);
+                if (lit) fb.MarkPrelit(dst); else fb.ClearPrelit(dst);
+            }
+        }
     };
     if (sy > 0) { for (int32_t y = H - 1; y >= sy; y--) moveRow(y, y - sy); }
     else { for (int32_t y = 0; y < H + sy; y++) moveRow(y, y - sy); }
+    fb.ShiftTransparency(sx, sy);
 }
 
 // drawSimpleRestoreDepth: copies a cached layer (colour + absolute depth) into dst with the depth test.
@@ -416,7 +702,7 @@ void World2D::MergeLayer(const Framebuffer& src, Framebuffer& dst, const st::Rec
             float d = sd[x];
             if (d > td[x]) continue;
             td[x] = d;
-            if (rooms && AmbientLight != nullptr) {
+            if (rooms && AmbientLight != nullptr && !src.IsPrelit((size_t)y * src.Width + x)) {
                 // deferred ambient light (psZDepthSprite: colour * tex2D(ambientSampler, room))
                 uint16_t room = rooms[(size_t)y * src.Width + x];
                 if (room != 65535) {
@@ -428,21 +714,75 @@ void World2D::MergeLayer(const Framebuffer& src, Framebuffer& dst, const st::Rec
             }
             if (a == 255) { tc[x] = c; continue; }
             uint32_t dc = tc[x], ia = 255 - a;
-            uint32_t r = ((c & 0xFF) * a + (dc & 0xFF) * ia) / 255;
-            uint32_t g = (((c >> 8) & 0xFF) * a + ((dc >> 8) & 0xFF) * ia) / 255;
-            uint32_t b = (((c >> 16) & 0xFF) * a + ((dc >> 16) & 0xFF) * ia) / 255;
+            // Cached RGB already includes its coverage alpha.
+            uint32_t r = std::min<uint32_t>(255, (c & 0xFF) + ((dc & 0xFF) * ia) / 255);
+            uint32_t g = std::min<uint32_t>(255, ((c >> 8) & 0xFF) + (((dc >> 8) & 0xFF) * ia) / 255);
+            uint32_t b = std::min<uint32_t>(255, ((c >> 16) & 0xFF) + (((dc >> 16) & 0xFF) * ia) / 255);
             uint32_t na = std::min<uint32_t>(255, a + ((dc >> 24) * ia) / 255);
             tc[x] = Framebuffer::Pack((uint8_t)r, (uint8_t)g, (uint8_t)b, (uint8_t)na);
         }
     }
 }
 
-void World2D::BuildComposite(const st::Rectangle& rect) {
+void World2D::ResolveComposite(const st::Rectangle& rect, WorldState& state) {
+    auto* batch = state._2D;
+    struct Restore {
+        WorldState& State; Framebuffer& Target; Utils::_2DWorldBatch& Batch;
+        st::Color Outside; Framebuffer* PreviousTarget; st::Vector2 Scroll;
+        bool OutsideTint; const st::Color* Light; st::Color CachedOutside;
+        ~Restore() {
+            State.OutsideColor = Outside; Target.ResetClip(); Batch.Target = PreviousTarget; Batch.SetScroll(Scroll);
+            Target.DeferredOutsideTint = OutsideTint; Target.CacheLight = Light; Target.CacheOutsideLight = CachedOutside;
+        }
+    } restore{state, Composite, *batch, state.OutsideColor, batch->Target, batch->GetScroll(),
+        Composite.DeferredOutsideTint, Composite.CacheLight, Composite.CacheOutsideLight};
+    state.OutsideColor = OutsideLight; // direct triangle producers use this input
+    Composite.DeferredOutsideTint = true;
+    Composite.CacheLight = AmbientLight; Composite.CacheOutsideLight = OutsideLight;
+    Composite.ClearRect(rect.X, rect.Y, rect.Right(), rect.Bottom(), ClearColor);
+    Composite.SetClip(rect.X, rect.Y, rect.Right(), rect.Bottom());
+    batch->Target = &Composite; batch->SetScroll(Origin);
+    if (Blueprint->Terrain) Blueprint->Terrain->DrawInto(state, Composite);
+    if (Blueprint->Floors) {
+        batch->Begin(state.Camera()); Blueprint->FloorComp->Draw(state); batch->End();
+    }
+    if (Blueprint->Walls && Blueprint->WallsAt) {
+        batch->Begin(state.Camera()); Blueprint->WallComp->Draw(state); batch->End();
+    }
+    if (state.DrawRoofs) Blueprint->RoofComp.DrawInto(state, Composite);
+    batch->Begin(state.Camera());
+    // The complete overlapping group is painted in the original object order.
+    // Both static and dynamic members are included exactly once.
+    for (auto* obj : Blueprint->Objects) {
+        if (obj->Level > state.Level()) continue;
+        const auto b = ObjectScreenBounds(obj, state);
+        const int x = b.X - int(Origin.X), y = b.Y - int(Origin.Y);
+        if (x >= rect.Right() || y >= rect.Bottom() || x + b.Width <= rect.X || y + b.Height <= rect.Y) continue;
+        const auto position = obj->DrawPosition();
+        batch->OffsetPixel(state.WorldSpace.GetScreenFromTile(position));
+        batch->OffsetTile(position); batch->SetObjID(obj->ObjectID); obj->Draw(state);
+    }
+    batch->End();
+    ++CompositeReplays;
+    CompositeReplayPixels += int64_t(rect.Width) * rect.Height;
+}
+
+void World2D::BuildComposite(const st::Rectangle& rect, WorldState& state) {
     RetainedTarget = nullptr;
     Composite.ClearRect(rect.X, rect.Y, rect.X + rect.Width, rect.Y + rect.Height, ClearColor);
     MergeLayer(StaticFloor.Buffer, Composite, rect);
     MergeLayer(StaticWall.Buffer, Composite, rect);
     MergeLayer(StaticObjects.Buffer, Composite, rect);
+    if (ResolveAllObjects) ResolveComposite(rect, state);
+    else for (const auto& region : ResolveRegions) {
+        if (region.X >= rect.Right() || region.Y >= rect.Bottom() ||
+            region.Right() <= rect.X || region.Bottom() <= rect.Y) continue;
+        const int x0 = std::max(region.X, rect.X), y0 = std::max(region.Y, rect.Y);
+        const int x1 = std::min(region.Right(), rect.Right()), y1 = std::min(region.Bottom(), rect.Bottom());
+        // Other pixels of an already resolved group remain valid. Clear the
+        // intersection before replaying, so cached alpha is never applied twice.
+        ResolveComposite(st::Rectangle(x0, y0, x1 - x0, y1 - y0), state);
+    }
 }
 
 void World2D::MarkDynamic(int x0, int y0, int x1, int y1) {
@@ -515,7 +855,7 @@ void World2D::Draw(WorldState& state, Framebuffer& target, bool retain) {
 
     for (auto obj : Blueprint->Objects) {
         if (obj->Level > state.Level()) continue;
-        if (obj->renderInfo.Layer == WorldObjectRenderLayer::DYNAMIC) {
+        if (obj->renderInfo.Layer == WorldObjectRenderLayer::DYNAMIC && !obj->renderInfo.Composited) {
             auto tilePosition = obj->DrawPosition();
             auto oPx = state.WorldSpace.GetScreenFromTile(tilePosition);
             obj->ValidateSprite(state);

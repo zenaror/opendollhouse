@@ -25,6 +25,8 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Transparent objects and overlapping lit and unlit parts keep their appearance
+  when the renderer rebuilds or reuses their cached images.
 - In-lot audio settings use the original eleven volume positions and gain curve.
   Background simulation preserves the player's selected speed and pause state.
 - The Lighting option controls rendered object light without changing room

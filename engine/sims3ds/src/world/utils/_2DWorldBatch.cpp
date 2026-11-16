@@ -220,14 +220,15 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
 
     // ambient light (psZDepthSprite / psZDepthWall multiply by tex2D(ambientSampler, roomVec))
     uint32_t lr = 256, lg = 256, lb = 256, la = 256;
-    if (useDepth && AmbientLight != nullptr) {
+    const bool grayscale = useDepth && sprite->Room == 65533;
+    if (useDepth && AmbientLight != nullptr && !grayscale) {
         auto& amb = AmbientLight[sprite->Room];
         lr = amb.R + (amb.R >> 7); lg = amb.G + (amb.G >> 7); lb = amb.B + (amb.B >> 7); la = amb.A + (amb.A >> 7);
     }
-    bool grayscale = useDepth && sprite->Room == 65533;
     // FSO_CPP: deferred room light (see Framebuffer::Room): write unlit colour + room id
-    uint16_t* roomBuf = (useDepth && !fb.Room.empty()) ? fb.Room.data() : nullptr;
-    const uint16_t roomId = grayscale ? (uint16_t)65535 : sprite->Room;
+    uint16_t* roomBuf = !fb.Room.empty() ? fb.Room.data() : nullptr;
+    const uint16_t roomId = (!useDepth || grayscale) ? (uint16_t)65535 : sprite->Room;
+    if (roomBuf) fb.CacheLight = AmbientLight;
     if (roomBuf) { lr = lg = lb = la = 256; }
 
     // FIX(sims) memory: RGBA texels (Data) or palettised ones (Index/Alpha/Palette: SPR#/SPR2 frames, see SPR.h /
@@ -286,12 +287,24 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
                 d = backDepth + (float)(255 - (int32_t)z) * frontStep;
                 if (d > drow[x]) continue; // LessEqual depth test
                 drow[x] = d;
-                if (rrow) rrow[x] = roomId;
             } else {
                 if (a == 0) continue;
             }
+            const size_t pixel = (size_t)y * fb.Width + x;
+            if (rrow) {
+                // Discover domains before overwriting the previous room, and
+                // only for fragments which passed coverage and depth tests.
+                if (!fb.ResolvePrelit) {
+                    if (a == 255) fb.ClearPrelit(pixel);
+                    else if ((crow[x] >> 24) != 0 && rrow[x] != roomId)
+                        fb.MarkPrelit(pixel);
+                }
+                if (a < 255) fb.MarkTransparency(pixel);
+                rrow[x] = roomId;
+            }
+            const bool prelit = roomBuf && fb.ResolvePrelit && fb.IsPrelit(pixel);
             const st::Color& c = PAL ? ppal[irow[ci]] : prow[ci];
-            if (naturalColor && a == 255) {
+            if (naturalColor && !prelit && a == 255) {
                 crow[x] = c.PackedValue() | 0xff000000u;
                 continue;
             }
@@ -307,7 +320,12 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
                     g = b = 3 * l / 4;
                 }
             }
-            if (useDepth) { r = (r * lr) >> 8; g = (g * lg) >> 8; b = (b * lb) >> 8; a = (a * la) >> 8; }
+            if (prelit) {
+                const auto light = fb.CachedLight(roomId);
+                r = (r * (light.R + (light.R >> 7))) >> 8;
+                g = (g * (light.G + (light.G >> 7))) >> 8;
+                b = (b * (light.B + (light.B >> 7))) >> 8;
+            } else if (useDepth) { r = (r * lr) >> 8; g = (g * lg) >> 8; b = (b * lb) >> 8; a = (a * la) >> 8; }
             if (a >= 255) {
                 crow[x] = Framebuffer::Pack((uint8_t)r, (uint8_t)g, (uint8_t)b, 255);
             } else {
@@ -328,6 +346,17 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
     };
     if (pdata) draw(std::false_type());
     else draw(std::true_type());
+}
+
+bool _2DWorldBatch::HasPartialAlpha(Texture2D* texture) {
+    if (!texture || !texture->HasColor()) return false;
+    if (texture->partialAlpha >= 0) return texture->partialAlpha != 0;
+    texture->partialAlpha = 0;
+    for (size_t i = 0; i < size_t(texture->Width) * texture->Height; ++i) {
+        const auto a = texture->Data ? texture->Data[i].A : texture->Alpha[i];
+        if (a > 2 && a < 255) { texture->partialAlpha = 1; break; }
+    }
+    return texture->partialAlpha != 0;
 }
 
 Texture2D* _2DWorldBatch::GetTexture(SPRFrame* item) {

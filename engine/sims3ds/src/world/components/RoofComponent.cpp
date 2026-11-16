@@ -378,7 +378,7 @@ void RoofComponent::DrawInto(WorldState& world, Framebuffer& target) {
 
     // TS1 roofs are lit by the outside light (C#: DiffuseColor = world.OutsideColor)
     st::Color out = world.OutsideColor;
-    if (out.A == 0 || !target.Room.empty()) out = st::Color::White(); // deferred: lit when composited
+    if (out.A == 0 || !target.Room.empty() || target.DeferredOutsideTint) out = st::Color::White(); // tint after raster clamp
     float lr = out.R / 255.0f, lg = out.G / 255.0f, lb = out.B / 255.0f;
 
     // FSO_CPP: shading relative to the view. Face normals in tile space -> screen direction.

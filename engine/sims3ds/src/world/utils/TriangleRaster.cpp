@@ -105,6 +105,17 @@ void DrawTriangle(Framebuffer& fb, const RasterVertex& a, const RasterVertex& b0
             if (w0 >= 0 && w1 >= 0 && w2 >= 0 && z <= drow[x]) {
                 uint32_t t = hasTex ? tp[(((int32_t)std::floor(v)) & tmy) * tw + (((int32_t)std::floor(u)) & tmx)] : flatColor;
                 int32_t r = (int32_t)((t & 0xFF) * lr), g = (int32_t)(((t >> 8) & 0xFF) * lg), bb = (int32_t)(((t >> 16) & 0xFF) * lb);
+                const size_t pixel = (size_t)y * fb.Width + x;
+                if (rrow) {
+                    if (!fb.ResolvePrelit) fb.ClearPrelit(pixel); // opaque overwrite
+                }
+                if ((rrow && fb.ResolvePrelit && fb.IsPrelit(pixel)) ||
+                    (fb.DeferredOutsideTint && room == Framebuffer::OUTSIDE_LIGHT_ROOM)) {
+                    const auto light = fb.CachedLight(room);
+                    r = (std::clamp(r, 0, 255) * (light.R + (light.R >> 7))) >> 8;
+                    g = (std::clamp(g, 0, 255) * (light.G + (light.G >> 7))) >> 8;
+                    bb = (std::clamp(bb, 0, 255) * (light.B + (light.B >> 7))) >> 8;
+                }
                 crow[x] = Framebuffer::Pack((uint8_t)std::min<int32_t>(255, std::max<int32_t>(0, r)), (uint8_t)std::min<int32_t>(255, std::max<int32_t>(0, g)),
                                             (uint8_t)std::min<int32_t>(255, std::max<int32_t>(0, bb)), 255);
                 drow[x] = z;

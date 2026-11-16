@@ -190,7 +190,7 @@ void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
     auto cam = world.Camera();
 
     st::Color out = world.OutsideColor;
-    if (out.A == 0 || !target.Room.empty()) out = st::Color::White(); // deferred: lit when composited
+    if (out.A == 0 || !target.Room.empty() || target.DeferredOutsideTint) out = st::Color::White(); // tint after raster clamp
     // blade texture: 200 = 1.0
     float lr = out.R / (255.0f * 200.0f), lg = out.G / (255.0f * 200.0f), lb = out.B / (255.0f * 200.0f);
     // texels per tile: ~2 screen pixels per texel at every zoom

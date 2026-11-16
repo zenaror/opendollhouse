@@ -34,6 +34,7 @@ struct Texture2D {
     // Only immutable frame textures from this batch opt into row clipping.
     const Coverage* coveredRows = nullptr;
     uint8_t drawsUntilCoverage = 0;
+    int8_t partialAlpha = -1; // immutable texture view: unknown/no/yes
     bool HasColor() const { return Data != nullptr || (Index != nullptr && Palette != nullptr); }
 };
 
