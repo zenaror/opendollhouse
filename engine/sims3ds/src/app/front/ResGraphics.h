@@ -58,6 +58,8 @@ public:
     int Const(const std::string& name) const;
     /// FAR path of a resource id (the default-language entry), "" when unknown.
     std::string PathFor(int id) const;
+    /// The game's preferred language-specific artwork, falling back to the default.
+    std::string PathFor(int id, int language) const;
     /// Raw bytes of a FAR member ("Nbhd/NScreen.BMP", any case, '/' or '\').
     std::vector<uint8_t> Raw(const std::string& path) const;
     bool Exists(const std::string& path) const;
@@ -73,6 +75,7 @@ private:
     std::map<std::string, size_t> _Index;      // normalized path -> index into the far's entries
     std::map<std::string, int> _Consts;        // kName -> id
     std::map<int, std::string> _Paths;         // id -> path
+    std::map<std::pair<int, int>, std::string> _LocalizedPaths;
     void ParseHeader(const std::string& text);
     void ParseRT(const std::string& text);
     static std::string Normalize(const std::string& p);

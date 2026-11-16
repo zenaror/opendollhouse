@@ -11,6 +11,14 @@
 #include "app/front/ResGraphics.h"
 #include <algorithm>
 #include <cmath>
+#include "odh/loading_label.hpp"
+#include "files/formats/iff/chunks/STR.h"
+#ifdef __3DS__
+#include "app/Font.h"
+#else
+#include "app/ui/OriginalPresentation.h"
+#include "linux_text_renderer.hpp"
+#endif
 #include <cstdio>
 
 namespace simapp { namespace front {
@@ -70,13 +78,17 @@ void IntroVideo::Draw(Canvas& top) const {
 
 // ======================================================================= LoadingScreen (FreeSims LoadingScreen.cs)
 
-void LoadingScreen::Init() {
+void LoadingScreen::Init(bool desktop) {
     auto& ui = ResGraphics::Get();
+    const auto language = static_cast<int>(FSO::Files::Formats::IFF::Chunks::STR::DefaultLangCode);
+    const auto artwork = ui.PathFor(ui.Const("kSimsLogo"), language);
+    const float scale = desktop ? 1.f : .4f;
+    if (artwork.empty() || !ui.LoadScaled(artwork, scale, _Background))
+        ui.LoadScaled("Other/setup.bmp", scale, _Background);
+}
+
+void LoadingScreen::LoadBootLabels() {
     auto& S = FrontStrings::Get();
-    /** Background image **/
-    // C#: setupTex = GetTexture(UIFileIDs.setup); bgScale = 600f / setupTex.Height (the screen is scaled to 600 high)
-    ui.LoadScaled("kSimsLogo", 0.4f, _Background);
-    if (_Background.Width == 0) ui.LoadScaled("Other/setup.bmp", 0.4f, _Background);
     _Copyright = S.Get(154, 5, "\xA9 2000-2005 Electronic Arts Inc. All Rights Reserved.");
     _Brand = S.Get(154, 4, "Maxis is an Electronic Arts brand.");
     // C#: PreloadLabels = 155/6..9. TS1(sims): the game's full set of the funny ones, in the game's order.
@@ -85,85 +97,91 @@ void LoadingScreen::Init() {
     _PreloadLabels.erase(std::remove(_PreloadLabels.begin(), _PreloadLabels.end(), std::string()), _PreloadLabels.end());
     if (_PreloadLabels.empty()) _PreloadLabels = { "Reticulating Splines", "Interpreting Family Values", "Fabricating Imaginary Infrastructure" };
     _CurrentPreloadLabel = 0;
-    _Done = false;
-    AnimateLabel("", _PreloadLabels[0]);
+    _CaptionTimeMs = 0;
+    _InTween = false;
+    _Label1.clear();
+    _Label2 = _PreloadLabels.front();
 }
 
-void LoadingScreen::InitLot(const std::string& art, const std::string& title) {
-    auto& ui = ResGraphics::Get();
-    auto& S = FrontStrings::Get();
-    _Background = Canvas();
-    _DesktopBackground = Canvas();
-    _BackgroundArt = art.empty() ? "kSimsLogo" : art;
-    if (!art.empty()) ui.LoadScaled(art, 0.4f, _Background);
-    if (_Background.Width == 0) ui.LoadScaled("kSimsLogo", 0.4f, _Background);
-    if (_Background.Width == 0) ui.LoadScaled("Other/setup.bmp", 0.4f, _Background);
-    _Copyright = S.Get(154, 5, "\xA9 2000-2005 Electronic Arts Inc. All Rights Reserved.");
-    _Brand = S.Get(154, 4, "Maxis is an Electronic Arts brand.");
-    Title = title;
-    // the lot loading steps (house file, objects, family, view) under the game's own lot loading labels:
-    // 4 Reticulating Splines, 14 Compiling Reticulated Splines, 15 Loading Characters, 16 Simulating Program Execution
-    _PreloadLabels.clear();
-    static const char* fb[4] = { "Reticulating Splines", "Compiling Reticulated Splines", "Loading Characters", "Simulating Program Execution" };
-    int ids[4] = { 4, 14, 15, 16 };
-    for (int i = 0; i < 4; i++) _PreloadLabels.push_back(S.Get(155, ids[i], fb[i]));
-    _CurrentPreloadLabel = 0;
-    _Progress = 0;
-    _Done = false;
-    CurrentStep.clear();
-    AnimateLabel("", _PreloadLabels[0]);
-    _InTween = false; // shown at once: the first frame is the only one before the blocking load
+void LoadingScreen::AdvanceBootCaption(double dtMs) {
+    if (_PreloadLabels.empty()) return;
+    constexpr double interval = 2900.0, transition = 900.0;
+    const double cycle = interval * _PreloadLabels.size();
+    _CaptionTimeMs = std::fmod(_CaptionTimeMs + std::max(0.0, dtMs), cycle);
+    const size_t index = size_t(_CaptionTimeMs / interval);
+    _CurrentPreloadLabel = static_cast<int>(index);
+    const double dwell = std::fmod(_CaptionTimeMs, interval);
+    _InTween = _PreloadLabels.size() > 1 && dwell >= interval - transition;
+    _TweenT = _InTween ? (dwell - (interval - transition)) / transition : 0;
+    _Label1 = _InTween ? _PreloadLabels[index] : std::string();
+    _Label2 = _PreloadLabels[_InTween ? (index + 1) % _PreloadLabels.size() : index];
 }
 
-void LoadingScreen::SetLotStep(const std::string& step) {
-    CurrentStep = step;
-    float p = _Progress;
-    if (step.find("objects") != std::string::npos) p = 0.25f;
-    else if (step.find("family") != std::string::npos || step.find("travellers") != std::string::npos) p = 0.5f;
-    else if (step.find("view") != std::string::npos || step.find("first frame") != std::string::npos) p = 0.75f;
-    if (p > _Progress) _Progress = p;
-}
-
-void LoadingScreen::AnimateLabel(const std::string& previousLabel, const std::string& newLabel) {
-    _InTween = true;
-    _TweenT = 0;
-    _Label1 = previousLabel; // ProgressLabel1: X 0 -> -800 over 1 s
-    _Label2 = newLabel;      // ProgressLabel2: X 800 -> 0 over 1 s
-}
-
-void LoadingScreen::CheckPreloadLabel() {
-    /** Have we preloaded the correct percent? **/
-    float percentDone = _Progress;
-    float percentUntilNextLabel = (float)(_CurrentPreloadLabel + 1) / (float)_PreloadLabels.size();
-    if (percentDone >= percentUntilNextLabel) {
-        if (!_InTween) {
-            if (_CurrentPreloadLabel + 1 < (int)_PreloadLabels.size()) {
-                _CurrentPreloadLabel++;
-                AnimateLabel(_PreloadLabels[(size_t)_CurrentPreloadLabel - 1], _PreloadLabels[(size_t)_CurrentPreloadLabel]);
-            } else {
-                /** No more labels to show! Preload must be complete :) **/
-                _Done = true;
-            }
+// The expansion artwork is a complete frame. Startup's copyright and rolling
+// captions belong only to setup.bmp. Home lots keep the outgoing neighborhood.
+void DrawLotLoadStart(Canvas& top, Canvas& bottom, const char* picture, bool showIndicator) {
+    if (picture) {
+        Canvas art;
+        if (ResGraphics::Get().Load(picture, art, false) && art.Width && art.Height) {
+            const double scale = std::min(double(top.Width) / art.Width, double(top.Height) / art.Height);
+            const int width = int(art.Width * scale + 0.5);
+            const int height = int(art.Height * scale + 0.5);
+            top.Clear(RGBA(0, 0, 0));
+            Rect destination((top.Width-width)/2, (top.Height-height)/2, width, height);
+            if (width == art.Width && height == art.Height)
+                top.Blit(art.Px.data(), art.Width, art.Height, destination.X, destination.Y, false);
+            else
+                top.BlitScaled(art.Px.data(), art.Width, art.Height, destination, false);
+        } else {
+            std::printf("[front] lot loading artwork unavailable: %s\n", picture);
         }
     }
+    if (!showIndicator) return;
+
+    const auto language = static_cast<uint8_t>(FSO::Files::Formats::IFF::Chunks::STR::DefaultLangCode);
+    const auto label = odh_host::loading_label(language);
+    const bool dualScreen = &top != &bottom;
+    if (dualScreen)
+        bottom.GradientV(0, 0, bottom.Width, bottom.Height, RGBA(0x12,0x2a,0x5a), RGBA(0x09,0x18,0x2f));
+    const int width = std::min(bottom.Width, 180), height = 28;
+    Rect box((bottom.Width-width)/2, dualScreen ? (bottom.Height-height)/2 : bottom.Height-height-12, width, height);
+#ifndef __3DS__
+    Canvas badge(width,height);
+    badge.Clear(RGBA(0x09,0x18,0x2f));
+    auto frame=original::Raster(badge);
+    odh_host::TextOverlayStyle style;
+    style.x=0;style.y=0;style.width=width;style.height=height;
+    style.font_size_px=16;style.centered=true;style.background={0,0,0,0};
+    odh_host::draw_text_overlay(frame,label,language,style);
+    original::Copy(frame,badge);
+    bottom.Blit(badge.Px.data(),width,height,box.X,box.Y,false);
+#else
+    // The dual-screen interface uses the DVD bitmap font. Like the handheld
+    // language chooser, use a readable transcription for unsupported scripts.
+    const char* ascii=nullptr;
+    switch(language) {
+        case 12: ascii="To'en..."; break;
+        case 13: ascii="Zagruzka..."; break;
+        case 15: ascii="Yomikomi chu..."; break;
+        case 17: case 18: ascii="Zhengzai jiazai..."; break;
+        case 19: ascii="Kamlang lot..."; break;
+        case 20: ascii="Bulleooneun jung..."; break;
+    }
+    TextCentered(bottom,TS1Size::S12,box,ascii?std::string(ascii):ToLatin1(std::string(label)),RGBA(255,255,255));
+#endif
 }
 
-bool LoadingScreen::Update(double dtMs) {
-    if (_InTween) {
-        _TweenT += dtMs / 1000.0;
-        if (_TweenT >= 1.0) { _TweenT = 1.0; _InTween = false; } // tween_OnComplete
-    }
-    CheckPreloadLabel();
-    return _Done;
+void DrawLotLoadBar(Canvas& bottom, float fraction) {
+    Rect bar(40, bottom.Height-44, bottom.Width-80, 10);
+    bottom.FillRoundRect(bar, 4, RGBA(4,10,30));
+    const int width=int((bar.W-4)*std::clamp(fraction,0.0f,1.0f));
+    if(width>0) bottom.GradientV(bar.X+2,bar.Y+2,width,bar.H-4,RGBA(120,230,255),RGBA(30,110,200));
+    bottom.StrokeRoundRect(bar.X,bar.Y,bar.W,bar.H,4,RGBA(90,130,210));
 }
 
 void LoadingScreen::Draw(Canvas& top, Canvas& bottom) {
     bool desktop = &top == &bottom;
-    if (desktop && _DesktopBackground.Width == 0) {
-        ResGraphics::Get().Load(_BackgroundArt, _DesktopBackground);
-        if (_DesktopBackground.Width == 0) ResGraphics::Get().Load("Other/setup.bmp", _DesktopBackground);
-    }
-    const Canvas& background = desktop ? _DesktopBackground : _Background;
+    const Canvas& background = _Background;
     // C#: Draw fills the viewport with (0x09,0x18,0x2F), then the container (scaled to the screen height)
     top.Clear(RGBA(0x09, 0x18, 0x2F));
     int bx = (top.Width - background.Width) / 2;
@@ -193,11 +211,12 @@ void LoadingScreen::Draw(Canvas& top, Canvas& bottom) {
     // ---- touch screen (TS1(sims))
     if (&top == &bottom) return;
     bottom.GradientV(0, 0, bottom.Width, bottom.Height, RGBA(0x12, 0x2A, 0x5A), RGBA(0x09, 0x18, 0x2F));
-    TextCentered(bottom, TS1Size::S12, Rect(0, 18, bottom.Width, 18), Fit(TS1Size::S12, Title.empty() ? FrontStrings::Get().Get(153, 0, "The Sims Complete Collection") : Title, bottom.Width - 16), RGBA(255, 216, 96), RGBA(0, 0, 0, 180));
+    if (_PreloadLabels.empty()) return;
+    TextCentered(bottom, TS1Size::S12, Rect(0, 18, bottom.Width, 18), Fit(TS1Size::S12, FrontStrings::Get().Get(153, 0, "The Sims Complete Collection"), bottom.Width - 16), RGBA(255, 216, 96), RGBA(0, 0, 0, 180));
     // the labels shown so far
     int ly = 52;
     for (int i = 0; i <= _CurrentPreloadLabel && i < (int)_PreloadLabels.size(); i++) {
-        bool cur = i == _CurrentPreloadLabel && !_Done;
+        bool cur = i == _CurrentPreloadLabel;
         std::string l = _PreloadLabels[(size_t)i] + (cur ? std::string("...") : std::string(""));
         Text(bottom, TS1Size::S10, 40, ly, l, cur ? RGBA(255, 255, 255) : RGBA(130, 160, 210), RGBA(0, 0, 0, 150));
         if (!cur) Text(bottom, TS1Size::S10, 18, ly, "\x95", RGBA(120, 220, 90));

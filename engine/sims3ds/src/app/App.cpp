@@ -139,7 +139,6 @@ bool App::Init(const Config& cfg) {
         Top.Resize(_Cfg.DesktopWidth, _Cfg.DesktopHeight);
     }
     InstallLoadHooks(); // TS1(sims): step log + loading progress (front/AppFlow.cpp)
-    _Str.Load(cfg.DataRoot + "/GameData");
     // the front end: EA intro, loading screen (the content boots behind it), neighbourhood (front/AppFlow.cpp)
     return FrontBoot();
 }

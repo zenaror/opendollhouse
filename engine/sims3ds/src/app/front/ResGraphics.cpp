@@ -275,7 +275,7 @@ static std::string ReadText(const std::string& path) {
 
 bool ResGraphics::Open(const std::string& dir) {
     _Far.reset();
-    _Index.clear(); _Consts.clear(); _Paths.clear();
+    _Index.clear(); _Consts.clear(); _Paths.clear(); _LocalizedPaths.clear();
     try {
         _Far.reset(new FAR1Archive(dir + "/UIGraphics.far", false));
     } catch (...) {
@@ -320,7 +320,7 @@ void ResGraphics::ParseHeader(const std::string& text) {
     }
 }
 
-// "{RLEBMP,kName,"Path/File.bmp"}" or "{BITMAP,kName,"Path", kRes_LanguageX}" (only the default entry is kept)
+// "{RLEBMP,kName,"Path/File.bmp"}" or "{BITMAP,kName,"Path", kRes_LanguageX}"
 void ResGraphics::ParseRT(const std::string& text) {
     size_t pos = 0;
     while ((pos = text.find('{', pos)) != std::string::npos) {
@@ -342,13 +342,17 @@ void ResGraphics::ParseRT(const std::string& text) {
         while (!name.empty() && (name.back() == ',' || std::isspace((unsigned char)name.back()))) name.pop_back();
         while (!name.empty() && std::isspace((unsigned char)name[0])) name.erase(0, 1);
         std::string path = body.substr(q1 + 1, q2 - q1 - 1);
-        bool lang = body.find("kRes_Language", q2) != std::string::npos;
+        const auto language = body.find("kRes_Language", q2);
         int id = Const(name);
         if (id < 0) { // a constant missing from the headers: keep the entry by name
             id = 1000000 + (int)_Consts.size();
             _Consts[name] = id;
         }
-        if (lang && _Paths.count(id)) continue;
+        if (language != std::string::npos) {
+            const auto end = body.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", language);
+            const int code = Const(body.substr(language, end - language));
+            if (code >= 0) _LocalizedPaths.emplace(std::make_pair(id, code), path);
+        }
         if (!_Paths.count(id)) _Paths[id] = path;
     }
 }
@@ -361,6 +365,11 @@ int ResGraphics::Const(const std::string& name) const {
 std::string ResGraphics::PathFor(int id) const {
     auto it = _Paths.find(id);
     return it == _Paths.end() ? std::string() : it->second;
+}
+
+std::string ResGraphics::PathFor(int id, int language) const {
+    const auto entry = _LocalizedPaths.find({id, language});
+    return entry == _LocalizedPaths.end() ? PathFor(id) : entry->second;
 }
 
 bool ResGraphics::Exists(const std::string& path) const { return _Index.count(Normalize(path)) != 0; }

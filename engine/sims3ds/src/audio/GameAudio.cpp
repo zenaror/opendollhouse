@@ -23,15 +23,34 @@ GameAudio& GameAudio::Get() {
 }
 
 bool GameAudio::Init(const Config& cfg) {
+    return Init(cfg, nullptr, false);
+}
+
+bool GameAudio::Init(const Config& cfg, std::unique_ptr<AudioBackend> backend, bool startLoadMusic) {
     Shutdown();
     _Cfg = cfg;
+    _Mixer.reset(new AudioMixer(cfg.OutputRate, cfg.Voices));
+    if (backend && startLoadMusic) {
+        // This original track has a known path and can stream from the installation
+        // without opening a sound bank. The first frames use the saved volume.
+        auto music = WavStream::Open(cfg.DataRoot + "/Music/Modes/Load/loadloop.wav");
+        if (music) {
+            _Mixer->SetGroupVolume(AudioMixer::GroupMusic, cfg.MusicVolume);
+            _BootMusicVoice = _Mixer->PlayStream(std::move(music), 1.0f, 0.0f, true, AudioMixer::GroupMusic);
+            if (_BootMusicVoice) {
+                _Mode = MusicMode::Load;
+                _ModeSet = true;
+            }
+        }
+    }
+    SetBackend(std::move(backend));
+    if (_BootMusicVoice) std::printf("audio: loading loop started before bank indexing\n");
     auto content = FSO::Content::Audio::Init(cfg.DataRoot, cfg.SampleCacheBytes);
     if (content == nullptr || content->Groups.empty()) {
         std::printf("audio: no sound banks under %s/SoundData - sound disabled\n", cfg.DataRoot.c_str());
-        FSO::Content::Audio::Shutdown();
+        Shutdown();
         return false;
     }
-    _Mixer.reset(new AudioMixer(cfg.OutputRate, cfg.Voices));
     HITVM::Init(_Mixer.get());
     auto vm = HITVM::Get();
     vm->EventLog = [this](const std::string& evt, const std::string& info) { if (Log) Log(evt + ": " + info); };
@@ -61,6 +80,7 @@ void GameAudio::Shutdown() {
     FSO::Content::Audio::Shutdown();
     _Ready = false;
     _ModeSet = false;
+    _BootMusicVoice = 0;
     _FileVoice = 0; // ADDED(sims)
 }
 
@@ -144,13 +164,16 @@ void GameAudio::SetMusicMode(MusicMode mode) {
     if (HITVM::Get()->GetEvent(evt) == nullptr) evt = ModeEvent(mode); // pack not installed: base mode
     // live mode on a lot whose objects picked a station (Downtown jazz...) goes back to that station, not silence
     if (m == MusicMode::Live && !_LotMusicEvent.empty()) evt = _LotMusicEvent;
-    _Requesting = true;
-    HITVM::Get()->PlaySoundEvent(evt);
-    _Requesting = false;
+    SetMusicEvent(evt);
+    _ModeSet = true;
 }
 
 void GameAudio::SetMusicEvent(const std::string& evt) {
     if (!_Ready) return;
+    if (_BootMusicVoice) {
+        _Mixer->Stop(_BootMusicVoice);
+        _BootMusicVoice = 0;
+    }
     _Requesting = true;
     HITVM::Get()->PlaySoundEvent(evt);
     _Requesting = false;
@@ -158,6 +181,7 @@ void GameAudio::SetMusicEvent(const std::string& evt) {
 }
 
 std::string GameAudio::NowPlaying() const {
+    if (_BootMusicVoice) return ModeEvent(MusicMode::Load);
     return _Ready ? HITVM::Get()->MusicStation() : std::string();
 }
 

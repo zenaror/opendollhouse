@@ -40,6 +40,7 @@ public:
                     }
                 }
             }catch(const std::exception& error){std::fprintf(stderr,"desktop cursor %s: %s\n",path.c_str(),error.what());}
+            if(!native && path=="Shared/cursors/HOURGLASS.cur")native=SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_WAIT);
             if(!native)std::fprintf(stderr,"desktop cursor unavailable/unsupported: %s; retaining system pointer\n",path.c_str());
             found=handles_.emplace(path,native).first;
         }

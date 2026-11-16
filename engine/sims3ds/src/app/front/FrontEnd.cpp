@@ -91,25 +91,45 @@ bool FrontEnd::Init(const Config& cfg) {
     _Cfg = cfg;
     if (_Cfg.SaveRoot.empty()) _Cfg.SaveRoot = _Cfg.DataRoot + "/Saves";
     UserDataSetup::MakeDirs(_Cfg.SaveRoot);
-    FrontStrings::Get().Load(_Cfg.DataRoot + "/GameData");
     auto& ui = ResGraphics::Get();
     if (!ui.IsOpen()) ui.Open(_Cfg.DataRoot + "/UIGraphics");
     if (!ui.IsOpen()) printf("[front] UIGraphics/UIGraphics.far not found: plain look (copy UIGraphics/ next to GameData/)\n");
-    LoadTS1Fonts();
-    FrontArt::Get().Load(ui);
 #if defined(__vita__) || defined(__SWITCH__)
     _Settings.Load(_Cfg.SaveRoot + "/sims_options.txt", true);
 #else
     _Settings.Load(_Cfg.SaveRoot + "/sims_options.txt");
 #endif
     _Setup.Configure(_Cfg.DataRoot, _Cfg.SaveRoot);
-    _Nhood.reset(new NeighbourhoodScreen(this));
-    _Loading.Init();
+    _Loading.Init(_Cfg.Desktop);
     _BootStep = 0;
     _BootDone = false;
     if (!_Cfg.SkipIntro && _Settings.PlayIntro && _Video.Open(_Cfg.CacheDir + "/intro.stv")) _State = State::Intro;
-    else { _State = State::Loading; if (Music) Music("Load"); }
+    else _State = State::Loading;
     return true;
+}
+
+void FrontEnd::DrawInitialFrame(Canvas& top, Canvas& bottom) {
+    if (_State == State::Intro) {
+        _Video.Update(0);
+        _Video.Draw(top);
+        if (&top != &bottom) bottom.Clear(RGBA(0, 0, 0));
+    } else {
+        _Loading.Draw(top, bottom);
+        _DrawnFrame.scene = FramePresentation::Scene::Loading;
+    }
+}
+
+void FrontEnd::LoadBootLabels() {
+    FrontStrings::Get().Load(_Cfg.DataRoot + "/GameData");
+    LoadTS1Fonts();
+    _Loading.LoadBootLabels();
+    _LastBootFrameMs = BootClock();
+}
+
+void FrontEnd::AdvanceBootCaption() {
+    const double now = BootClock();
+    _Loading.AdvanceBootCaption(now - _LastBootFrameMs);
+    _LastBootFrameMs = now;
 }
 
 void FrontEnd::SaveSettings() {
@@ -123,6 +143,8 @@ bool FrontEnd::BootStep(std::string& label) {
     using FSO::Files::LoadProgress; // TS1(sims): step log
     switch (_BootStep) {
         case 0:
+            FrontArt::Get().Load(ResGraphics::Get());
+            _Nhood.reset(new NeighbourhoodScreen(this));
             LoadProgress::Step("front: save area");
             _Setup.PlanAll();
             label = _Setup.Busy() ? "Setting up the neighborhoods (first run)" : "";
@@ -204,11 +226,8 @@ bool FrontEnd::BootStep(std::string& label) {
 void FrontEnd::DrawBootProgress(const std::string& text, float fraction, Canvas& top, Canvas& bottom) {
     _Loading.CurrentStep = text;
     // the game data boot is the 0.3 .. 0.6 part of the bar (FrontEnd::Frame)
-    if (fraction >= 0) _Loading.SetProgress(0.3f + 0.3f * (fraction > 1 ? 1.0f : fraction));
-    // FIX(sims) QA2: blocking steps redraw without frames, so the label slide froze at its start and the top screen
-    // kept the previous label ("Reticulating Splines") while the touch screen listed the next one: finish the slide.
-    _Loading.Update(1000.0);
-    _Loading.Update(1000.0); // a label change in the first call starts a new slide: finish that one too
+    if (_BootStep == 2 && fraction >= 0) _Loading.SetProgress(0.3f + 0.3f * (fraction > 1 ? 1.0f : fraction));
+    AdvanceBootCaption();
     _Loading.Draw(top, bottom);
 }
 
@@ -250,7 +269,12 @@ void FrontEnd::Frame(const AppInput& in, double dtMs, Canvas& top, Canvas& botto
                 vdt = lat > 0 ? -lat : 0;
             }
             bool skip = in.TouchDown || (in.Down & (BTN_A | BTN_B | BTN_START));
-            if (!_Video.Update(vdt) || skip) { EndIntro(); _State = State::Loading; if (Music) Music("Load"); }
+            if (!_Video.Update(vdt) || skip) {
+                EndIntro();
+                _State = State::Loading;
+                _LastBootFrameMs = BootClock();
+                if (Music) Music("Load");
+            }
             _Video.Draw(top);
             if (&top == &bottom) break;
             bottom.Clear(RGBA(0, 0, 0));
@@ -267,10 +291,10 @@ void FrontEnd::Frame(const AppInput& in, double dtMs, Canvas& top, Canvas& botto
                 if (!more) { _BootDone = true; p = 1.0f; _Loading.CurrentStep = ""; }
                 _Loading.SetProgress(p);
             }
-            bool labelsDone = _Loading.Update(dtMs);
+            AdvanceBootCaption();
             _Loading.Draw(top, bottom);
             _DrawnFrame.scene = FramePresentation::Scene::Loading;
-            if (_BootDone && (labelsDone || in.TouchDown || (in.Down & BTN_A))) {
+            if (_BootDone) {
                 _State = State::Neighbourhood;
                 if (Music) Music(GetAreaDef(_Nhood->CurrentArea(), _Model.Unleashed()).Music);
             }
@@ -382,37 +406,39 @@ void FrontEnd::PickFrame(const AppInput& in, double dtMs, Canvas& top, Canvas& b
     }
 }
 
-// FIX(sims) FB1: lot loading and trips use the game's classic loading screen (FreeSims LoadingScreen: the picture, the
-// sliding STR# 155 labels, the copyright line; Music/Modes/Load/loadloop.wav, kept playing during the blocking load by
-// App::PumpLoadAudio). The picture is what the original shows for the destination: a trip shows the expansion pack's
-// vehicle (Res_Nbhd kDTGo taxi, kVacationGo boat / kVacationGo2 jeep home, kNeighborhoodGo Old Town bus,
-// kStudiotownGo limo, kMagicLandGo balloon), a home lot the game's splash (kSimsLogo, setup.bmp). Before, the trip
-// showed only the vehicle with "Loading..." and a home lot only its house picture, with no music (the HIT VM did not
-// tick while the lot loaded, so the load loop never started).
-void FrontEnd::DrawTravelLoading(int dest, int from, Canvas& top, Canvas& bottom) {
-    // going home: the picture of the place being left (TS1 shows the taxi / boat taking the Sims back)
-    Area a = AreaOfHouse(dest);
-    bool home = a == Area::Neighbourhood && AreaOfHouse(from) != Area::Neighbourhood;
-    if (home) a = AreaOfHouse(from);
-    const char* art = nullptr;
-    switch (a) {
-        case Area::Downtown: art = "kDTGo"; break;
-        case Area::Vacation: art = home ? "kVacationGo2" : "kVacationGo"; break;
-        case Area::StudioTown: art = "kStudiotownGo"; break;
-        case Area::MagicTown: art = "kMagicLandGo"; break;
-        default: art = "kNeighborhoodGo"; break; // Old Town community lots: the bus
-    }
-    auto lot = _Model.Lot(dest);
-    std::string where = lot ? (lot->Name.empty() ? lot->Address : lot->Name) : NhoodModel::StreetAddress(_Model.UserDir, dest);
-    if (_LotLoadKey != "t" + std::to_string(dest) + "/" + std::to_string(from)) {
-        _LotLoadKey = "t" + std::to_string(dest) + "/" + std::to_string(from);
-        _LotLoading.InitLot(art, where);
-    }
-    _LotLoading.Update(1000.0); _LotLoading.Update(1000.0); // blocking steps: finish the label slide (see DrawBootProgress)
-    _LotLoading.Draw(top, bottom);
+bool FrontEnd::ShowLotLoadingIndicator() const {
+#if defined(__vita__) || defined(__SWITCH__) || defined(__ANDROID__)
+    return true;
+#else
+    return !IsDesktop();
+#endif
 }
 
-void FrontEnd::LotLoadStep(const std::string& step) { _LotLoading.SetLotStep(step); }
+void FrontEnd::PaintLotLoad(const std::string& key, const char* art, Canvas& top, Canvas& bottom) {
+    if (_LotLoadKey != key) {
+        _LotLoadKey = key;
+        DrawLotLoadStart(top, bottom, art, ShowLotLoadingIndicator());
+    }
+    if (&top != &bottom) DrawLotLoadBar(bottom, _LotLoadProgress);
+}
+
+void FrontEnd::DrawTravelLoading(int dest, int from, Canvas& top, Canvas& bottom) {
+    Area area = AreaOfHouse(dest);
+    const bool returning = area == Area::Neighbourhood && AreaOfHouse(from) != Area::Neighbourhood;
+    if (returning) area = AreaOfHouse(from);
+    const char* art = GetAreaDef(area, _Model.Unleashed()).LoadScreen;
+    if (returning && area == Area::Vacation) art = "kVacationGo2";
+    PaintLotLoad("t" + std::to_string(dest) + "/" + std::to_string(from), art, top, bottom);
+}
+
+void FrontEnd::LotLoadStep(const std::string& step) {
+    if (step.find("first frame") != std::string::npos || step.find(": view") != std::string::npos)
+        _LotLoadProgress = std::max(_LotLoadProgress, .75f);
+    else if (step.find("family") != std::string::npos || step.find("travellers") != std::string::npos)
+        _LotLoadProgress = std::max(_LotLoadProgress, .5f);
+    else if (step.find("objects") != std::string::npos)
+        _LotLoadProgress = std::max(_LotLoadProgress, .25f);
+}
 
 bool FrontEnd::SaveNeighbourhood() {
     FSO::Files::LoadProgress::Step("save: neighbourhood"); // TS1(sims) hardware pass
@@ -426,33 +452,16 @@ bool FrontEnd::CommunityLotLoading(int house) const {
     const auto found = std::find_if(_Model.Lots.begin(), _Model.Lots.end(),
         [house](const LotInfo& candidate) { return candidate.House == house; });
     const auto* lot = found == _Model.Lots.end() ? nullptr : &*found;
-    return lot && _Nhood && (lot->Community || _Nhood->CurrentArea() != Area::Neighbourhood) && lot->Family < 0;
+    return lot && lot->Community;
 }
 
 bool FrontEnd::ShouldRetainLotLoadingFrame(int house, bool travel) const {
-    return IsDesktop() && !travel && _Nhood && !CommunityLotLoading(house);
+    return !ShowLotLoadingIndicator() && !travel && _Nhood && !CommunityLotLoading(house);
 }
 
 void FrontEnd::DrawLotLoading(int house, Canvas& top, Canvas& bottom) {
-    auto lot = _Model.Lot(house);
-    const AreaDef& def = GetAreaDef(_Nhood->CurrentArea(), _Model.Unleashed());
-    const bool community = CommunityLotLoading(house);
-    // A desktop residential entry keeps the outgoing neighbourhood visible
-    // until the first lot frame. Blocking-load progress callbacks retain that
-    // same canvas; the boot title screen does not belong to this transition.
-    if (ShouldRetainLotLoadingFrame(house, false)) return;
-    if (_LotLoadKey != "l" + std::to_string(house)) {
-        _LotLoadKey = "l" + std::to_string(house);
-        // A community lot uses its vehicle; handheld residential loads keep their existing title presentation.
-        std::string title;
-        if (lot && lot->Family >= 0) if (auto fam = _Model.Family(lot->Family)) title = Format(FrontStrings::Get().Get(134, 0, "The %s Family"), { fam->Name });
-        if (title.find('\n') != std::string::npos) title = title.substr(0, title.find('\n'));
-        if (title.find('\r') != std::string::npos) title = title.substr(0, title.find('\r'));
-        if (title.empty() && lot) title = lot->Name.empty() ? lot->Address : lot->Name;
-        _LotLoading.InitLot(community && def.LoadScreen ? def.LoadScreen : "kSimsLogo", title);
-    }
-    _LotLoading.Update(1000.0); _LotLoading.Update(1000.0);
-    _LotLoading.Draw(top, bottom);
+    const char* art = CommunityLotLoading(house) ? GetAreaDef(_Model.CurrentArea, _Model.Unleashed()).LoadScreen : nullptr;
+    PaintLotLoad("l" + std::to_string(house), art, top, bottom);
 }
 
 // ======================================================================= scripting

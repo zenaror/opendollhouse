@@ -61,6 +61,8 @@ public:
 
     /// Indexes the sound content and starts the HIT VM. False (and every call a no-op) when SoundData is missing.
     bool Init(const Config& cfg);
+    /// Attach the device at startup so the loading loop can play while the banks are indexed.
+    bool Init(const Config& cfg, std::unique_ptr<AudioBackend> backend, bool startLoadMusic);
     /// Attaches a platform backend (started immediately). GameAudio owns it.
     void SetBackend(std::unique_ptr<AudioBackend> backend);
     AudioBackend* Backend() { return _Backend.get(); }
@@ -120,6 +122,7 @@ private:
     bool _ModeSet = false;
     NeighbourhoodKind _Nhood = NeighbourhoodKind::Main;
     bool _Requesting = false;     // inside our own SetMusicMode
+    int _BootMusicVoice = 0;
     int _FileVoice = 0;           // ADDED(sims): the PlayFile voice
     std::string _LotMusicEvent;   // a station a lot object chose (Downtown / Vacation / Magic Town controllers)
 };

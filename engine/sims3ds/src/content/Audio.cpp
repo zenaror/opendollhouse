@@ -6,6 +6,7 @@
 // Translated from FreeSims SimsVille/ContentManager/Audio.cs; the archive layout is The Sims 1's (see Audio.h).
 #include "files/FilePool.h"
 #include "content/Audio.h"
+#include "files/LoadProgress.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -192,6 +193,7 @@ Audio* Audio::Init(const std::string& basePath, size_t sfxCacheBytes) {
 }
 
 void Audio::ScanBankDir(const std::string& dir, bool recurse) {
+    FSO::Files::LoadProgress::Progress("audio banks", 0, 0);
     auto entries = ListDir(dir);
     if (entries.empty()) return;
     std::vector<int> local;
@@ -207,6 +209,7 @@ void Audio::ScanBankDir(const std::string& dir, bool recurse) {
 }
 
 void Audio::LoadBank(const std::string& dir, const std::string& baseName) {
+    FSO::Files::LoadProgress::Progress("audio banks", 0, 0);
     std::string hotPath = FindI(dir, baseName + ".hot");
     if (hotPath.empty()) return;
     std::string hsmPath = FindI(dir, baseName + ".hsm");
@@ -227,6 +230,7 @@ void Audio::LoadBank(const std::string& dir, const std::string& baseName) {
 }
 
 void Audio::IndexFar(const std::string& path, std::vector<int>* localList) {
+    FSO::Files::LoadProgress::Progress("audio banks", 0, 0);
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return;
     uint8_t hdr[16];

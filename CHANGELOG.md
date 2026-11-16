@@ -29,6 +29,10 @@ There is no stable public release yet.
 
 ### Changed
 
+- The startup picture, music and scrolling messages begin while the game prepares
+  the neighborhood. Entering a lot shows an hourglass on PC or a loading notice
+  on handhelds. Expansion trips use their original destination artwork.
+
 - When entering a home, the game looks up the outfits its residents wear.
   Custom outfits outside the game index are discovered as needed. The household
   bar reads each resident's face strip independently.

@@ -466,19 +466,6 @@ int Run(Options options) {
     }
 #endif
     AudioLifetime audioLifetime;
-#if defined(ODH_PORTABLE_DIAGNOSTICS)
-    ConsoleStage("audio-init-begin");
-#endif
-    if (!options.silent) {
-        simaudio::GameAudio::Config audioConfig;
-        audioConfig.DataRoot = options.data.generic_string();
-        audioConfig.OutputRate = 48000;
-        if (simaudio::GameAudio::Get().Init(audioConfig))
-            simaudio::GameAudio::Get().SetBackend(std::make_unique<odh::desktop::SdlAudio>());
-    }
-#if defined(ODH_PORTABLE_DIAGNOSTICS)
-    ConsoleStage("audio-init-end");
-#endif
 #ifdef ODH_DESKTOP_PANGO
     // Keep the preserved font-map cache for the complete UI session instead
     // of creating a separate map for every measurement and label.
@@ -644,6 +631,21 @@ int Run(Options options) {
     config.Desktop = true;
     config.DesktopWidth = options.width;
     config.DesktopHeight = options.height;
+    config.InitAudio = [&](bool loading, int musicVolume) {
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
+        ConsoleStage("audio-init-begin");
+#endif
+        if (!options.silent) {
+            simaudio::GameAudio::Config audioConfig;
+            audioConfig.DataRoot = options.data.generic_string();
+            audioConfig.OutputRate = 48000;
+            audioConfig.MusicVolume = musicVolume / 100.0f;
+            simaudio::GameAudio::Get().Init(audioConfig, std::make_unique<odh::desktop::SdlAudio>(), loading);
+        }
+#if defined(ODH_PORTABLE_DIAGNOSTICS)
+        ConsoleStage("audio-init-end");
+#endif
+    };
     config.SkipIntro = options.skipIntro;
     config.NowMs = NowMs;
 #if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
@@ -934,7 +936,9 @@ int Run(Options options) {
             if (std::ferror(stdout)) std::fputs("Application log write failed; unexported messages retained.\n", stderr);
         }
         const bool cursorActive=portable.Enabled()?portable.Focused():SDL_GetMouseFocus()==window.get() && SDL_GetKeyboardFocus()==window.get();
-        const auto cursorPath=!cursorActive?std::string{}:app.Lot()?app.Lot()->DesktopCameraCursorPath():
+        const auto cursorPath=!cursorActive?std::string{}:
+            (!portable.Enabled() && app.CurrentMode()==simapp::App::Mode::Loading)?std::string("Shared/cursors/HOURGLASS.cur"):
+            app.Lot()?app.Lot()->DesktopCameraCursorPath():
             app.Front()?app.Front()->DesktopCursorPath():std::string{};
         if(portable.Enabled()){
             const auto requested=cursorActive?(cursorPath.empty()?std::string("Shared/cursors/Arrow.cur"):cursorPath):std::string{};

@@ -448,17 +448,15 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // sound: SoundData/, Music/ and the pack folders next to GameData (src/audio/README.md); silent without them
-    {
-        simaudio::GameAudio::Config acfg;
-        acfg.DataRoot = DATA_ROOT;
-        acfg.OutputRate = 32728;
-        if (simaudio::GameAudio::Get().Init(acfg))
-            simaudio::GameAudio::Get().SetBackend(std::unique_ptr<simaudio::AudioBackend>(new simaudio::NdspBackend()));
-    }
-
     App* app = new App();
     App::Config cfg;
+    cfg.InitAudio = [](bool loading, int musicVolume) {
+        simaudio::GameAudio::Config audio;
+        audio.DataRoot = DATA_ROOT;
+        audio.OutputRate = 32728;
+        audio.MusicVolume = musicVolume / 100.0f;
+        simaudio::GameAudio::Get().Init(audio, std::make_unique<simaudio::NdspBackend>(), loading);
+    };
     cfg.LanguageCode = *language;
     cfg.DataRoot = DATA_ROOT;
     cfg.SaveRoot = SAVE_ROOT;

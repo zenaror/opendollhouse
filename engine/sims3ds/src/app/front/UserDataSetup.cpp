@@ -138,6 +138,7 @@ void UserDataSetup::PlanCopyTree(const std::string& source, const std::string& d
     const auto entries = FSO::Files::ListDirectory(source, &opened);
     if (opened) {
         for (const auto& e : entries) {
+            FSO::Files::LoadProgress::Progress("front: checking save files", 0, 0);
             if (destination == group && (e.Name.compare(0, 14, "sims_setup.txt") == 0 || e.Name.compare(0, 18, "sims_bootstrap.txt") == 0)) continue;
             const auto dst = destination + "/" + e.Name;
             if (e.IsDir) { MakeDirs(dst); PlanCopyTree(source + "/" + e.Name, dst, group); }
@@ -268,6 +269,7 @@ void UserDataSetup::Plan(int index, const std::string& source, bool fresh) {
 
 void UserDataSetup::PlanAll() {
     for (int i = 0; i < MaxNeighbourhoods; i++) {
+        FSO::Files::LoadProgress::Progress("front: checking neighborhoods", i, MaxNeighbourhoods);
         const auto dst = NeighbourhoodDir(i);
         // Completed destinations belong to the player. No install lookup or
         // interrupted-copy probe is needed for them on subsequent launches.
@@ -304,6 +306,7 @@ bool UserDataSetup::Step(size_t budget, std::string* status) {
         while ((n = fread(buf.data(), 1, buf.size(), in)) > 0) {
             FSO::Files::FilePool::Stats.BytesRead += n; // TS1(sims): counted for the boot log / SD estimate
             if (fwrite(buf.data(), 1, n, out) != n) { ok = false; break; }
+            FSO::Files::LoadProgress::Progress("front: copying save files", _DoneBytes, _TotalBytes);
         }
         if (ferror(in)) ok = false;
         fclose(in);

@@ -77,6 +77,7 @@ public:
         std::string CacheDir;   // objects.cache, intro video
         bool SkipIntro = false;
         bool Desktop = false;
+        std::function<double()> NowMs;
     };
     // hooks the App connects (all optional)
     std::function<void(const std::string&)> Music;        // Music/Modes/<name> ("Nhood", "Load", "dt_nhood"... "" = stop)
@@ -89,8 +90,10 @@ public:
 
     FrontEnd();
     ~FrontEnd();
-    /// Fast: strings, UIGraphics, fonts, settings. The heavy loading runs inside Frame() (loading screen).
+    /// Open the original startup artwork before preparing fonts, audio and the neighborhood.
     bool Init(const Config& cfg);
+    void DrawInitialFrame(Canvas& top, Canvas& bottom);
+    void LoadBootLabels();
     void Frame(const AppInput& in, double dtMs, Canvas& top, Canvas& bottom);
 
     enum class State { Intro, Loading, Neighbourhood, SubScreen, InLot, Error };
@@ -123,8 +126,7 @@ public:
     static Area AreaOfHouse(int house);
     /// FIX(sims) FB1: the lot loader's current step (moves the loading screen's progress / label).
     void LotLoadStep(const std::string& step);
-    void LotLoadDetail(const std::string& text) { _LotLoading.CurrentStep = text; }
-    void BeginLotLoading() { _LotLoadKey.clear(); }
+    void BeginLotLoading() { _LotLoadKey.clear(); _LotLoadProgress=0; }
     /// Saves the neighbourhood (Options "Save"). Returns false with Error set on failure.
     bool SaveNeighbourhood();
 
@@ -157,6 +159,8 @@ public:
 
 private:
     bool CommunityLotLoading(int house) const;
+    bool ShowLotLoadingIndicator() const;
+    void PaintLotLoad(const std::string& key, const char* art, Canvas& top, Canvas& bottom);
     FramePresentation _DrawnFrame;
     Config _Cfg;
     State _State = State::Intro;
@@ -167,9 +171,12 @@ private:
     bool _IntroStarted = false;  // ADDED(sims): the intro's first frame (and its sound) has started
     void EndIntro();             // ADDED(sims): stops the intro's sound
     LoadingScreen _Loading;
-    LoadingScreen _LotLoading;   // FIX(sims) FB1: lot / trip loading (classic screen)
+    float _LotLoadProgress=0; // Dual-screen progress bar.
     std::string _LotLoadKey;
     bool _BootDone = false;
+    double _LastBootFrameMs = 0;
+    double BootClock() const { return _Cfg.NowMs ? _Cfg.NowMs() : _Time; }
+    void AdvanceBootCaption();
     std::unique_ptr<NeighbourhoodScreen> _Nhood;
     std::unique_ptr<SubScreen> _Sub;
     std::function<void()> _SubDone;

@@ -2,6 +2,9 @@
 // Asset-backed App frame scheduling fixture. No input saves or state edits.
 #include "app/App.h"
 #include "app/front/FrontEnd.h"
+#include "app/front/ResGraphics.h"
+#include "files/formats/iff/chunks/STR.h"
+#include "odh/loading_label.hpp"
 #include "simantics/VM.h"
 #include <iostream>
 #include <stdexcept>
@@ -121,8 +124,50 @@ static int presented(App& a){
  return 0;
 }
 
+static int loadingArt(const std::string& root) {
+ using namespace simapp::front;
+ auto& ui=ResGraphics::Get();
+ require(ui.Open(root+"/UIGraphics"),"UI archive unavailable");
+ Canvas shown(800,600);
+ const auto initial=RGBA(149,87,53);
+ shown.Clear(initial);
+ DrawLotLoadStart(shown,shown,nullptr,false);
+ require(std::all_of(shown.Px.begin(),shown.Px.end(),[&](auto px){return px==initial;}),"home replaced the desktop map");
+ for(const auto* resource:{"kNeighborhoodGo","kDTGo","kVacationGo","kVacationGo2","kStudiotownGo","kMagicLandGo"}) {
+  Canvas expected;
+  require(ui.Load(resource,expected,false)&&expected.Width==800&&expected.Height==600,"destination artwork unavailable");
+  DrawLotLoadStart(shown,shown,resource,false);
+  require(shown.Px==expected.Px,"desktop destination has extra startup pixels");
+  DrawLotLoadStart(shown,shown,resource,true);
+  require(shown.Px!=expected.Px,"missing handheld status");
+  for(int y=0;y<600;++y)for(int x=0;x<800;++x)
+   if(y<560||y>=588||x<310||x>=490)require(shown.Px[y*800+x]==expected.Px[y*800+x],"status damaged destination artwork");
+ }
+ using namespace FSO::Files::Formats::IFF::Chunks;
+ Canvas english,portuguese;
+ const auto systemLanguage=STR::DefaultLangCode;
+ for(auto code:{STRLangCode::EnglishUS,STRLangCode(14)}) {
+  STR::DefaultLangCode=code;
+  shown.Clear(initial);
+  DrawLotLoadStart(shown,shown,nullptr,true);
+  require(shown.Px.front()==initial&&shown.Px[573*800+315]!=initial,"home handheld status or outgoing map missing");
+  (code==STRLangCode::EnglishUS?english:portuguese)=shown;
+ }
+ STR::DefaultLangCode=systemLanguage;
+ require(odh_host::loading_label(14)=="Carregando..."&&english.Px!=portuguese.Px,"handheld text did not follow language");
+ Canvas top(400,240),bottom(320,240);
+ top.Clear(initial); bottom.Clear(initial);
+ DrawLotLoadStart(top,bottom,nullptr,true);
+ require(top.Px.front()==initial&&top.Px.back()==initial&&bottom.Px.front()!=initial,"dual-screen home transition");
+ auto first=bottom.Px;
+ DrawLotLoadBar(bottom,0.75f);
+ require(bottom.Px!=first,"missing dual-screen load progress");
+ std::cout<<"PASS: six clean desktop destination pictures; localized handheld status, single/dual screen homes, progress."<<std::endl;
+ return 0;
+}
 int main(int argc,char**argv){try{
  require(argc==5,"usage: frame-boundary DATA SAVE CACHE dialog|notice|travel|normal|edge|presented");
+ if(std::string(argv[4])=="loading-art")return loadingArt(argv[1]);
  App a;App::Config c;c.DataRoot=argv[1];c.SaveRoot=argv[2];c.CacheDir=argv[3];c.Desktop=true;c.SkipIntro=true;c.VMBudgetMs=0;require(a.Init(c),"init failed");
  if(std::string(argv[4])=="presented")return presented(a);
  int x=0,y=0;for(int i=0;i<240&&!a.ScriptHousePos(9,x,y);++i)a.Frame(AppInput{},0);require(a.ScriptHousePos(9,x,y),"house missing");click(a,x,y);

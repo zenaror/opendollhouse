@@ -1,3 +1,4 @@
+#include "odh/loading_label.hpp"
 #include "person_runtime.hpp"
 #ifdef ODH_HAVE_SDL_AUDIO
 #include "linux_audio.hpp"
@@ -90,14 +91,6 @@
 
 namespace {
 #ifdef ODH_HAVE_X11
-std::string_view loading_label(std::uint8_t language) {
-    static constexpr std::array<std::string_view,20> labels{
-        "Loading...","Loading...","Chargement...","Lädt...","Caricamento...",
-        "Cargando...","Laden...","Indlæser...","Laddar...","Laster...",
-        "Ladataan...","טוען...","Загрузка...","Carregando...","読み込み中...",
-        "Wczytywanie...","正在加载...","正在載入...","กำลังโหลด...","불러오는 중..."};
-    return language>=1&&language<=labels.size()?labels[language-1]:labels[0];
-}
 
 void present_loading_screen(odh_host::LinuxWindow& window, std::uint8_t language) {
     odh::RasterFrame frame{};
@@ -124,8 +117,8 @@ void present_loading_screen(odh_host::LinuxWindow& window, std::uint8_t language
     style.padding=2;
     style.foreground={240,245,247,255};
     style.background={39,52,63,0};
-    (void)odh_host::draw_text_overlay(frame,loading_label(language),language,style);
-    const auto message=loading_label(language);
+    (void)odh_host::draw_text_overlay(frame,odh_host::loading_label(language),language,style);
+    const auto message=odh_host::loading_label(language);
     window.set_title("OpenDollhouse | "+std::string(message));
     window.present(frame);
 }

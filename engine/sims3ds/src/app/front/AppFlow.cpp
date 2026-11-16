@@ -272,7 +272,6 @@ bool App::FrontBoot() {
     _Front.reset(new front::FrontEnd());
     _LotDialog.reset(new front::FrontDialog());
     _SimDialog.reset(new front::SimDialogView());
-    CheckCacheVersion();
     _Front->SettingsChanged = [this](const front::FrontSettings&) { ApplyPlaySettings(); };
     front::GameOptions::Get().FE = _Front.get();
     _Front->Music = front::FrontMusic;
@@ -304,11 +303,31 @@ bool App::FrontBoot() {
     fc.SaveRoot = _Cfg.SaveRoot;
     fc.CacheDir = _Cfg.CacheDir;
     fc.SkipIntro = _Cfg.SkipIntro;
+    fc.NowMs = [this] { return Now(); };
     _Front->Init(fc);
-    auto& st = _Front->Settings();
-    front::FrontVolumes(st.SoundVolume, st.MusicVolume, st.VoxVolume);
-    if (!FlowFileExists(_Cfg.CacheDir + "/objects.cache")) Log += "first run: Objects.far will be indexed during the loading screen\n";
+    const bool loading = _Front->CurrentState() == front::FrontEnd::State::Loading;
+    if (Present) {
+        _Front->DrawInitialFrame(Top, UI());
+        _DrawnFrame = _Front->DrawnFrame();
+        Present();
+        if (_Cfg.LogSteps) {
+            std::printf("[startup] first artwork presented at %.0f ms after app init\n", Now() - _LoadT0);
+            std::fflush(stdout);
+        }
+    }
+    _Front->LoadBootLabels();
     _Mode = Mode::Front;
+    if (loading && Present) {
+        _Front->DrawInitialFrame(Top, UI());
+        Present();
+    }
+    auto& st = _Front->Settings();
+    if (_Cfg.InitAudio) _Cfg.InitAudio(loading, st.MusicVolume);
+    front::FrontVolumes(st.SoundVolume, st.MusicVolume, st.VoxVolume);
+    if (loading && _Front->Music) _Front->Music("Load");
+    CheckCacheVersion();
+    _Str.Load(_Cfg.DataRoot + "/GameData");
+    if (!FlowFileExists(_Cfg.CacheDir + "/objects.cache")) Log += "first run: Objects.far will be indexed during the loading screen\n";
     return true;
 }
 
@@ -412,7 +431,8 @@ void App::InstallLoadHooks() {
         // ADDED(sims) save progress: the "Saving..." overlay; a save's reports never draw another screen (Bulldoze
         // saves from the neighbourhood screen, which would otherwise show the boot loading screen)
         if (_Saving) { SaveOverlayReport(what, done, total, false); return; }
-        if (what.compare(0, 6, "save: ") == 0 || what == "front: neighbourhood map") return;
+        if (what.compare(0, 6, "save: ") == 0) return;
+        if (what == "front: neighbourhood map" && (!_Front || _Front->CurrentState() != front::FrontEnd::State::Loading)) return;
         if (now - _LastProgressDraw < 150 || !Present) return;
         _LastProgressDraw = now;
         char buf[160];
@@ -510,14 +530,10 @@ void App::EndSaveOverlay() {
 void App::LoadProgressFrame(const std::string& text, float fraction) {
     if (_Mode == Mode::Front && _Front && _Front->InSubScreen()) {
         if (!_Front->DrawSubProgress(text, fraction, Top, UI())) return; // TS1(sims): Create-A-Sim opening
-    } else if (_Mode == Mode::Front && _Front) {
+    } else if (_Mode == Mode::Front && _Front && _Front->CurrentState() == front::FrontEnd::State::Loading) {
         _Front->DrawBootProgress(text, fraction, Top, UI());
     } else if (_Mode == Mode::Loading && _Front) {
         const bool retainFrame = _Front->ShouldRetainLotLoadingFrame(_LoadHouse, _LoadTravel);
-        // Painted vehicle/handheld loading screens own the detail line. A
-        // retained desktop canvas keeps its previous completed-frame metadata.
-        if (!retainFrame && !text.empty()) _Front->LotLoadDetail(text);
-        (void)fraction;
         if (_LoadTravel) _Front->DrawTravelLoading(_LoadHouse, _TravelFrom, Top, UI());
         else _Front->DrawLotLoading(_LoadHouse, Top, UI());
         if (!retainFrame) {

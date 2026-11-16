@@ -1,6 +1,11 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 #include "SdlAudio.h"
 #include "audio/WavFile.h"
+#include "audio/GameAudio.h"
+#include "files/LoadProgress.h"
+#include <algorithm>
+#include <fstream>
+#include <iterator>
 #include <SDL.h>
 #include <cstdio>
 #include <filesystem>
@@ -32,6 +37,42 @@ struct ThrowStream final : simaudio::AudioStream {
     }
     bool Rewind() override { return true; }
 };
+// Listen to the first frames while the bank index is still being built.
+static void checkLoadingMusic(const std::filesystem::path& root) {
+    using namespace simaudio;
+    using FSO::Files::LoadProgress;
+    require(!std::filesystem::exists(root), "startup fixture path must be new");
+    std::filesystem::create_directories(root / "SoundData");
+    std::filesystem::create_directories(root / "Music/Modes/Load");
+    std::ofstream(root / "SoundData/test.hot") << "[EventMappingEquate]\n";
+    require(WriteWavFile((root / "Music/Modes/Load/loadloop.wav").string(), *sample()), "write loading loop");
+    auto& audio = GameAudio::Get();
+    GameAudio::Config config;
+    config.DataRoot = root.string();
+    config.MusicVolume = 0.25f;
+    bool heardDuringIndex = false;
+    LoadProgress::ProgressSink = [&](const std::string&, size_t, size_t) {
+        if (heardDuringIndex) return;
+        require(!audio.Ready() && audio.Backend(), "loading music precedes bank completion");
+        int16_t pcm[128] = {};
+        audio.Mixer()->Mix(pcm, 64);
+        heardDuringIndex = std::any_of(std::begin(pcm), std::end(pcm), [](int16_t v){return v != 0;});
+        require(audio.Mixer()->GroupVolume(AudioMixer::GroupMusic) == config.MusicVolume, "saved loading volume");
+    };
+    auto capture = (root / "capture.wav").string();
+    bool ready = audio.Init(config, std::make_unique<WavCaptureBackend>(capture), true);
+    LoadProgress::ProgressSink = {};
+    require(ready && heardDuringIndex, "original load loop audible during indexing");
+    audio.SetMusicMode(MusicMode::Load);
+    require(audio.ActiveVoices() == 1, "repeated loading state keeps one loop");
+    audio.SetMusicMode(MusicMode::Fade);
+    int16_t tail[256] = {};
+    audio.Mixer()->Mix(tail, 128); // Let the normal stop ramp finish.
+    require(audio.ActiveVoices() == 0, "leaving the loading screen stops the early loop");
+    audio.Shutdown();
+    std::filesystem::remove_all(root);
+}
+
 int main(int argc, char** argv) {
     SDL_SetMainReady();
     if (argc != 2) return 2;
@@ -114,6 +155,7 @@ int main(int argc, char** argv) {
         continuous.Stop();
         mixer.StopAll();
         std::filesystem::remove(path);
+        checkLoadingMusic(directory / "startup");
         SDL_Quit();
         std::cout << "continuous audio: " << mixed << " frames during 300ms main stall; lifecycle, voice operations, PCM stream/end/loop and decoder fault passed\n";
         return 0;

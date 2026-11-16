@@ -53,6 +53,8 @@ public:
         int ThumbInterval = 1;         // refresh the touch-screen copy of the lot every N frames (3DS: 2)
         std::string SaveRoot;          // writable save area (default <DataRoot>/Saves: UserData, UserData2... copies)
         bool SkipIntro = false;        // no EA intro (host scripts)
+        // Start platform audio only after the first game artwork is visible.
+        std::function<void(bool loading, int musicVolume)> InitAudio;
         // TS1(sims): loading diagnostics (front/AppFlow.cpp InstallLoadHooks)
         bool LogSteps = false;                 // print a timestamped line per loading step (3DS: log.txt, flushed)
         std::function<std::string()> MemInfo;  // platform memory summary for those lines ("heap 12.3 MB free ...")
