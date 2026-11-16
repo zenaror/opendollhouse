@@ -25,6 +25,9 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Autonomous choices respect each Sim's action thresholds and rank needs
+  without rounding. Action order, tied scores, species and burning-object
+  checks follow the original rules in the corrected selection paths.
 - Room satisfaction uses the original floor, wall, lighting and object
   calculations, including diagonal rooms and changes made while playing.
 - Scripts receive the original day, dusk, night and dawn periods instead of

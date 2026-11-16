@@ -765,10 +765,12 @@ std::unique_ptr<std::vector<VMPieMenuInteraction>> VMThread::CheckTS1Action(std:
         }
         auto debugTrees = false;
 
+        const auto age = avatar->GetPersonData(VMPersonDataVariable::PersonsAge);
+        const bool child = age > 0 && age < 18;
         TTABFlags ts1State = (TTABFlags)(
               (int32_t)((isVisitor) ? TTABFlags::AllowVisitors : (TTABFlags)0)
-            | (int32_t)((avatar->GetPersonData(VMPersonDataVariable::PersonsAge) < 18) ? TTABFlags::TS1NoChild : (TTABFlags)0)
-            | (int32_t)((avatar->GetPersonData(VMPersonDataVariable::PersonsAge) >= 18 && !avatar->IsPet()) ? TTABFlags::TS1NoAdult : (TTABFlags)0));
+            | (int32_t)(child ? TTABFlags::TS1NoChild : (TTABFlags)0)
+            | (int32_t)((!child && !avatar->IsPet()) ? TTABFlags::TS1NoAdult : (TTABFlags)0));
 
         //DEBUG: enable debug interction for all CSRs.
         if ((action->Flags & TTABFlags::Debug) > 0) {

@@ -64,7 +64,7 @@ void RegisterTS1ExpansionPrimitives(VMContext* ctx) {
     {
         auto reg = new Engine::VMPrimitiveRegistration(new Primitives::VMFind5WorstMotives());
         reg->Opcode = 33; reg->Name = "find_5_worst_motives";
-        reg->OperandModel = Engine::VMPrimitiveRegistration::Model<Primitives::VMNoOperand>();
+        reg->OperandModel = Engine::VMPrimitiveRegistration::Model<Primitives::VMFind5WorstMotivesOperand>();
         ctx->AddPrimitive(std::unique_ptr<Engine::VMPrimitiveRegistration>(reg));
     }
     for (uint16_t op : { (uint16_t)10, (uint16_t)34 }) {

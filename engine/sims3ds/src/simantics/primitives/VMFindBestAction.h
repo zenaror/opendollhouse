@@ -32,7 +32,6 @@ public:
     static std::function<void(VMEntity* caller, VMEntity* obj, const std::string& name, bool checkPassed, float score)> DebugCandidate;
 private:
     Engine::VMPrimitiveExitCode ExecuteTS1(Engine::VMStackFrame* context);
-    static std::vector<VMPieMenuInteraction> TakeTopActions(const std::vector<VMPieMenuInteraction>& list, int count);
 };
 
 class VMFindBestActionOperand : public Engine::VMPrimitiveOperand {

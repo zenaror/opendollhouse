@@ -5,6 +5,7 @@
  */
 // Translated from FreeSims SimsVille/SimsAntics/primitives/VMFindBestAction.cs
 #include "simantics/primitives/VMFindBestAction.h"
+#include "simantics/primitives/VMTS1AutonomyPolicy.h"
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
@@ -25,6 +26,7 @@
 #include "simantics/model/VMPersonDataVariable.h"
 #include "simantics/model/VMStackObjectVariable.h"
 #include "content/ContentManager.h"
+#include "content/TS1NeighbourProvider.h"
 
 namespace FSO { namespace SimAntics { namespace Primitives {
 using namespace FSO::SimAntics::Engine;
@@ -48,8 +50,7 @@ using FSO::LotView::Model::LotTilePos;
 //
 // For each interaction, we only evaluate it if it has the following properties:
 // - positive autonomy threshold; a check tree may supply initially empty advertisements
-// - object is not "occupied"
-// - object has use count of 0 (or the interaction is joinable)
+// - object is not burning
 // - advertisement minima contribute a fixed amount; personality scales only the delta
 // Interaction check trees are evaluated to see if they are usable. "Auto" is passed to the tree as 1 in param 0, indicating this is an autonomous check.
 // When evaluating an interaction's check tree, it may change the motive ad range and minimum.
@@ -116,21 +117,6 @@ int VMFindBestAction::MotiveToWeight(int motive) {
     return -1;
 }
 
-std::vector<VMPieMenuInteraction> VMFindBestAction::TakeTopActions(const std::vector<VMPieMenuInteraction>& list, int count) {
-    std::vector<VMPieMenuInteraction> result;
-    for (auto& action : list) {
-        auto users = action.Callee->GetValue(VMStackObjectVariable::UseCount);
-        bool joinable = false;
-        if (action.Callee->TreeTable != nullptr)
-            for (auto& x : action.Callee->TreeTable->Interactions) if (x->JoiningIndex == (int32_t)action.ID) { joinable = true; break; }
-        if (users == 0 || joinable) {
-            result.push_back(action);
-            if ((int)result.size() >= count) break;
-        }
-    }
-    return result;
-}
-
 VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
     auto callerAvatar = dynamic_cast<VMAvatar*>(context->Caller);
     if (callerAvatar == nullptr) throw VMSimanticsException("Find Best Action: caller is not an avatar (invalid cast).", context);
@@ -148,8 +134,9 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
     // Preserve queued manual/script priorities above before consulting the
     // player's free-will preference. Visitors and pets still choose normally
     // (FreeSO Alex a3c6c5a, VMFindBestAction.Execute).
-    const bool visitor = callerAvatar->GetPersonData(VMPersonDataVariable::PersonType) == 1;
-    if (!context->VM()->FreeWillEnabled && !visitor && !callerAvatar->IsPet())
+    const auto personType = callerAvatar->GetPersonData(VMPersonDataVariable::PersonType);
+    const bool visitor = personType != 0;
+    if (!context->VM()->FreeWillEnabled && personType != 1 && !callerAvatar->IsPet())
         return VMPrimitiveExitCode::GOTO_FALSE;
 
     auto ents = std::vector<VMEntity*>(context->VM()->Entities); // C#: ObjectQueries.WithAutonomy (objects with auto interactions)
@@ -157,7 +144,8 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
     auto caller = callerAvatar;
     auto pos1 = caller->Position();
 
-    auto child = (caller->GetPersonData(VMPersonDataVariable::PersonsAge) < 18 && context->VM()->TS1); // C# caller.IsChild
+    const auto age = caller->GetPersonData(VMPersonDataVariable::PersonsAge);
+    const bool child = age > 0 && age < 18;
     auto attenTable = visitor ? TTAB::VisitorAttenuationValues : TTAB::TS1AttenuationValues;
     auto global = FSO::Content::Content::Get()->WorldObjectGlobals.get();
     global->InitCurves();
@@ -175,6 +163,18 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
     for (int i = 0; i < 9; i++) weights[i] /= totalWeight;
     const auto& tuning = global->Autonomy;
     const double minScore = visitor ? tuning.VisitorMinimum : tuning.FamilyMinimum;
+    // DVD 004074bc tests the current lot's registered zoning for residential.
+    // Its lookup treats lot zero as residential and an unknown nonzero lot as
+    // undefined. The native cache encodes residential/community as 0/1.
+    const auto lot = context->VM()->GetGlobalValue(10);
+    bool residential = lot == 0;
+    if (lot != 0) {
+        const auto hood = FSO::Content::Content::Get()->Neighborhood.get();
+        if (hood) {
+            const auto zone = hood->ZoningDictionary.find(lot);
+            residential = zone != hood->ZoningDictionary.end() && zone->second == 0;
+        }
+    }
 
     float happyParts[9];
     float baseHappy = 0;
@@ -187,6 +187,9 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
     for (auto iobj : ents) {
         if (iobj->Dead || iobj->Position() == LotTilePos::OUT_OF_WORLD) continue;
         auto obj = iobj->MultitileGroup->GetInteractionGroupLeader(iobj);
+        // DVD 0045dea5 uses person data65 (sex/species), independently of
+        // resident/visitor person type, to exclude human self-interactions.
+        if (obj == caller && caller->GetPersonData(VMPersonDataVariable::Gender) < 2) continue;
         auto gobj = dynamic_cast<VMGameObject*>(obj);
         if (processed.count(obj->ObjectID) || (gobj != nullptr && (int)gobj->Disabled > 0)) continue;
         processed.insert(obj->ObjectID);
@@ -208,23 +211,22 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
         }
         auto pos2 = obj->Position();
         auto distance = (float)std::sqrt(std::pow(pos1.x - pos2.x, 2) + std::pow(pos1.y - pos2.y, 2) + std::pow((pos1.Level - pos2.Level) * 320, 2.0)) / 16.0f;
-        auto inUse = obj->GetFlag(VMEntityFlags::Occupied);
+        // DVD 004584fa tests bit9 of object data8 (Burning), not bit5
+        // (Occupied). Occupancy/join eligibility belongs to the authored check.
+        if (obj->GetFlag(VMEntityFlags::Burning)) continue;
 
         if (obj->TreeTable == nullptr) continue;
-        for (auto entry : obj->TreeTable->AutoInteractions) {
+        // DVD 00458992 visits the TTAB from its last row to its first. Checks
+        // can change advertisements and consume random numbers, so this order
+        // matters before candidate scoring as well as when scores tie.
+        const auto& autoEntries = obj->TreeTable->AutoInteractions;
+        for (auto entryIt = autoEntries.rbegin(); entryIt != autoEntries.rend(); ++entryIt) {
+            auto entry = *entryIt;
             auto id = entry->TTAIndex;
-            if (inUse) {
-                bool joinable = false;
-                for (auto& x : obj->TreeTable->Interactions) if (x->JoiningIndex == (int32_t)id) { joinable = true; break; }
-                if (!joinable) continue;
-            }
-            // FIX(sims) QA3: the TTAB autonomy threshold (Edith 'autonomy', 50 on 5400 entries, 100 on 3700) is never
-            // reached by free will in TS1. CatGlobals disables the dog interactions it copied (Play With.../Fetch,
-            // Wrestle, Dig, Sniff, Howl, Wriggle) only through it ('hide menu' test, threshold 50 -> 100), and the
-            // base game puts 100 on what PC Sims never pick by themselves (Dismiss, Drain, Scold Pet, Kiss.../Suave,
-            // Back Rub, Open starter kit ...). FreeSO ignores it, so Ginia played 'Fetch' with the cat Maggie and both
-            // waited forever (the cat's 'Dog - Play - Fetch - Person B' waits for the dog socials object).
-            if (entry->AutonomyThreshold >= 100) continue;
+            // The original compares the signed TTAB threshold against the
+            // Sim's script-controlled autonomy level, including equality.
+            const auto threshold = static_cast<int16_t>(entry->AutonomyThreshold);
+            if (threshold <= 0 || threshold > caller->GetPersonData(VMPersonDataVariable::AutonomyLevel)) continue;
 
             auto action = obj->GetAction((int32_t)id, caller, context->VM()->Context);
             auto ttas = obj->TreeTableStrings;
@@ -321,22 +323,28 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
             //TODO: special logic for socials?
         }
     }
-    std::stable_sort(validActions.begin(), validActions.end(), [](const VMPieMenuInteraction& a, const VMPieMenuInteraction& b) { return a.Score > b.Score; });
+    TS1Autonomy::SortAutonomyRecords(validActions, [](const VMPieMenuInteraction& a, const VMPieMenuInteraction& b) {
+        // DVD 0045e467 subtracts float operands in x87 precision and compares
+        // against the single-precision 1e-7 constant, without secondary keys.
+        const double difference = double(b.Score) - double(a.Score);
+        const double tolerance = double(1e-7f);
+        return difference > tolerance ? 1 : (difference < -tolerance ? -1 : 0);
+    });
     // DVD 0045dea5 uses a uniform choice among the best N records. Logic
     // reduces N by one for each 2000 skill points; the selected Global sets N.
     const auto count = static_cast<int>(std::min<int64_t>(validActions.size(),
         std::max<int64_t>(1, int64_t(tuning.RandomSelectionCount) -
             caller->GetPersonData(VMPersonDataVariable::LogicSkill) / 2000)));
-    auto sorted = TakeTopActions(validActions, count);
+    auto sorted = std::vector<VMPieMenuInteraction>(validActions.begin(), validActions.begin() + count);
     if (sorted.empty()) return VMPrimitiveExitCode::GOTO_FALSE;
     auto selection = sorted[0];
-    // The original AutoFirst path has an additional context predicate whose
-    // mapping remains under investigation. Preserve this existing exception.
-    if (!selection.Entry->AutoFirst())
+    // On residential lots, visitors take the first sorted record. Family Sims
+    // do so only when that record has AutoFirst. Community lots always draw.
+    if (!residential || (!visitor && !selection.Entry->AutoFirst()))
         selection = sorted[context->VM()->Context->NextRandom(static_cast<int>(sorted.size()))];
     // Sitting is checked after the lottery in the DVD. A weak chosen action
     // leaves the Sim idle; filtering it before drawing changes the lottery.
-    if (caller->GetPersonData(VMPersonDataVariable::Posture) > 0 &&
+    if (caller->GetPersonData(VMPersonDataVariable::Posture) != 0 &&
         selection.Score < tuning.SittingMinimum)
         return VMPrimitiveExitCode::GOTO_FALSE;
 

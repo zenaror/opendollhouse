@@ -66,6 +66,25 @@ existing Refresh operations to update contributions. Keep the original wall
 type separate from a dynamically allocated drawing resource number. These
 caches are reconstructed from game data and edits, without adding save fields.
 
+## Autonomous choices
+
+`VMFindBestAction` evaluates autonomous interactions; `VMFind5WorstMotives`
+supplies the ranked needs used by scripts. Both consume precise needs. Their
+comparisons and sorting order are preserved in `VMTS1AutonomyPolicy`.
+For example, two nearly equal needs can exchange places under the original
+sort. Replacing it with a stable sort changes the values returned to scripts.
+
+Keep interaction checks in their original order: checks can consume random
+values and alter an interaction's advertised effects. Species and household
+role are separate fields; a family pet does not become human because its role
+is zero. Likewise, an object burning and an object being in use are different
+flags. Authored checks decide whether an in-use object admits an interaction.
+
+The native action queue remains an adapter around selection and execution.
+Matching the chooser does not establish original cancellation or interruption
+timing. Queue changes need checks of player input, action handover, saving and
+continuation, including actions that are already running.
+
 ## Handheld rendering and file access
 
 | When playing | What the engine reuses |

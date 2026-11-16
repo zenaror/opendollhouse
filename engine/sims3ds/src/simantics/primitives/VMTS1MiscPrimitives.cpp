@@ -5,6 +5,7 @@
  */
 // TS1(sims): see VMTS1MiscPrimitives.h. Burn and Show String are translated from FreeSO (MPL-2.0).
 #include "simantics/primitives/VMTS1MiscPrimitives.h"
+#include "simantics/primitives/VMTS1AutonomyPolicy.h"
 #include "simantics/engine/VMStackFrame.h"
 #include "simantics/engine/VMSimanticsException.h"
 #include "simantics/engine/VMThread.h"
@@ -129,14 +130,22 @@ VMPrimitiveExitCode VMShowString::Execute(VMStackFrame* context, VMPrimitiveOper
 
 VMPrimitiveExitCode VMFind5WorstMotives::Execute(VMStackFrame* context, VMPrimitiveOperand* args)
 {
-    (void)args;
-    auto avatar = dynamic_cast<VMAvatar*>(context->Caller);
-    if (avatar == nullptr) return VMPrimitiveExitCode::GOTO_FALSE;
+    const auto operand = static_cast<VMFind5WorstMotivesOperand*>(args);
+    const auto target = operand ? operand->Words[2] : 0;
+    if ((operand && operand->Words[3] > 2) || target == 2)
+        throw VMSimanticsException("Find 5 Worst Motives: invalid operand selector.", context);
+    auto avatar = dynamic_cast<VMAvatar*>(target == 1 ? context->StackObject : context->Caller);
+    if (avatar == nullptr)
+        throw VMSimanticsException("Find 5 Worst Motives: selected object is not a Sim.", context);
     static const int motives[8] = { 5, 6, 7, 8, 9, 13, 14, 15 }; // energy comfort hunger hygiene bladder room social fun
-    std::vector<std::pair<int16_t, int>> v;
-    for (int m : motives) v.push_back({ avatar->GetMotiveData((Model::VMMotive)m), m });
-    std::stable_sort(v.begin(), v.end(), [](const std::pair<int16_t, int>& a, const std::pair<int16_t, int>& b) { return a.first < b.first; });
-    for (size_t i = 0; i < 5 && i < context->Thread->TempRegisters.size(); i++) context->Thread->TempRegisters[i] = (int16_t)v[i].second;
+    std::vector<int> v(std::begin(motives), std::end(motives));
+    TS1Autonomy::SortAutonomyRecords(v, [avatar](int a, int b) {
+        // DVD 0044d07b compares the float motives with a double 0.01 tolerance.
+        const double difference = double(avatar->GetMotiveDataFloat((Model::VMMotive)a)) -
+            double(avatar->GetMotiveDataFloat((Model::VMMotive)b));
+        return difference < -0.01 ? -1 : (difference > 0.01 ? 1 : 0);
+    });
+    for (size_t i = 0; i < 5 && i < context->Thread->TempRegisters.size(); i++) context->Thread->TempRegisters[i] = (int16_t)v[i];
     return VMPrimitiveExitCode::GOTO_TRUE;
 }
 

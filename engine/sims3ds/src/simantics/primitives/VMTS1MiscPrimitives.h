@@ -7,7 +7,7 @@
 //   9  Burn                  - FreeSO VMBurn (stoves, fireplaces, candles, magic: starts / spreads fires)
 //   21 Show String           - FreeSO VMShowString (a message balloon over a Sim; AnimTester debug object)
 //   33 Find 5 Worst Motives  - the visitor's "I'm going home because..." (PedPortal 'show leave dialog', Hot Date
-//                              nagging): Temp 0..4 = the caller's five lowest of energy, comfort, hunger, hygiene,
+//                              nagging): Temp 0..4 = the selected Sim's five lowest of energy, comfort, hunger, hygiene,
 //                              bladder, room, social, fun (motive numbers 5..9, 13..15), worst first.
 #pragma once
 #include <cstdint>
@@ -46,6 +46,16 @@ public:
 class VMFind5WorstMotives : public Engine::VMPrimitiveHandler {
 public:
     Engine::VMPrimitiveExitCode Execute(Engine::VMStackFrame* context, Engine::VMPrimitiveOperand* args) override;
+};
+class VMFind5WorstMotivesOperand : public Engine::VMPrimitiveOperand {
+public:
+    uint16_t Words[4] = {};
+    void Read(const uint8_t* bytes) override {
+        for (int i = 0; i < 4; ++i) Words[i] = uint16_t(bytes[2*i] | (uint16_t(bytes[2*i+1]) << 8));
+    }
+    void Write(uint8_t* bytes) override {
+        for (int i = 0; i < 4; ++i) { bytes[2*i] = uint8_t(Words[i]); bytes[2*i+1] = uint8_t(Words[i] >> 8); }
+    }
 };
 class VMNoOperand : public Engine::VMPrimitiveOperand {
 public:
