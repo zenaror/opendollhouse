@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <algorithm>
+#include <utility>
 
 namespace simapp { namespace front {
 
@@ -28,8 +29,15 @@ void FrontStrings::Load(const std::string& gameDataDir) {
         for (int t : tables) {
             auto str = iff.Get<FSO::Files::Formats::IFF::Chunks::STR>((uint16_t)t);
             if (str == nullptr) continue;
-            int n = std::min<int>((int)str->Length(), 200);
-            for (int i = 0; i < n; i++) _Strings[t * 10000 + i] = str->GetString(i);
+            using FSO::Files::Formats::IFF::Chunks::STRLangCode;
+            const bool loadingText = t == 154 || t == 155;
+            int length = str->Length();
+            if (loadingText) length = std::max<int>(length, str->Length(STRLangCode::EnglishUS));
+            for (int i = 0; i < std::min(length, 200); ++i) {
+                auto text = str->GetString(i);
+                if (loadingText && text.empty()) text = str->GetString(i, STRLangCode::EnglishUS);
+                _Strings[t * 10000 + i] = std::move(text);
+            }
         }
     } catch (std::exception& e) { printf("[front] UIText.iff not loaded: %s\n", e.what()); }
 }

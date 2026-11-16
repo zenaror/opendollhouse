@@ -125,7 +125,6 @@ struct KnownMusic { const char* Dir; const char* Files; };
 const KnownMusic kKnownMusic[] = {
     {"Music/Modes/Build", "build1.mp3,build2.mp3,build3.mp3,build4.mp3,build5.mp3,build6.mp3"},
     {"Music/Modes/Buy", "buy1.mp3,buy2.mp3,buy3.mp3,buy4.mp3"},
-    {"Music/Modes/Load", "loadloop.wav"},
     {"Music/Modes/MM_Build", "build3.mp3,build4.mp3,build5.mp3,build6.mp3,build7.mp3,build8.mp3,build9.mp3"},
     {"Music/Modes/MM_Buy", "buy1.mp3,buy2.mp3,buy3.mp3,buy4.mp3,buy5.mp3"},
     {"Music/Modes/MM_credits", "sep7_credits1.mp3"},
@@ -339,10 +338,29 @@ void Audio::BuildTables() {
     };
 }
 
+std::unique_ptr<simaudio::AudioStream> Audio::OpenLoadingMusic(const std::string& dataRoot, std::string& path) {
+    const std::string folder = dataRoot + "/Music/Modes/Load/";
+    for (const char* name : {"loadloop.wav", "loadloop.old.wav"}) {
+        auto candidate = folder + name;
+        auto stream = simaudio::WavStream::Open(candidate);
+        if (stream && stream->DurationSeconds() > 0) {
+            path = candidate;
+            return stream;
+        }
+    }
+    path.clear();
+    return nullptr;
+}
+
 std::vector<std::string> Audio::ListMusic(const std::string& relDir) {
     std::vector<std::string> out;
     std::string dir = relDir;
     while (!dir.empty() && dir.back() == '/') dir.pop_back();
+    if (dir == "Music/Modes/Load") {
+        std::string path;
+        if (OpenLoadingMusic(BasePath, path)) out.push_back(path);
+        return out;
+    }
 #ifdef ST_AUDIO_DIRENT
     for (auto& e : ListDir(BasePath + "/" + dir))
         if (!e.Dir && (EndsWithI(e.Name, ".mp3") || EndsWithI(e.Name, ".wav"))) out.push_back(BasePath + "/" + dir + "/" + e.Name);

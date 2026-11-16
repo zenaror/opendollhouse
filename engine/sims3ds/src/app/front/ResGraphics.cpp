@@ -6,6 +6,8 @@
 // sims front end — see UIGraphics.h. TS1(sims): new code (no FreeSims equivalent).
 #include "app/front/ResGraphics.h"
 #include "files/FAR1/FAR1Archive.h"
+#include "files/FilePool.h"
+#include "core/io.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -275,15 +277,18 @@ static std::string ReadText(const std::string& path) {
 
 bool ResGraphics::Open(const std::string& dir) {
     _Far.reset();
+    _Directory = dir;
+    _ArchiveLogos.clear();
     _Index.clear(); _Consts.clear(); _Paths.clear(); _LocalizedPaths.clear();
     try {
         _Far.reset(new FAR1Archive(dir + "/UIGraphics.far", false));
     } catch (...) {
         _Far.reset();
-        return false;
     }
-    auto& entries = _Far->GetAllFarEntries();
-    for (size_t i = 0; i < entries.size(); i++) _Index[Normalize(entries[i].Filename)] = i;
+    if (_Far) {
+        auto& entries = _Far->GetAllFarEntries();
+        for (size_t i = 0; i < entries.size(); i++) _Index[Normalize(entries[i].Filename)] = i;
+    }
     static const char* tables[] = { "Res_Languages", "Res_Nbhd", "Res_CPanel", "Res_Other", "SMCtrlMgrRes" };
     for (auto t : tables) {
         std::string h = ReadText(dir + "/" + t + ".h");
@@ -292,10 +297,16 @@ bool ResGraphics::Open(const std::string& dir) {
     }
     for (auto t : tables) {
         std::string rt = ReadText(dir + "/" + t + ".RT");
-        if (rt.empty()) { auto raw = Raw(std::string(t) + ".RT"); rt.assign(raw.begin(), raw.end()); }
+        const bool logoTable = std::strcmp(t, "Res_Other") == 0;
+        if (rt.empty() || logoTable) {
+            auto raw = Raw(std::string(t) + ".RT");
+            std::string packaged(raw.begin(), raw.end());
+            if (logoTable) ParseRT(packaged, true);
+            if (rt.empty()) rt = std::move(packaged);
+        }
         ParseRT(rt);
     }
-    return true;
+    return IsOpen();
 }
 
 // "const Sint32 kName = 5000;"
@@ -321,7 +332,7 @@ void ResGraphics::ParseHeader(const std::string& text) {
 }
 
 // "{RLEBMP,kName,"Path/File.bmp"}" or "{BITMAP,kName,"Path", kRes_LanguageX}"
-void ResGraphics::ParseRT(const std::string& text) {
+void ResGraphics::ParseRT(const std::string& text, bool archiveLogosOnly) {
     size_t pos = 0;
     while ((pos = text.find('{', pos)) != std::string::npos) {
         size_t end = text.find('}', pos);
@@ -341,19 +352,28 @@ void ResGraphics::ParseRT(const std::string& text) {
         std::string name = body.substr(c1 + 1, q1 - c1 - 1);
         while (!name.empty() && (name.back() == ',' || std::isspace((unsigned char)name.back()))) name.pop_back();
         while (!name.empty() && std::isspace((unsigned char)name[0])) name.erase(0, 1);
+        if (archiveLogosOnly && name != "kSimsLogo") continue;
         std::string path = body.substr(q1 + 1, q2 - q1 - 1);
         const auto language = body.find("kRes_Language", q2);
+        int code = 0;
+        if (language != std::string::npos) {
+            const auto end = body.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", language);
+            code = Const(body.substr(language, end - language));
+        }
+        if (archiveLogosOnly) {
+            if (code >= 0) _ArchiveLogos[code] = path;
+            continue;
+        }
         int id = Const(name);
         if (id < 0) { // a constant missing from the headers: keep the entry by name
             id = 1000000 + (int)_Consts.size();
             _Consts[name] = id;
         }
-        if (language != std::string::npos) {
-            const auto end = body.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", language);
-            const int code = Const(body.substr(language, end - language));
-            if (code >= 0) _LocalizedPaths.emplace(std::make_pair(id, code), path);
-        }
-        if (!_Paths.count(id)) _Paths[id] = path;
+        if (language != std::string::npos && code >= 0)
+            _LocalizedPaths.emplace(std::make_pair(id, code), path);
+        if (name == "kSimsLogo") {
+            if (code == 0) _Paths[id] = path;
+        } else if (!_Paths.count(id)) _Paths[id] = path;
     }
 }
 
@@ -367,9 +387,100 @@ std::string ResGraphics::PathFor(int id) const {
     return it == _Paths.end() ? std::string() : it->second;
 }
 
-std::string ResGraphics::PathFor(int id, int language) const {
-    const auto entry = _LocalizedPaths.find({id, language});
-    return entry == _LocalizedPaths.end() ? PathFor(id) : entry->second;
+bool ResGraphics::LoadStartupLogo(int language, Canvas& out) const {
+    const int id = Const("kSimsLogo");
+    const std::string packagedEnglish = "Other/setup.bmp";
+    const auto archivePath = [&](int code) {
+        const auto found = _ArchiveLogos.find(code);
+        return found == _ArchiveLogos.end() ? std::string() : found->second;
+    };
+    // Resolve only directories named by the logo table. DVD paths follow Windows
+    // case rules, e.g. the table's setuppg.bmp can be installed as setupPg.bmp.
+    std::map<std::string, std::vector<FSO::Files::DirEntry>> listings;
+    const auto looseFile = [&](const std::string& relative) {
+        std::string dir = _Directory;
+        const auto path = Normalize(relative);
+        if (path.find(':') != std::string::npos) return std::string();
+        size_t start = 0;
+        while (start < path.size()) {
+            const auto end = path.find('\\', start);
+            const auto part = path.substr(start, end - start);
+            if (part.empty() || part == "." || part == "..") return std::string();
+            auto listing = listings.find(dir);
+            if (listing == listings.end()) listing = listings.emplace(dir, FSO::Files::ListDirectory(dir)).first;
+            const bool directory = end != std::string::npos;
+            const auto entry = std::find_if(listing->second.begin(), listing->second.end(), [&](const auto& e) {
+                return e.IsDir == directory && Normalize(e.Name) == part;
+            });
+            if (entry == listing->second.end()) return std::string();
+            dir += "/" + entry->Name;
+            if (!directory) return dir;
+            start = end + 1;
+        }
+        return std::string();
+    };
+
+    const auto decode = [&](const std::vector<uint8_t>& bytes) {
+        // A partially copied Windows bitmap must not displace a valid fallback.
+        if (bytes.size() >= 54 && bytes[0] == 'B' && bytes[1] == 'M') {
+            if (U32(bytes.data() + 2) > bytes.size()) return false;
+            const auto header = U32(bytes.data() + 14);
+            if (header >= 40 && U32(bytes.data() + 30) == 0) {
+                const auto width = int32_t(U32(bytes.data() + 18));
+                const int64_t height = int32_t(U32(bytes.data() + 22));
+                if (width <= 0 || width > 4096 || height == 0 || height < -4096 || height > 4096) return false;
+                const size_t row = ((size_t(width) * U16(bytes.data() + 28) + 31) / 32) * 4;
+                const size_t offset = U32(bytes.data() + 10);
+                if (offset > bytes.size() || row > (bytes.size() - offset) / size_t(std::abs(height))) return false;
+            }
+        }
+        Canvas decoded;
+        if (!DecodeImage(bytes, decoded, false)) return false;
+        out = std::move(decoded);
+        return true;
+    };
+    const auto packedLogo = [&](const std::string& path) {
+        if (path.empty() || !decode(Raw(path))) return false;
+        std::printf("[startup] artwork=archive path=%s language=%d\n", path.c_str(), language);
+        return true;
+    };
+
+    const auto tryOverride = [&](const std::string& path, const std::string& packaged, const std::string& loose,
+                                 bool competesWithAnotherChoice) {
+        if (path.empty()) return false;
+        const bool remapped = Normalize(path) != Normalize(packaged);
+        if (!loose.empty()) {
+            std::vector<uint8_t> bytes;
+            if (st::ReadAllBytes(loose, bytes)) {
+                // An unmodified file extracted from the FAR is not a customization.
+                const auto entry = _Index.find(Normalize(path));
+                const bool sameSize = entry != _Index.end() &&
+                    bytes.size() == size_t(_Far->GetAllFarEntries()[entry->second].DataLength);
+                if ((!competesWithAnotherChoice || remapped || !sameSize || bytes != Raw(path)) && decode(bytes)) {
+                    std::printf("[startup] artwork=loose path=%s language=%d\n", path.c_str(), language);
+                    return true;
+                }
+            }
+        }
+        return remapped && packedLogo(path);
+    };
+    const auto installed = archivePath(language);
+    const auto declared = _LocalizedPaths.find({id, language});
+    const auto selected = declared == _LocalizedPaths.end() ? installed : declared->second;
+    auto english = archivePath(0);
+    if (english.empty()) english = packagedEnglish;
+    auto generic = PathFor(id);
+    if (generic.empty()) generic = english;
+    const auto looseEnglish = looseFile(generic);
+    const bool customEnglishPossible = !looseEnglish.empty() || Normalize(generic) != Normalize(english);
+    if (!selected.empty() && tryOverride(selected, installed, looseFile(selected), customEnglishPossible)) return true;
+    if (!installed.empty() && installed != selected &&
+        tryOverride(installed, installed, looseFile(installed), customEnglishPossible)) return true;
+    if (tryOverride(generic, english, looseEnglish, !selected.empty())) return true;
+    if (packedLogo(selected)) return true;
+    if (selected != installed && packedLogo(installed)) return true;
+    if (packedLogo(english)) return true;
+    return english != packagedEnglish && packedLogo(packagedEnglish);
 }
 
 bool ResGraphics::Exists(const std::string& path) const { return _Index.count(Normalize(path)) != 0; }

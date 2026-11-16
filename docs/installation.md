@@ -42,6 +42,21 @@ installation. The engine does not run the original program or require an
 inserted CD. On first launch, it may prepare copies of the neighborhoods for
 its own saves and create cache files.
 
+### Startup picture and music
+
+The startup picture follows your chosen language. The game checks these pictures
+in this order and uses the first one it can open.
+
+1. A custom picture for your language, such as `UIGraphics/Other/setupPg.bmp` for Portuguese.
+2. A custom English picture at `UIGraphics/Other/setup.bmp`.
+3. The original picture for your language in the installed game files.
+4. The original English picture.
+
+The Complete Collection uses the same startup music in every language. A replacement
+at `Music/Modes/Load/loadloop.wav` plays at startup. If that file is missing
+or unreadable and you kept the original as `loadloop.old.wav` beside it,
+OpenDollhouse plays that copy.
+
 ### Choose the language on a handheld
 
 On PlayStation Vita, Nintendo Switch and New Nintendo 3DS, choose your game

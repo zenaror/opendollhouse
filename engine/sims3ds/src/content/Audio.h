@@ -103,7 +103,9 @@ public:
     const std::map<uint32_t, StationInfo>& StationPaths() const { return _StationPaths; }
     /// kSetMusicMode ids -> music folders (FreeSims: _MusicModes, TSO ids 11/12/13 -> "KSEL"/"KCRE"/"KMAP").
     const std::map<int, std::string>& MusicModes() const { return _MusicModes; }
-    /// Files (*.mp3, *.wav) in a music folder relative to BasePath, sorted. Empty when missing.
+    /// Opens only the active loading WAV or its adjacent original backup, before sound banks are indexed.
+    static std::unique_ptr<simaudio::AudioStream> OpenLoadingMusic(const std::string& dataRoot, std::string& path);
+    /// Files in a music folder relative to BasePath. The loading mode has one active loop.
     std::vector<std::string> ListMusic(const std::string& relDir);
 
     /// One TV station: episodes (each a list of clip names) and the commercials of its pack.

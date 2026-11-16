@@ -81,10 +81,12 @@ void IntroVideo::Draw(Canvas& top) const {
 void LoadingScreen::Init(bool desktop) {
     auto& ui = ResGraphics::Get();
     const auto language = static_cast<int>(FSO::Files::Formats::IFF::Chunks::STR::DefaultLangCode);
-    const auto artwork = ui.PathFor(ui.Const("kSimsLogo"), language);
-    const float scale = desktop ? 1.f : .4f;
-    if (artwork.empty() || !ui.LoadScaled(artwork, scale, _Background))
-        ui.LoadScaled("Other/setup.bmp", scale, _Background);
+    Canvas picture;
+    if (!ui.LoadStartupLogo(language, picture)) return;
+    const float scale = std::min((desktop ? 800.f : 320.f) / picture.Width,
+                                 (desktop ? 600.f : 240.f) / picture.Height);
+    if (scale == 1.f) _Background = std::move(picture);
+    else Resample(picture, _Background, int(picture.Width * scale + .5f), int(picture.Height * scale + .5f));
 }
 
 void LoadingScreen::LoadBootLabels() {

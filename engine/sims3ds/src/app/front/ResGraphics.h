@@ -58,8 +58,8 @@ public:
     int Const(const std::string& name) const;
     /// FAR path of a resource id (the default-language entry), "" when unknown.
     std::string PathFor(int id) const;
-    /// The game's preferred language-specific artwork, falling back to the default.
-    std::string PathFor(int id, int language) const;
+    /// Prefer a loose or remapped startup picture, then the installed language and English.
+    bool LoadStartupLogo(int language, Canvas& out) const;
     /// Raw bytes of a FAR member ("Nbhd/NScreen.BMP", any case, '/' or '\').
     std::vector<uint8_t> Raw(const std::string& path) const;
     bool Exists(const std::string& path) const;
@@ -76,8 +76,10 @@ private:
     std::map<std::string, int> _Consts;        // kName -> id
     std::map<int, std::string> _Paths;         // id -> path
     std::map<std::pair<int, int>, std::string> _LocalizedPaths;
+    std::string _Directory;
+    std::map<int, std::string> _ArchiveLogos; // kSimsLogo in the packaged Res_Other.RT
     void ParseHeader(const std::string& text);
-    void ParseRT(const std::string& text);
+    void ParseRT(const std::string& text, bool archiveLogosOnly = false);
     static std::string Normalize(const std::string& p);
 };
 

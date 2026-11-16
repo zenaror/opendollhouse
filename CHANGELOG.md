@@ -30,7 +30,9 @@ There is no stable public release yet.
 ### Changed
 
 - The startup picture, music and scrolling messages begin while the game prepares
-  the neighborhood. Entering a lot shows an hourglass on PC or a loading notice
+  the neighborhood. Startup honors custom pictures and music from the installation
+  and uses the selected language for the picture, with an English fallback.
+  Entering a lot shows an hourglass on PC or a loading notice
   on handhelds. Expansion trips use their original destination artwork.
 
 - When entering a home, the game looks up the outfits its residents wear.

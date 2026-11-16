@@ -30,10 +30,11 @@ bool GameAudio::Init(const Config& cfg, std::unique_ptr<AudioBackend> backend, b
     Shutdown();
     _Cfg = cfg;
     _Mixer.reset(new AudioMixer(cfg.OutputRate, cfg.Voices));
+    std::string loadingTrack;
     if (backend && startLoadMusic) {
         // This original track has a known path and can stream from the installation
         // without opening a sound bank. The first frames use the saved volume.
-        auto music = WavStream::Open(cfg.DataRoot + "/Music/Modes/Load/loadloop.wav");
+        auto music = FSO::Content::Audio::OpenLoadingMusic(cfg.DataRoot, loadingTrack);
         if (music) {
             _Mixer->SetGroupVolume(AudioMixer::GroupMusic, cfg.MusicVolume);
             _BootMusicVoice = _Mixer->PlayStream(std::move(music), 1.0f, 0.0f, true, AudioMixer::GroupMusic);
@@ -44,7 +45,7 @@ bool GameAudio::Init(const Config& cfg, std::unique_ptr<AudioBackend> backend, b
         }
     }
     SetBackend(std::move(backend));
-    if (_BootMusicVoice) std::printf("audio: loading loop started before bank indexing\n");
+    if (_BootMusicVoice) std::printf("audio: loading loop started before bank indexing: %s\n", loadingTrack.c_str());
     auto content = FSO::Content::Audio::Init(cfg.DataRoot, cfg.SampleCacheBytes);
     if (content == nullptr || content->Groups.empty()) {
         std::printf("audio: no sound banks under %s/SoundData - sound disabled\n", cfg.DataRoot.c_str());
