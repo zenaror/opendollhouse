@@ -20,7 +20,7 @@
 #include "catalog_info_text.hpp"
 #include "catalog_object_thumbnail.hpp"
 #include "original_button_state.hpp"
-#include "retained_panel_art.hpp"
+#include "app/ui/RetainedControlPanel.h"
 #include "app/ui/RetainedRegion.h"
 #include "files/formats/iff/chunks/DGRP.h"
 #include "files/formats/iff/chunks/SPR2.h"
@@ -61,8 +61,8 @@ odh::AvatarBodyStrings body_input(Avatar* a){
 struct OriginalPCUI::Impl {
     std::string root,last_source;
     odh_host::OriginalControlPanelArt panel;
-#if defined(__vita__) || defined(__SWITCH__)
-    odh_host::RetainedPanelArt panel_layer;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    original::RetainedControlPanel panel_layer{panel};
 #endif
     odh_host::OriginalQueueView queue;
     odh_host::CatalogInfoView catalog;
@@ -278,12 +278,11 @@ void OriginalPCUI::DrawPanel(Canvas& c,odh_host::OriginalPanelMode mode,const od
         P->last_state.inventory_enabled=false;
         P->last_state.simulation_speed.reset();
     }
-#if (defined(__vita__) || defined(__SWITCH__)) && defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    // Canvas packs R in the low byte. Both handhelds can paint the original
-    // RGBA art over the current world without importing and exporting the HUD.
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    // Canvas RGBA bytes match the original artwork renderer on these targets.
     odh::UiBitmapSurface target{static_cast<uint32_t>(c.Width),static_cast<uint32_t>(c.Height),
         reinterpret_cast<unsigned char*>(c.Px.data()),c.Px.size()};
-    P->panel.draw(target,mode,state,&P->panel_layer);
+    P->panel_layer.draw(target,mode,state);
 #else
     P->copy_in(c,c.Height-183,183);
     P->panel.draw(P->surface,mode,state);

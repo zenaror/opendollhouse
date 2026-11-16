@@ -2,7 +2,7 @@
 #include "app/ui/OriginalNeedsPresentation.h"
 #include "app/ui/OriginalHover.h"
 #include "original_control_panel.hpp"
-#include "retained_panel_art.hpp"
+#include "app/ui/RetainedControlPanel.h"
 #include "app/ui/RetainedRegion.h"
 #include "original_queue_view.hpp"
 #include "original_tooltip_view.hpp"
@@ -164,7 +164,7 @@ void needs(){
     }
 }
 void portable_needs_cache(){
-    original::PortableNeedsCache cache;
+    original::NeedsPanelCache cache;
     auto input=background(800,600,7);
     const auto layout=odh_host::original_control_panel_layout(input.Width,input.Height);
     auto geometry=odh_host::original_motive_panel_geometry(input.Width,input.Height,layout,1,nullptr);
@@ -195,7 +195,8 @@ void retained_handheld_layers(){
     Fixture fixture;
     odh_host::OriginalControlPanelArt art(fixture.path);
     odh_host::RetainedPanelArt retained;
-    for(const int width:{640,800})for(int i=0;i<28;++i){
+    original::RetainedControlPanel controls(art);
+    for(const int width:{640,800,1024,800})for(int i=0;i<28;++i){
         Canvas input=background(width,480,unsigned(i));
         auto expected=old_raster(input),actual=expected;
         odh_host::OriginalPanelState state;
@@ -203,7 +204,7 @@ void retained_handheld_layers(){
         state.simulation_speed=i/6%2?1:3;state.pointer=std::array<int,2>{75+i/4,328};
         const auto mode=odh_host::OriginalPanelMode(i/7);
         art.draw(expected,mode,state);
-        art.draw(odh::UiBitmapSurface::from(actual),mode,state,&retained);
+        controls.draw(odh::UiBitmapSurface::from(actual),mode,state);
         check(expected.pixels==actual.pixels,"retained common panel differs on changing scene or state");
     }
     odh::BitmapImage edges{3,1,32,true,{{{35,6,209,17},{0,255,0,200},{255,0,255,255}}},0};

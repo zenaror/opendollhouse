@@ -60,9 +60,7 @@ struct PanelResources {
     std::array<std::string,21> control_tips;
     std::array<std::string,8> needs_labels{{"Hunger","Comfort","Hygiene","Bladder","Energy","Fun","Social","Room"}};
     odh::RasterFrame surface;
-#if defined(__vita__) || defined(__SWITCH__)
-    PortableNeedsCache needs_cache;
-#endif
+    NeedsPanelCache needs_cache;
     std::map<uint32_t,odh_host::CharacterUiImages> portraits;
     std::array<std::string,32> career_help;
     std::array<std::string,2> school_help;
@@ -152,11 +150,7 @@ void DrawDesktopNeedsPanel(Canvas& canvas,LotSession& session,const std::array<i
     const auto layout=odh_host::original_control_panel_layout(canvas.Width,canvas.Height);
     const auto* tall_art=assets.art->find("cpanel\\backgrounds\\tallsubpanel.tga");
     const auto geometry=odh_host::original_motive_panel_geometry(canvas.Width,canvas.Height,layout,assets.language,tall_art);
-#if defined(__vita__) || defined(__SWITCH__)
     assets.needs_cache.draw(
-#else
-    DrawNeeds(
-#endif
         canvas,assets.surface,status,assets.language,tall_art,layout,
         sim->IsPet()?&assets.pet_needs_labels:&assets.needs_labels,
         sim->IsPet()?&assets.pet_needs_heading:&assets.needs_heading,geometry,change_arrows);

@@ -494,6 +494,8 @@ int Run(Options options) {
     simapp::App app;
 #if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
     odh::desktop::SdlCanvasUpload canvasUpload;
+    const odh::CursorImage* paintedImage = nullptr;
+    SDL_Point paintedPoint{};
 #endif
 #if defined(ODH_PORTABLE_DIAGNOSTICS)
     odh::desktop::ConsoleFrameWindow performance(NowMs());
@@ -592,14 +594,21 @@ int Run(Options options) {
         const double uploadStarted = NowMs();
 #endif
 #if defined(ODH_PLATFORM_VITA) || defined(ODH_PLATFORM_SWITCH)
-        const bool uploaded=canvasUpload.Upload(texture.get(),canvas.Px,canvas.Width,canvas.Height);
+        const bool keepCursor = portable.Focused() && !cursorInput.PointerCancelled &&
+            softwareCursor && softwareCursor == paintedImage &&
+            paintedPoint.x == cursorInput.TouchX && paintedPoint.y == cursorInput.TouchY;
+        const bool uploaded=canvasUpload.Upload(texture.get(),canvas.Px,canvas.Width,canvas.Height,keepCursor);
         SDL_Rect* paintedCursor=&canvasUpload.paintedCursor;
+        const bool drawCursor=portable.Focused() && canvasUpload.paintedCursor.w == 0;
+        paintedImage = softwareCursor;
+        paintedPoint = {cursorInput.TouchX, cursorInput.TouchY};
 #else
         const bool uploaded=SDL_UpdateTexture(texture.get(), nullptr, canvas.Px.data(), canvas.Width * sizeof(uint32_t))==0;
         SDL_Rect* paintedCursor=nullptr;
+        const bool drawCursor=portable.Enabled() && portable.Focused();
 #endif
         if (!uploaded
-            || (portable.Enabled() && portable.Focused() && !odh::desktop::SdlPortableInput::UploadCursor(
+            || (drawCursor && !odh::desktop::SdlPortableInput::UploadCursor(
                 texture.get(),canvas.Px,canvas.Width,canvas.Height,cursorInput,softwareCursor,false,paintedCursor))
             || SDL_RenderClear(renderer.get()) != 0
             || SDL_RenderCopy(renderer.get(), texture.get(), nullptr, portable.Enabled()?&portableCanvas.Box:nullptr) != 0) {
@@ -920,6 +929,8 @@ int Run(Options options) {
 #if defined(ODH_PORTABLE_DIAGNOSTICS)
             const double uploadDone=NowMs();
 #endif
+            paintedImage = softwareCursor;
+            paintedPoint = {packet.Input.TouchX, packet.Input.TouchY};
             SDL_RenderPresent(renderer.get());
 #if defined(ODH_PORTABLE_DIAGNOSTICS)
             performance.Presentation(uploadDone-uploadStarted,NowMs()-uploadDone);

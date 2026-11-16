@@ -25,8 +25,8 @@ class RetainedPanelArt {
         }
     };
     struct Tile {
-        struct Run { std::uint16_t offset,length; };
-        struct Edge { std::uint16_t offset; Pixel color; };
+        struct Run { std::uint8_t x,y; std::uint16_t length; };
+        struct Edge { std::uint8_t x,y; Pixel color; };
         Rect box{};
         std::vector<Sprite> sprites;
         std::vector<Pixel> pixels;
@@ -59,35 +59,42 @@ class RetainedPanelArt {
                         const auto i=std::uint16_t((y-box.y)*box.width+x-box.x);
                         if(p[3]==255)pixels[i]=p;
                         else if(pixels[i][3])blend(pixels[i].data(),p);
-                        else edges.push_back({i,p});
+                        else edges.push_back({std::uint8_t(x-box.x),std::uint8_t(y-box.y),p});
                     }
                 }
             }
             edges.erase(std::remove_if(edges.begin(),edges.end(),
-                [&](const Edge& edge){ return pixels[edge.offset][3]!=0; }),edges.end());
+                [&](const Edge& edge){ return pixels[edge.y*box.width+edge.x][3]!=0; }),edges.end());
             for(int y=0;y<box.height;++y) {
                 const int row=y*box.width;
                 for(int x=0;x<box.width;) {
                     if(!pixels[row+x][3]){++x;continue;}
                     const int start=x++;
                     while(x<box.width && pixels[row+x][3])++x;
-                    runs.push_back({std::uint16_t(row+start),std::uint16_t(x-start)});
+                    runs.push_back({std::uint8_t(start),std::uint8_t(y),std::uint16_t(x-start)});
                 }
             }
         }
         void draw(odh::UiBitmapSurface frame) const {
-            const auto output=[&](int offset) {
-                return frame.pixel(size_t(box.y+offset/box.width)*frame.width+box.x+offset%box.width);
-            };
-            for(const auto& run:runs)
-                std::memcpy(output(run.offset),pixels[run.offset].data(),size_t(run.length)*4);
-            for(const auto& edge:edges)blend(output(edge.offset),edge.color);
+            auto* base=frame.pixel(size_t(box.y)*frame.width+box.x);
+            for(const auto& run:runs) {
+                auto* dest=base+4*(size_t(run.y)*frame.width+run.x);
+                const auto* src=pixels.data()+run.y*box.width+run.x;
+                std::memcpy(dest,src,size_t(run.length)*4);
+            }
+            for(const auto& edge:edges)
+                blend(base+4*(size_t(edge.y)*frame.width+edge.x),edge.color);
         }
     };
     std::vector<Sprite> current,previous,intersecting;
     std::vector<Tile> tiles;
     Rect area{};
 public:
+#if defined(__vita__) || defined(__SWITCH__)
+    static constexpr std::uint32_t max_width=800;
+#else
+    static constexpr std::uint32_t max_width=3840;
+#endif
     void begin(){current.clear();}
     void add(const odh::BitmapImage& image,Rect box,Rect crop) {
         if(box.width>0 && box.height>0)current.push_back({&image,box,crop});
@@ -128,6 +135,13 @@ public:
             }
             previous=current;
         }
+        replay(frame);
+    }
+    void replay(odh::UiBitmapSurface frame) const {
+        if(!frame.rgba || frame.pixel_count!=std::uint64_t(frame.width)*frame.height ||
+           area.x<0 || area.y<0 || std::int64_t(area.x)+area.width>frame.width ||
+           std::int64_t(area.y)+area.height>frame.height)
+            throw odh::FormatError("retained control panel outside destination");
         for(const auto& tile:tiles)tile.draw(frame);
     }
 };

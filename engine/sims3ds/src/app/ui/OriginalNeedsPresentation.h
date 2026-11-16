@@ -40,7 +40,7 @@ inline odh_host::MotivePanelResult DrawNeeds(Canvas& canvas,odh::RasterFrame& sc
 // Lives with the immutable localized artwork and labels for one data root.
 // Compare the underlying pixels as well as the values: UI art can be
 // translucent and the world behind the panel may have moved since last time.
-class PortableNeedsCache {
+class NeedsPanelCache {
 public:
     bool draw(Canvas& canvas,odh::RasterFrame& scratch,const odh_host::StatusHud& status,
             std::uint8_t language,const odh::BitmapImage* art,const odh_host::OriginalControlPanelLayout& layout,

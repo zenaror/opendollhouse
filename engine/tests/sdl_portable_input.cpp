@@ -48,6 +48,28 @@ static void CheckCanvasUpload() {
     pixels[31*w+239]^=0x45;
     verify(5*5*sizeof(Uint32));
     verify(0);
+    // A narrow animation extending through many bands must stay a narrow transfer.
+    for (int y=0; y<440; ++y) pixels[y*w+205] ^= 0x876543;
+    verify(440*sizeof(Uint32));
+
+    // The software pointer can stay in the texture while other regions change.
+    Check(SDL_UpdateTexture(texture.get(),&cursor,fakeCursor,4*4)==0,"paint stationary pointer");
+    upload.paintedCursor=cursor;
+    upload.bytes=0;
+    pixels[1]^=0x12;
+    Check(upload.Upload(texture.get(),pixels,w,h,true) && upload.bytes==sizeof(Uint32) &&
+          upload.paintedCursor.w==cursor.w,"retain pointer outside damaged region");
+    Check(SDL_RenderCopy(renderer.get(),texture.get(),nullptr,nullptr)==0 &&
+          SDL_RenderReadPixels(renderer.get(),nullptr,SDL_PIXELFORMAT_ABGR8888,readback.data(),w*4)==0 &&
+          readback[cursor.y*w+cursor.x]==0 && readback[1]==pixels[1],"pointer is still displayed");
+    // A background change beneath an inverted pointer requires a new composition.
+    pixels[cursor.y*w+cursor.x]^=0x34;
+    Check(upload.Upload(texture.get(),pixels,w,h,true) && upload.paintedCursor.w==0,
+          "damage underneath invalidates pointer");
+    // Repaint the whole pointer as the presentation code does, then hide it.
+    Check(SDL_UpdateTexture(texture.get(),&cursor,fakeCursor,4*4)==0,"redraw stationary pointer");
+    upload.paintedCursor=cursor;
+    verify(cursor.w*cursor.h*sizeof(Uint32));
     for(std::size_t i=0;i<pixels.size();++i) pixels[i]^=0x876543;
     verify(pixels.size()*4);
     upload.Invalidate();

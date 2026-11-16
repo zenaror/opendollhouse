@@ -241,9 +241,8 @@ void OriginalControlPanelArt::draw(UiBitmapSurface frame,OriginalPanelMode mode,
     const auto l=original_control_panel_layout(frame.width,frame.height);
     if(!frame.rgba || frame.pixel_count!=std::uint64_t(frame.width)*frame.height)
         throw FormatError("UI bitmap destination frame is malformed");
-    // Current handheld canvases are at most 800 pixels wide. Keep larger
-    // surfaces on the existing renderer instead of growing the portable cache.
-    if(frame.width>800)retained=nullptr;
+    // Keep retained tiles within the canvas budget for this target.
+    if(frame.width>RetainedPanelArt::max_width)retained=nullptr;
     if(retained)retained->begin();
     const auto paint=[&](const BitmapImage& image,BuyUiRect box,BuyUiRect crop){
         if(retained)retained->add(image,box,crop);

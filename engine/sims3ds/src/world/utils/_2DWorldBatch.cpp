@@ -192,10 +192,19 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
     if (clipRows && px->drawsUntilCoverage && --px->drawsUntilCoverage == 0) PrepareCoverage(*px);
     const auto* covered = clipRows ? px->coveredRows : nullptr;
 
-    BuildLookup(ColPx, ColZ, ColM, dst.Width, sprite->SrcRect.X, sprite->SrcRect.Width, sprite->FlipHorizontally,
-                px->Width, zt ? zt->Width : px->Width, mt ? mt->Width : px->Width);
-    BuildLookup(RowPx, RowZ, RowM, dst.Height, sprite->SrcRect.Y, sprite->SrcRect.Height, sprite->FlipVertically,
-                px->Height, zt ? zt->Height : px->Height, mt ? mt->Height : px->Height);
+    // Native-sized sprites share one coordinate across the colour, depth and mask
+    // planes. Walk their rows directly instead of rebuilding six sampling tables.
+    const bool direct = src.Width == dst.Width && src.Height == dst.Height &&
+        src.X >= 0 && src.X <= px->Width - src.Width &&
+        src.Y >= 0 && src.Y <= px->Height - src.Height &&
+        (!zt || (zt->Width == px->Width && zt->Height == px->Height)) &&
+        (!mt || (mt->Width == px->Width && mt->Height == px->Height));
+    if (!direct) {
+        BuildLookup(ColPx, ColZ, ColM, dst.Width, src.X, src.Width, sprite->FlipHorizontally,
+                    px->Width, zt ? zt->Width : px->Width, mt ? mt->Width : px->Width);
+        BuildLookup(RowPx, RowZ, RowM, dst.Height, src.Y, src.Height, sprite->FlipVertically,
+                    px->Height, zt ? zt->Height : px->Height, mt ? mt->Height : px->Height);
+    }
 
     // vsZSprite: depth of the sprite's back corner and of the step towards the camera.
     float backDepth = 0, frontStep = 0;
@@ -229,16 +238,23 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
     const uint8_t* palpha = px->Alpha;
     const st::Color* ppal = px->Palette;
     const int32_t pw = px->Width;
-    auto rows = [&](auto palTag) {
+    const bool naturalColor = !grayscale && !sprite->PlacementRejected &&
+        lr == 256 && lg == 256 && lb == 256 && la == 256;
+    const int xStart = sprite->FlipHorizontally ? src.X + src.Width - 1 : src.X;
+    const int xStep = sprite->FlipHorizontally ? -1 : 1;
+    auto rows = [&](auto palTag, auto directTag) {
+        constexpr bool DIRECT = decltype(directTag)::value;
         constexpr bool PAL = decltype(palTag)::value;
     for (int32_t y = cy0; y < cy1; y++) {
         int32_t iy = y - sy0;
-        size_t poff = (size_t)RowPx[(size_t)iy] * pw;
+        const int py = DIRECT ? (sprite->FlipVertically ? src.Y + src.Height - 1 - iy : src.Y + iy)
+                              : RowPx[(size_t)iy];
+        size_t poff = (size_t)py * pw;
         const st::Color* prow = PAL ? nullptr : pdata + poff;
         const uint8_t* irow = PAL ? pidx + poff : nullptr;
         const uint8_t* arow = PAL ? palpha + poff : nullptr;
-        const uint8_t* zrow = zt ? zt->Alpha8 + (size_t)RowZ[(size_t)iy] * zt->Width : nullptr;
-        size_t moff = mt ? (size_t)RowM[(size_t)iy] * mt->Width : 0;
+        const uint8_t* zrow = zt ? zt->Alpha8 + (DIRECT ? poff : (size_t)RowZ[(size_t)iy] * zt->Width) : nullptr;
+        size_t moff = mt ? (DIRECT ? poff : (size_t)RowM[(size_t)iy] * mt->Width) : 0;
         const st::Color* mrow = (mt && mt->Data) ? mt->Data + moff : nullptr;
         const uint8_t* marow = (mt && !mt->Data) ? mt->Alpha + moff : nullptr;
         uint32_t* crow = &fb.Color[(size_t)y * fb.Width];
@@ -246,7 +262,7 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
         uint16_t* rrow = roomBuf ? roomBuf + (size_t)y * fb.Width : nullptr;
         int left = cx0, right = cx1;
         if (covered) {
-            const auto span = covered[RowPx[(size_t)iy]];
+            const auto span = covered[py];
             if (span.left == span.right) continue;
             // Map the source span back into the destination, including flipped subrectangles.
             if (sprite->FlipHorizontally) {
@@ -259,14 +275,14 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
         }
         for (int32_t x = left; x < right; x++) {
             int32_t ix = x - sx0;
-            int32_t ci = ColPx[(size_t)ix];
+            int32_t ci = DIRECT ? xStart + ix * xStep : ColPx[(size_t)ix];
             uint32_t a = PAL ? arow[ci] : prow[ci].A;
-            if (mrow) a = mrow[ColM[(size_t)ix]].A; //walls: alpha comes from the style mask
-            else if (marow) a = marow[ColM[(size_t)ix]];
+            if (mrow) a = mrow[DIRECT ? ci : ColM[(size_t)ix]].A; //walls: alpha comes from the style mask
+            else if (marow) a = marow[DIRECT ? ci : ColM[(size_t)ix]];
             float d = 0;
             if (useDepth) {
                 if (a <= 2) continue; // pixel.a <= 0.01: discard
-                uint32_t z = zrow ? zrow[ColZ[(size_t)ix]] : 0;
+                uint32_t z = zrow ? zrow[DIRECT ? ci : ColZ[(size_t)ix]] : 0;
                 d = backDepth + (float)(255 - (int32_t)z) * frontStep;
                 if (d > drow[x]) continue; // LessEqual depth test
                 drow[x] = d;
@@ -275,6 +291,10 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
                 if (a == 0) continue;
             }
             const st::Color& c = PAL ? ppal[irow[ci]] : prow[ci];
+            if (naturalColor && a == 255) {
+                crow[x] = c.PackedValue() | 0xff000000u;
+                continue;
+            }
             uint32_t r = c.R, g = c.G, b = c.B;
             if (grayscale || sprite->PlacementRejected) {
                 const uint32_t l = (r * 77 + g * 151 + b * 28) >> 8;
@@ -302,8 +322,12 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
         }
     }
     };
-    if (pdata) rows(std::false_type());
-    else rows(std::true_type());
+    auto draw = [&](auto palTag) {
+        if (direct) rows(palTag, std::true_type());
+        else rows(palTag, std::false_type());
+    };
+    if (pdata) draw(std::false_type());
+    else draw(std::true_type());
 }
 
 Texture2D* _2DWorldBatch::GetTexture(SPRFrame* item) {

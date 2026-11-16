@@ -174,29 +174,39 @@ void CheckSpriteCoverage(bool palette) {
     Texture2D depth, mask;
     depth.Width = mask.Width = width; depth.Height = mask.Height = height;
     depth.Alpha8 = depths.data(); mask.Data = maskPixels.data();
-    auto draw = [&](Texture2D& tex, bool h, bool v, bool wall, bool scaled) {
+    // Doubling each depth texel horizontally forces the general sampler without
+    // changing any depth value. Use it to check the native-size sampling path.
+    std::vector<uint8_t> doubleDepths;
+    for (auto z : depths) {
+        doubleDepths.push_back(z);
+        doubleDepths.push_back(z);
+    }
+    Texture2D referenceDepth = depth;
+    referenceDepth.Width = 2 * width;
+    referenceDepth.Alpha8 = doubleDepths.data();
+    auto draw = [&](Texture2D& tex, Texture2D& depthPlane, bool h, bool v, bool wall, bool scaled) {
         Framebuffer fb(28, 7);
         fb.EnableRoom(true);
         fb.SetClip(2, 1, 23, 6);
         batch.Target = &fb;
         batch.Begin(state.Camera());
         auto* sprite = batch.NewSprite(wall ? _2DBatchRenderMode::WALL : _2DBatchRenderMode::Z_BUFFER);
-        sprite->Pixel = &tex; sprite->Depth = &depth; sprite->Mask = wall ? &mask : nullptr;
+        sprite->Pixel = &tex; sprite->Depth = &depthPlane; sprite->Mask = wall ? &mask : nullptr;
         sprite->SrcRect = st::Rectangle(3, 0, 27, 6);
-        sprite->DestRect = st::Rectangle(-2, 0, scaled ? 24 : 27, 7);
+        sprite->DestRect = st::Rectangle(-2, 0, scaled ? 24 : 27, scaled ? 7 : 6);
         sprite->FlipHorizontally = h; sprite->FlipVertically = v; sprite->Room = 17;
         batch.Draw(sprite); batch.End();
         return fb;
     };
-    draw(*cached, false, false, false, false);
-    draw(*cached, false, false, false, false);
+    draw(*cached, depth, false, false, false, false);
+    draw(*cached, depth, false, false, false, false);
     Check(cached->coveredRows != nullptr, "reused sparse sprite did not acquire row bounds");
     for (bool h : {false,true}) for (bool v : {false,true}) for (bool wall : {false,true})
         for (bool scaled : {false,true}) {
-            const auto clipped = draw(*cached,h,v,wall,scaled);
-            const auto reference = draw(ordinary,h,v,wall,scaled);
+            const auto clipped = draw(*cached,depth,h,v,wall,scaled);
+            const auto reference = draw(ordinary,referenceDepth,h,v,wall,scaled);
             Check(clipped.Color == reference.Color && clipped.Room == reference.Room &&
-                clipped.Depth == reference.Depth, "sprite row clipping changed output");
+                clipped.Depth == reference.Depth, "sprite sampling or row clipping changed output");
         }
 }
 }
