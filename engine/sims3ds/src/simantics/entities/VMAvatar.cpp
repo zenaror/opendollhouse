@@ -632,7 +632,9 @@ void VMAvatar::Tick() {
 
     if (Thread && Thread->Context->VM->TS1) {
         // Original SAnimator update precedes room assignment and ordered deltas.
-        SetMotiveDataFloat(VMMotive::Room, Thread->Context->GetRoomScore(Thread->Context->GetRoomAt(Position())));
+        if (GetValue(VMStackObjectVariable::Room) != -5 &&
+            Thread->Context->GetEnvironmentRoomAt(Position()) != -5)
+            SetMotiveDataFloat(VMMotive::Room, Thread->Context->GetEnvironmentScore(Position()));
         for (const auto& change : TS1MotiveChanges) change.Tick(this);
     } else {
         for (auto& change : MotiveChanges) change.Tick(this);

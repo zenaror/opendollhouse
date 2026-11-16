@@ -16,6 +16,7 @@
 #include "simantics/engine/VMChangeActionString.h"
 #include "simantics/model/VMBuildableAreaInfo.h"
 #include "simantics/model/TSOPlatform/VMTSOLotState.h"
+#include "content/TS1NeighbourProvider.h"
 #include <random>
 #include <algorithm>
 #include <cmath>
@@ -196,6 +197,9 @@ void VMContext::RegeneratePortalInfo() {
         obj->SetRoom(room);
     }
 
+    RebuildEnvironmentGeometry();
+    EnvironmentPeriod = -1;
+    EnvironmentObjectsDirty = true;
     for (uint16_t i = 0; i < RoomInfo.size(); i++) {
         RefreshLighting(i, i == (RoomInfo.size() - 1));
     }
@@ -235,10 +239,11 @@ void VMContext::RefreshLighting(uint16_t room, bool commit) {
     }
 }
 
-// TS1(sims): FreeSO VMContext.RefreshRoomScore — the Room motive. Sum of the objects' Room Impact (object data 7:
-// decorations positive, dirty dishes/trash/puddles negative), scaled by area (1 per 12 tiles, outside 1/30), minus 10
-// inside or 15 outside, clamped to -100..100. Rooms are not merged across open divisions here (see LightBaseRoom).
+// Legacy non-TS1 consumer retains its existing visual-room score. TS1 uses the
+// separately cached original environment partitions, never native room aliases.
 void VMContext::RefreshRoomScore(uint16_t room) {
+    EnvironmentObjectsDirty = true;
+    if (VM && VM->TS1) return;
     if (RoomInfo.empty() || room == 0 || room >= RoomInfo.size()) return;
     room = RoomInfo[room].Room.LightBaseRoom;
     if (room >= RoomInfo.size()) return;
@@ -253,6 +258,92 @@ void VMContext::RefreshRoomScore(uint16_t room) {
     roomScore = (int16_t)(roomScore / areaRScale);
     roomScore -= (info.Room.IsOutside) ? 15 : 10;
     info.Light.RoomScore = (int16_t)std::min<int32_t>(100, std::max<int32_t>(-100, roomScore));
+}
+
+void VMContext::RefreshEnvironmentScores() {
+    const int period = Clock ? Clock->TimeOfDay() : 0;
+    if (!EnvironmentObjectsDirty && period == EnvironmentPeriod) return;
+    ++EnvironmentScoreRefreshes;
+    if (EnvironmentObjectsDirty) {
+        ++EnvironmentObjectPasses;
+        for (auto& room : EnvironmentRooms) {
+            auto& input = room.Environment;
+            input.RoomImpact = input.WindowLight = input.ArtificialLight = input.GoodObjectCount = 0;
+        }
+        auto architecture = Architecture();
+        // One entity pass per coalesced invalidation; no geometry scans per actor.
+        if (VM && architecture) for (auto ent : VM->Entities) {
+            if (!ent || ent->Dead || ent->GetValue(VMStackObjectVariable::Hidden) != 0 ||
+                ent->GetValue(VMStackObjectVariable::Room) < 0) continue;
+            const auto pos = ent->Position();
+            if (GetEnvironmentRoomAt(pos) < 0 || pos.Level < 1 ||
+                size_t(pos.Level) > EnvironmentTileRooms.size()) continue;
+            const auto& tiles = EnvironmentTileRooms[pos.Level - 1];
+            const auto entries = tiles.find(pos.TileY() * architecture->Width + pos.TileX());
+            if (entries == tiles.end()) continue;
+            // The PC scans every object at a visited coordinate. A split tile
+            // can contribute to both adjacent environment rooms.
+            for (const auto& entry : entries->second) {
+                const auto id = entry.first;
+                if (id == 0 || id >= EnvironmentRooms.size()) continue;
+                auto& room = EnvironmentRooms[id];
+                const int32_t weight = int32_t(entry.second);
+                auto& input = room.Environment;
+                const auto impact = ent->GetValue(VMStackObjectVariable::RoomImpact);
+                if (!room.Outside || impact < 0) input.RoomImpact += impact * weight;
+                if (impact >= 0) input.GoodObjectCount += weight;
+                if ((uint16_t(ent->GetValue(VMStackObjectVariable::FlagField2)) & 0x400) != 0 &&
+                    pos.TileX() > 0 && pos.TileY() > 0 && pos.TileX() < architecture->Width - 1 &&
+                    pos.TileY() < architecture->Height - 1) {
+                    const auto light = ent->GetValue(VMStackObjectVariable::LightingContribution);
+                    if (ent->Object->OBJ->ObjectType == OBJDType::Portal) input.WindowLight += light * weight;
+                    else input.ArtificialLight += light * weight;
+                }
+            }
+        }
+    }
+    const Common::TS1::EnvironmentTunings defaults;
+    auto content = Content::Content::Get();
+    auto provider = content ? content->WorldObjectGlobals.get() : nullptr;
+    if (provider) provider->InitCurves();
+    const auto& tuning = provider ? provider->Environment : defaults;
+    float outdoorSum = 0;
+    for (size_t id = 1; id < EnvironmentRooms.size(); ++id) {
+        auto& room = EnvironmentRooms[id];
+        const auto result = Common::TS1::EvaluateEnvironment(room.Environment, tuning, room.Outside,
+            Common::TS1::EnvironmentDaylight(period));
+        room.Score = result.Score; room.LightFactor = result.LightFactor;
+        if (room.Outside) outdoorSum += room.Score;
+    }
+    OutdoorEnvironmentScore = Common::TS1::EvaluateOutdoorEnvironment(outdoorSum, tuning, period);
+    EnvironmentPeriod = period;
+    EnvironmentObjectsDirty = false;
+}
+
+int32_t VMContext::GetEnvironmentRoomAt(const LotTilePos& pos) const {
+    if (!_Arch || pos.TileX() <= 0 || pos.TileY() <= 0 || pos.TileX() >= _Arch->Width - 1 ||
+        pos.TileY() >= _Arch->Height - 1 || pos.Level < 1 || size_t(pos.Level) > EnvironmentMaps.size()) return -5;
+    const auto& map = EnvironmentMaps[pos.Level - 1];
+    const size_t off = size_t(pos.TileY() * _Arch->Width + pos.TileX());
+    if (off >= map.size()) return -5;
+    const auto segments = uint8_t(_Arch->Walls[pos.Level - 1][off].Segments);
+    return Common::TS1::ResolveEnvironmentRoom(map, _Arch->Width, _Arch->Height,
+        pos.TileX(), pos.TileY(), pos.x & 15, pos.y & 15, segments);
+}
+
+float VMContext::GetEnvironmentScore(const LotTilePos& pos) {
+    RefreshEnvironmentScores();
+    const auto room = GetEnvironmentRoomAt(pos);
+    if (room <= 0 || size_t(room) >= EnvironmentRooms.size()) return 0;
+    float score = EnvironmentRooms[room].Outside ? OutdoorEnvironmentScore : EnvironmentRooms[room].Score;
+    if (room == 1 && score < 0) { // original logical room zero only
+        const auto house = VM ? VM->GetGlobalValue(10) : 0;
+        const auto content = Content::Content::Get();
+        const bool residential = house == 0 ||
+            (content && content->Neighborhood && content->Neighborhood->GetZoning(house) == 0);
+        if (!residential) score = 0;
+    }
+    return score;
 }
 
 void VMContext::AddRoomPortal(VMEntity* obj, uint16_t room) {
@@ -286,6 +377,26 @@ static bool HasObjectTileIndex(const LotTilePos& position, VMArchitecture* archi
         position.Level >= 1 && position.Level <= architecture->Stories;
 }
 
+static bool MovedObjectAffectsEnvironment(VMContext* context, VMEntity* obj) {
+    if (!context->VM || !context->VM->TS1) return true;
+    if (obj->GetValue(VMStackObjectVariable::RoomImpact) != 0 ||
+        obj->GetValue(VMStackObjectVariable::LightingContribution) != 0 ||
+        (uint16_t(obj->GetValue(VMStackObjectVariable::FlagField2)) & 0x400) != 0) return true;
+    const auto room = context->GetEnvironmentRoomAt(obj->Position());
+    // Zero-contribution objects cannot alter the interior formula when moving.
+    // Outdoor good-object counts still depend on their tile/visit multiplicity.
+    if (room <= 0 || size_t(room) >= context->EnvironmentRooms.size()) return true;
+    const auto pos = obj->Position();
+    if (pos.Level < 1 || size_t(pos.Level) > context->EnvironmentTileRooms.size()) return true;
+    const auto& tiles = context->EnvironmentTileRooms[pos.Level - 1];
+    const auto entries = tiles.find(pos.TileY() * context->Architecture()->Width + pos.TileX());
+    if (entries == tiles.end()) return true;
+    for (const auto& entry : entries->second)
+        if (entry.first < context->EnvironmentRooms.size() &&
+            context->EnvironmentRooms[entry.first].Outside) return true;
+    return false;
+}
+
 void VMContext::RegisterObjectPos(VMEntity* obj) {
     auto pos = obj->Position();
     if (pos.Level < 1) return;
@@ -302,8 +413,8 @@ void VMContext::RegisterObjectPos(VMEntity* obj) {
     obj->SetRoom(room);
     if (obj->GetValue(VMStackObjectVariable::LightingContribution) > 0)
         RefreshLighting(room, true);
-    else if (obj->GetValue(VMStackObjectVariable::RoomImpact) != 0)
-        RefreshRoomScore(room); // TS1(sims): FreeSO
+    else if (room < RoomInfo.size() && MovedObjectAffectsEnvironment(this, obj))
+        EnvironmentObjectsDirty = true;
 
     if (HasObjectTileIndex(pos, Architecture())) SetToNextCache->RegisterObjectPos(obj);
 }
@@ -322,8 +433,8 @@ void VMContext::UnregisterObjectPos(VMEntity* obj) {
     }
     if (obj->GetValue(VMStackObjectVariable::LightingContribution) > 0)
         RefreshLighting(room, true);
-    else if (obj->GetValue(VMStackObjectVariable::RoomImpact) != 0)
-        RefreshRoomScore(room); // TS1(sims): FreeSO
+    else if (room < RoomInfo.size() && MovedObjectAffectsEnvironment(this, obj))
+        EnvironmentObjectsDirty = true;
 
     if (HasObjectTileIndex(obj->Position(), Architecture())) SetToNextCache->UnregisterObjectPos(obj);
 }
@@ -533,9 +644,8 @@ uint16_t VMContext::GetRoomAt(const LotTilePos& pos) {
 
 int16_t VMContext::GetRoomScore(uint16_t room) {
     if (room >= RoomInfo.size()) return 0;
-    auto base = RoomInfo[room].Room.LightBaseRoom;
-    if (base >= RoomInfo.size()) return 0;
-    return RoomInfo[base].Light.RoomScore;
+    const auto base = RoomInfo[room].Room.LightBaseRoom;
+    return base < RoomInfo.size() ? RoomInfo[base].Light.RoomScore : 0;
 }
 
 Entities::VMMultitileGroup* VMContext::GhostCopyGroup(Entities::VMMultitileGroup* group) {

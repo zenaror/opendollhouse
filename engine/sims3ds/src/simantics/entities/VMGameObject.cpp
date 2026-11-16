@@ -340,6 +340,7 @@ void VMGameObject::PositionChangeInternal(VMContext* context, bool noEntryPoint,
             //first thing's first, is the style between 22-255 inclusive? If it is, then the style is stored in the object. Need to load its sprites and change the id for the objd.
             auto id = Object->OBJ->WallStyleSpriteID;
             FSO::Content::WallStyle style;
+            style.LogicalType = Object->OBJ->WallStyle;
             style.WallsUpFar = Object->Resource->Get<SPR>(id);
             style.WallsUpMedium = Object->Resource->Get<SPR>((uint16_t)(id + 1));
             style.WallsUpNear = Object->Resource->Get<SPR>((uint16_t)(id + 2));

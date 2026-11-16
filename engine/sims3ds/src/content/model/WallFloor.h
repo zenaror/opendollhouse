@@ -26,6 +26,9 @@ public:
 class WallStyle {
 public:
     uint16_t ID = 0;
+    // Object cutout masks receive runtime drawing IDs from 256. Retain the
+    // original logical wall type separately for simulation geometry.
+    uint16_t LogicalType = 0;
     FSO::Files::Formats::IFF::Chunks::SPR* WallsUpNear = nullptr;
     FSO::Files::Formats::IFF::Chunks::SPR* WallsUpMedium = nullptr;
     FSO::Files::Formats::IFF::Chunks::SPR* WallsUpFar = nullptr;

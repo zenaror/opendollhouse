@@ -22,8 +22,11 @@ public:
     int32_t FirePercent = 20000;
 
     int32_t TimeOfDay() const {
-        //return (Hours >= 6 && Hours < 18) ? 0 : 1;
-        return 0; //TODO: hack to make windows always cast full contribution. need to look into real patch.
+        // The PC game's four periods also drive authored light/autonomy trees.
+        // Dawn and dusk have separate values; nighttime is not a boolean flag.
+        if (Hours < 6 || Hours >= 19) return 2;
+        if (Hours < 7) return 3;
+        return Hours < 18 ? 0 : 1;
     }
     int32_t Seconds() const { return (TicksPerMinute == 0) ? 0 : ((MinuteFractions * 60) / TicksPerMinute); }
 

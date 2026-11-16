@@ -682,6 +682,7 @@ void WorldGlobalProvider::Init() {
     CurvesLoaded = false;
     Autonomy = {};
     MotiveDecay = {};
+    Environment = {};
     GlobalFar.reset();
     GlobalEntries.clear();
     const std::string& base = ContentManager->SimsCompleteDir;
@@ -703,6 +704,7 @@ void WorldGlobalProvider::InitCurves() {
     if (CurvesLoaded) return;
     AutonomyTunings autonomy;
     std::array<MotiveDecayTunings, 3> motiveDecay;
+    FSO::Common::TS1::EnvironmentTunings environment;
     auto global = Get("global", true);
     // The DVD registers these named properties with constructor defaults, then
     // reads Global FCNS#2. Read once with the curves, from the same resource.
@@ -756,6 +758,30 @@ void WorldGlobalProvider::InitCurves() {
     if (motiveDecay[0].WakeHours == 0 || motiveDecay[0].WakeHours == 24)
         throw std::runtime_error("Human motive tuning has zero awake or sleep span");
 
+    if (auto chunk = global->Resource->Get<FSO::Files::Formats::IFF::Chunks::FCNS>(3)) {
+        for (const auto& r : chunk->Values.records) {
+            const auto& key = r.name; const auto value = r.value;
+            if (key == "object light contribution factor") environment.ObjectLightFactor = value;
+            else if (key == "area clip to score") environment.AreaClip = value;
+            else if (key == "area score for zero tiles") environment.AreaZero = value;
+            else if (key == "area score for clip tile") environment.AreaFull = value;
+            else if (key == "light score for 0.0") environment.LightZero = value;
+            else if (key == "light score for 1.0") environment.LightFull = value;
+            else if (key == "room impact effective area min") environment.ImpactAreaMin = value;
+            else if (key == "room impact effective area max") environment.ImpactAreaMax = value;
+            else if (key == "room impact multiplier") environment.ImpactMultiplier = value;
+            else if (key == "outdoor room impact factor") environment.OutdoorImpactFactor = value;
+            else if (key == "outdoor good object count factor") environment.OutdoorGoodFactor = value;
+            else if (key == "outdoor object divisor") environment.OutdoorDivisor = value;
+            else if (key == "outdoor daylight bonus") environment.OutdoorDay = value;
+            else if (key == "outdoor dawn/dusk bonus") environment.OutdoorTwilight = value;
+            else if (key == "outdoor nighttime bonus") environment.OutdoorNight = value;
+            else if (key == "floor score for 0%") environment.FloorZero = value;
+            else if (key == "floor score for 100%") environment.FloorFull = value;
+            else if (key == "wall score for 0%") environment.WallZero = value;
+            else if (key == "wall score for 100%") environment.WallFull = value;
+        }
+    }
     auto curveFromSTR = [&](uint16_t id, bool cache) {
         std::vector<FSO::Common::TS1::TS1Curve> result;
         auto str = global->Resource->Get<FSO::Files::Formats::IFF::Chunks::STR>(id);
@@ -774,6 +800,7 @@ void WorldGlobalProvider::InitCurves() {
     HouseScore = curveFromSTR(505, false);
     Autonomy = autonomy;
     MotiveDecay = motiveDecay;
+    Environment = environment;
     CurvesLoaded = true;
 }
 

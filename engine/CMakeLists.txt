@@ -60,6 +60,7 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/VMAI.cpp
   sims3ds/src/simantics/VMArchitecture.cpp
   sims3ds/src/simantics/VMContext.cpp
+  sims3ds/src/simantics/VMEnvironmentGeometry.cpp
   sims3ds/src/simantics/engine/Routing/VMRectRouter.cpp
   sims3ds/src/simantics/engine/TSOGlobalLink/VMTSOGlobalLinkStub.cpp
   sims3ds/src/simantics/engine/VMActionCallback.cpp
@@ -500,6 +501,14 @@ if(BUILD_TESTING)
   target_compile_features(odh-motive-persistence PRIVATE cxx_std_17)
   target_include_directories(odh-motive-persistence PRIVATE sims3ds/src)
   add_test(NAME motive-persistence COMMAND odh-motive-persistence)
+  add_executable(odh-environment-score tests/environment_score.cpp)
+  target_compile_features(odh-environment-score PRIVATE cxx_std_17)
+  target_include_directories(odh-environment-score PRIVATE sims3ds/src)
+  add_test(NAME environment-score COMMAND odh-environment-score)
+  add_executable(odh-environment-geometry tests/environment_geometry.cpp)
+  target_compile_features(odh-environment-geometry PRIVATE cxx_std_17)
+  target_include_directories(odh-environment-geometry PRIVATE sims3ds/src)
+  add_test(NAME environment-geometry COMMAND odh-environment-geometry)
   add_executable(odh-relative-position-contract tests/relative_position_contract.cpp)
   target_link_libraries(odh-relative-position-contract PRIVATE odh_engine)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

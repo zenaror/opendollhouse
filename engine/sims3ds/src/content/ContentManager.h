@@ -13,6 +13,7 @@
 // STUB(3ds): avatar content (animations, appearances, outfits, skeletons, purchasables),
 // wall/floor/roof catalogs and the TSO GlobalTuning are minimal shells (see STUBS.md).
 #pragma once
+#include "common/TS1/TS1Environment.h"
 #include "common/TS1/TS1Curve.h" // TS1(sims)
 #include <cstdint>
 #include <array>
@@ -260,6 +261,7 @@ public:
         float HygieneAwake = .15f, HygieneAsleep = .1f, BladderAwake = .3f, BladderAsleep = .2f;
     };
     std::array<MotiveDecayTunings, 3> MotiveDecay;
+    FSO::Common::TS1::EnvironmentTunings Environment;
     bool CurvesLoaded = false;
     /// C# InitCurves (called from Content.Init in FreeSO). Here: called on first use (Global.iff must be loadable).
     void InitCurves();

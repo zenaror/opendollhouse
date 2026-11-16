@@ -40,6 +40,12 @@ public:
     std::vector<std::vector<FSO::LotView::Model::FloorTile>> Floors;
     std::vector<std::vector<FSO::LotView::Model::FloorTile>> VisFloors;
 
+    // Logical PC floor coverage remains separate from the renderer's pool and
+    // pond sentinels. Empty entries derive coverage from ordinary floor tiles.
+    std::vector<std::vector<uint8_t>> TS1FloorPresent;
+    std::vector<uint8_t> TS1PoolTiles;
+    std::vector<std::vector<uint16_t>> TS1WallStyleTopLeft, TS1WallStyleTopRight;
+
     std::vector<std::vector<bool>> ObjectSupport;
     std::vector<std::vector<bool>> Supported;
 

@@ -47,11 +47,18 @@ public:
     std::array<std::unique_ptr<Engine::VMPrimitiveRegistration>, 256> Primitives;
     std::shared_ptr<Engine::VMAmbientSound> Ambience;
     uint64_t RandomSeed = 0;
+    int EnvironmentPeriod = -1;
+    float OutdoorEnvironmentScore = 0;
     static uint64_t DebugSeed; // FIX(sims) QA: when non-zero, new VMs get repeatable seeds (host tools only)
 
     FSO::Content::GameGlobal* Globals = nullptr;
     std::unique_ptr<Model::VMSetToNextCache> SetToNextCache;
     std::vector<Model::VMRoomInfo> RoomInfo;
+    std::vector<Model::VMEnvironmentRoom> EnvironmentRooms;
+    std::vector<std::vector<uint32_t>> EnvironmentMaps;
+    std::vector<std::unordered_map<int32_t, std::vector<std::pair<uint16_t, uint32_t>>>> EnvironmentTileRooms;
+    bool EnvironmentObjectsDirty = true;
+    uint64_t EnvironmentScoreRefreshes = 0, EnvironmentObjectPasses = 0;
 
     FSO::SimAntics::VM* VM = nullptr;
 
@@ -70,7 +77,11 @@ public:
     st::Rectangle GetTSOBuildableArea(int32_t lotSInfo);
     void RegeneratePortalInfo();
     void RefreshLighting(uint16_t room, bool commit);
-    void RefreshRoomScore(uint16_t room); // TS1(sims): FreeSO
+    void RefreshRoomScore(uint16_t room);
+    void RebuildEnvironmentGeometry(); // original logical map, independent of routing/graphics
+    void RefreshEnvironmentScores();
+    int32_t GetEnvironmentRoomAt(const FSO::LotView::Model::LotTilePos& pos) const;
+    float GetEnvironmentScore(const FSO::LotView::Model::LotTilePos& pos);
     void AddRoomPortal(VMEntity* obj, uint16_t room);
     void RemoveRoomPortal(VMEntity* obj, uint16_t room);
     void RegisterObjectPos(VMEntity* obj);

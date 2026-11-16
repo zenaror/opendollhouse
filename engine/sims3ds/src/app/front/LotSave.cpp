@@ -337,6 +337,10 @@ static bool BuildBulldozedLot(int houseNumber, std::vector<uint8_t>* prepared, s
             size_t i = (size_t)(y * arch->Width + x);
             arch->Walls[(size_t)lvl][i] = FSO::LotView::Model::WallTile();
             arch->Floors[(size_t)lvl][i] = FSO::LotView::Model::FloorTile();
+            if (i < arch->TS1FloorPresent[lvl].size()) arch->TS1FloorPresent[lvl][i] = 0;
+            if (i < arch->TS1WallStyleTopLeft[lvl].size()) arch->TS1WallStyleTopLeft[lvl][i] = 0;
+            if (i < arch->TS1WallStyleTopRight[lvl].size()) arch->TS1WallStyleTopRight[lvl][i] = 0;
+            if (lvl == 0 && i < arch->TS1PoolTiles.size()) arch->TS1PoolTiles[i] = 0;
         }
     }
     arch->RegenWallsAt();

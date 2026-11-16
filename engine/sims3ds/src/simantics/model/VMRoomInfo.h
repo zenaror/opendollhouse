@@ -8,7 +8,9 @@
 #include <cstdint>
 #include <vector>
 #include <functional>
+#include <unordered_map>
 #include "core/math.h"
+#include "common/TS1/TS1Environment.h"
 #include "world/model/RoomLighting.h"
 #include "simantics/model/Routing/VMObstacle.h"
 namespace FSO { namespace SimAntics {
@@ -38,11 +40,21 @@ public:
     int32_t GetHashCode() const { return ObjectID + TargetRoom; }
 };
 
+// Original environment partitions are independent of visual/routing rooms.
+struct VMEnvironmentRoom {
+    FSO::Common::TS1::EnvironmentInputs Environment;
+    // Original flood-fill can visit a tile more than once. Preserve multiplicity.
+    std::unordered_map<int32_t, uint32_t> EnvironmentTileVisits;
+    float Score = 0, LightFactor = 0;
+    bool Outside = false;
+};
+
 struct VMRoomInfo {
     std::vector<VMRoomPortal> Portals;
     std::vector<VMEntity*> Entities;
     FSO::LotView::Model::RoomLighting Light;
     VMRoom Room;
+
 };
 
 }}}

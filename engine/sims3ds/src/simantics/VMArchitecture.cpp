@@ -68,6 +68,9 @@ VMArchitecture::VMArchitecture(int32_t width, int32_t height, Blueprint* bluepri
 
     this->Floors.resize(Stories);
     this->VisFloors.resize(Stories);
+    this->TS1FloorPresent.resize(Stories);
+    this->TS1WallStyleTopLeft.resize(Stories);
+    this->TS1WallStyleTopRight.resize(Stories);
 
     this->ObjectSupport.resize(Stories); //true if there's an object support in the specified position
     this->Supported.resize(Stories - 1); //no supported array for bottom floor. true if this tile is supported.
@@ -525,6 +528,38 @@ bool VMArchitecture::RaycastWall(const st::Point& p1, const st::Point& p2, int8_
 void VMArchitecture::SetWall(int16_t tileX, int16_t tileY, int8_t level, const WallTile& wall) {
     int32_t off = GetOffset(tileX, tileY);
 
+    if (RealMode && Context && Context->VM && Context->VM->TS1) {
+        const auto& before = Walls[level - 1][off];
+        const auto update = [&](std::vector<uint16_t>& styles, bool left) {
+            const auto& existing = Walls[level - 1];
+            if (styles.size() != existing.size()) {
+                styles.resize(existing.size());
+                for (size_t i = 0; i < styles.size(); ++i)
+                    styles[i] = left ? existing[i].TopLeftStyle : existing[i].TopRightStyle;
+            }
+            const int bit = left ? 1 : 2;
+            const auto nowStyle = left ? wall.TopLeftStyle : wall.TopRightStyle;
+            const auto oldStyle = left ? before.TopLeftStyle : before.TopRightStyle;
+            const auto nowObject = left ? wall.ObjSetTLStyle : wall.ObjSetTRStyle;
+            const auto oldObject = left ? before.ObjSetTLStyle : before.ObjSetTRStyle;
+            const int nowSegments = int(wall.Segments), oldSegments = int(before.Segments);
+            if ((nowSegments & 48) || ((nowSegments ^ oldSegments) & (bit | 48)) || nowStyle != oldStyle)
+                styles[off] = nowStyle;
+            if (!(nowSegments & 48) && nowObject != oldObject) {
+                uint16_t logical = nowObject;
+                if (nowObject >= 256) {
+                    const auto* content = FSO::Content::Content::Get();
+                    const auto* source = content && content->WorldWalls ? content->WorldWalls->GetWallStyle(nowObject) : nullptr;
+                    logical = source ? source->LogicalType : 0;
+                }
+                styles[off] = nowObject ? logical : nowStyle;
+            }
+            if (!(nowSegments & (bit | 48))) styles[off] = 0;
+        };
+        update(TS1WallStyleTopLeft[level - 1], true);
+        update(TS1WallStyleTopRight[level - 1], false);
+    }
+
     auto& wa = WallsAt[level - 1];
     auto it = std::find(wa.begin(), wa.end(), off);
     if (it != wa.end()) wa.erase(it);
@@ -565,6 +600,24 @@ bool VMArchitecture::SetFloor(int16_t tileX, int16_t tileY, int8_t level, const 
         if (!Context->CheckFloorValid(LotTilePos::FromBigTile((int16_t)tileX, (int16_t)tileY, level), floor)) return false;
     }
 
+    // Pool/water tools replace the drawing pattern while the saved PC floor
+    // underneath is retained. Keep that distinction for environment scoring.
+    if (RealMode && Context && Context->VM && Context->VM->TS1) {
+        auto& present = TS1FloorPresent[level - 1];
+        if (present.size() != Floors[level - 1].size()) {
+            present.resize(Floors[level - 1].size());
+            for (size_t i = 0; i < present.size(); ++i)
+                present[i] = Floors[level - 1][i].Pattern != 0 && Floors[level - 1][i].Pattern < 65534;
+        }
+        if (floor.Pattern < 65534) present[offset] = floor.Pattern != 0;
+        if (level == 1) {
+            if (TS1PoolTiles.size() != Floors[0].size()) {
+                TS1PoolTiles.resize(Floors[0].size());
+                for (size_t i = 0; i < TS1PoolTiles.size(); ++i) TS1PoolTiles[i] = Floors[0][i].Pattern == 65535;
+            }
+            TS1PoolTiles[offset] = floor.Pattern == 65535;
+        }
+    }
     Floors[level - 1][offset] = floor;
 
     if (RealMode) FloorsDirty = true;

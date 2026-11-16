@@ -25,6 +25,10 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Room satisfaction uses the original floor, wall, lighting and object
+  calculations, including diagonal rooms and changes made while playing.
+- Scripts receive the original day, dusk, night and dawn periods instead of
+  treating every hour as daytime.
 - Needs retain fractional values during simulation and saving. Sleep, comfort,
   social needs, eating and mood follow the original calculations and game data.
 - Actions preserve simultaneous changes to the same need in their original

@@ -53,6 +53,19 @@ to those two records. Restore one validated source of needs; do not combine the
 legacy projections and precise values. An older build can rewrite the records
 without updating `ODMP`, so stale metadata must not overwrite its new progress.
 
+Room satisfaction has a separate cached logical map in
+`TS1EnvironmentGeometry` and `VMContext`. Query it by the Sim's position;
+rendering and routing room numbers are not interchangeable with this map.
+The original calculation counts repeated visits to tiles, floor and wall
+coverage, eligible objects, daylight and artificial light. Reusing unique
+rendered floor area gives different results.
+
+For example, removing floor covering must update the logical coverage and
+rebuild the room geometry when the edit is committed. Object scripts use the
+existing Refresh operations to update contributions. Keep the original wall
+type separate from a dynamically allocated drawing resource number. These
+caches are reconstructed from game data and edits, without adding save fields.
+
 ## Handheld rendering and file access
 
 | When playing | What the engine reuses |

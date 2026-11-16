@@ -171,20 +171,51 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     VMArchitecture* arch = VM->Context->Architecture();
     ARRY* advFloors = iff->Get<ARRY>(11);
     std::vector<uint8_t> flags = Req(iff->Get<ARRY>(8), "ARRY#8")->TransposeData();
+    const auto logicalWalls = [&](ARRY* source, bool advanced, int level) {
+        const auto raw = source->TransposeData();
+        const size_t stride = advanced ? 14 : 8;
+        auto& left = arch->TS1WallStyleTopLeft[level];
+        auto& right = arch->TS1WallStyleTopRight[level];
+        left.resize(size_t(size) * size); right.resize(left.size());
+        for (int y = 0; y < size && y < 64; ++y) for (int x = 0; x < size && x < 64; ++x) {
+            const size_t from = (size_t(y) * 64 + x) * stride, to = size_t(y) * size + x;
+            if (from + stride > raw.size()) continue;
+            left[to] = uint16_t(raw[from + 2]) | (advanced ? uint16_t(raw[from + 3]) << 8 : 0);
+            right[to] = uint16_t(raw[from + (advanced ? 4 : 3)]) |
+                (advanced ? uint16_t(raw[from + 5]) << 8 : 0);
+        }
+        return RemapWalls(advanced ? DecodeAdvWalls(raw) : DecodeWalls(raw), wallDict, floorDict);
+    };
     if (advFloors != nullptr) {
         arch->Floors[0] = RemapFloors(DecodeAdvFloors(advFloors->TransposeData()), floorDict, flags);
         arch->Floors[1] = RemapFloors(DecodeAdvFloors(Req(iff->Get<ARRY>(111), "ARRY#111")->TransposeData()), floorDict, flags);
-        arch->Walls[0] = RemapWalls(DecodeAdvWalls(Req(iff->Get<ARRY>(12), "ARRY#12")->TransposeData()), wallDict, floorDict);
-        arch->Walls[1] = RemapWalls(DecodeAdvWalls(Req(iff->Get<ARRY>(112), "ARRY#112")->TransposeData()), wallDict, floorDict);
+        arch->Walls[0] = logicalWalls(Req(iff->Get<ARRY>(12), "ARRY#12"), true, 0);
+        arch->Walls[1] = logicalWalls(Req(iff->Get<ARRY>(112), "ARRY#112"), true, 1);
     } else {
         arch->Floors[0] = RemapFloors(DecodeFloors(Req(iff->Get<ARRY>(1), "ARRY#1")->TransposeData()), floorDict, flags);
         arch->Floors[1] = RemapFloors(DecodeFloors(Req(iff->Get<ARRY>(101), "ARRY#101")->TransposeData()), floorDict, flags);
-        arch->Walls[0] = RemapWalls(DecodeWalls(Req(iff->Get<ARRY>(2), "ARRY#2")->TransposeData()), wallDict, floorDict);
-        arch->Walls[1] = RemapWalls(DecodeWalls(Req(iff->Get<ARRY>(102), "ARRY#102")->TransposeData()), wallDict, floorDict);
+        arch->Walls[0] = logicalWalls(Req(iff->Get<ARRY>(2), "ARRY#2"), false, 0);
+        arch->Walls[1] = logicalWalls(Req(iff->Get<ARRY>(102), "ARRY#102"), false, 1);
     }
     arch->SignalRedraw();
+    // Preserve raw floor presence before pool/pond drawing sentinels replace it.
+    // Environment coverage tests the PC floor channel, not those sentinels.
+    for (int level = 0; level < 2; ++level) {
+        auto& present = arch->TS1FloorPresent[level];
+        present.resize(size_t(size) * size);
+        for (int y = 0; y < size; ++y) for (int x = 0; x < size; ++x) {
+            const size_t source = size_t(y) * 64 + x;
+            if (source < arch->Floors[level].size())
+                present[size_t(y) * size + x] = arch->Floors[level][source].Pattern != 0;
+        }
+    }
     std::vector<uint8_t> pools = Req(iff->Get<ARRY>(9), "ARRY#9")->TransposeData();
     std::vector<uint8_t> water = Req(iff->Get<ARRY>(10), "ARRY#10")->TransposeData();
+    arch->TS1PoolTiles.assign(size_t(size) * size, 0);
+    for (int y = 0; y < size && y < 64; ++y) for (int x = 0; x < size && x < 64; ++x) {
+        const size_t source = size_t(y) * 64 + x;
+        if (source < pools.size()) arch->TS1PoolTiles[size_t(y) * size + x] = pools[source] < 16;
+    }
     for (size_t j = 0; j < pools.size() && j < arch->Floors[0].size(); j++) {
         // ARRY9 values 0..15 are pool adjacency masks; 16 is the dry rim.
         // Retain the dry portal tiles used by ladders and diving boards.
