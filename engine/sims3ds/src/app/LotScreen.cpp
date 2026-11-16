@@ -80,6 +80,11 @@ using namespace FSO::SimAntics;
 
 #ifndef __3DS__
 struct LotScreen::DesktopHoverState {
+    struct ManualHelp {std::string title,description,identity,context,illustration;};
+    std::optional<ManualHelp> manual_help;
+    std::string automatic_help_identity,automatic_help_context;
+    std::string pressed_automatic_help_identity,pressed_automatic_help_context;
+    std::string dismissed_help_identity,dismissed_help_context;
     OriginalHover hover;
     FSO::LotView::Framebuffer object_mask;
     AppInput pointer;
@@ -108,13 +113,20 @@ void LotScreen::ObserveDesktopPointer(const AppInput& in){
     if(!Desktop||(!in.DesktopPointer&&!in.PointerCancelled))return;
     if(!DesktopHover)DesktopHover.reset(new DesktopHoverState());
     auto& h=*DesktopHover;
+    if(in.TouchDown){
+        // Preserve what was actually visible before this press hides hover.
+        // The ordered release may be delivered by a later App::Frame.
+        h.pressed_automatic_help_identity=h.automatic_help_identity;
+        h.pressed_automatic_help_context=h.automatic_help_context;
+    }
     auto& p=h.pointer;
     p.DesktopPointer=true;p.TouchX=in.TouchX;p.TouchY=in.TouchY;
     p.Touching=in.Touching;p.TouchDown=in.TouchDown;p.TouchUp=in.TouchUp;
     p.MouseRightDown=in.MouseRightDown;p.MouseRightHeld=in.MouseRightHeld;
     p.WheelY=in.WheelY;p.PointerCancelled=in.PointerCancelled;
-    if(in.PointerCancelled){p.TouchX=p.TouchY=-1;h.pressed_control.clear();h.press_origin.reset();return;}
+    if(in.PointerCancelled){p.TouchX=p.TouchY=-1;h.pressed_control.clear();h.press_origin.reset();h.pressed_automatic_help_identity.clear();h.pressed_automatic_help_context.clear();return;}
     const bool modal=HasModalSimDialog()||Pie.IsOpen||h.external_modal;
+    if(modal||in.MouseRightDown){h.pressed_automatic_help_identity.clear();h.pressed_automatic_help_context.clear();}
     if(modal||in.MouseRightDown||in.TouchUp||!in.Touching){h.pressed_control.clear();h.press_origin.reset();}
     if(in.TouchDown&&!modal){
         h.pressed_control=HitAt(in.TouchX,in.TouchY);
@@ -189,6 +201,33 @@ void LotScreen::OfferDesktopHelp(const std::string& title,const std::string& des
     auto& h=*DesktopHover;h.help_title=title;h.help_description=description;h.help_illustration=illustration;h.help_objects=objects;h.help_portrait=selectedPortrait;
 #else
     (void)title;(void)description;(void)identity;(void)context;(void)selection;(void)bounds;(void)illustration;(void)objects;(void)selectedPortrait;
+#endif
+}
+
+void LotScreen::ClearDesktopSettingsHelp(){
+#ifndef __3DS__
+    if(DesktopHover){DesktopHover->manual_help.reset();DesktopHover->automatic_help_identity.clear();DesktopHover->automatic_help_context.clear();DesktopHover->pressed_automatic_help_identity.clear();DesktopHover->pressed_automatic_help_context.clear();DesktopHover->dismissed_help_identity.clear();DesktopHover->dismissed_help_context.clear();DesktopHover->hover.Clear();}
+#endif
+}
+void LotScreen::ToggleDesktopSettingsHelp(const std::string& title,const std::string& description,
+        const std::string& identity,const std::string& context,const std::string& illustration){
+#ifndef __3DS__
+    if(!Desktop||title.empty()||description.empty())return;
+    if(!DesktopHover)DesktopHover.reset(new DesktopHoverState());
+    auto& h=*DesktopHover;
+    if((h.manual_help&&h.manual_help->identity==identity&&h.manual_help->context==context)||
+       (h.automatic_help_identity==identity&&h.automatic_help_context==context)||
+       (h.pressed_automatic_help_identity==identity&&h.pressed_automatic_help_context==context)){
+        h.manual_help.reset();h.dismissed_help_identity=identity;h.dismissed_help_context=context;
+    }else{
+        h.manual_help=DesktopHoverState::ManualHelp{title,description,identity,context,illustration};
+        h.dismissed_help_identity.clear();h.dismissed_help_context.clear();
+    }
+    h.automatic_help_identity.clear();h.automatic_help_context.clear();
+    h.pressed_automatic_help_identity.clear();h.pressed_automatic_help_context.clear();
+    h.hover.Clear();
+#else
+    (void)title;(void)description;(void)identity;(void)context;(void)illustration;
 #endif
 }
 
@@ -1146,9 +1185,29 @@ void LotScreen::Draw() {
         auto& h=*DesktopHover;
         const bool modal=h.external_modal || Pie.IsOpen || HasModalSimDialog() || Buy->DesktopQueryVisible || Camera.Anchor().has_value();
         const std::string context=std::to_string(int(CurrentMode))+":"+h.context;
-        if(h.help_title.empty())
+        // Original F5 button help is a separate250ms automatic illustrated
+        // popup. Quick Tips does not disable clicks or unrelated tooltips.
+        const bool settingsHelp=!h.help_title.empty()&&h.context.rfind("settings:",0)==0;
+        const auto fe=front::GameOptions::Get().FE;
+        const bool dismissed=settingsHelp&&h.dismissed_help_identity==h.identity&&h.dismissed_help_context==h.context;
+        const bool helpEnabled=!settingsHelp||((fe&&fe->Settings().QuickTips)&&!dismissed);
+        h.hover.SetDelayMs(settingsHelp?251:500); // Original integer elapsed >250ms.
+        if(CurrentMode!=Mode::Options)h.manual_help.reset();
+        bool automaticHelp=false;
+        if(h.help_title.empty()&&!h.manual_help)
             h.hover.Draw(*Bottom,h.pointer,h.name,HoverKey(h.identity),HoverKey(context),h.selection,h.bounds,modal,true,true,h.foreground);
-        else if(h.hover.Resolve(h.pointer,h.name,HoverKey(h.identity),HoverKey(context),h.selection,h.bounds,modal)){
+        else if(!h.help_title.empty())automaticHelp=bool(h.hover.Resolve(h.pointer,h.name,HoverKey(h.identity),HoverKey(context),h.selection,h.bounds,modal,true,helpEnabled));
+        else h.hover.Clear();
+        h.automatic_help_identity=automaticHelp?h.identity:std::string{};
+        h.automatic_help_context=automaticHelp?h.context:std::string{};
+        if(automaticHelp&&settingsHelp){h.dismissed_help_identity.clear();h.dismissed_help_context.clear();}
+        if(automaticHelp&&h.manual_help&&h.manual_help->identity!=h.identity)h.manual_help.reset();
+        const bool manualHelp=!modal&&h.manual_help.has_value();
+        if(manualHelp&&!automaticHelp){
+            const auto& help=*h.manual_help;h.help_title=help.title;h.help_description=help.description;
+            h.help_illustration=help.illustration;h.context=help.context;h.help_objects={};h.help_portrait=false;
+        }
+        if(automaticHelp||manualHelp){
             auto content=FSO::Content::Content::Get();
             if(content){
                 if(!h.help_view || h.help_root!=content->SimsCompleteDir){
@@ -1188,6 +1247,7 @@ void LotScreen::Draw() {
                 original::Copy(frame,*Bottom);
             }
         }
+        if(h.pointer.TouchUp||h.pointer.PointerCancelled){h.pressed_automatic_help_identity.clear();h.pressed_automatic_help_context.clear();}
         h.pointer.TouchDown=h.pointer.TouchUp=h.pointer.MouseRightDown=false;h.pointer.WheelY=0;
     }
 #endif

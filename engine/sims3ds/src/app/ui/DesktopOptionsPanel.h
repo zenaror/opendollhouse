@@ -14,7 +14,7 @@ struct DesktopOptionsSnapshot {
 };
 // Observed persisted preferences, with capabilities requiring current consumers.
 DesktopOptionsSnapshot CaptureDesktopOptions(const front::FrontSettings&,bool audio,std::optional<bool> live_free_will,
-    const FSO::LotView::World* graphics_world=nullptr);
+    const FSO::LotView::World* graphics_world=nullptr,bool host_focus_events=false);
 bool ApplyDesktopOption(front::FrontSettings&,const odh_host::OriginalSettingsEvent&,
     const odh_host::OriginalSettingsCapabilities&);
 class DesktopOptionsPanel {

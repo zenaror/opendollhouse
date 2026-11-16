@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <set>
 
 namespace {
 using namespace odh_host;using Pixel=std::array<std::uint8_t,4>;
@@ -90,16 +91,24 @@ void cases(){
                 need(!view.hit(layout,p[0],p[1],state,disabled)&&!view.activate(layout,n,p[0],state,disabled),"unsupported consumer never emits action");
                 auto unknown=state;unknown.values[id].reset();
                 need(!view.hit(layout,p[0],p[1],unknown,capabilities)&&!view.activate(layout,n,p[0],unknown,capabilities),"unknown host state never emits action");
-                auto invalid=state;invalid.values[id]=control.kind==OriginalSettingControlKind::slider?101:3;
+                auto invalid=state;invalid.values[id]=control.kind==OriginalSettingControlKind::slider?11:3;
                 need(!view.activate(layout,n,p[0],invalid,capabilities),"invalid host state cannot be toggled");
                 const auto event=view.activate(layout,n,p[0],state,capabilities);
                 need(event&&event->id==control.id,"event has exact setting identity");
                 if(control.kind==OriginalSettingControlKind::slider){
-                    need(event->value>=45&&event->value<=55,"slider midpoint uses drawn thumb travel");
+                    need(event->value==5,"slider midpoint uses drawn thumb travel");
                     need(view.activate(layout,n,control.rect.x-500,state,capabilities)->value==0&&
-                        view.activate(layout,n,control.rect.x+control.rect.width+500,state,capabilities)->value==100,"captured slider drag clamps both endpoints");
-                    auto half=state;half.values[id]=50;auto painted=base;view.draw(painted,page,half,capabilities,p,n);
+                        view.activate(layout,n,control.rect.x+control.rect.width+500,state,capabilities)->value==10,"captured slider drag clamps both endpoints");
+                    auto half=state;half.values[id]=5;auto painted=base;view.draw(painted,page,half,capabilities,p,n);
                     need(pixel(painted,p)!=clear&&painted.depth==base.depth&&painted.owner_ids==base.owner_ids,"original slider paints without changing depth/picking");
+                    auto idle=base;view.draw(idle,page,half,capabilities);
+                    need(idle.pixels==painted.pixels,"nonzero slider artwork is independent of hover");
+                    auto muted=base;view.draw(muted,page,state,capabilities,p,n);
+                    need(muted.pixels!=painted.pixels,"mute uses the original off artwork");
+                    std::set<int> steps;
+                    for(int x=control.rect.x;x<=control.rect.x+control.rect.width;++x)
+                        steps.insert(view.activate(layout,n,x,state,capabilities)->value);
+                    need(steps==std::set<int>({0,1,2,3,4,5,6,7,8,9,10}),"slider exposes exactly eleven integer positions");
                 }else{
                     need(event->value==(control.kind==OriginalSettingControlKind::checkbox?1:control.value),"checkbox toggles/radio selects authored value");
                     auto local=state;local.values[id]=control.kind==OriginalSettingControlKind::radio?control.value:0;
@@ -167,12 +176,12 @@ void cases(){
     const auto sound=complete.layout(1024,768,OriginalSettingsPage::sound);
     const auto track=sound.controls[1].rect;const auto mid=center(track);
     auto press=pointer.update(complete,sound,state,capabilities,{mid[0],mid[1],true,true,false,false});
-    need(press&&press->id==OriginalSettingId::music&&press->value>=45&&press->value<=55&&pointer.captured()==1,
+    need(press&&press->id==OriginalSettingId::music&&press->value==5&&pointer.captured()==1,
         "raw pointer captures the drawn music slider and applies exact travel");
     const auto drag=pointer.update(complete,sound,state,capabilities,{track.x-50,0,false,true,false,false});
     need(drag&&drag->value==0,"held slider clamps outside track without switching controls");
     const auto release=pointer.update(complete,sound,state,capabilities,{track.x+track.width+50,0,false,false,true,false});
-    need(release&&release->value==100&&!pointer.captured(),"release outside track commits endpoint and clears capture");
+    need(release&&release->value==10&&!pointer.captured(),"release outside track commits endpoint and clears capture");
     pointer.update(complete,sound,state,capabilities,{mid[0],mid[1],true,true,false,false});
     need(!pointer.update(complete,sound,state,capabilities,{0,0,false,false,false,true})&&!pointer.captured(),
         "focus cancellation never fabricates a settings edit");

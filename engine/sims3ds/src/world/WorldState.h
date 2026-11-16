@@ -92,6 +92,9 @@ public:
     // Portable lots omit decorative grass grain and slope shading. Ambient
     // room light, time of day, tile heights and the build grid stay active.
     bool SimpleTerrain = false;
+    // Presentation only: authored object light can be hidden without changing
+    // the simulation's contributions or room score. Daylight remains visible.
+    bool ObjectLighting = true;
     st::Rectangle ThumbnailGroundBounds;
     bool ThumbnailGroundTile(int x, int y) const {
         return !RenderingThumbnail || ThumbnailGroundBounds.Width <= 0 ||

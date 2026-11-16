@@ -69,13 +69,13 @@ float Blueprint::InterpAltitude(const st::Vector3& Position) const {
     return (yLerp * xl2 + (1 - yLerp) * xl1 - BaseAlt) * TerrainFactor;
 }
 
-void Blueprint::GenerateRoomLights() {
+void Blueprint::GenerateRoomLights(bool objectLighting) {
     float len = (float)std::sqrt((double)(OutsideColor.R * OutsideColor.R + OutsideColor.G * OutsideColor.G + OutsideColor.B * OutsideColor.B));
     auto minOut = OutsideColor * (float)(len > 0 ? 150 / len : 0);
 
     for (size_t i = 0; i < Light.size() && i < RoomColors.size(); i++) {
         auto outside = OutsideColor * (Light[i].OutsideLight / 100.0f);
-        auto ambient = st::Color::White() * (Light[i].AmbientLight / 100.0f);
+        auto ambient = st::Color::White() * (objectLighting ? Light[i].AmbientLight / 100.0f : 0.0f);
 
         outside.R = std::max(minOut.R, outside.R);
         outside.G = std::max(minOut.G, outside.G);

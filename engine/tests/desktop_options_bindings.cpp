@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 #include "app/ui/DesktopOptionsPanel.h"
+#include "app/front/FrontAudio.h"
+#include "app/ui/OriginalHover.h"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +31,14 @@ int main(){try{
     need(std::filesystem::create_directory(dir),"new disposable fixture root");
     struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code e;std::filesystem::remove_all(p,e);}}cleanup{dir};
     const auto source=dir/"source.txt";
+    front::FrontSettings defaults;
+    need(defaults.SoundVolume==80&&defaults.MusicVolume==80&&defaults.VoxVolume==80&&!defaults.BackgroundSimulation,
+        "original factory volume8 and background-off defaults");
+    const int originalLevels[]={0,300,390,490,590,690,790,840,895,960,1024};
+    for(int i=0;i<=10;++i)need(front::OriginalVolumeStep(i*10)==i&&front::OriginalVolumeGain(i*10)==originalLevels[i]/1024.f,
+        "all eleven original audio group gains, including mute and unity");
+    need(front::OriginalVolumeStep(31)==3&&front::OriginalVolumeStep(62)==6&&front::OriginalVolumeStep(93)==9&&
+        front::OriginalVolumeStep(-5)==0&&front::OriginalVolumeStep(105)==10,"legacy percentages use bounded nearest original step");
     {std::ofstream f(source);f<<"Shadows=0\nLighting=0\nInterfaceEffects=0\nTerrainDetail=1\nCharacterDetail=0\nSoundVolume=31\nMusicVolume=62\nVoxVolume=93\nFreeWill=0\nAutonomyLevel=2\nAutoCentering=0\nEdgeScrolling=1\nQuickTips=0\nAutoSnapshot=0\nLivePIP=1\n";}
     const auto legacyPortable=dir/"old-handheld.txt";
     {std::ofstream f(legacyPortable);f<<"Shadows=1\nLighting=1\nInterfaceEffects=1\nTerrainDetail=2\nCharacterDetail=2\nMusicVolume=27\n";}
@@ -45,10 +55,15 @@ int main(){try{
     freshHandheld.Load((dir/"nonexistent").string(),true);
     need(!freshHandheld.Shadows&&!freshHandheld.Lighting&&!freshHandheld.InterfaceEffects&&
          freshHandheld.TerrainDetail==0&&freshHandheld.CharacterDetail==0,"low handheld profile applies on first boot");
+    const auto malformed=dir/"malformed.txt";
+    {std::ofstream f(malformed);f<<"SoundVolume=-12\nMusicVolume=777\nVoxVolume=60\nTerrainDetail=-2\nCharacterDetail=99\nAutonomyLevel=7\n";}
+    front::FrontSettings bounded;bounded.Load(malformed.string());
+    need(bounded.SoundVolume==0&&bounded.MusicVolume==100&&bounded.VoxVolume==60&&bounded.TerrainDetail==0&&
+         bounded.CharacterDetail==2&&bounded.AutonomyLevel==3,"old malformed numeric preferences clamp to supported domains");
     front::FrontEnd fe;fe.Settings().Load(source.string());auto& st=fe.Settings();
     const auto snapshot=CaptureDesktopOptions(st,true,false);
-    need(snapshot.state.values[size_t(Id::sound_effects)]==31&&snapshot.state.values[size_t(Id::music)]==62&&
-        snapshot.state.values[size_t(Id::voices)]==93&&snapshot.state.values[size_t(Id::free_will)]==0,"producer reads real loaded native settings");
+    need(snapshot.state.values[size_t(Id::sound_effects)]==3&&snapshot.state.values[size_t(Id::music)]==6&&
+        snapshot.state.values[size_t(Id::voices)]==9&&snapshot.state.values[size_t(Id::free_will)]==0,"producer reads real loaded native settings");
     need(!snapshot.state.values[size_t(Id::background_simulation)]&&!snapshot.state.values[size_t(Id::export_html)],"missing native preferences are not invented");
     need(!snapshot.capabilities[size_t(Id::shadows)]&&!snapshot.capabilities[size_t(Id::lighting)]&&
         snapshot.capabilities[size_t(Id::music)]&&snapshot.capabilities[size_t(Id::free_will)]&&snapshot.capabilities[size_t(Id::edge_scrolling)],"capabilities require real selected consumers");
@@ -56,10 +71,10 @@ int main(){try{
     for(const auto id:{Id::shadows,Id::lighting,Id::terrain_detail,Id::auto_center,Id::quick_tips,Id::auto_snapshot,Id::live_pip,Id::background_simulation,Id::export_html})
         need(!ApplyDesktopOption(st,{id,1},snapshot.capabilities),"unavailable control refuses state mutation");
     st.Save((dir/"refused.txt").string());need(read(dir/"refused.txt")==before,"refusals preserve all persisted preferences and schema");
-    need(ApplyDesktopOption(st,{Id::music,17},snapshot.capabilities)&&ApplyDesktopOption(st,{Id::free_will,1},snapshot.capabilities),"authorized native settings edits apply");
+    need(ApplyDesktopOption(st,{Id::music,7},snapshot.capabilities)&&ApplyDesktopOption(st,{Id::free_will,1},snapshot.capabilities),"authorized native settings edits apply");
     need(st.SoundVolume==31&&st.VoxVolume==93&&st.AutonomyLevel==2&&!st.Shadows&&!st.AutoCentering&&st.EdgeScrolling,
         "volume and desktop FreeWill edits preserve other native preferences");
-    need(!ApplyDesktopOption(st,{Id::music,101},snapshot.capabilities)&&!ApplyDesktopOption(st,{Id::free_will,2},snapshot.capabilities),"malformed events refuse");
+    need(!ApplyDesktopOption(st,{Id::music,11},snapshot.capabilities)&&!ApplyDesktopOption(st,{Id::free_will,2},snapshot.capabilities),"malformed events refuse");
     const auto live=CaptureDesktopOptions(st,true,false);
     need(live.state.values[size_t(Id::free_will)]==0&&st.FreeWill,"actual VM state takes precedence over a saved preference without rewriting it");
     need(ApplyDesktopOption(st,{Id::free_will,1},live.capabilities),"valid FreeWill command still reaches callback when stored preference already matches");
@@ -68,7 +83,7 @@ int main(){try{
     need(ApplyDesktopOption(st,{Id::edge_scrolling,0},snapshot.capabilities)&&!st.EdgeScrolling,"native camera preference can be disabled");
     need(!ApplyDesktopOption(st,{Id::edge_scrolling,2},snapshot.capabilities)&&!st.EdgeScrolling,"malformed camera preference refuses mutation");
     st.Save((dir/"saved.txt").string());front::FrontSettings reopened;reopened.Load((dir/"saved.txt").string());
-    need(reopened.MusicVolume==17&&reopened.FreeWill&&reopened.AutonomyLevel==2&&!reopened.Shadows&&!reopened.EdgeScrolling,
+    need(reopened.MusicVolume==70&&reopened.FreeWill&&reopened.AutonomyLevel==2&&!reopened.Shadows&&!reopened.EdgeScrolling,
         "actual native SafeFile settings save/reopen retains edits and unavailable preferences");
     // Exercise the native preference -> App settings callback -> actual World
     // consumer and rasterizer. No content, simulation updates or game saves.
@@ -87,11 +102,11 @@ int main(){try{
     need(!world.DrawAvatarShadows,"loaded desktop preference reaches the current World");
     const auto graphicsSnapshot=CaptureDesktopOptions(graphics,false,{},&world);
     need(graphicsSnapshot.capabilities[size_t(Id::shadows)]&&
-        !graphicsSnapshot.capabilities[size_t(Id::lighting)]&&
+        graphicsSnapshot.capabilities[size_t(Id::lighting)]&&
         !graphicsSnapshot.capabilities[size_t(Id::interface_effects)]&&
         !graphicsSnapshot.capabilities[size_t(Id::terrain_detail)]&&
         !graphicsSnapshot.capabilities[size_t(Id::character_detail)],
-        "only the existing shadow renderer is offered; missing quality services remain unavailable");
+        "existing shadow/object-light renderers offered; missing quality services remain unavailable");
     need(!ApplyDesktopOption(graphics,{Id::shadows,2},graphicsSnapshot.capabilities),"malformed shadow commands rejected");
     const auto unbound=CaptureDesktopOptions(graphics,false,{});
     need(!ApplyDesktopOption(graphics,{Id::shadows,1},unbound.capabilities),"no World means no editable shadow capability");
@@ -132,6 +147,48 @@ int main(){try{
         "display uses current renderer state while preserving the saved preference");
     need(ApplyDesktopOption(graphics,{Id::shadows,1},mismatch.capabilities),"matching saved value still delivers renderer command");
     app._Front->SaveSettings();need(world.DrawAvatarShadows,"same-value command repairs live state through callback");
+    // Renderer light toggle must retain daylight and simulation lighting data.
+    blueprint.Light.resize(3);blueprint.OutsideColor=st::Color(100,120,140,255);
+    blueprint.Light[1].OutsideLight=100;blueprint.Light[2].OutsideLight=25;
+    blueprint.Light[2].AmbientLight=50;blueprint.Light[2].RoomScore=77;
+    need(ApplyDesktopOption(graphics,{Id::lighting,1},graphicsSnapshot.capabilities),"light control accepts enable");
+    app._Front->SaveSettings();need(world.State.ObjectLighting,"settings callback enables real renderer light");
+    blueprint.GenerateRoomLights(world.State.ObjectLighting);const auto bright=blueprint.RoomColors[2];const auto outside=blueprint.RoomColors[1];
+    need(ApplyDesktopOption(graphics,{Id::lighting,0},graphicsSnapshot.capabilities),"light control accepts disable");
+    app._Front->SaveSettings();need(!world.State.ObjectLighting,"settings callback disables real renderer light");
+    blueprint.GenerateRoomLights(world.State.ObjectLighting);
+    need(blueprint.RoomColors[2].R<bright.R&&blueprint.RoomColors[2].R>0&&blueprint.RoomColors[1].PackedValue()==outside.PackedValue(),
+        "object-light off darkens interiors while preserving ambient/daylight");
+    need(blueprint.Light[2].AmbientLight==50&&blueprint.Light[2].OutsideLight==25&&blueprint.Light[2].RoomScore==77,
+        "graphics option does not rewrite simulation contribution or room score");
+    need(std::any_of(blueprint.Damage.begin(),blueprint.Damage.end(),[](const auto& d){return d.Type==FSO::LotView::Model::BlueprintDamageType::LIGHTING_CHANGED;}),
+        "settings changes invalidate retained lighting composite");
+    need(ApplyDesktopOption(graphics,{Id::quick_tips,0},graphicsSnapshot.capabilities)&&!graphics.QuickTips&&
+        ApplyDesktopOption(graphics,{Id::quick_tips,1},graphicsSnapshot.capabilities)&&graphics.QuickTips,"Quick Tips preference reaches the F5 help policy");
+    odh_host::UiHover f5Help({251});odh_host::UiHoverTarget caption{17,{0,0,100,20},"original F5 help"};
+    odh_host::UiHoverInput hoverInput;hoverInput.pointer=std::array<int32_t,2>{10,10};
+    need(!f5Help.update(0,caption,hoverInput)&&!f5Help.update(250,caption,hoverInput)&&bool(f5Help.update(251,caption,hoverInput)),
+        "F5 automatic help requires elapsed strictly greater than250ms");
+    need(ApplyDesktopOption(graphics,{Id::quick_tips,0},graphicsSnapshot.capabilities),"Quick Tips can disable automatic help");
+    hoverInput.enabled=graphics.QuickTips;
+    need(!f5Help.update(252,caption,hoverInput)&&!f5Help.pending(),"disabled automatic help clears its pending/visible state");
+    need(ApplyDesktopOption(graphics,{Id::quick_tips,1},graphicsSnapshot.capabilities),"Quick Tips can re-enable automatic help");
+    hoverInput.enabled=graphics.QuickTips;
+    need(!f5Help.update(1000,caption,hoverInput)&&!f5Help.update(1250,caption,hoverInput)&&bool(f5Help.update(1251,caption,hoverInput)),
+        "re-enabled help starts a fresh dwell rather than reviving an old timer");
+    const auto focusSnapshot=CaptureDesktopOptions(graphics,false,{},&world,true);
+    need(focusSnapshot.capabilities[size_t(Id::background_simulation)]&&focusSnapshot.state.values[size_t(Id::background_simulation)]==0,
+        "only a focus-aware host exposes background simulation");
+    app._Cfg.HostFocusEvents=true;app.Speed=3;app.SetHostFocused(false);
+    need(app.HostPausesSimulation()&&app.Speed==3,"focus pause retains selected speed");
+    need(ApplyDesktopOption(graphics,{Id::background_simulation,1},focusSnapshot.capabilities)&&!app.HostPausesSimulation(),
+        "enabled background simulation permits advancement while unfocused");
+    app.Speed=0;app.SetHostFocused(true);need(!app.HostPausesSimulation()&&app.Speed==0,"returning focus never unpauses an explicit pause");
+    need(ApplyDesktopOption(graphics,{Id::background_simulation,0},focusSnapshot.capabilities),"background option disables");
+    app.SetHostFocused(false);need(app.HostPausesSimulation()&&app.Speed==0,"losing focus preserves explicit pause");
+    app.SetHostFocused(true);need(!app.HostPausesSimulation()&&app.Speed==0,"pause remains after repeated focus transition");
+    app._Front->SaveSettings();front::FrontSettings extraReopened;extraReopened.Load((dir/"sims_options.txt").string());
+    need(!extraReopened.BackgroundSimulation&&extraReopened.QuickTips&&!extraReopened.Lighting,"new effects preferences save and reopen");
     app._Session->_World=std::make_unique<FSO::LotView::World>();
     app._Session->World()->DrawAvatarShadows=false;app.ApplyPlaySettings();
     need(app._Session->World()->DrawAvatarShadows,"new World receives the preference on the load/travel boundary");
@@ -142,6 +199,8 @@ int main(){try{
     options.FE=&fe;DesktopOptionsPanel controller;
     need(!controller.Page(),"first native Options page starts empty");
     need(controller.Tap("pcopt_4")&&controller.Page()==odh_host::OriginalSettingsPage::sound,"Sound opens observed original page");
+    need(controller.Tap("pcopt_4")&&!controller.Page(),"clicking the selected category closes its contents");
+    need(controller.Tap("pcopt_3")&&controller.Page()==odh_host::OriginalSettingsPage::graphics&&controller.Tap("pcopt_5")&&controller.Page()==odh_host::OriginalSettingsPage::play,"switching categories selects the new page");
     controller.Reset();need(!controller.Page(),"mode exit/reentry clears page as observed in original");
     for(unsigned i=0;i<3;++i){need(controller.Tap("pcopt_"+std::to_string(i)),"original action dispatch");
         const auto expected=i==0?front::GameOptions::Action::Save:i==1?front::GameOptions::Action::Neighbourhood:front::GameOptions::Action::Quit;

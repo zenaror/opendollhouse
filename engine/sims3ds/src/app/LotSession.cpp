@@ -9,6 +9,10 @@
 #include "files/LoadProgress.h"
 #include <algorithm>
 #include "app/LotSession.h"
+#include "app/front/GameOptions.h"
+#include "app/front/FrontEnd.h"
+#include "app/front/FrontAudio.h"
+#include "app/UISounds.h"
 #include "core/LotOpenPolicy.h"
 #include "files/formats/iff/chunks/FAMI.h"
 #ifndef __3DS__
@@ -259,7 +263,12 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
     // LoadFromIff executes object init/load trees. Consume their camera requests
     // now, while keeping early selection events ignored as in the existing load.
     const auto focusCamera = [this](int32_t evt, int32_t value) {
-        if (evt != Engine::Utils::VMTS1Travel::EventCameraFocus) return false;
+        const bool automatic=evt==Engine::Utils::VMTS1Travel::EventAutomaticCameraFocus;
+        if (!automatic && evt != Engine::Utils::VMTS1Travel::EventCameraFocus) return false;
+        auto frontend=front::GameOptions::Get().FE;
+        if(automatic && frontend && !frontend->Settings().AutoCentering){
+            front::FrontSound(UISounds::Error);return true;
+        }
         auto target = _VM->GetObjectById((int16_t)value);
         const auto before = _World ? _World->State.CenterTile() : st::Vector2();
         const int levelBefore = _World ? _World->State.Level() : -1;

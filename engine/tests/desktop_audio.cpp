@@ -2,6 +2,7 @@
 #include "SdlAudio.h"
 #include "audio/WavFile.h"
 #include "audio/GameAudio.h"
+#include "app/front/FrontAudio.h"
 #include "content/Audio.h"
 #include "files/LoadProgress.h"
 #include <algorithm>
@@ -70,6 +71,17 @@ static void checkLoadingMusic(const std::filesystem::path& root) {
         bool ready = audio.Init(config, std::make_unique<WavCaptureBackend>(capture), true);
         LoadProgress::ProgressSink = {};
         require(ready && indexedWhilePlaying, "loading loop audible during indexing");
+        const int levels[]={0,300,390,490,590,690,790,840,895,960,1024};
+        for(int step=0;step<=10;++step){
+            const int music=10-step,vox=(step+4)%11;
+            simapp::front::FrontVolumes(step*10,music*10,vox*10);
+            require(audio.Mixer()->GroupVolume(AudioMixer::GroupSFX)==levels[step]/1024.f&&
+                audio.Mixer()->GroupVolume(AudioMixer::GroupMusic)==levels[music]/1024.f&&
+                audio.Mixer()->GroupVolume(AudioMixer::GroupVox)==levels[vox]/1024.f&&
+                audio.Mixer()->GroupVolume(AudioMixer::GroupAmbience)==levels[step]/1024.f,
+                "original slider gain reaches every actual mixer group");
+        }
+        audio.SetVolumes(config.SfxVolume,config.MusicVolume,config.VoiceVolume);
         auto tracks = FSO::Content::Audio::Get()->ListMusic("Music/Modes/Load/");
         require(tracks.size() == 1 && tracks.front() == expectedPath.string(), "HIT must use the same single loading loop");
         audio.SetMusicMode(MusicMode::Load);

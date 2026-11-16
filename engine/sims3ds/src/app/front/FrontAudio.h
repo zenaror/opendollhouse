@@ -6,8 +6,17 @@
 // sims front end — music / UI sound glue to src/audio (see FrontAudio.cpp). All calls are no-ops without it.
 #pragma once
 #include <string>
+#include <algorithm>
 
 namespace simapp { namespace front {
+
+// DVD sliders have eleven positions. Keep old 0..100 options files readable,
+// but convert through the original group-volume table, not linear percentages.
+inline int OriginalVolumeStep(int percent) { return (std::clamp(percent,0,100)+5)/10; }
+inline float OriginalVolumeGain(int percent) {
+    static constexpr int levels[]={0,300,390,490,590,690,790,840,895,960,1024};
+    return levels[OriginalVolumeStep(percent)]/1024.0f;
+}
 
 /// Music/Modes name: "Load", "Nhood", "dt_nhood", "Vacation", "Superstar", "MakinMagic", "Family", "Credits",
 /// "Options", "Live" (no score); anything else fades out.

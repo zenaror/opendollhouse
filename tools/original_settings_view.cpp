@@ -17,7 +17,7 @@ std::vector<std::string> settings_assets(bool tutorial){
 }
 constexpr const char* slider_on="CPanel/Buttons/optslideron.bmp";
 std::size_t index(OriginalSettingId id){return static_cast<std::size_t>(id);}
-int maximum(OriginalSettingControlKind kind){return kind==OriginalSettingControlKind::slider?100:kind==OriginalSettingControlKind::radio?2:1;}
+int maximum(OriginalSettingControlKind kind){return kind==OriginalSettingControlKind::slider?10:kind==OriginalSettingControlKind::radio?2:1;}
 bool enabled(const OriginalSettingControl& control,const OriginalSettingsState& state,const OriginalSettingsCapabilities& capabilities){
     const auto i=index(control.id);
     return i<original_setting_count&&capabilities[i]&&state.values[i]&&*state.values[i]>=0&&*state.values[i]<=maximum(control.kind);
@@ -151,7 +151,7 @@ std::optional<OriginalSettingsEvent> OriginalSettingsView::activate(const Origin
         const auto thumb=thumb_width(control.rect),travel=control.rect.width-thumb;
         if(travel<=0)return {};
         const double relative=double(x)-control.rect.x-thumb*.5;
-        value=int(std::lround(std::clamp(relative/travel,0.,1.)*100));
+        value=int(std::lround(std::clamp(relative/travel,0.,1.)*10));
     }
     return OriginalSettingsEvent{control.id,value};
 }
@@ -164,11 +164,12 @@ void OriginalSettingsView::draw(odh::RasterFrame& frame,OriginalSettingsPage pag
         const auto& control=layout.controls[i];const auto available=enabled(control,state,capabilities);
         const auto value=state.values[index(control.id)];
         if(control.kind==OriginalSettingControlKind::slider){
-            const auto& image=art_.at(available&&(hovered==i||pressed==i)?slider_on:slider_off);
+            // The original switches this artwork for mute/nonzero, not hover.
+            const auto& image=art_.at(available&&value&&*value>0?slider_on:slider_off);
             odh::blit_color_keyed_bitmap(frame,image,control.rect,odh::UiBitmapRect{0,0,33,14},{255,0,255});
-            if(value&&*value>=0&&*value<=100){
+            if(value&&*value>=0&&*value<=10){
                 auto thumb=control.rect;thumb.width=thumb_width(thumb);
-                thumb.x+=int(std::lround((control.rect.width-thumb.width)*(*value/100.)));
+                thumb.x+=int(std::lround((control.rect.width-thumb.width)*(*value/10.)));
                 odh::blit_color_keyed_bitmap(frame,image,thumb,odh::UiBitmapRect{35,0,8,14},{255,0,255});
             }
         }else{

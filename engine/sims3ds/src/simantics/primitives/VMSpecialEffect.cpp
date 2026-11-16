@@ -19,7 +19,7 @@ VMPrimitiveExitCode VMSpecialEffect::Execute(VMStackFrame* context, VMPrimitiveO
     // Both pinned TS1 implementations implement bit 3 as a one-shot camera
     // focus. Timeout/size/zoom/caption do not imply a recovered PIP service.
     if ((uint8_t(operand->Flags) & (1u << 3)) != 0)
-        Utils::VMTS1Travel::FocusCamera(context->VM(), context->StackObject);
+        Utils::VMTS1Travel::FocusCamera(context->VM(), context->StackObject, true);
     return VMPrimitiveExitCode::GOTO_TRUE;
 }
 

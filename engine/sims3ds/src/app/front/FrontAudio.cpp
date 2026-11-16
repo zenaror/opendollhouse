@@ -47,7 +47,7 @@ void FrontSound(const std::string& evt) {
 
 void FrontVolumes(int sfx, int music, int vox) {
     auto& a = GameAudio::Get();
-    if (a.Ready()) a.SetVolumes(sfx / 100.0f, music / 100.0f, vox / 100.0f);
+    if (a.Ready()) a.SetVolumes(OriginalVolumeGain(sfx), OriginalVolumeGain(music), OriginalVolumeGain(vox));
 }
 
 bool FrontAudioAvailable() { return GameAudio::Get().Ready(); }

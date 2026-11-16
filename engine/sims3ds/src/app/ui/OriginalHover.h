@@ -19,8 +19,13 @@ class OriginalHover {
     int width_=0,height_=0;
     uint32_t foreground_=0;
     uint8_t language_=0;
+    uint64_t delay_ms_=500;
 public:
     void Clear(){Hover.clear();text_.clear();}
+    void SetDelayMs(uint64_t delay){
+        if(delay==delay_ms_)return;
+        delay_ms_=delay;Hover=odh_host::UiHover(odh_host::UiHoverConfig{delay});text_.clear();
+    }
     std::optional<odh_host::UiHoverTarget> Resolve(const AppInput& in,const std::string& name,
               uint64_t target,uint64_t context,uint64_t selection,Rect bounds,bool modal=false,bool focused=true,bool enabled=true){
         odh_host::UiHoverInput input;

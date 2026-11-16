@@ -78,7 +78,7 @@ void World2D::PreDraw(WorldState& state) {
                 redrawFloor = redrawWall = redrawStaticObjects = true;
                 break;
             case BlueprintDamageType::LIGHTING_CHANGED: {
-                Blueprint->GenerateRoomLights();
+                Blueprint->GenerateRoomLights(state.ObjectLighting);
                 state.OutsideColor = Blueprint->RoomColors[1];
                 _2d->AmbientLight = Blueprint->RoomColors.data();
                 TicksSinceLight = 0;

@@ -28,6 +28,7 @@
 #include <new>
 #include <string>
 #include "app/App.h"
+#include "app/front/FrontAudio.h"
 #include "app/Font.h"
 #include "app/HandheldLanguage.h"
 #include "odh/game_languages.hpp"
@@ -454,7 +455,7 @@ int main(int argc, char** argv) {
         simaudio::GameAudio::Config audio;
         audio.DataRoot = DATA_ROOT;
         audio.OutputRate = 32728;
-        audio.MusicVolume = musicVolume / 100.0f;
+        audio.MusicVolume = simapp::front::OriginalVolumeGain(musicVolume);
         simaudio::GameAudio::Get().Init(audio, std::make_unique<simaudio::NdspBackend>(), loading);
     };
     cfg.LanguageCode = *language;

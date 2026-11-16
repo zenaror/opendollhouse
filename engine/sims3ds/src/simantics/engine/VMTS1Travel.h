@@ -64,7 +64,8 @@ public:
         EventCancelPieMenu = 3,
         EventHeadFlush = 4,
         EventFameChanged = 5,        // value: object id whose star level changed
-        EventCameraFocus = 7,      // value: object id for a one-shot focus (Special Effect / Downtown arrival)
+        EventCameraFocus = 7,      // explicit/manual focus, including Downtown arrival
+        EventAutomaticCameraFocus = 8, // Special Effect bit3, respects Auto Centering
         EventTutorialComplete = 6,   // TS1(sims): Generic Sims Call 0, the house is no longer the tutorial house (global 26 = 0)
     };
     // inventory "sim data" slots (type 2), FreeSO VMGenericTS1Call.SaveIData
@@ -107,7 +108,7 @@ public:
     static void WearCurrentOutfit(VMAvatar* avatar);
     static void Signal(VM* vm, int32_t evt, int32_t value);
     /// Presentation request only: no selection, simulation update, persistent follow or preference gate.
-    static void FocusCamera(VM* vm, VMEntity* target);
+    static void FocusCamera(VM* vm, VMEntity* target, bool automatic = false);
     /// TS1(sims): Makin' Magic. The Magic Controller (0xB6C90029) holds the current family's made spells in its
     /// attributes 0..5. Load (Generic Sims Call 43) / save them for the family (TS1GameState::FamilySpells). Save is
     /// called by RequestLotSwitch; the front end calls it before saving or leaving a lot.

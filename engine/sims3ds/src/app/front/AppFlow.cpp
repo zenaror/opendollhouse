@@ -133,6 +133,11 @@ void App::ApplyPlaySettings() {
     // created World after travel. Portable hosts retain their current defaults.
     if (_Front->IsDesktop()) if (auto world = _Session->World()) {
         world->DrawAvatarShadows = st.Shadows;
+        if (world->State.ObjectLighting != st.Lighting) {
+            world->State.ObjectLighting = st.Lighting;
+            if(auto blueprint=world->GetBlueprint())blueprint->Damage.push_back(
+                FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::LIGHTING_CHANGED));
+        }
         if (world->State.SimpleTerrain != st.HandheldGraphics) {
             world->State.SimpleTerrain = st.HandheldGraphics;
             world->Get2DWorld().Invalidate();
@@ -299,6 +304,7 @@ bool App::FrontBoot() {
     };
     front::FrontEnd::Config fc;
     fc.Desktop = _Cfg.Desktop;
+    fc.HostFocusEvents = _Cfg.HostFocusEvents;
     fc.DataRoot = _Cfg.DataRoot;
     fc.SaveRoot = _Cfg.SaveRoot;
     fc.CacheDir = _Cfg.CacheDir;

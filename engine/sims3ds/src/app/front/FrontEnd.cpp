@@ -24,6 +24,7 @@ namespace simapp { namespace front {
 void FrontSettings::Load(const std::string& path, bool handheldGraphics) {
     HandheldGraphics = handheldGraphics;
     if (HandheldGraphics) {
+        EdgeScrolling = false;
         Shadows = Lighting = InterfaceEffects = false;
         TerrainDetail = CharacterDetail = 0;
     }
@@ -48,6 +49,7 @@ void FrontSettings::Load(const std::string& path, bool handheldGraphics) {
         else if (k == "AutoCentering") AutoCentering = v != 0;
         else if (k == "FreeWill") FreeWill = v != 0;
         else if (k == "EdgeScrolling") EdgeScrolling = v != 0;
+        else if (k == "BackgroundSimulation") BackgroundSimulation = v != 0;
         else if (k == "QuickTips") QuickTips = v != 0;
         else if (k == "AutoSnapshot") AutoSnapshot = v != 0;
         else if (k == "LivePIP") LivePIP = v != 0;
@@ -56,6 +58,12 @@ void FrontSettings::Load(const std::string& path, bool handheldGraphics) {
         else if (k == "LastNeighbourhood") LastNeighbourhood = v;
     }
     fclose(f);
+    SoundVolume=std::clamp(SoundVolume,0,100);
+    MusicVolume=std::clamp(MusicVolume,0,100);
+    VoxVolume=std::clamp(VoxVolume,0,100);
+    TerrainDetail=std::clamp(TerrainDetail,0,2);
+    CharacterDetail=std::clamp(CharacterDetail,0,2);
+    AutonomyLevel=std::clamp(AutonomyLevel,0,3);
     if (HandheldGraphics) {
         // An old options file serialized PC quality values even for controls
         // this host never exposed. Start those profiles with the low preset.
@@ -73,6 +81,7 @@ void FrontSettings::Save(const std::string& path) const {
     fprintf(f, "Shadows=%d\nLighting=%d\nInterfaceEffects=%d\nTerrainDetail=%d\nCharacterDetail=%d\n", Shadows, Lighting, InterfaceEffects, TerrainDetail, CharacterDetail);
     fprintf(f, "SoundVolume=%d\nMusicVolume=%d\nVoxVolume=%d\n", SoundVolume, MusicVolume, VoxVolume);
     fprintf(f, "AutoCentering=%d\nFreeWill=%d\nEdgeScrolling=%d\nQuickTips=%d\nAutoSnapshot=%d\nLivePIP=%d\nAutonomyLevel=%d\n", AutoCentering, FreeWill, EdgeScrolling, QuickTips, AutoSnapshot, LivePIP, AutonomyLevel);
+    fprintf(f, "BackgroundSimulation=%d\n", BackgroundSimulation);
     fprintf(f, "PlayIntro=%d\nLastNeighbourhood=%d\n", PlayIntro, LastNeighbourhood);
     FSO::Files::SafeFile::EndWrite(path, f);
 }
@@ -94,6 +103,9 @@ bool FrontEnd::Init(const Config& cfg) {
     auto& ui = ResGraphics::Get();
     if (!ui.IsOpen()) ui.Open(_Cfg.DataRoot + "/UIGraphics");
     if (!ui.IsOpen()) printf("[front] UIGraphics/UIGraphics.far not found: plain look (copy UIGraphics/ next to GameData/)\n");
+#if defined(__ANDROID__) || defined(__3DS__)
+    _Settings.EdgeScrolling = false; // Keep the portable input preset.
+#endif
 #if defined(__vita__) || defined(__SWITCH__)
     _Settings.Load(_Cfg.SaveRoot + "/sims_options.txt", true);
 #else

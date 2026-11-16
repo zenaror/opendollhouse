@@ -231,6 +231,9 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
     static const double UPS[4] = { 0, 60, 180, 600 };
     int speed = lot.EffectiveSpeed(); // paused in buy/build/options and while a blocking dialog waits (TS1)
     if (_LotDialog && _LotDialog->Open) speed = 0;
+    // Window focus is a transient presentation pause. Never overwrite Speed,
+    // the player's paused state, or a save merely because another app has focus.
+    if (HostPausesSimulation()) speed = 0;
     if (!cheat.Sweep) speed = 0; // TS1(sims): "sweep off" stops the simulation
     // TS1(sims): sim_speed -1000..1000 scales every speed setting, 1/16x .. 16x (the port's mapping; 0 = normal)
     double ups = UPS[speed] * std::pow(2.0, cheat.SimSpeed / 250.0);
@@ -325,6 +328,10 @@ AppInput App::FilterChord(const AppInput& in0, bool& openCheats) {
         if (released || ++_ShoulderFrames >= 6) { in.Down |= _ShoulderPending; _ShoulderPending = 0; }
     }
     return in;
+}
+
+bool App::HostPausesSimulation() const {
+    return _Cfg.HostFocusEvents && !_HostFocused && _Front && !_Front->Settings().BackgroundSimulation;
 }
 
 void App::Frame(const AppInput& inRaw, double dtMs) {

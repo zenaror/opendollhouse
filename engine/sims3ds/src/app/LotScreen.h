@@ -78,6 +78,10 @@ public:
         const std::string& identity,const std::string& context,uint64_t selection,const Rect& bounds,
         const std::string& illustration={},const std::array<std::uint32_t,2>& objects={},bool selectedPortrait=false);
     void SetDesktopHoverModal(bool modal);
+    // F5 caption clicks select illustrated help independently of Quick Tips.
+    void ToggleDesktopSettingsHelp(const std::string& title,const std::string& description,
+        const std::string& identity,const std::string& context,const std::string& illustration);
+    void ClearDesktopSettingsHelp();
     // Presentation-only observation precedes modal dispatch. Neutral game input
     // cannot replace the physical pointer or activate a captured control.
     void ObserveDesktopPointer(const AppInput&);

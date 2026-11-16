@@ -90,12 +90,12 @@ void VMTS1Travel::Signal(VM* vm, int32_t evt, int32_t value)
     if (vm->OnTS1Event) vm->OnTS1Event(evt, value);
 }
 
-void VMTS1Travel::FocusCamera(VM* vm, VMEntity* target)
+void VMTS1Travel::FocusCamera(VM* vm, VMEntity* target, bool automatic)
 {
     // Both pinned FreeSO consumers are TS1 + UseWorld. The host owns the
     // renderer and resolves the object synchronously through its existing event.
     if (vm && vm->TS1 && VM::UseWorld() && target && !target->Dead)
-        Signal(vm, EventCameraFocus, target->ObjectID);
+        Signal(vm, automatic ? EventAutomaticCameraFocus : EventCameraFocus, target->ObjectID);
 }
 
 void VMTS1Travel::ActivateFamily(VM* vm, FAMI* family)

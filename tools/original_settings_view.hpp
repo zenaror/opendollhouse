@@ -11,7 +11,7 @@ enum class OriginalSettingId {
 };
 constexpr std::size_t original_setting_count=static_cast<std::size_t>(OriginalSettingId::count);
 // Values are observed host state, not UI defaults. Unknown state cannot be edited.
-// Boolean=0/1, detail=0..2, volume=0..100. Capabilities require real consumers.
+// Boolean=0/1, detail=0..2, original volume step=0..10. Capabilities require real consumers.
 struct OriginalSettingsState {std::array<std::optional<int>,original_setting_count> values{};};
 using OriginalSettingsCapabilities=std::array<bool,original_setting_count>;
 enum class OriginalSettingControlKind {checkbox,radio,slider};

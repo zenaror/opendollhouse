@@ -40,6 +40,7 @@ public:
 
     struct Config {
         bool Desktop = false;
+        bool HostFocusEvents = false; // PC host supplies focus; portable defaults remain unchanged.
         bool HalfResolutionLot = false; // authored smaller sprites for a single-screen handheld
         uint8_t LanguageCode = 1;      // TS1 STR language; fixed before loading localized resources
         int DesktopWidth = 800, DesktopHeight = 600;
@@ -69,6 +70,8 @@ public:
     bool Init(const Config& cfg);
     /// One frame: input -> simulation -> both canvases.
     void Frame(const AppInput& in, double dtMs);
+    void SetHostFocused(bool focused) { _HostFocused = focused; }
+    bool HostPausesSimulation() const;
 
     Canvas Top, Bottom;
     const Canvas& DesktopCanvas() const { return Top; }
@@ -188,6 +191,7 @@ private:
     int _AudioLotMode = -1, _AudioSpeed = -1;
     bool _AudioPie = false;
     bool _AudioLotPaused = false;
+    bool _HostFocused = true;
     double _UpdateAccum = 0;
     void LiveFrame(const AppInput& in, double dtMs);
     // TS1(sims): L+R chord: a shoulder press waits a few frames to see whether the other shoulder joins it

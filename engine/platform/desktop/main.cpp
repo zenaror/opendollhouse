@@ -12,6 +12,7 @@
 #include <string>
 #include "app/App.h"
 #include "app/front/FrontEnd.h"
+#include "app/front/FrontAudio.h"
 #include "audio/GameAudio.h"
 #include "core/png.h"
 #include "SdlAudio.h"
@@ -638,6 +639,9 @@ int Run(Options options) {
     config.CacheDir = options.cache.generic_string();
     config.LanguageCode = options.language;
     config.Desktop = true;
+#if !defined(ODH_PLATFORM_VITA) && !defined(ODH_PLATFORM_SWITCH) && !defined(__ANDROID__)
+    config.HostFocusEvents = true;
+#endif
     config.DesktopWidth = options.width;
     config.DesktopHeight = options.height;
     config.InitAudio = [&](bool loading, int musicVolume) {
@@ -648,7 +652,7 @@ int Run(Options options) {
             simaudio::GameAudio::Config audioConfig;
             audioConfig.DataRoot = options.data.generic_string();
             audioConfig.OutputRate = 48000;
-            audioConfig.MusicVolume = musicVolume / 100.0f;
+            audioConfig.MusicVolume = simapp::front::OriginalVolumeGain(musicVolume);
             simaudio::GameAudio::Get().Init(audioConfig, std::make_unique<odh::desktop::SdlAudio>(), loading);
         }
 #if defined(ODH_PORTABLE_DIAGNOSTICS)
@@ -938,6 +942,9 @@ int Run(Options options) {
         }
 #endif
         cursorInput=packet.Input; // Cursor and engine consume the same ordered point.
+#if !defined(ODH_PLATFORM_VITA) && !defined(ODH_PLATFORM_SWITCH) && !defined(__ANDROID__)
+        app.SetHostFocused(SDL_GetKeyboardFocus()==window.get());
+#endif
         app.Frame(packet.Input, elapsed);
         // Frame has rendered the canvas. Export before presentation so an SDL
         // failure still leaves the last player command in the existing log.

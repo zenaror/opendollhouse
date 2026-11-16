@@ -25,6 +25,13 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- In-lot audio settings use the original eleven volume positions and gain curve.
+  Background simulation preserves the player's selected speed and pause state.
+- The Lighting option controls rendered object light without changing room
+  satisfaction. Auto Centering controls scripted event focus while preserving
+  explicit camera commands.
+- Settings captions support illustrated help, including manual help with Quick
+  Tips off. Clicking an open settings category closes it, as in the original.
 - Corrected priority, waiting and cancellation in ordinary action queues.
   Cancelling a pending command removes it; a running action finishes its cleanup.
   Internal cancellation commands stay out of the player's action bar.

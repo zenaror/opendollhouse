@@ -41,9 +41,10 @@ int main(){try{
     VMThread thread(&context,&target,8);VMStackFrame frame;frame.Thread=&thread;frame.StackObject=&target;
     // The host resolves each event synchronously, without retaining a VM pointer
     // in a renderer or storing a deferred focus for a later/changed object.
-    int requests=0;
+    int requests=0,lastEvent=0;
     vm.OnTS1Event=[&](int32_t event,int32_t value){
-        need(event==VMTS1Travel::EventCameraFocus&&value==target.ObjectID,"focus carries actual stack object identity");
+        need((event==VMTS1Travel::EventAutomaticCameraFocus||event==VMTS1Travel::EventCameraFocus)&&value==target.ObjectID,"focus carries actual stack object identity");
+        lastEvent=event;
         ++requests;auto entity=vm.GetObjectById(int16_t(value));if(entity)world.CenterTo(entity->WorldUI.get());
     };
     Primitives::VMSpecialEffect primitive;Primitives::VMSpecialEffectOperand operand;
@@ -52,6 +53,7 @@ int main(){try{
         operand.Flags=int8_t(flags);const int before=requests;
         need(primitive.Execute(&frame,&operand)==VMPrimitiveExitCode::GOTO_TRUE,"special effect keeps normal true result");
         need(requests-before==int((flags&8)!=0),"only original bit3 requests a focus");
+        if(flags&8)need(lastEvent==VMTS1Travel::EventAutomaticCameraFocus,"special-effect focus carries automatic origin");
     }
     operand.Flags=8;vm.TS1=false;const int before=requests;primitive.Execute(&frame,&operand);
     vm.TS1=true;VM::UseWorld(false);primitive.Execute(&frame,&operand);VM::UseWorld(true);
@@ -59,6 +61,7 @@ int main(){try{
     need(requests==before,"nonTS1/headless/missing target do not request presentation");
     VMTS1Travel::FocusCamera(&vm,&target);
     need(requests==before+1,"same normal focus boundary used by Downtown arrival");
+    need(lastEvent==VMTS1Travel::EventCameraFocus,"arrival/manual origin remains distinct from optional automatic focus");
     near(world.State.Level(),2,"event focus selects the actual target level");
     // Target elevation and pose must be centered in the real 2D rendering
     // projection, not raw VM tile XY. Compare against the existing draw origin.

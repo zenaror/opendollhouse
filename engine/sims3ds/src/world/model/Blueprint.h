@@ -90,7 +90,7 @@ public:
     Blueprint(int32_t width, int32_t height);
     ~Blueprint();
 
-    void GenerateRoomLights();
+    void GenerateRoomLights(bool objectLighting = true);
 
     void AddAvatar(Components::AvatarComponent* avatar);
     void RemoveAvatar(Components::AvatarComponent* avatar) {

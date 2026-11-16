@@ -39,9 +39,10 @@ struct FrontSettings {
     bool Shadows = true, Lighting = true, InterfaceEffects = true;
     int TerrainDetail = 2, CharacterDetail = 2;  // 0 low, 1 med, 2 high
     // Sound Options (0..100)
-    int SoundVolume = 80, MusicVolume = 70, VoxVolume = 80;
+    int SoundVolume = 80, MusicVolume = 80, VoxVolume = 80;
     // Play Options
-    bool AutoCentering = true, FreeWill = true, EdgeScrolling = false, QuickTips = true, AutoSnapshot = true, LivePIP = true;
+    bool AutoCentering = true, FreeWill = true, EdgeScrolling = true, QuickTips = true, AutoSnapshot = true, LivePIP = true;
+    bool BackgroundSimulation = false;
     int AutonomyLevel = 3;                       // TS1(sims): 0 (none) .. 3 (full) for the family Sims
     // TS1(sims): 3DS
     bool PlayIntro = true;
@@ -77,6 +78,7 @@ public:
         std::string CacheDir;   // objects.cache, intro video
         bool SkipIntro = false;
         bool Desktop = false;
+        bool HostFocusEvents = false;
         std::function<double()> NowMs;
     };
     // hooks the App connects (all optional)
@@ -101,6 +103,7 @@ public:
     const FramePresentation& DrawnFrame() const { return _DrawnFrame; }
     bool QuitRequested = false;
     bool IsDesktop() const { return _Cfg.Desktop; }
+    bool HasHostFocusEvents() const { return _Cfg.HostFocusEvents; }
     std::string DesktopCursorPath() const;
     std::string Error;
 
