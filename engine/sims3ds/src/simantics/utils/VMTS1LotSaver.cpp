@@ -691,7 +691,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             bool unmoved = base && base->Inst.X == pos.x && base->Inst.Y == pos.y && base->Inst.Level == pos.Level &&
                            base->Inst.ObjectData.size() > 1 && base->Inst.ObjectData[1] == dir;
             inst.X = pos.x; inst.Y = pos.y; inst.Level = std::max<int32_t>(1, pos.Level);
-            if (!unmoved) {
+            if (!unmoved || (dynamic_cast<VMAvatar*>(e) && e->Footprint && !e->Container)) {
                 if (e->Footprint && e->Container == nullptr) {
                     inst.Footprint.MinX = e->Footprint->x1; inst.Footprint.MinY = e->Footprint->y1;
                     inst.Footprint.MaxX = e->Footprint->x2; inst.Footprint.MaxY = e->Footprint->y2;

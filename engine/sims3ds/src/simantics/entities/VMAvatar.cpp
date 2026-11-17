@@ -918,12 +918,35 @@ std::string VMAvatar::ToString() {
     return Name();
 }
 
-std::unique_ptr<Routing::VMObstacle> VMAvatar::GetObstacle(const LotTilePos& pos, DirectionT /*dir*/) {
-    return std::unique_ptr<Routing::VMObstacle>(new Routing::VMObstacle(
-        (pos.x - 3),
-        (pos.y - 3),
-        (pos.x + 3),
-        (pos.y + 3)));
+std::unique_ptr<Routing::VMObstacle> VMAvatar::GetObstacle(const LotTilePos& pos, DirectionT dir) {
+    if (!(Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1))
+        return std::make_unique<Routing::VMObstacle>(pos.x-3, pos.y-3, pos.x+3, pos.y+3);
+    // Directions in the engine are one-hot; the original formula uses ordinals.
+    unsigned bits = static_cast<unsigned>(dir), d = 0;
+    if (bits && !(bits & (bits-1))) while ((bits >>= 1) != 0) ++d;
+    d %= 8;
+    const int h = ((PersonData[68] & 1) || (PersonData[84] & 1)) ? 0 : 3;
+    const uint16_t mask = Object && Object->OBJ ? uint16_t(Object->OBJ->FootprintMask) : 0;
+    const uint16_t extension = (d & 1) ? 0 : uint16_t(PersonData[73]);
+    int e[4];
+    for (int i=0; i<4; ++i) e[i] = ((mask >> (4*i)) & 15) - ((extension >> (4*i)) & 15);
+    const unsigned q = ((8-d)/2)%4;
+    // Do not normalize: even zero-width and inverted numeric results are source state.
+    auto result = std::make_unique<Routing::VMObstacle>();
+    result->x1=pos.x-h+e[(q+3)%4]; result->y1=pos.y-h+e[q];
+    result->x2=pos.x+h-e[(q+1)%4]; result->y2=pos.y+h-e[(q+2)%4];
+    return result;
+}
+
+void VMAvatar::RefreshTS1Footprint() {
+    if (Container || Position() == LotTilePos::OUT_OF_WORLD) { Footprint.reset(); return; }
+    Footprint = GetObstacle(Position(), Direction());
+}
+
+void VMAvatar::RestoreTS1Footprint(int minX, int minY, int maxX, int maxY) {
+    if (Container || Position() == LotTilePos::OUT_OF_WORLD) { Footprint.reset(); return; }
+    Footprint = std::make_unique<Routing::VMObstacle>();
+    Footprint->x1=minX; Footprint->y1=minY; Footprint->x2=maxX; Footprint->y2=maxY;
 }
 
 void VMAvatar::PositionChange(VMContext* context, bool noEntryPoint) {

@@ -184,9 +184,16 @@ VMPrimitiveExitCode VMGenericTS1Call::Execute(VMStackFrame* context, VMGenericTS
             vm->TS1BuildBuyEnabled = true;
             VMTS1Travel::Signal(vm, VMTS1Travel::EventBuildBuyChange, 1);
             break;
-        case VMGenericTS1CallMode::MyRoutingFootprintEqualsTemp0: //15
-            //todo: change the avatar's routing footprint (need to find out how exactly this is changed in the normal game)
+        case VMGenericTS1CallMode::MyRoutingFootprintEqualsTemp0: { //15
+            auto avatar = AvatarCast(context->Caller, context);
+            if (avatar) {
+                const auto requested = context->Thread->TempRegisters[0];
+                avatar->SetPersonData(VMPersonDataVariable::RouteFootprintMask, requested);
+                avatar->SetPersonData(VMPersonDataVariable::FootprintExtension, 0);
+                if (!requested) avatar->RefreshTS1Footprint();
+            }
             break;
+        }
         // 16. Change Normal Outfit
         case VMGenericTS1CallMode::ChangeToLotInTemp0: { //17
             //-1 is this family's home lot

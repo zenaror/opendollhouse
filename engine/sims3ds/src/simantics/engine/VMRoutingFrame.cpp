@@ -55,6 +55,10 @@ bool VMRoutingFrame::InPool() {
 }
 
 void VMRoutingFrame::Init() {
+    if (VM()->TS1) {
+        TS1PendingFootprint = static_cast<VMAvatar*>(Caller)->GetPersonData(VMPersonDataVariable::RouteFootprintMask);
+        TS1PendingFootprintKnown = true;
+    }
     ParentRoute = GetParentFrame();
     if (ParentRoute != nullptr) {
         AvatarsToConsider = ParentRoute->AvatarsToConsider;
@@ -325,7 +329,7 @@ bool VMRoutingFrame::AttemptWalk() {
             if (best >= 0) {
                 auto storedDir = ((VMAvatar*)Caller)->RadianDirection();
                 LotTilePos np((int16_t)cands[best].X, (int16_t)cands[best].Y, startPos.Level);
-                auto res = Caller->SetPosition(np, FSO::LotView::Model::Direction::NORTH, VM()->Context);
+                auto res = Caller->SetPosition(np, VM()->TS1 ? Caller->Direction() : FSO::LotView::Model::Direction::NORTH, VM()->Context);
                 ((VMAvatar*)Caller)->RadianDirection(storedDir);
                 if (res.Status == VMPlacementError::Success) { startPos = np; startPoint = cands[best]; moved = true; }
             }
@@ -389,6 +393,8 @@ bool VMRoutingFrame::PushEntryPoint(int32_t entryPoint, VMEntity* ent) {
             childFrame->StackObject = ent;
             childFrame->ActionTree = ActionTree;
             childFrame->Args.assign(routine->Arguments, 0);
+            if (VM()->TS1 && TS1PendingFootprintKnown)
+                static_cast<VMAvatar*>(Caller)->SetPersonData(VMPersonDataVariable::RouteFootprintMask, 0);
             Thread->Push(childFrame);
             return true;
         } else {
@@ -401,6 +407,8 @@ bool VMRoutingFrame::PushEntryPoint(int32_t entryPoint, VMEntity* ent) {
 
 VMPrimitiveExitCode VMRoutingFrame::Tick() {
     auto avatar = (VMAvatar*)Caller;
+    if (VM()->TS1 && TS1PendingFootprintKnown)
+        avatar->SetPersonData(VMPersonDataVariable::RouteFootprintMask, TS1PendingFootprint);
 
     // TS1: an explicit maximum-priority service handoff must leave a Main route
     // through its normal failure path before Main can reach its authored AllowPush.
@@ -520,7 +528,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                         return VMPrimitiveExitCode::CONTINUE;
                     }
                 } else {
-                    if (Thread->LastStackExitCode == VMPrimitiveExitCode::RETURN_TRUE) return VMPrimitiveExitCode::RETURN_TRUE;
+                    if (Thread->LastStackExitCode == VMPrimitiveExitCode::RETURN_TRUE) return CompleteRoute();
                     else {
                         SoftFail(VMRouteFailCode::CantSit, nullptr);
                         return VMPrimitiveExitCode::CONTINUE;
@@ -556,7 +564,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
         case VMRoutingFrameState::FAILED:
             return VMPrimitiveExitCode::RETURN_FALSE;
         case VMRoutingFrameState::TURN_ONLY:
-            return (EndWalk()) ? VMPrimitiveExitCode::RETURN_TRUE : VMPrimitiveExitCode::CONTINUE;
+            return (EndWalk()) ? CompleteRoute() : VMPrimitiveExitCode::CONTINUE;
         case VMRoutingFrameState::SHOOED:
             StartWalkAnimation();
             State = VMRoutingFrameState::WALKING;
@@ -583,7 +591,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     state->Loop = true;
                     avatar->Animations.push_back(state);
 
-                    return VMPrimitiveExitCode::RETURN_TRUE; //we are here!
+                    return CompleteRoute(); //we are here!
                 }
             } else {
                 avatar->RadianDirection(avatar->RadianDirection() + TurnTweak); //while we're turning, adjust our direction
@@ -632,7 +640,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
             }
 
             auto storedDir = avatar->RadianDirection();
-            auto result = Caller->SetPosition(PreviousPosition + diff, FSO::LotView::Model::Direction::NORTH, VM()->Context);
+            auto result = Caller->SetPosition(PreviousPosition + diff, VM()->TS1 ? Caller->Direction() : FSO::LotView::Model::Direction::NORTH, VM()->Context);
             avatar->RadianDirection(storedDir);
             if (result.Status != VMPlacementError::Success && result.Status != VMPlacementError::CantBeThroughWall) {
                 //route failure, either something changed or we hit an avatar
@@ -754,7 +762,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     auto remains = AdvanceWaypoint();
                     if (!remains) {
                         MoveTotalFrames = -1;
-                        if (EndWalk()) return VMPrimitiveExitCode::RETURN_TRUE;
+                        if (EndWalk()) return CompleteRoute();
                     }
                 }
             }
@@ -829,6 +837,24 @@ void VMRoutingFrame::BeginWalk() { //faces the avatar towards the initial walk d
         Caller->RadianDirection((float)TargetDirection);
         StartWalkAnimation();
     }
+}
+
+VMPrimitiveExitCode VMRoutingFrame::CompleteRoute() {
+    if (!VM()->TS1) return VMPrimitiveExitCode::RETURN_TRUE;
+    auto avatar = static_cast<VMAvatar*>(Caller);
+    const auto request = TS1PendingFootprintKnown ? TS1PendingFootprint : int16_t(0);
+    if (request) avatar->SetPersonData(VMPersonDataVariable::FootprintExtension, request);
+    const auto valid = avatar->PositionValid(avatar->Position(), avatar->Direction(), VM()->Context);
+    if (valid.Status != VMPlacementError::Success) {
+        if (request) avatar->SetPersonData(VMPersonDataVariable::FootprintExtension, 0);
+        if (avatar->GetPersonData(VMPersonDataVariable::Posture) == 0) {
+            HardFail(VMRouteFailCode::Unknown, valid.Object);
+            return VMPrimitiveExitCode::CONTINUE;
+        }
+        return VMPrimitiveExitCode::RETURN_TRUE;
+    }
+    avatar->RefreshTS1Footprint();
+    return VMPrimitiveExitCode::RETURN_TRUE;
 }
 
 bool VMRoutingFrame::EndWalk() { //returns true if we should exit immediately.

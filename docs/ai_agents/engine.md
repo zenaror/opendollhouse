@@ -38,6 +38,15 @@ For saving, start with `app/front/LotSave`, the neighborhood model and the
 both the house file and the character and neighborhood records. A successful
 write does not prove that the save will restore correctly.
 
+Career dialog substitutions use `content/TS1CareerDialog` to connect the active
+VM parser to the shared `career_dialog_text` service. The current `Work.iff`
+resources supply job offers, titles and descriptions, including the alternate
+title bank and the selected language. Keep text encoding and fallback attached
+to each returned fragment. The same service formats `TimeLocal` without changing
+the simulation clock. Its tests cover selection rules; the engine consumer test
+also exercises the actual parser and job provider. Neither establishes that an
+entire dialog, including its illustration, matches the original on screen.
+
 ## Needs and action state
 
 `VMAvatar` keeps current and previous needs as floating point values. Use
@@ -64,12 +73,35 @@ on the lot and be referenced by another script. Temporary checks and immediate
 callbacks do not go through the normal-update gate.
 
 Native continuation version 9 binds those manager words to a freshly saved
-classic graph. Saving validates the graph before marking that version; loading
-validates all participating instances before publishing their execution state.
-Version 8 and earlier did not maintain these words, so their stale classic tails
-must not disable native characters when migrating. Builds that understand only
-the older continuation format cannot reopen version 9 saves; use an updated
-engine on every device sharing those saves.
+classic graph. Version 10 records that binding explicitly: normal saves bind the
+words, while a direct execution snapshot can retain its previous unbound
+semantics. Saving validates a bound graph; loading validates all participating
+instances before publishing their execution state. Version 8 and earlier did
+not maintain these words, so their stale classic tails must not disable native
+characters when migrating. Builds that understand only an older continuation
+format cannot reopen newer saves; use an updated engine on every device sharing
+those saves.
+
+## Routing and occupied space
+
+A Sim's requested space for a route and its currently applied space are
+different values. Person Data 72 holds the live request; Person Data 73 supplies
+the applied extension. The cached rectangle also matters: a script can clear
+the applied extension while leaving that rectangle unchanged until the next
+placement. The low bits of Person Data 68 and 84 can produce a zero-width
+numeric rectangle, which is different from having no rectangle.
+
+A TS1 route retains the request captured when it starts. Nested entry-point
+scripts can temporarily clear the live request without erasing the route's own
+value. Apply it at successful arrival, after the final turn or chair action,
+using the existing placement checks. Do not bypass collision rules because a
+Sim is seated or infer a missing request from a live field that a child script
+has already cleared. These rules are separate from the TSO routing path.
+
+Continuation version 10 preserves the route-owned request and the exact cached
+rectangle. Bound saves cross-check the rectangle against the classic `ObjM`
+record. Older native snapshots do not contain the route-owned request; loading
+them must not invent one. Original classic saves retain their saved rectangle.
 
 Script room numbers are signed. An object outside the world reports `-5` to
 game scripts; a real outdoor room can report `0`. Keep this distinction separate

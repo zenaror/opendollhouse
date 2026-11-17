@@ -417,7 +417,7 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
             throw std::runtime_error("Interaction checkpoint: ambiguous ODHI");
         st::Reader header(snapshots.front()->Data);
         const auto snapshotVersion = header.u32();
-        if (snapshotVersion == 7 || snapshotVersion == 8 || snapshotVersion == 9) {
+        if (snapshotVersion >= 7 && snapshotVersion <= 10) {
             if (!objm->Decoded || header.u32() != objm->SourceSignature)
                 throw std::runtime_error("Interaction checkpoint: ObjM changed since capture");
             completeNativeSnapshot = true;
@@ -815,7 +815,14 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
     // roots only, as VM.Load does in both reference pins, not each child twice.
     for (const auto& saved : objm->ObjectData) {
         auto entity = VM->GetObjectById(int16_t(saved.first));
-        if (entity && !entity->Dead && !entity->Container) entity->PositionChange(ctx, true);
+        if (entity && !entity->Dead && !entity->Container) {
+            entity->PositionChange(ctx, true);
+            auto avatar = dynamic_cast<VMAvatar*>(entity);
+            if (avatar && saved.second.Instance && avatar->Position() != LotTilePos::OUT_OF_WORLD) {
+                const auto& bounds = saved.second.Instance->Footprint;
+                avatar->RestoreTS1Footprint(bounds.MinX, bounds.MinY, bounds.MaxX, bounds.MaxY);
+            }
+        }
     }
     // Init-created entities outside the saved graph were also detached if they
     // occupied a saved slot. Keep their live spatial registration consistent;

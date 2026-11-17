@@ -326,6 +326,91 @@ static void dialogContract() {
  vm.Entities.clear();vm.ObjectsById.clear();
 }
 
+// Production routing, collision, child-yield and v10 route codec consumers.
+static void footprintConsumerContract() {
+ using namespace FSO::SimAntics::Model;
+ using namespace FSO::LotView::Model;
+ VM::UseWorld(false); VMContext ctx(nullptr); VM vm(&ctx,nullptr);
+ ctx.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&ctx));
+ ctx.Architecture()->Rooms[0].Map.assign(64,0); ctx.RoomInfo.resize(1);
+ IffFile iff; FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"footprint-consumers",true);
+ auto child=new BHAV(); child->ChunkProcessed=true;child->ChunkID=4096;
+ BHAVInstruction instruction; instruction.Opcode=17; child->Instructions.push_back(instruction);iff.AddChunk(child);
+ OBJD def;def.GUID=0x43123456;FSO::Content::GameObject object;object.OBJ=&def;object.GUID=def.GUID;object.Resource=&resource;
+ VMAvatar actor(&object),departed(&object); VMGameObject blocker(&object,nullptr),chair(&object,nullptr);
+ Entities::VMMultitileGroup ag,dg,bg,cg;
+ actor.MultitileGroup=&ag;departed.MultitileGroup=&dg;blocker.MultitileGroup=&bg;chair.MultitileGroup=&cg;
+ ag.AddObject(&actor);dg.AddObject(&departed);bg.AddObject(&blocker);cg.AddObject(&chair);
+ for(auto entity:{static_cast<VMEntity*>(&actor),static_cast<VMEntity*>(&departed),static_cast<VMEntity*>(&blocker),static_cast<VMEntity*>(&chair)}) vm.AddEntity(entity);
+ actor.Thread=std::make_unique<VMThread>(&ctx,&actor,16);
+ actor.SetValue(VMStackObjectVariable::PlacementFlags,int16_t(VMPlacementFlags::OnTerrain));
+ const LotTilePos pos(64,64,1);actor.Position(pos);actor.Direction(Direction::NORTH);
+ actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);actor.RefreshTS1Footprint();
+ blocker.Footprint=std::make_unique<Routing::VMObstacle>(61,54,67,58);
+ ctx.RoomInfo[0].Entities={&blocker};
+ check(actor.PositionValid(pos,Direction::NORTH,&ctx).Status==VMPlacementError::Success,"ordinary pose is clear before requested extension");
+ auto routeFor=[&](int posture) {
+  actor.SetPersonData(VMPersonDataVariable::Posture,posture);
+  actor.SetPersonData(VMPersonDataVariable::RouteFootprintMask,8);
+  actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);
+  actor.RefreshTS1Footprint();
+  auto route=std::make_shared<VMRoutingFrame>();route->Caller=&actor;route->Callee=&actor;route->Thread=actor.Thread.get();
+  actor.Thread->Stack={route};route->Init();route->State=VMRoutingFrameState::TURN_ONLY;
+  route->CurRoute=std::make_shared<VMFindLocationResult>();route->CurRoute->FaceAnywhere=true;
+  return route;
+ };
+ auto standing=routeFor(0);auto original=actor.Footprint.get();
+ check(standing->Tick()==VMPrimitiveExitCode::CONTINUE && standing->State==VMRoutingFrameState::FAILED &&
+       actor.GetPersonData(VMPersonDataVariable::RouteResult)==1 && actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==0 && actor.Footprint.get()==original,
+       "blocked extension fails standing route without committing cached bounds");
+ auto sitting=routeFor(1);original=actor.Footprint.get();
+ check(sitting->Tick()==VMPrimitiveExitCode::RETURN_TRUE && actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==0 && actor.Footprint.get()==original,
+       "blocked extension retains nonstanding success and cached bounds");
+ auto existing=routeFor(0);
+ existing->TS1PendingFootprint=0;actor.SetPersonData(VMPersonDataVariable::RouteFootprintMask,0);
+ actor.SetPersonData(VMPersonDataVariable::FootprintExtension,8);actor.RefreshTS1Footprint();original=actor.Footprint.get();
+ check(existing->Tick()==VMPrimitiveExitCode::CONTINUE && existing->State==VMRoutingFrameState::FAILED &&
+       actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==8 && actor.Footprint.get()==original,
+       "zero request validates existing extension and retains it on rejection");
+ ctx.RoomInfo[0].Entities.clear();auto accepted=routeFor(0);
+ check(accepted->Tick()==VMPrimitiveExitCode::RETURN_TRUE && actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==8 && actor.Footprint && actor.Footprint->y1==53,
+       "accepted extension publishes final bounds through turn-only route");
+ // The chair entry point yields a real child after route Init captured PD72.
+ actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);
+ auto yielding=routeFor(0);yielding->State=VMRoutingFrameState::INITIAL;
+ yielding->Choices=std::make_unique<std::vector<VMFindLocationResult>>();yielding->CurRoute->Chair=&chair;
+ chair.EntryPoints[26].ActionFunction=4096;ctx.RoomInfo[0].Entities={&chair};
+ chair.Footprint=std::make_unique<Routing::VMObstacle>(61,61,67,67);
+ chair.SetValue(VMStackObjectVariable::Flags,int16_t(VMEntityFlags::AllowPersonIntersection));
+ check(yielding->Tick()==VMPrimitiveExitCode::CONTINUE && actor.Thread->Stack.size()==2 &&
+       actor.GetPersonData(VMPersonDataVariable::RouteFootprintMask)==0 && yielding->TS1PendingFootprint==8,
+       "chair child yield clears live request while route owns its original mask");
+ st::Writer output(st::Endian::Little);Archive out(output);InteractionCheckpointCodec writer(vm,out,10);writer.route(*yielding,nullptr);
+ const auto bytes=output.ToArray();st::Reader input(bytes);Archive in(input);InteractionCheckpointCodec reader(vm,in,10);
+ auto resumed=std::make_shared<VMRoutingFrame>();reader.route(*resumed,nullptr);
+ check(!input.has_more() && resumed->TS1PendingFootprintKnown && resumed->TS1PendingFootprint==8 &&
+       actor.GetPersonData(VMPersonDataVariable::RouteFootprintMask)==0,
+       "v10 route restore retains pending request while child has cleared live PD72");
+ resumed->Caller=&actor;resumed->Callee=&actor;resumed->Thread=actor.Thread.get();actor.Thread->Stack={resumed};
+ actor.Thread->LastStackExitCode=VMPrimitiveExitCode::RETURN_TRUE;actor.Container=&chair;
+ actor.SetPersonData(VMPersonDataVariable::Posture,1);actor.Footprint.reset();
+ check(resumed->Tick()==VMPrimitiveExitCode::RETURN_TRUE && actor.GetPersonData(VMPersonDataVariable::RouteFootprintMask)==8 &&
+       actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==8 && !actor.Footprint,
+       "resumed contained chair continuation validates permitted chair and restores request");
+ // A solid chair proves that contained continuation did not bypass validation.
+ chair.SetValue(VMStackObjectVariable::Flags,0);
+ resumed->State=VMRoutingFrameState::INITIAL;resumed->AttemptedChair=true;
+ actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);
+ check(resumed->Tick()==VMPrimitiveExitCode::RETURN_TRUE && actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==0 && !actor.Footprint,
+       "contained chair rejection follows nonstanding policy and clears attempted extension");
+ actor.Container=nullptr;ctx.RoomInfo[0].Entities.clear();
+ // Removal must erase the live cache before a reused identity can be observed.
+ auto cache=routeFor(0);cache->AvatarsToConsider.insert(&departed);actor.Thread->Stack={cache};
+ vm.RemoveEntity(&departed);
+ check(departed.Dead && !cache->AvatarsToConsider.count(&departed),"VM deletion clears live routing blocker cache");
+ actor.Thread->Stack.clear();vm.Entities.clear();vm.ObjectsById.clear();
+}
+
 int main(){try{
  VMContext context(nullptr);VM vm(&context,nullptr);
  IffFile iff;FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"route-fixture",true);
@@ -346,6 +431,11 @@ int main(){try{
  vm.ObjectsById[7]=&replacement;check(write(route)==bytes,"dead target with reused ID never binds replacement");
  check(write(restored)==bytes,"canonical failed route is byte-stable on recapture");
  VMRoutingFrame parent;route.ParentRoute=&parent;auto nested=write(route,&parent);VMRoutingFrame restoredNested;read(nested,restoredNested,&parent);check(restoredNested.ParentRoute==&parent&&restoredNested.HeldResult==int(VMPrimitiveExitCode::RETURN_FALSE),"nested route preserves enclosing parent chain");route.ParentRoute=nullptr;
+ VMRoutingFrame pendingRoute;pendingRoute.TS1PendingFootprint=0x1234;pendingRoute.TS1PendingFootprintKnown=true;
+ st::Writer pendingOut(st::Endian::Little);Archive pendingWriter(pendingOut);InteractionCheckpointCodec pendingEncoder(vm,pendingWriter,10);pendingEncoder.route(pendingRoute,nullptr);
+ auto pendingBytes=pendingOut.ToArray();st::Reader pendingIn(pendingBytes);Archive pendingReader(pendingIn);InteractionCheckpointCodec pendingDecoder(vm,pendingReader,10);VMRoutingFrame pendingRestored;pendingDecoder.route(pendingRestored,nullptr);
+ check(pendingRestored.TS1PendingFootprintKnown && pendingRestored.TS1PendingFootprint==0x1234 && !pendingIn.has_more(),"v10 retains pending route request independent of live person data");
+ VMRoutingFrame legacy;read(write(pendingRoute),legacy);check(!legacy.TS1PendingFootprintKnown && legacy.TS1PendingFootprint==0,"legacy route does not infer a pending mask");
  VMRoutingFrame normal;normal.Target=&live;normal.State=VMRoutingFrameState::INITIAL;auto liveBytes=write(normal);VMRoutingFrame liveRestored;read(liveBytes,liveRestored);check(liveRestored.Target==&live&&write(liveRestored)==liveBytes,"live route retains exact identity and bytes");
  normal.Target=&dead;dead.Dead=false;rejects([&]{write(normal);},"nondead replaced target remains rejected");dead.Dead=true;
  normal.Target=&live;live.GhostImage=true;rejects([&]{write(normal);},"ghost route target remains rejected");live.GhostImage=false;
@@ -387,5 +477,6 @@ int main(){try{
  check(thread.Queue.size()==1&&thread.Queue[0]==pending&&thread.TempRegisters[2]==73&&thread.ActiveQueueBlock==-1,"failed route leaves pending work and thread registers intact");
  classicContract();
  dialogContract();
+ footprintConsumerContract();
  printf("route checkpoint contract: %d cases passed\n",cases);return 0;
 }catch(const std::exception& e){fprintf(stderr,"FAIL %s\n",e.what());return 1;}}

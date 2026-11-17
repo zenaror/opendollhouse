@@ -74,6 +74,8 @@ public:
     // result held back for the next tick when it ended in that same tick.
     int64_t PushTick = -1;
     int8_t HeldResult = -1;
+    int16_t TS1PendingFootprint = 0;
+    bool TS1PendingFootprintKnown = false;
 
     VMRoutingFrame() {}
     bool IsRoutingFrame() const override { return true; }
@@ -88,6 +90,7 @@ public:
     void SoftFail(Model::Routing::VMRouteFailCode code, VMEntity* blocker);
     VMPrimitiveExitCode Tick();
     void WalkInterrupt(int32_t waitTime);
+    void ForgetAvatar(VMAvatar* avatar) { AvatarsToConsider.erase(avatar); }
 
 private:
     friend class FSO::SimAntics::Engine::Utils::InteractionCheckpointCodec;
@@ -148,6 +151,7 @@ private:
     VMRoutingFrame* GetParentFrame();
     bool CanPortalTurn();
     void BeginWalk();
+    VMPrimitiveExitCode CompleteRoute();
     bool EndWalk(); //returns true if we should exit immediately.
     bool Turn(double directionDiff);
     void StartWalkAnimation();

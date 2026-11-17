@@ -7,6 +7,8 @@ add_library(odh_original_ui STATIC
   ${ODH_ORIGINAL_ROOT}/tools/original_cursors.cpp
   ${ODH_ORIGINAL_ROOT}/tools/original_cursor_policy.cpp
   ${ODH_ORIGINAL_ROOT}/src/animation.cpp
+  ${ODH_ORIGINAL_ROOT}/src/career.cpp
+  ${ODH_ORIGINAL_ROOT}/tools/career_dialog_text.cpp
   ${ODH_ORIGINAL_ROOT}/src/skeleton.cpp
   ${ODH_ORIGINAL_ROOT}/src/mesh.cpp
   ${ODH_ORIGINAL_ROOT}/src/bitmap.cpp

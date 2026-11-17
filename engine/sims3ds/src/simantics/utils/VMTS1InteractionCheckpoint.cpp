@@ -152,6 +152,8 @@ struct AvatarRecord {
     Model::VMTS1BodyPart bodyPart, headPart;
     std::vector<std::string> accessories;
     int16_t renderFlags = 0;
+    bool hasFootprint = false;
+    int32_t minX=0, minY=0, maxX=0, maxY=0;
 };
 struct Record {
     VMEntity* entity = nullptr;
@@ -744,6 +746,9 @@ public:
         }
         io.value(r.State); io.value(r.PortalTurns); io.value(r.WaitTime);
         io.value(r.CallFailureTrees); io.value(r.PushTick); io.value(r.HeldResult);
+        // Older snapshots cannot establish a route-owned request from live PD72.
+        if (version >= 10) { io.value(r.TS1PendingFootprint); io.value(r.TS1PendingFootprintKnown); }
+        else if (io.in) { r.TS1PendingFootprint = 0; r.TS1PendingFootprintKnown = false; }
         io.value(r.WalkDirection); io.value(r.TargetDirection); io.value(r.IgnoreRooms);
         io.value(r.Timeout); io.value(r.Retries); io.value(r.AttemptedChair); io.value(r.TurnTweak);
         io.value(r.TurnFrames); io.value(r.MoveTotalFrames); io.value(r.MoveFrames); io.value(r.Velocity);
@@ -941,6 +946,11 @@ public:
         if (io.out) {
             a.animations = live.Animations; a.carry = live.CarryAnimationState;
             a.person = live.PersonData;
+            a.hasFootprint = bool(live.Footprint);
+            if (a.hasFootprint) {
+                a.minX=live.Footprint->x1; a.minY=live.Footprint->y1;
+                a.maxX=live.Footprint->x2; a.maxY=live.Footprint->y2;
+            }
             for (size_t i = 0; i < 16; ++i) {
                 a.motives[i] = live.GetMotiveData(Model::VMMotive(i));
                 a.changes[i].motive = uint32_t(i);
@@ -1000,6 +1010,10 @@ public:
             if (version >= 6) io.value(savedAvailable);
             Require(savedAvailable == available, "bound accessory availability changed: " + name);
         }
+        if (version >= 10) {
+            io.value(a.hasFootprint);
+            if (a.hasFootprint) { io.value(a.minX); io.value(a.minY); io.value(a.maxX); io.value(a.maxY); }
+        }
         Require(a.leftHand >= 0 && a.leftHand <= 3 && a.rightHand >= 0 && a.rightHand <= 3, "invalid hand gesture");
     }
     void record(Record& r) {
@@ -1044,10 +1058,17 @@ public:
         if (isAvatar) { r.avatar = std::make_unique<AvatarRecord>(); avatar(*r.avatar, *av); }
     }
 
-    void publish(std::map<int16_t, Record>& records) {
+    void publish(std::map<int16_t, Record>& records, const OBJM& objm) {
         for (auto& p : participants) Require(records.count(p.first), "partial participant group");
         for (auto& p : records) {
             auto& r = p.second;
+            if (r.avatar) {
+                const auto saved = objm.ObjectData.find(r.entity->ObjectID);
+                Require(saved != objm.ObjectData.end() && saved->second.Instance &&
+                        saved->second.Instance->OBJT && r.entity->Object && r.entity->Object->OBJ &&
+                        saved->second.Instance->OBJT->GUID == r.entity->Object->OBJ->GUID,
+                        "avatar footprint identity changed");
+            }
             if (r.container) {
                 auto& slots = records.at(r.container->ObjectID).slots;
                 Require(r.slot >= 0 && size_t(r.slot) < slots.size() && slots[r.slot] == r.entity, "container links disagree");
@@ -1137,6 +1158,12 @@ public:
                 live->MotiveDecay->LastTick = a.precision.lastTick;
                 live->Animations = std::move(a.animations); live->CarryAnimationState = std::move(a.carry);
                 live->RadianDirection(a.direction); live->Velocity=a.velocity; live->KillTimeout = a.killTimeout;
+                const auto saved = objm.ObjectData.find(e->ObjectID);
+                const auto& bounds = saved->second.Instance->Footprint;
+                if (version >= 10) {
+                    if (a.hasFootprint) live->RestoreTS1Footprint(a.minX, a.minY, a.maxX, a.maxY);
+                    else live->Footprint.reset();
+                } else live->RestoreTS1Footprint(bounds.MinX, bounds.MinY, bounds.MaxX, bounds.MaxY);
                 live->TS1Appearance.Body=std::move(a.bodyPart); live->TS1Appearance.Head=std::move(a.headPart);
                 live->DefaultSuits=a.suits; live->BodyOutfit(a.body); live->HeadOutfit(a.head);
                 for (const auto& old:live->BoundAppearances)
@@ -1254,9 +1281,16 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
                     "scheduler binding instance identity changed");
             Require(TS1SavedSchedulerState(*saved->second.Instance, objects.Version, 9) == e->TS1SchedulerState,
                     "scheduler binding manager word changed");
+            if (dynamic_cast<VMAvatar*>(e) && !e->Container && e->Footprint &&
+                e->Position() != LotView::Model::LotTilePos::OUT_OF_WORLD) {
+                const auto& b = saved->second.Instance->Footprint;
+                Require(e->Footprint->x1==b.MinX && e->Footprint->y1==b.MinY &&
+                        e->Footprint->x2==b.MaxX && e->Footprint->y2==b.MaxY,
+                        "classic avatar footprint differs from live cache");
+            }
         }
     }
-    const uint32_t captureVersion = schedulerWordsBound ? 9 : 8;
+    const uint32_t captureVersion = 10;
     st::Writer body(st::Endian::Little);
     Archive fields(body);
     Require(VM::IsTS1TextInputValid(vm.TS1TextInput), "invalid TS1 text input");
@@ -1297,6 +1331,7 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
     Archive header(data);
     header.value(departing);
     if (departing) DepartureState(header, vm.Departure);
+    header.value(schedulerWordsBound);
     auto clock = *vm.Context->Clock;
     auto seed = vm.Context->RandomSeed;
     ClockState(header, clock, seed);
@@ -1335,7 +1370,7 @@ bool VMTS1InteractionCheckpoint::IsDeparture(IffFile& house) {
     st::Reader input(chunks.front()->Data);
     auto version = input.u32();
     if (version == 2) return false;
-    Require(version >= 3 && version <= 9, "unsupported ODHI version");
+    Require(version >= 3 && version <= 10, "unsupported ODHI version");
     input.u32(); // ObjM signature is checked during restore.
     Archive header(input);
     bool departing = false;
@@ -1350,13 +1385,15 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     auto objm = house.Get<OBJM>(1);
     st::Reader input(chunks.front()->Data);
     const auto version = input.u32();
-    Require(version >= 2 && version <= 9, "unsupported ODHI version");
+    Require(version >= 2 && version <= 10, "unsupported ODHI version");
     Require(objm && objm->Decoded && input.u32() == objm->SourceSignature, "ObjM changed since capture");
     Archive fields(input);
     bool departing = false;
     TS1Departure departure;
     if (version >= 3) fields.value(departing);
     if (departing) DepartureState(fields, departure);
+    bool schedulerWordsBound = version == 9;
+    if (version >= 10) fields.value(schedulerWordsBound);
     VMClock clock; uint64_t seed = 0;
     ClockState(fields, clock, seed);
     bool ready=false, alternate=false, buildBuy=false;
@@ -1394,7 +1431,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     // Prepare manager words from the same signature-bound classic graph before
     // publishing any field or thread. Older native supplements retain their
     // historical admitted behavior, rather than consuming a stale source word.
-    if (version >= 9) for (auto& entry : records) {
+    if (schedulerWordsBound) for (auto& entry : records) {
         const auto saved = objm->ObjectData.find(entry.first);
         Require(saved != objm->ObjectData.end() && saved->second.Instance &&
                 saved->second.Instance->OBJT &&
@@ -1403,13 +1440,25 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
         entry.second.schedulerState = TS1SavedSchedulerState(
             *saved->second.Instance, objm->Version, version);
     }
+    if (version >= 10) for (const auto& entry : records) if (entry.second.avatar) {
+        const auto& record = entry.second; const auto& a = *record.avatar;
+        const bool inWorld = !record.container && record.position != LotView::Model::LotTilePos::OUT_OF_WORLD;
+        Require(inWorld || !a.hasFootprint, "contained or out-of-world avatar has a footprint");
+        if (schedulerWordsBound && inWorld && a.hasFootprint) {
+            const auto saved = objm->ObjectData.find(entry.first);
+            Require(saved != objm->ObjectData.end() && saved->second.Instance, "missing classic avatar footprint");
+            const auto& b = saved->second.Instance->Footprint;
+            Require(a.minX==b.MinX && a.minY==b.MinY && a.maxX==b.MaxX && a.maxY==b.MaxY,
+                    "native and classic avatar footprints differ");
+        }
+    }
     if (departing) {
         auto caller = records.find(departure.caller);
         VerifyDeparture(vm, departure, caller != records.end() ? caller->second.preparedThread.get() : nullptr);
     }
     codec.preparePrimitiveStates(records, *objm, house.Get<OBJT>(0));
     codec.prepareMotives(records, house, *objm, *chunks.front(), clock.Ticks);
-    codec.publish(records);
+    codec.publish(records, *objm);
     *vm.Context->Clock = clock;
     vm.Context->RandomSeed = seed;
     vm.Ready=ready; vm.AlternateTick=alternate; vm.TS1BuildBuyEnabled=buildBuy;

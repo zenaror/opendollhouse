@@ -37,16 +37,17 @@ static std::vector<uint8_t> captureVersion7(VM& vm,IffRawFile& house){
   if(!done.insert(entry.first).second)continue;
   Record record;record.entity=entry.second;codec.record(record);
  }
- // The header is unchanged between v7/v8. Copy its real capture rather
- // than exposing VM-private timing fields or fabricating their values.
+ // Read the current header, then remove its v10 scheduler-authority byte
+ // before combining it with the genuinely encoded v7 body.
  IffRawFile captured;captured.Set("ObjM",1,house.Find("ObjM",1)->Data);
  VMTS1InteractionCheckpoint::Capture(vm,captured,false);const auto& modern=captured.Find("ODHI",1)->Data;
- st::Reader input(modern);Require(input.u32()==8,"modern fixture version");input.u32();Archive header(input);
+ st::Reader input(modern);Require(input.u32()==10,"modern fixture version");input.u32();Archive header(input);
  bool departing=false;header.value(departing);Require(!departing,"legacy fixture unexpectedly departing");
+ bool schedulerBound=false;header.value(schedulerBound);Require(!schedulerBound,"direct fixture unexpectedly bound");
  VMClock clock;uint64_t seed;ClockState(header,clock,seed);bool ready,alternate,buildBuy;
  header.value(ready);header.value(alternate);header.value(buildBuy);
  std::vector<int16_t> globals;header.vector(globals,4096);std::string text;header.string(text,VM::TS1TextInputMaxBytes);
- std::vector<uint8_t> prefix(modern.begin(),modern.begin()+input.Position());prefix[0]=7;
+ std::vector<uint8_t> prefix(modern.begin(),modern.begin()+input.Position());prefix.erase(prefix.begin()+9);prefix[0]=7;
  st::Writer bytes(st::Endian::Little);bytes.WriteBytes(prefix);
  bytes.WriteUInt32(done.size());bytes.WriteBytes(body.ToArray());return bytes.ToArray();
 }
@@ -87,7 +88,7 @@ int main(){try{
   auto liveThread=std::move(caller.Thread);
   Rejects([&]{VMTS1InteractionCheckpoint::Capture(vm,saved,false);},"v8 capture silently omitted a persistent threadless instance");
   caller.Thread=std::move(liveThread);
-  vm.TS1TextInput=input;VMTS1InteractionCheckpoint::Capture(vm,saved,false);const auto odhi=saved.Find("ODHI",1);Require(odhi&&odhi->Data[0]==8,"native name state did not version8");
+  vm.TS1TextInput=input;VMTS1InteractionCheckpoint::Capture(vm,saved,false);const auto odhi=saved.Find("ODHI",1);Require(odhi&&odhi->Data[0]==10,"native name state did not version10");
   IffFile house;auto objm=new OBJM();objm->ChunkID=1;objm->ChunkProcessed=true;objm->Decoded=true;objm->SourceSignature=FSO::Files::Hash::CalculateHash(saved.Find("ObjM",1)->Data);objm->ObjectData[caller.ObjectID]=OBJM::MappedObject{};house.AddChunk(objm);auto chunk=new ODHI();chunk->ChunkID=1;chunk->ChunkProcessed=true;chunk->Data=odhi->Data;house.AddChunk(chunk);vm.TS1TextInput="changed after capture";VMTS1InteractionCheckpoint::Restore(vm,house);Require(vm.TS1TextInput==input,"native roundtrip lost last text including empty");
   // Manual decoded fixture must contain the same persistent identity domain.
   // Missing/additional IDs are rejected before any execution state publishes.
@@ -101,7 +102,7 @@ int main(){try{
   objm->ObjectData.erase(32767);objm->ObjectData[caller.ObjectID]=OBJM::MappedObject{};
   const auto good=chunk->Data;chunk->Data.push_back(0);vm.TS1TextInput="unchanged on rejection";const auto time=context.Clock->Ticks;Rejects([&]{VMTS1InteractionCheckpoint::Restore(vm,house);},"trailing state accepted");Require(vm.TS1TextInput=="unchanged on rejection"&&context.Clock->Ticks==time,"rejected checkpoint partially published name/clock");chunk->Data=good;
   // Locate the modern text channel for malformed v8 payload gates.
-  st::Reader reader(good);reader.u32();reader.u32();Archive header(reader);bool departing;header.value(departing);VMClock clock;uint64_t seed;ClockState(header,clock,seed);bool a,b,c;header.value(a);header.value(b);header.value(c);std::vector<int16_t> globals;header.vector(globals,4096);const auto start=reader.Position();std::string oldText;header.string(oldText,VM::TS1TextInputMaxBytes);const auto end=reader.Position();
+  st::Reader reader(good);reader.u32();reader.u32();Archive header(reader);bool departing;header.value(departing);bool schedulerBound;header.value(schedulerBound);VMClock clock;uint64_t seed;ClockState(header,clock,seed);bool a,b,c;header.value(a);header.value(b);header.value(c);std::vector<int16_t> globals;header.vector(globals,4096);const auto start=reader.Position();std::string oldText;header.string(oldText,VM::TS1TextInputMaxBytes);const auto end=reader.Position();
   // Validate the new bounded channel before publishing any object/clock state.
   chunk->Data=good;for(int j=0;j<4;++j)chunk->Data[size_t(start)+j]=uint8_t(4097u>>(j*8));vm.TS1TextInput="unchanged on oversized channel";Rejects([&]{VMTS1InteractionCheckpoint::Restore(vm,house);},"oversized channel accepted");Require(vm.TS1TextInput=="unchanged on oversized channel"&&context.Clock->Ticks==time,"oversized channel partially published");
   if(!input.empty()){chunk->Data=good;chunk->Data[size_t(start)+4]=0xff;vm.TS1TextInput="unchanged on malformed UTF8";Rejects([&]{VMTS1InteractionCheckpoint::Restore(vm,house);},"malformed checkpoint UTF8 accepted");Require(vm.TS1TextInput=="unchanged on malformed UTF8"&&context.Clock->Ticks==time,"malformed UTF8 partially published");}

@@ -13,6 +13,7 @@
 #include "simantics/entities/VMGameObject.h"
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/engine/VMThread.h"
+#include "simantics/engine/VMRoutingFrame.h"
 #include "simantics/engine/VMTS1Travel.h"
 #include "simantics/engine/translator/VMTranslator.h"
 #include "simantics/model/TSOPlatform/VMTSOLotState.h"
@@ -245,6 +246,12 @@ void VM::AddToObjList(std::vector<VMEntity*>& list, VMEntity* entity) {
 
 /// Removes an entity from this Virtual Machine.
 void VM::RemoveEntity(VMEntity* entity) {
+    if (TS1) if (auto avatar = dynamic_cast<VMAvatar*>(entity)) {
+        for (auto other : Entities) if (other && other->Thread)
+            for (const auto& frame : other->Thread->Stack)
+                if (frame && frame->IsRoutingFrame())
+                    static_cast<Engine::VMRoutingFrame*>(frame.get())->ForgetAvatar(avatar);
+    }
     Context->RemoveSpatialEntity(entity);
     auto it = std::find(Entities.begin(), Entities.end(), entity);
     if (it != Entities.end()) {

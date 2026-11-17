@@ -41,6 +41,10 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Sims retain their requested and occupied space while walking, turning and
+  sitting. Saving and reopening preserves that space and the pending route.
+- Job dialogs use the game's localized offers, titles, descriptions and time
+  formatting instead of a generated English offer.
 - Bills no longer charge for Sims and objects retained outside the lot.
   Their off-lot state also survives saving and reopening a house.
 - Loading original-game saves preserves inactive characters and scheduled

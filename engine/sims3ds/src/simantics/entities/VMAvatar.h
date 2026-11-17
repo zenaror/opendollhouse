@@ -161,6 +161,9 @@ public:
 
     std::string ToString() override;
     std::unique_ptr<Model::Routing::VMObstacle> GetObstacle(const LotTilePos& pos, DirectionT dir) override;
+    // Rebuild the occupied TS1 rectangle without executing placement trees.
+    void RefreshTS1Footprint();
+    void RestoreTS1Footprint(int minX, int minY, int maxX, int maxY);
     void PositionChange(VMContext* context, bool noEntryPoint) override;
     void PrePositionChange(VMContext* context) override;
 

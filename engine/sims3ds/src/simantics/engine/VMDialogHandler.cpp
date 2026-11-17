@@ -17,6 +17,7 @@
 #include <cstdio>
 #include "content/ContentManager.h"
 #include "content/TS1JobProvider.h"
+#include "content/TS1CareerDialog.h"
 #include "content/TS1NeighbourProvider.h"
 #include "content/TS1PersonalText.h"
 #include "simantics/entities/VMMultitileGroup.h"
@@ -173,9 +174,29 @@ Model::VMDialogText VMDialogHandler::ParseDialogText(VMStackFrame* context, cons
 
                 auto cmdString = command;
                 int16_t values[3] = { 0, 0, 0 };
+                const bool originalCareer = context->VM()->TS1 &&
+                    (cmdString == "Job:" || cmdString == "JobDesc:" ||
+                     cmdString == "JobOffer:" || cmdString == "TimeLocal:");
+                std::vector<uint16_t> careerSelectors;
                 if (cmdString.size() > 1 && cmdString[cmdString.size() - 1] == ':') {
                     try {
-                        if (cmdString == "DynamicStringLocal:" || cmdString == "TimeLocal:" || cmdString == "JobOffer:" || cmdString == "Job:" || cmdString == "JobDesc:" || cmdString == "DateLocal:") { // FIX(sims): FreeSO
+                        if (originalCareer) {
+                            // TS1 accepts one or two WORD selectors. Any following
+                            // colon is literal text, rather than a third argument.
+                            for (int j = 0; j < 2; ++j) {
+                                char next = CharAt(input, ++i);
+                                std::string num;
+                                while (std::isdigit((unsigned char)next)) {
+                                    num += next;
+                                    next = (++i == (int)input.size()) ? '!' : input[i];
+                                }
+                                if (num.empty()) break;
+                                const auto number = std::stoul(num);
+                                if (number > 65535) throw FormatException();
+                                careerSelectors.push_back(uint16_t(number));
+                                if (i == (int)input.size() || next != ':') break;
+                            }
+                        } else if (cmdString == "DynamicStringLocal:" || cmdString == "TimeLocal:" || cmdString == "JobOffer:" || cmdString == "Job:" || cmdString == "JobDesc:" || cmdString == "DateLocal:") { // FIX(sims): FreeSO
                             values[1] = -1;
                             values[2] = -1;
                             for (int j = 0; j < 3; j++) {
@@ -207,7 +228,11 @@ Model::VMDialogText VMDialogHandler::ParseDialogText(VMStackFrame* context, cons
                     }
                 }
                 try {
-                    if (cmdString == "Object" || cmdString == "DynamicObjectName") {
+                    if (originalCareer) {
+                        std::string error;
+                        auto text = Content::TS1::ResolveCareerDialog(context, cmdString, careerSelectors, error);
+                        if (text) output += *text;
+                    } else if (cmdString == "Object" || cmdString == "DynamicObjectName") {
                         if (context->StackObject == nullptr) throw std::runtime_error("null");
                         // FIX(sims): FreeSO: the group name, else the catalogue name (CTSS 0), else the label
                         auto stackObj = context->StackObject;
