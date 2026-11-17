@@ -69,7 +69,57 @@ struct TerrainRandom {
         return (Next()&1) ? -value : value;
     }
 };
+using TerrainPoint = std::array<int,2>;
+// DVD 00407761/00434ffd use a fixed 64-cell coordinate table. The active
+// renderer can be smaller, so its rotated minimum is a separate origin.
+inline TerrainPoint RotateTerrainSourcePoint(TerrainPoint point,int rotation) {
+    switch(rotation&3) {
+        case 1:return {{63-point[1],point[0]}};
+        case 2:return {{63-point[0],63-point[1]}};
+        case 3:return {{point[1],63-point[0]}};
+        default:return point;
+    }
+}
+inline TerrainPoint TerrainCameraOrigin(int width,int rotation) {
+    TerrainPoint result{{63,63}};
+    for(int x : {0,width-1}) for(int y : {0,width-1}) {
+        const auto point=RotateTerrainSourcePoint({{x,y}},rotation);
+        result[0]=std::min(result[0],point[0]); result[1]=std::min(result[1],point[1]);
+    }
+    return result;
+}
+inline TerrainPoint TerrainWorldTileForCamera(TerrainPoint local,int width,int rotation) {
+    const auto origin=TerrainCameraOrigin(width,rotation);
+    return RotateTerrainSourcePoint({{local[0]+origin[0],local[1]+origin[1]}},(-rotation)&3);
+}
+inline TerrainPoint TerrainCameraTileForWorld(TerrainPoint world,int width,int rotation) {
+    const auto point=RotateTerrainSourcePoint(world,rotation);
+    const auto origin=TerrainCameraOrigin(width,rotation);
+    return {{point[0]-origin[0],point[1]-origin[1]}};
+}
+inline uint8_t TerrainWallFlagsForCamera(uint8_t flags,int rotation) {
+    const unsigned r=unsigned(rotation)&3, cardinal=flags&15;
+    unsigned result=((cardinal<<r)|(cardinal>>(4-r)))&15;
+    const unsigned diagonal=flags&48;
+    result|=(r&1) ? ((diagonal&16)<<1)|((diagonal&32)>>1) : diagonal;
+    return uint8_t(result);
+}
 using TerrainCorners = std::array<int,4>; // left, top, right, bottom at rotation zero
+// Keep shipped packed-corner differences while the live vertex inputs are
+// unchanged. An edited/previewed quad follows the current shared vertices.
+inline TerrainCorners BindTerrainHeightQuad(const TerrainCorners& authored,
+        const TerrainCorners& baseline,const TerrainCorners& current,bool haveAuthored) {
+    return haveAuthored && baseline==current ? authored : current;
+}
+// The camera-rotated source wall byte is a per-tile adjustment. Shared corner
+// samples must remain unchanged for neighboring tiles with different flags.
+inline TerrainCorners ApplyTerrainWallShade(TerrainCorners shades,uint8_t cameraWallFlags) {
+    if(cameraWallFlags&2) {
+        shades[1]=std::min(shades[1]+64,127);
+        shades[2]=std::min(shades[2]+64,127);
+    }
+    return shades;
+}
 inline TerrainCorners TerrainRotateCorners(const TerrainCorners& canonical,int rotation) {
     TerrainCorners result{};
     for(int i=0;i<4;++i) result[std::size_t(i)]=canonical[std::size_t((i-rotation)&3)];

@@ -5,11 +5,10 @@
  */
 // FSO.LotView.Components.TerrainComponent (World/components/TerrainComponent.cs, lot types from FreeSO)
 //
-// FreeSims/FreeSO draw the lot terrain as a 3D mesh with GrassShader.fx: per-vertex colour blended from the lot
-// type's light (healthy) and dark (dead) colours by the TS1 lawn state (house ARRY 6), plus darker grass blades.
-// Here the same mesh (two triangles per tile, per-vertex colour and altitude) is drawn with the software
-// TriangleRaster into the cached floor layer, modulated by a tileable blade/speckle texture in tile space so the
-// grain is continuous across tiles and rotations, and lit by the outside light (C# DiffuseColor = OutsideColor).
+// Ordinary TS1 grass uses its original indexed color ramps, camera-local
+// corner lighting and deterministic blade samples. Other terrain types and
+// neutral thumbnails retain the software mesh/texture path below. Both paths
+// share projection, clipping, depth and the separate interactive build grid.
 // Lot types (FreeSO VMTS1Activator.HouseNumToType + LotTypeGrassInfo): grass, sand (beach lots 28/29/46-48: grass
 // fading to sand), snow (Vacation 40-42), Magic Town dark grass (90-94) and autumn grass (95/96), cloud (99).
 // Depth: the terrain is written slightly behind the floor plane so floor sprites always win on equal depth.
@@ -51,6 +50,11 @@ public:
     void SetGrassState(const std::vector<uint8_t>& grass, int32_t width);
     /// Vertex altitude in tiles (width x width vertices, same layout as GrassState). Empty = flat.
     void SetHeights(const std::vector<float>& heights, int32_t width);
+    // Original row-major ARRY0 L/T/R/B bytes and signed ARRY6 bits. Storage
+    // width is independent of the cropped live lot/renderer width.
+    void SetOriginalSource(const std::vector<uint8_t>& heightQuads,
+                           const std::vector<uint8_t>& grassBytes,int32_t storageWidth);
+    std::array<int,4> OriginalTerrainShadeCorners(int worldX,int worldY) const;
     float GetElevationPoint(int x, int y) const;
 
     void RegenTerrain(WorldState& world, FSO::LotView::Model::Blueprint* blueprint);
@@ -74,7 +78,9 @@ private:
     Utils::RasterTexture Blades; // 128x128 tileable luminance (x200 = 1.0)
 
     // Original terrain caches indices, never RGB from a room/outside tint.
-    std::vector<uint8_t> OriginalShades;
+    std::vector<uint8_t> OriginalShades; // camera-local vertices, row major
+    std::vector<uint8_t> OriginalSourceHeights, OriginalSourceGrass;
+    int OriginalStorageWidth = 0;
     int LastOriginalStripHeight = 0;
     std::array<int,4> OriginalStripHeights{};
     bool OriginalBoundsDirty = true;
@@ -85,6 +91,7 @@ private:
     int OriginalShadeRotation = -1;
     int OriginalShadeSourceWidth = 0;
     bool BuildOriginalShades(int period, int rotation, int sourceWidth);
+    std::array<int,4> OriginalHeightQuad(int worldX,int worldY) const;
     int OriginalGrassSample(int x, int y) const;
     int OriginalGrassAt(int x, int y) const;
 

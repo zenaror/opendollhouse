@@ -10,6 +10,84 @@ static void CheckAt(bool passed,int line) {
     if (!passed) { std::fprintf(stderr,"terrain lighting conformance failed at line %d\n",line); std::abort(); }
 }
 #define Check(condition) CheckAt(bool(condition),__LINE__)
+static void CheckCameraBinding() {
+    // Actual owned DVD camera receipts at renderer width48, together with the
+    // fixed64 coordinate-table producer. These origins cannot all be zero.
+    const TerrainPoint origins[4]={{{0,0}},{{16,0}},{{16,16}},{{0,16}}};
+    const TerrainPoint worlds[4]={{{2,5}},{{5,45}},{{45,42}},{{42,2}}};
+    const TerrainCorners orders[4]={{{1,2,3,4}},{{4,1,2,3}},{{3,4,1,2}},{{2,3,4,1}}};
+    const uint8_t wallInputs[4]={2,1,8,4};
+    const TerrainCorners baseShade{{3,40,90,4}};
+    for(int r=0;r<4;++r) {
+        Check(TerrainCameraOrigin(48,r)==origins[r]);
+        Check(TerrainWorldTileForCamera({{2,5}},48,r)==worlds[r]);
+        Check((TerrainCameraTileForWorld(worlds[r],48,r)==TerrainPoint{{2,5}}));
+        Check(TerrainRotateCorners({{1,2,3,4}},r)==orders[r]);
+        Check((ApplyTerrainWallShade(baseShade,TerrainWallFlagsForCamera(wallInputs[r],r))==TerrainCorners{{3,104,127,4}}));
+        // Every camera-local tile uses exactly the same finite RNG/seed domain.
+        for(int x=0;x<48;++x) for(int y=0;y<48;++y) {
+            const TerrainPoint local{{x,y}};
+            const auto world=TerrainWorldTileForCamera(local,48,r);
+            Check(world[0]>=0 && world[0]<48 && world[1]>=0 && world[1]<48);
+            Check(TerrainCameraTileForWorld(world,48,r)==local);
+        }
+    }
+    Check(TerrainWallFlagsForCamera(16,1)==32);
+    Check(TerrainWallFlagsForCamera(32,3)==16);
+    Check(TerrainWallFlagsForCamera(25,1)==35);
+    // Full source-produced 64-mask rotation table from the independent dossier.
+    uint64_t wallHash=14695981039346656037ull;
+    for(int r=0;r<4;++r) for(int flags=0;flags<64;++flags)
+        wallHash=(wallHash^TerrainWallFlagsForCamera(uint8_t(flags),r))*1099511628211ull;
+    Check(wallHash==0x8fba8a03e6022c25ull);
+    // Shipped packed corners may disagree with neighboring B1 values. Preserve
+    // their source bytes until a live/preview vertex actually changes.
+    const TerrainCorners authored{{11,20,23,30}},baseline{{10,20,21,31}},edited{{10,22,21,31}};
+    Check(BindTerrainHeightQuad(authored,baseline,baseline,true)==authored);
+    Check(BindTerrainHeightQuad(authored,baseline,edited,true)==edited);
+    Check(BindTerrainHeightQuad(authored,baseline,baseline,false)==baseline);
+    // An available source halo at vertex48 must survive an edited interior;
+    // no nearest-live-vertex substitution is valid for these source values.
+    const TerrainCorners edge{{20,20,99,100}},edgeEdited{{20,21,99,100}};
+    Check(BindTerrainHeightQuad(edge,edge,edge,true)==edge);
+    Check(BindTerrainHeightQuad(edge,edge,edgeEdited,true)==edgeEdited);
+}
+
+static void CheckCameraShadeFixture() {
+    // Noncommercial synthetic heights, evaluated by the separate source oracle.
+    // Each orientation consumes the full camera-local48-square RNG sequence.
+    const TerrainCorners expected[4]={{{71,76,73,74}},{{75,100,114,33}},
+        {{68,77,60,61}},{{70,85,71,66}}};
+    const auto vertex=[](int x,int y) {return (3*x+5*y+(x*y)%7)%11;};
+    for(int r=0;r<4;++r) {
+        const TerrainNormals normals(0);
+        TerrainRandom random;
+        std::array<int,48*48> grid{};
+        const auto H=[&](int x,int y) {
+            const auto w=TerrainWorldTileForCamera({{x,y}},48,r);
+            return TerrainRotateCorners({{vertex(w[0],w[1]+1),vertex(w[0],w[1]),
+                vertex(w[0]+1,w[1]),vertex(w[0]+1,w[1]+1)}},r);
+        };
+        for(int x=1;x<48;++x) for(int y=1;y<48;++y)
+            grid[std::size_t(y)*48+x]=normals.Vertex(H(x,y),H(x-1,y),H(x-1,y-1),H(x,y-1),&random);
+        const auto q=TerrainCameraTileForWorld({{2,5}},48,r);
+        const TerrainCorners sample{{grid[std::size_t(q[1]+1)*48+q[0]],grid[std::size_t(q[1])*48+q[0]],
+            grid[std::size_t(q[1])*48+q[0]+1],grid[std::size_t(q[1]+1)*48+q[0]+1]}};
+        Check(ApplyTerrainWallShade(sample,TerrainWallFlagsForCamera(1,r))==expected[r]);
+        // The original camera-coordinate G getter gives the same signed four
+        // samples as the corresponding physical vertex, in a different order.
+        const auto G=[](int x,int y) {return (x*37+y*19)%256-128;};
+        const auto cameraG=[&](int x,int y) {const auto w=TerrainWorldTileForCamera({{x,y}},48,r);return G(w[0],w[1]);};
+        const int qx[4]={q[0],q[0],q[0]+1,q[0]+1},qy[4]={q[1]+1,q[1],q[1],q[1]+1};
+        const TerrainPoint physical[4]={{{2,6}},{{2,5}},{{3,5}},{{3,6}}};
+        for(int i=0;i<4;++i) {
+            const auto v=physical[(i-r)&3]; const int x=qx[i],y=qy[i];
+            Check(TerrainGrassLevel({{cameraG(x,y),cameraG(x-1,y),cameraG(x-1,y-1),cameraG(x,y-1)}})==
+                TerrainGrassLevel({{G(v[0],v[1]),G(v[0]-1,v[1]),G(v[0]-1,v[1]-1),G(v[0],v[1]-1)}}));
+        }
+    }
+}
+
 static void CheckBladeVectors() {
     Check(TerrainPoolBlocksBlades(0));
     Check(TerrainPoolBlocksBlades(15));
@@ -74,7 +152,14 @@ static void CheckBladeVectors() {
     Check(SelectTerrainBlades(TerrainBladePool{},0,0).Pool==nullptr);
 }
 int main() {
+    CheckCameraBinding();
+    CheckCameraShadeFixture();
     CheckBladeVectors();
+    const TerrainCorners wallBase{{3,40,90,4}};
+    Check((ApplyTerrainWallShade(wallBase,2)==TerrainCorners{{3,104,127,4}}));
+    Check((wallBase==TerrainCorners{{3,40,90,4}}));
+    for(uint8_t flags : {uint8_t(0),uint8_t(1),uint8_t(4),uint8_t(8),uint8_t(0x30)})
+        Check(ApplyTerrainWallShade(wallBase,flags)==wallBase);
     const TerrainCorners flat{{0,0,0,0}};
     const int shades[4]={13,44,84,44};
     const uint32_t colors[4]={0xff396d6bu,0xff295d5au,0xff184d42u,0xff295d5au};

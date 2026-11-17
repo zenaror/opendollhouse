@@ -60,11 +60,15 @@ void ARRY::Read(IffFile* iff, st::Reader& stream)
                     {
                         for (int i=0; i<flre; i++)
                         {
-                            if (!io.HasMore()) return;
+                            // HasMore requires two bytes for the next opcode;
+                            // literal payloads may end with one available byte.
+                            if (io.Position() >= io.Length() || size_t(currentPosition) >= Data.size()) return;
                             Data[currentPosition++] = io.ReadByte();
-                            if (currentPosition > (int32_t)Data.size()) return;
                         }
-                        if ((flre & 1) == 1) io.ReadByte();
+                        if ((flre & 1) == 1) {
+                            if (io.Position() >= io.Length()) return;
+                            io.ReadByte();
+                        }
                         continue;
                     }
 
@@ -102,11 +106,15 @@ void ARRY::Read(IffFile* iff, st::Reader& stream)
                     }
                     for (int i = 0; i < size; i++)
                     {
+                        if (io.Position() >= io.Length() || size_t(currentPosition) >= Data.size()) return;
                         Data[currentPosition++] = io.ReadByte();//ReadElement(io);
                         currentPosition %= (int32_t)Data.size();
                     }
 
-                    if ((size & 1) == 1) io.ReadByte(); //16-bit pad
+                    if ((size & 1) == 1) { //16-bit pad
+                        if (io.Position() >= io.Length()) return;
+                        io.ReadByte();
+                    }
 
                     currentPosition %= (int32_t)Data.size(); //12 bit wrap
                     break;

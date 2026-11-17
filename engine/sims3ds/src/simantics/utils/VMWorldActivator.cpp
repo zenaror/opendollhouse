@@ -273,6 +273,10 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
                 size_t si = (size_t)(y * 64 + x) * 4 + 1;
                 if (si < raw.size()) H[(size_t)(y * size + x)] = (int16_t)(raw[si] * 10);
             }
+            if (BlueprintPtr && BlueprintPtr->Terrain) {
+                if (auto grass = iff->Get<ARRY>(6))
+                    BlueprintPtr->Terrain->SetOriginalSource(raw, grass->TransposeData(), 64);
+            }
         }
         arch->Terrain->RegenerateCenters();
         arch->SyncTerrain(false);

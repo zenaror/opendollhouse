@@ -7,9 +7,9 @@ Notable changes for players and contributors, following
 
 ### Changed
 
-- Ordinary grass uses the original color tables and detail levels in the default
-  camera direction. Other terrain and scene-lighting differences remain under
-  review.
+- Ordinary grass uses the original color tables, detail levels and wall-edge
+  shading in all four camera directions. Other terrain and scene-lighting
+  differences remain under review.
 - Floors, walls and ordinary objects use the original room-lighting palette
   and day/night limits. Standard floors and walls also use the game's local
   lamp-light masks. Sim shading, terrain, roofs and special surfaces still
@@ -32,6 +32,8 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Loading terrain preserves the final byte of literal data and the authored
+  edge heights when changing the camera direction or previewing construction.
 - Restored the family-friend counter beside the household funds, using the
   original mutual-friendship rule and counter typeface.
 - Transparent objects and overlapping lit and unlit parts keep their appearance
