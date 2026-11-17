@@ -146,6 +146,23 @@ void App::ApplyPlaySettings() {
         if (world->State.TerrainDetail != terrainDetail) {
             world->State.TerrainDetail = terrainDetail;
         }
+        if (auto blueprint = world->GetBlueprint()) {
+            auto& state = world->State;
+            auto& roof = blueprint->RoofComp;
+            const bool firstBind = state.CharacterDetail < 0;
+            const bool materialCommand = !firstBind &&
+                (state.CharacterDetailRevision != st.CharacterDetailRevision ||
+                 state.CharacterDetail != st.CharacterDetail);
+            if (firstBind || materialCommand)
+                roof.SetCharacterDetail(st.CharacterDetail, materialCommand);
+            // Ordinary DVD world roof draws retain zero D3D ambient at day,
+            // dusk and night. The roof owns a separate white directional light;
+            // room lighting and the sprite outside palette are not its inputs.
+            roof.SetLightingAmbient({{0,0,0}});
+            state.CharacterDetail = st.CharacterDetail;
+            state.CharacterDetailRevision = st.CharacterDetailRevision;
+            state.OriginalRoofLighting = roof.GetLighting().Available();
+        }
         if (st.HandheldGraphics)
             std::printf("[portable-graphics] shadows=%d terrain_grain=off slope_shading=off "
                         "avatar_filter=nearest room_lighting=on\n", int(st.Shadows));

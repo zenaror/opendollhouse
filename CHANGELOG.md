@@ -7,6 +7,9 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Roof shading uses the recovered original light on the existing roof planes,
+  replacing camera-based brightness. Character Detail now affects roof materials.
+  Original roof shapes, textures and some material histories still need work.
 - Ordinary grass uses the original color tables, detail levels and wall-edge
   shading in all four camera directions. Other terrain and scene-lighting
   differences remain under review.
@@ -32,6 +35,7 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Selecting an unchanged roof style or pitch no longer rebuilds the roof.
 - Loading terrain preserves the final byte of literal data and the authored
   edge heights when changing the camera direction or previewing construction.
 - Restored the family-friend counter beside the household funds, using the

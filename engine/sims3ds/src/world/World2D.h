@@ -19,6 +19,7 @@
 //    target and depth-testing three full-screen layers.
 //  * The C# sprite-list caches (StaticWallCache/...) are not kept: a redraw re-runs the component.
 #pragma once
+#include "common/TS1/TS1RoofLighting.h"
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
@@ -101,6 +102,7 @@ private:
     bool HaveOrigin = false;
     int32_t TicksSinceLight = 0;
     bool LastDrawRoofs = false;
+    FSO::Common::TS1::RoofLightingInput RenderRoofLighting;
     std::vector<uint32_t> LastRoomColors;
     std::vector<uint32_t> RenderRoomColors;
     uint32_t RenderOutside = 0;

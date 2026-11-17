@@ -14,9 +14,10 @@
 // are part of the cached house image.
 // Shown like TS1: only in the "Roof" view (WorldState::DrawRoofs, control panel button above "Second Story") and in
 // lot thumbnails; never with walls down/cutaway or while a story is selected.
-// Differences (marked FSO_CPP): face shading is relative to the camera rotation (TS1's sprites are lit from the
-// viewer's side in every rotation; FreeSims lit fixed world sides), eaves get a thin fascia (FreeSO "advanced roof"
-// rim) in the roof's average colour, and the texture is mip-mapped per zoom level.
+// An explicit source material input enables flat world-space face lighting;
+// unbound inputs and neutral thumbnails retain the previous lighting path.
+// Native fascia geometry/style, roof tiling/UVs and mip sampling remain distinct
+// geometry/material limitations; the ordinary body light does not prove them.
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -25,6 +26,7 @@
 #include "world/components/WorldComponent.h"
 #include "world/model/LotTilePos.h"
 #include "world/utils/TriangleRaster.h"
+#include "common/TS1/TS1RoofLighting.h"
 
 namespace FSO { namespace LotView {
 class Framebuffer;
@@ -41,6 +43,14 @@ public:
     bool ShapeDirty = true;
 
     void SetStylePitch(uint32_t style, float pitch);
+    // Explicit source material snapshot. The world owns cache invalidation when
+    // this returns true; geometry rebuilds do not infer or reset mesh modes.
+    bool SetLighting(const FSO::Common::TS1::RoofLightingInput& input);
+    const FSO::Common::TS1::RoofLightingInput& GetLighting() const { return Lighting; }
+    bool SetCharacterDetail(int rawDetail,bool applyExisting);
+    bool SetLightingAmbient(const FSO::Common::TS1::RoofRGB& ambient);
+    int GetRawCharacterDetail() const { return MaterialState.RawDetail; }
+    bool HasMaterials() const { return MaterialState.HasMaterials; }
 
     class RoofRect {
     public:
@@ -78,6 +88,8 @@ private:
     std::vector<std::vector<RoofQuad>> Meshes;    // index level-2
     Utils::RasterTexture Mips[3];                 // 32x32, 16x16, 8x8
     std::string LoadedTexture;
+    FSO::Common::TS1::RoofLightingInput Lighting;
+    FSO::Common::TS1::RoofUniformMaterialState MaterialState;
 
     void MeshRects(int level);
     void PrepTexture();

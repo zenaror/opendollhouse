@@ -43,6 +43,7 @@ DesktopOptionsSnapshot CaptureDesktopOptions(const front::FrontSettings& st,bool
     out.capabilities[index(Id::auto_center)]=graphics_world!=nullptr;
     out.capabilities[index(Id::quick_tips)]=graphics_world!=nullptr;
     out.capabilities[index(Id::background_simulation)]=host_focus_events;
+    out.capabilities[index(Id::character_detail)]=graphics_world && graphics_world->State.OriginalRoofLighting;
     // No invented AA or ExportHTML service. Background is exposed only by a
     // host that actually supplies focus transitions.
     // Other stored preferences remain visible but unavailable until their actual
@@ -52,6 +53,7 @@ DesktopOptionsSnapshot CaptureDesktopOptions(const front::FrontSettings& st,bool
 bool ApplyDesktopOption(front::FrontSettings& st,const odh_host::OriginalSettingsEvent& event,
         const odh_host::OriginalSettingsCapabilities& capabilities){
     const auto at=index(event.id);if(at>=capabilities.size() || !capabilities[at])return false;
+    if(event.id==Id::character_detail)return st.ApplyCharacterDetail(event.value);
     if(event.id==Id::shadows){
         if(event.value<0 || event.value>1)return false;
         // The World state may differ from the stored preference (new lot or host).

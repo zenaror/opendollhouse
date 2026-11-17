@@ -21,9 +21,42 @@ using FSO::LotView::Model::LotTilePos;
 using namespace FSO::LotView::Utils;
 
 void RoofComponent::SetStylePitch(uint32_t style, float pitch) {
-    Style = style;
-    Pitch = pitch;
+    using namespace FSO::Common::TS1;
+    const float clampedPitch=ClampRoofPitch(pitch);
+    bool styleChanged=Style!=style;
+    if(styleChanged && blueprint) {
+        const auto* content=FSO::Content::Content::Get();
+        if(content && content->WorldRoofs) {
+            const auto before=content->WorldRoofs->IDToName(int(Style));
+            const auto after=content->WorldRoofs->IDToName(int(style));
+            if(!before.empty() && !after.empty()) styleChanged=before!=after;
+        }
+    }
+    const bool pitchChanged=RoofPitchReplacesFactory(Pitch,clampedPitch);
+    if(!styleChanged && !pitchChanged) return;
+    if(styleChanged) Style=style;
+    if(pitchChanged) Pitch=clampedPitch;
+    MaterialState.ResetFactory();
+    auto input=Lighting; input.Mode=MaterialState.Mode; SetLighting(input);
     if (blueprint != nullptr) blueprint->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::ROOF_STYLE_CHANGED, 0, 0, 1));
+}
+
+bool RoofComponent::SetLighting(const FSO::Common::TS1::RoofLightingInput& input) {
+    const bool changed=!Lighting.SameMaterialAs(input);
+    Lighting=input;
+    MaterialState.Mode=input.Mode;
+    return changed;
+}
+
+bool RoofComponent::SetCharacterDetail(int rawDetail,bool applyExisting) {
+    MaterialState.SetCharacterDetail(rawDetail,applyExisting);
+    auto input=Lighting; input.Mode=MaterialState.Mode;
+    return SetLighting(input);
+}
+
+bool RoofComponent::SetLightingAmbient(const FSO::Common::TS1::RoofRGB& ambient) {
+    auto input=Lighting; input.Ambient=ambient;
+    return SetLighting(input);
 }
 
 // ---------------------------------------------------------------- RoofRect
@@ -376,25 +409,32 @@ void RoofComponent::DrawInto(WorldState& world, Framebuffer& target) {
     float texDiv = (float)(1 << mip);
     const RasterTexture* tex = &Mips[mip];
 
-    // TS1 roofs are lit by the outside light (C#: DiffuseColor = world.OutsideColor)
+    const bool sourceLighting=Lighting.Available() && !world.RenderingThumbnail;
+    // The previous consumer remains only while a source material input is
+    // unavailable, or for the separately scoped neutral thumbnail path.
     st::Color out = world.OutsideColor;
     if (out.A == 0 || !target.Room.empty() || target.DeferredOutsideTint) out = st::Color::White(); // tint after raster clamp
     float lr = out.R / 255.0f, lg = out.G / 255.0f, lb = out.B / 255.0f;
 
-    // FSO_CPP: shading relative to the view. Face normals in tile space -> screen direction.
+    // Retained legacy decoration/fallback style. These camera coefficients
+    // never enter ordinary source-lit roof body factors.
     static const st::Vector3 normals[4] = { st::Vector3(0, -1, 0), st::Vector3(1, 0, 0), st::Vector3(0, 1, 0), st::Vector3(-1, 0, 0) };
     float faceShade[4];
+    std::array<FSO::Common::TS1::RoofRGB,4> bodyLight{};
     float slope = std::min(1.0f, Pitch / 0.66f);
     for (int f = 0; f < 4; f++) {
         auto s = ws.GetScreenFromTile(normals[f]);
         bool front = s.Y > 0, left = s.X < 0;
         float base = front ? (left ? 1.0f : 0.80f) : (left ? 0.90f : 0.70f);
         faceShade[f] = 1.0f - (1.0f - base) * (0.35f + 0.65f * slope);
+        if(sourceLighting) bodyLight[size_t(f)]=FSO::Common::TS1::RoofMaterialFactors(
+            FSO::Common::TS1::RoofFaceNormal(f,Pitch),Lighting);
     }
 
     for (size_t li = 0; li < Meshes.size(); li++) {
         int level = (int)li + 2;
         if (level - 1 > world.Level()) break; // roofs over the stories that are shown
+        if(!world.RenderingThumbnail && !Meshes[li].empty()) MaterialState.HasMaterials=true;
         for (auto& q : Meshes[li]) {
             RasterVertex rv[4];
             for (int i = 0; i < 4; i++) {
@@ -405,14 +445,24 @@ void RoofComponent::DrawInto(WorldState& world, Framebuffer& target) {
                 rv[i].z = cam->Depth(WorldSpace::GetWorldFromTile(v.Tile));
                 rv[i].u = v.U / texDiv;
                 rv[i].v = v.V / texDiv;
-                float sh = v.Shade * (q.Fascia ? faceShade[q.Face] * 0.75f : faceShade[q.Face]);
-                rv[i].r = sh * lr; rv[i].g = sh * lg; rv[i].b = sh * lb;
+                if(sourceLighting && !q.Fascia) {
+                    const auto& factors=bodyLight[size_t(q.Face)];
+                    rv[i].r=factors[0]; rv[i].g=factors[1]; rv[i].b=factors[2];
+                } else {
+                    // Fascia is an unproved native decoration, kept as legacy
+                    // style rather than assigning it invented source normals.
+                    const float sh=v.Shade*(q.Fascia ? faceShade[q.Face]*0.75f : faceShade[q.Face]);
+                    rv[i].r=sh*(sourceLighting ? 1.0f : lr);
+                    rv[i].g=sh*(sourceLighting ? 1.0f : lg);
+                    rv[i].b=sh*(sourceLighting ? 1.0f : lb);
+                }
             }
             const RasterTexture* t = q.Fascia ? nullptr : tex;
             uint32_t flat = q.Fascia ? tex->Average : 0;
             // C# index order: (2,1,0) (0,3,2)
-            DrawTriangle(target, rv[2], rv[1], rv[0], t, flat, -0.05f, &LastStats);
-            DrawTriangle(target, rv[0], rv[3], rv[2], t, flat, -0.05f, &LastStats);
+            const uint16_t room=sourceLighting ? uint16_t(65535) : Framebuffer::OUTSIDE_LIGHT_ROOM;
+            DrawTriangle(target, rv[2], rv[1], rv[0], t, flat, -0.05f, &LastStats,room);
+            DrawTriangle(target, rv[0], rv[3], rv[2], t, flat, -0.05f, &LastStats,room);
         }
     }
 }

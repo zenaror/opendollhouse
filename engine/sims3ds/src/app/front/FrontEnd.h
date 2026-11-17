@@ -38,6 +38,15 @@ struct FrontSettings {
     // Graphics Options
     bool Shadows = true, Lighting = true, InterfaceEffects = true;
     int TerrainDetail = 2, CharacterDetail = 2;  // 0 low, 1 med, 2 high
+    // An explicit detail command also reapplies existing materials when its
+    // selected value is unchanged. This event is transient, not a save field.
+    uint64_t CharacterDetailRevision = 0;
+    bool ApplyCharacterDetail(int value) {
+        if (value < 0 || value > 2) return false;
+        CharacterDetail = value;
+        ++CharacterDetailRevision;
+        return true;
+    }
     // Sound Options (0..100)
     int SoundVolume = 80, MusicVolume = 80, VoxVolume = 80;
     // Play Options

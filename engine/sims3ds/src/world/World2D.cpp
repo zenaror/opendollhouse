@@ -464,6 +464,15 @@ void World2D::PreDraw(WorldState& state) {
     redrawFloor |= terrainPeriod != RenderTerrainPeriod || terrainDetail != RenderTerrainDetail;
     RenderTerrainPeriod = terrainPeriod;
     RenderTerrainDetail = terrainDetail;
+    // Roof light is already resolved by its own material pass. It neither
+    // follows the sprite outside palette nor requires rebuilding geometry.
+    // Settle one input for both the retained WALL layer and fragment replay.
+    const auto roofLight = state.RenderingThumbnail ? FSO::Common::TS1::RoofLightingInput{} :
+        Blueprint->RoofComp.GetLighting();
+    if (!RenderRoofLighting.SameMaterialAs(roofLight)) {
+        if (state.DrawRoofs) redrawWall = true;
+        RenderRoofLighting = roofLight;
+    }
     bool sizeChanged = Composite.Width != bw || Composite.Height != bh;
     auto newOrigin = GetBufferOrigin(pxOffset);
     const bool bufferShifted = HaveOrigin && newOrigin != Origin;

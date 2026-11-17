@@ -100,6 +100,12 @@ public:
     // Presentation only: authored object light can be hidden without changing
     // the simulation's contributions or room score. Daylight remains visible.
     bool ObjectLighting = true;
+    // Roof material commands are independent from sprite room lighting.
+    // The source global is copied when a new world is bound; later explicit
+    // commands update existing materials without replaying unrelated options.
+    bool OriginalRoofLighting = false;
+    int CharacterDetail = -1;
+    uint64_t CharacterDetailRevision = 0;
     st::Rectangle ThumbnailGroundBounds;
     bool ThumbnailGroundTile(int x, int y) const {
         return !RenderingThumbnail || ThumbnailGroundBounds.Width <= 0 ||

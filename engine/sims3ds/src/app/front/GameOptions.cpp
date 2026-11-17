@@ -170,7 +170,9 @@ bool GameOptions::Tap(const std::string& id, int) {
     else if (id == "gopt_lighting") { st.Lighting = !st.Lighting; help(20); Changed(); }
     else if (id == "gopt_effects") { st.InterfaceEffects = !st.InterfaceEffects; help(23); Changed(); }
     else if (id.rfind("gopt_terrain", 0) == 0) { st.TerrainDetail = atoi(id.c_str() + 12); help(28); Changed(); }
-    else if (id.rfind("gopt_chardetail", 0) == 0) { st.CharacterDetail = atoi(id.c_str() + 15); help(31); Changed(); }
+    else if (id.rfind("gopt_chardetail", 0) == 0) {
+        if (st.ApplyCharacterDetail(atoi(id.c_str() + 15))) { help(31); Changed(); }
+    }
     else if (id.rfind("gopt_sl_", 0) == 0) {
         std::string rest = id.substr(8);
         size_t us = rest.rfind('_');

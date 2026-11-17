@@ -32,6 +32,13 @@ int main(){try{
     struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code e;std::filesystem::remove_all(p,e);}}cleanup{dir};
     const auto source=dir/"source.txt";
     front::FrontSettings defaults;
+    need(defaults.CharacterDetailRevision==0,"quality apply history starts empty and is not a saved preference");
+    need(defaults.ApplyCharacterDetail(1)&&defaults.CharacterDetail==1&&defaults.CharacterDetailRevision==1,
+        "explicit quality command carries raw global medium");
+    need(defaults.ApplyCharacterDetail(1)&&defaults.CharacterDetailRevision==2,
+        "reapplying selected quality is still an explicit material event");
+    need(!defaults.ApplyCharacterDetail(-1)&&!defaults.ApplyCharacterDetail(3)&&
+         defaults.CharacterDetail==1&&defaults.CharacterDetailRevision==2,"invalid quality command preserves event history");
     need(defaults.SoundVolume==80&&defaults.MusicVolume==80&&defaults.VoxVolume==80&&!defaults.BackgroundSimulation,
         "original factory volume8 and background-off defaults");
     const int originalLevels[]={0,300,390,490,590,690,790,840,895,960,1024};
@@ -107,6 +114,18 @@ int main(){try{
         !graphicsSnapshot.capabilities[size_t(Id::terrain_detail)]&&
         !graphicsSnapshot.capabilities[size_t(Id::character_detail)],
         "existing shadow/object-light renderers offered; missing quality services remain unavailable");
+    world.State.OriginalRoofLighting=true;
+    const auto roofSnapshot=CaptureDesktopOptions(graphics,false,{},&world);
+    need(roofSnapshot.capabilities[size_t(Id::character_detail)],"source-bound roof exposes original material detail command");
+    const auto originalDetail=graphics.CharacterDetail;
+    need(ApplyDesktopOption(graphics,{Id::character_detail,1},roofSnapshot.capabilities)&&
+         graphics.CharacterDetail==1&&graphics.CharacterDetailRevision==1,"original radio handler emits medium apply");
+    need(ApplyDesktopOption(graphics,{Id::character_detail,1},roofSnapshot.capabilities)&&
+         graphics.CharacterDetailRevision==2,"selected radio emits a second material apply");
+    need(!ApplyDesktopOption(graphics,{Id::character_detail,3},roofSnapshot.capabilities)&&
+         graphics.CharacterDetailRevision==2,"out of range radio emits no event");
+    graphics.CharacterDetail=originalDetail;graphics.CharacterDetailRevision=0;
+    world.State.OriginalRoofLighting=false;
     need(!ApplyDesktopOption(graphics,{Id::shadows,2},graphicsSnapshot.capabilities),"malformed shadow commands rejected");
     const auto unbound=CaptureDesktopOptions(graphics,false,{});
     need(!ApplyDesktopOption(graphics,{Id::shadows,1},unbound.capabilities),"no World means no editable shadow capability");
