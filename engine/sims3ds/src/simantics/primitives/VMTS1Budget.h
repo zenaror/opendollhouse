@@ -11,6 +11,7 @@
 // stands, tips, rentals, Vacation tokens, Superstar pay, Makin' Magic...
 #pragma once
 #include "simantics/primitives/VMTransferFunds.h"
+#include <array>
 
 namespace FSO { namespace SimAntics { class VM; } }
 namespace FSO { namespace SimAntics { namespace Primitives {
@@ -19,9 +20,19 @@ namespace FSO { namespace SimAntics { namespace Primitives {
 class VMTS1Budget : public Engine::VMPrimitiveHandler {
 public:
     Engine::VMPrimitiveExitCode Execute(Engine::VMStackFrame* context, Engine::VMPrimitiveOperand* args) override;
-    /// TS1(sims): the lot family's budget (globals 13/14 when a family is on the lot, else FAMI.Budget).
+    using DaysType = std::array<std::array<int32_t, 8>, 6>;
+    // Installs the classic lot state without a transaction or changing FAMI.
+    static void LoadState(FSO::SimAntics::VM* vm, int32_t purse, const DaysType& days);
+    // Raw purse is distinct from the Global32==1 script getter sentinel.
+    static int32_t GetRawBudget(FSO::SimAntics::VM* vm);
     static int32_t GetBudget(FSO::SimAntics::VM* vm);
+    // Administrative/family synchronization: no ledger post.
     static void SetBudget(FSO::SimAntics::VM* vm, int32_t budget);
+    // Source update: caller checks affordability; Global32==1 suppresses commit.
+    // Selector 8 intentionally changes purse only, with an explicit diagnostic.
+    static bool Commit(FSO::SimAntics::VM* vm, uint8_t expense, int32_t amount);
+    // Source copies history in ascending order, propagating prior history[0].
+    static void RolloverDay(FSO::SimAntics::VM* vm);
 private:
     VMTransferFunds TSO; // non-TS1 VMs keep FreeSims' behaviour
 };

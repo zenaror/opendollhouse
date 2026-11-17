@@ -71,9 +71,14 @@ VMPrimitiveExitCode VMRunFunctionalTree::Execute(VMStackFrame* context, VMPrimit
             childFrame->CodeOwner = tree->owner;
             childFrame->StackObject = ent;
             childFrame->ActionTree = context->ActionTree;
-            if (operand->Flags > 0 && context->ActionTree && context->Thread->ActiveAction() != nullptr) context->Thread->ActiveAction()->IconOwner(context->StackObject); // TS1(sims): FreeSO ActiveAction
+            if (!context->VM()->TS1 && operand->Flags > 0 && context->ActionTree && context->Thread->ActiveAction() != nullptr)
+                context->Thread->ActiveAction()->IconOwner(context->StackObject);
             childFrame->Args = std::vector<int16_t>(routine->Arguments);
-            context->Thread->Push(childFrame);
+            if (context->Thread->Push(childFrame) && context->VM()->TS1 && !context->Thread->IsCheck) {
+                context->Thread->AcquireTS1ObjectUse(ent,operand->Flags & 1);
+                if ((operand->Flags & 1) && context->ActionTree && context->Thread->ActiveAction())
+                    context->Thread->ActiveAction()->IconOwner(context->StackObject);
+            }
             return VMPrimitiveExitCode::CONTINUE;
         }
         else

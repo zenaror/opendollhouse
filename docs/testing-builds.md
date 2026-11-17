@@ -36,3 +36,8 @@ The Sims data: you must supply your own complete installation.
 Close the game before updating, keep the package files together and preserve
 your saves. Do not use the build delivery folder as a save folder.
 Also keep the licenses and corresponding source code supplied with the build.
+
+Development builds on `milestone/2-original-parity` write newer saves than the
+v0.0.1 packages can read. Keep a backup before testing, and use matching updated
+builds when moving a save between devices. Updating the Linux package does not
+update the packages for other systems.

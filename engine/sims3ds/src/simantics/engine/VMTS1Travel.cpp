@@ -6,6 +6,7 @@
 // TS1(sims): see VMTS1Travel.h. RequestLotSwitch / VerifyFamily / ActivateFamily / the sim data helpers are
 // translated from FreeSO (VMGenericTS1Call ChangeToLotInTemp0, VMTS1LotState); Arrive is new.
 #include "simantics/engine/VMTS1Travel.h"
+#include "simantics/primitives/VMTS1Budget.h"
 #include "simantics/engine/VMThread.h"
 #include "simantics/engine/VMTS1Neighbourhood.h"
 #include "simantics/engine/VMTS1PersonDataState.h"
@@ -104,10 +105,10 @@ void VMTS1Travel::ActivateFamily(VM* vm, FAMI* family)
     vm->SetGlobalValue(VMTS1Neighbourhood::GLOBAL_CURRENT_FAMILY, (int16_t)family->ChunkID);
     // TS1(sims): the family's money (globals 13/14, read by Transfer Funds and the UI) comes with it to a
     // visited lot (a Downtown/Vacation/community lot has no resident family, so they were 0: "§0 on arrival").
-    vm->SetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_MOD, (int16_t)(family->Budget % 10000));
-    vm->SetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_DIV, (int16_t)(family->Budget / 10000));
     auto prov = VMTS1Neighbourhood::Provider();
     if (prov != nullptr) prov->GameState.ActiveFamily = family;
+    vm->TS1Budget.LegacyOwnerRestricted = false;
+    Primitives::VMTS1Budget::SetBudget(vm, family->Budget);
     ApplyFamilySpells(vm); // FIX(sims)
 }
 

@@ -30,7 +30,14 @@ public:
     }
     int32_t Seconds() const { return (TicksPerMinute == 0) ? 0 : ((MinuteFractions * 60) / TicksPerMinute); }
 
-    void Tick() {
+    void FinishCalendarCarry() {
+        if (DayOfMonth > 30) {
+            DayOfMonth=1;
+            if (++Month > 12) { Month=1; ++Year; }
+        }
+    }
+
+    void Tick(bool deferCalendarCarry=false) {
         // TS1(sims): FreeSims forced the TSO rate (30 * 5 ticks per game minute) here on every tick, overriding
         // VMContext's 30. FreeSO keeps the context's value: The Sims 1 runs 30 ticks per game minute ("1 minute per
         // irl second"). At 150, everything Sims do (animations, routes, idle loops counted in ticks) took a fifth of
@@ -45,13 +52,8 @@ public:
                     // TS1(sims): FreeSO VMClock — the date advances at midnight (30-day months). FreeSims never
                     // advanced it, so day-keyed trees (car portal 'check for school bus schedule': once per Day of
                     // Month) ran only on the first day: no school bus from day 2 on.
-                    if (++DayOfMonth > 30) {
-                        DayOfMonth = 1;
-                        if (++Month > 12) {
-                            Month = 1;
-                            Year++;
-                        }
-                    }
+                    ++DayOfMonth;
+                    if (!deferCalendarCarry) FinishCalendarCarry();
                 }
             }
         }

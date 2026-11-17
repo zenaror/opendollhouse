@@ -48,6 +48,43 @@ static OBJTEntry classicType(uint32_t guid,uint16_t type) {
  bytes.WriteUInt16(type);bytes.WriteUInt16(uint16_t(OBJDType::Normal));bytes.WriteByte('x');bytes.WriteByte(0);
  auto raw=bytes.TakeArray();st::Reader input(raw);return OBJTEntry(input,2);
 }
+static void portalPreviewContract() {
+ using namespace FSO::LotView::Model;
+ VMContext ctx(nullptr);VM vm(&ctx,nullptr);ctx.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&ctx));
+ ctx.Architecture()->Rooms[0].Map.assign(64,0);ctx.Architecture()->Rooms[0].Map[9]=1;ctx.Architecture()->Rooms[0].Map[10]=2;ctx.RoomInfo.resize(3);
+ IffFile iff;FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"portal-preview",true);
+ OBJD def;def.GUID=0xaabbccdd;FSO::Content::GameObject object;object.OBJ=&def;object.GUID=def.GUID;object.Resource=&resource;
+ VMGameObject a(&object,nullptr),b(&object,nullptr);Entities::VMMultitileGroup group;a.MultitileGroup=b.MultitileGroup=&group;group.AddObject(&a);group.AddObject(&b);
+ vm.AddEntity(&a);vm.AddEntity(&b);a.Position(LotTilePos(24,24,1));b.Position(LotTilePos(40,24,1));
+ a.EntryPoints[15].ActionFunction=b.EntryPoints[15].ActionFunction=1;
+ a.Thread=std::make_unique<VMThread>(&ctx,&a,4);auto pending=std::make_shared<VMQueuedAction>();pending->Callee=&b;a.Thread->Queue.push_back(pending);
+ ctx.AddRoomPortal(&a,1);Model::VMRoomPortal edge(a.ObjectID,2);
+ st::Writer output(st::Endian::Little);Archive out(output);InteractionCheckpointCodec encoder(vm,out,12);encoder.portal(edge);
+ VMRoutingFrame route;route.Rooms.push_back(edge);st::Writer routeOutput(st::Endian::Little);Archive routeOut(routeOutput);InteractionCheckpointCodec routeEncoder(vm,routeOut,12);routeEncoder.roomRoute(route);auto routeBytes=routeOutput.ToArray();
+ auto bytes=output.ToArray();ctx.RoomInfo[1].Portals.clear();
+ auto decode=[&](const std::vector<uint8_t>& payload,bool preview){st::Reader input(payload);Archive in(input);InteractionCheckpointCodec codec(vm,in,12);codec.PreviewUnpublishedPortals=preview;Model::VMRoomPortal result;codec.portal(result);return result;};
+ const auto beforeA=a.Position(),beforeB=b.Position();
+ check(decode(bytes,true)==edge && ctx.RoomInfo[1].Portals.empty() && a.Position()==beforeA && b.Position()==beforeB,"portal preflight derives unpublished directed edge without publishing or moving objects");
+ st::Reader routeInput(routeBytes);Archive routeIn(routeInput);InteractionCheckpointCodec routeDecoder(vm,routeIn,12);routeDecoder.PreviewUnpublishedPortals=true;VMRoutingFrame routeRestored;routeDecoder.roomRoute(routeRestored);
+ check(routeRestored.Rooms.size()==1 && routeRestored.Rooms.front()==edge && a.Thread->Queue.size()==1 && a.Thread->Queue.front()==pending && ctx.RoomInfo[1].Portals.empty(),"pending route edge validates before publication without consuming the queued action");
+ rejects([&]{decode(bytes,false);},"direct graph validation still rejects an unpublished edge");
+ auto badRoom=bytes;badRoom[8]=0;badRoom[9]=0;rejects([&]{decode(badRoom,true);},"portal preview rejects changed source room");
+ auto badOID=bytes;badOID[0]=127;badOID[1]=0;rejects([&]{decode(badOID,true);},"portal preview rejects unresolved portal identity");
+ auto badTarget=bytes;badTarget[6]=0;badTarget[7]=0;rejects([&]{decode(badTarget,true);},"portal preview rejects a changed directed destination");
+ a.GhostImage=true;rejects([&]{decode(bytes,true);},"portal preview rejects a ghost source");a.GhostImage=false;
+ a.EntryPoints[15].ActionFunction=0;rejects([&]{decode(bytes,true);},"portal preview rejects missing source portal entry");a.EntryPoints[15].ActionFunction=1;
+ a.MultitileGroup=nullptr;rejects([&]{decode(bytes,true);},"portal preview rejects missing source group");a.MultitileGroup=&group;
+ a.Position(LotTilePos(24,24,0));auto lowLevel=bytes;lowLevel[8]=0;lowLevel[9]=0;
+ rejects([&]{decode(lowLevel,true);},"portal preview rejects an unregistrable source level even with matching room");a.Position(beforeA);
+ b.EntryPoints[15].ActionFunction=0;rejects([&]{decode(bytes,true);},"portal preview rejects missing sibling portal entry");b.EntryPoints[15].ActionFunction=1;
+ VMGameObject c(&object,nullptr);c.MultitileGroup=&group;c.Position(LotTilePos(56,24,1));c.EntryPoints[15].ActionFunction=1;
+ group.Objects.insert(group.Objects.begin()+1,&c);
+ rejects([&]{decode(bytes,true);},"portal preview honors first eligible sibling order");group.Objects.erase(group.Objects.begin()+1);
+ check(a.Thread->Queue.size()==1 && a.Thread->Queue.front()==pending && ctx.RoomInfo[1].Portals.empty() && a.Position()==beforeA,"rejected previews leave the pending action and portal graph unchanged");
+ ctx.RegisterObjectPos(&a);check(decode(bytes,false)==edge,"published graph validates after real portal registration");
+ ctx.RoomInfo[1].Portals.clear();rejects([&]{decode(bytes,false);},"final validation requires the published edge");
+}
+
 static void classicContract() {
  VM::UseWorld(false);VMContext context(nullptr);VM vm(&context,nullptr);
  IffFile iff;FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"classic fixture",true);
@@ -94,6 +131,7 @@ static void classicContract() {
  person.ActiveInteraction.Flags=int(OBJMInteractionFlags::UserInitiated);person.ActiveInteraction.Priority=50;
  person.InteractionQueue.push_back(person.ActiveInteraction);person.InteractionQueue.back().UID=0;
  OBJMObjectUse use;use.TargetID=10;use.StackLength=2;person.ObjectUses.push_back(use);
+ furniture.ObjectData.at(size_t(Model::VMStackObjectVariable::UseCount))=1; // already loaded from classic ObjM
  OBJMMotiveDelta delta;delta.Motive=int(Model::VMMotive::Fun);delta.TickDelta=1/1800.f;delta.StopAt=80;person.MotiveDeltas.push_back(delta);
  auto restore=[&]{st::Writer output;Archive archive(output);InteractionCheckpointCodec codec(vm,archive,7);codec.classic(snapshot,types);};
  auto oldFurniture=furniture.Thread.get(),oldActor=actor.Thread.get();
@@ -242,6 +280,18 @@ static void dialogContract() {
  actor.Thread=std::move(original);
  auto write=[&](VMThread& thread,uint32_t version){st::Writer bytes(st::Endian::Little);Archive archive(bytes);InteractionCheckpointCodec codec(vm,archive,version);codec.thread(thread);return bytes.ToArray();};
  auto read=[&](const std::vector<uint8_t>& bytes,uint32_t version){auto candidate=std::make_unique<VMThread>(&context,&actor,16);st::Reader in(bytes);Archive archive(in);InteractionCheckpointCodec codec(vm,archive,version);codec.thread(*candidate);check(!in.has_more(),"thread payload consumed exactly");return candidate;};
+ VMThread depthFixture(&context,&actor,4);auto first=std::make_shared<VMStackFrame>();first->Routine=frame->Routine;
+ auto internal=std::make_shared<VMRoutingFrame>();auto last=std::make_shared<VMStackFrame>();last->Routine=frame->Routine;
+ depthFixture.Stack={first,internal,last};
+ check(depthFixture.TS1ClassicUseDepth(3)==2&&depthFixture.TS1NativeUseDepth(2)==3,"authored-route-authored use depth maps 3 to 2 and back");
+ rejects([&]{depthFixture.TS1ClassicUseDepth(2);},"a use cannot end on an internal routing frame");
+ actor.Thread->TS1ObjectUses.push_back({&actor,1,1});actor.Thread->TS1FlaggedUseTarget=&actor;
+ actor.Thread->TS1LastInteraction.TargetID=10;actor.Thread->TS1LastInteraction.Icon=10;actor.Thread->TS1LastInteraction.TTAIndex=4;
+ auto useBytes=write(*actor.Thread,12);auto useRestored=read(useBytes,12);
+ check(useRestored->TS1ObjectUses.size()==1 && useRestored->TS1ObjectUses[0].Target==&actor && useRestored->TS1ObjectUses[0].StackDepth==1 &&
+       useRestored->TS1ObjectUses[0].Flag==1 && useRestored->TS1FlaggedUseTarget==&actor && useRestored->TS1LastInteraction.Icon==10,
+       "v12 persists object uses and current/last icon without reacquisition");
+ actor.Thread->TS1ObjectUses.clear();actor.Thread->TS1FlaggedUseTarget=nullptr;actor.Thread->TS1LastInteraction={};
  const auto legacy=write(*actor.Thread,7);auto old=read(legacy,7);
  check(!old->BlockingState&&old->Stack.back()->InstructionPointer==0&&write(*old,7)==legacy,"version7 thread byte layout remains readable and exact");
  auto pending=std::make_shared<Primitives::VMDialogResult>();pending->Type=operand.Type;pending->WaitTime=123;pending->Version=42;pending->Timeout=456;pending->ResponseText="accepted text";pending->HasDisplayed=true;
@@ -475,6 +525,7 @@ int main(){try{
  auto pending=std::make_shared<VMQueuedAction>();pending->Callee=&live;pending->UID=44;thread.Queue.push_back(pending);thread.TempRegisters[2]=73;thread.Stack.push_back(mainFrame);read(bytes,*frame);thread.Stack.push_back(frame);thread.NextInstruction();
  check(thread.Stack.size()==1&&thread.Stack[0]==mainFrame&&mainFrame->InstructionPointer==2&&mainFrame->Args==std::vector<int16_t>{42}&&mainFrame->Locals==std::vector<int16_t>{123},"real VMThread preserves Main and takes authored false edge");
  check(thread.Queue.size()==1&&thread.Queue[0]==pending&&thread.TempRegisters[2]==73&&thread.ActiveQueueBlock==-1,"failed route leaves pending work and thread registers intact");
+ portalPreviewContract();
  classicContract();
  dialogContract();
  footprintConsumerContract();

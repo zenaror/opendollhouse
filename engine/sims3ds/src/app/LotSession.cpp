@@ -24,6 +24,7 @@
 #include "app/WorldPicking.h"
 #include "app/live/UIHeadlineRenderer.h"
 #include "simantics/engine/VMTS1Neighbourhood.h"
+#include "simantics/primitives/VMTS1Budget.h"
 #include "content/ContentManager.h"
 #include "content/TS1NeighbourProvider.h"
 #include "simantics/VM.h"
@@ -527,8 +528,8 @@ void LotSession::Update(int n) {
         // TS1(sims): objects lose value once a day (OBJD DailyDepreciation, down to DepreciationLimit), on the
         // object's current value (object data 41 CurrentValue, saved in the house file's OBJM records)
         int day = _Ctx->Clock->DayOfMonth;
-        if (_LastDepreciationDay < 0) _LastDepreciationDay = day;
-        else if (day != _LastDepreciationDay) { _LastDepreciationDay = day; DepreciateObjects(); }
+        if (!_VM->TS1 && _LastDepreciationDay < 0) _LastDepreciationDay = day;
+        else if (!_VM->TS1 && day != _LastDepreciationDay) { _LastDepreciationDay = day; DepreciateObjects(); }
     }
 }
 
@@ -550,6 +551,7 @@ void LotSession::DepreciateObjects() {
 int LotSession::Budget() {
     using Engine::Utils::VMTS1Neighbourhood;
     if (!_VM) return 0;
+    if (_VM->TS1) return Primitives::VMTS1Budget::GetRawBudget(_VM.get());
     return _VM->GetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_DIV) * 10000 + _VM->GetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_MOD);
 }
 
@@ -558,6 +560,7 @@ void LotSession::SetBudget(int value) {
     using Engine::Utils::VMTS1Neighbourhood;
     if (!_VM) return;
     if (value < 0) value = 0;
+    if (_VM->TS1) { Primitives::VMTS1Budget::SetBudget(_VM.get(), value); return; }
     _VM->SetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_DIV, (int16_t)(value / 10000));
     _VM->SetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_MOD, (int16_t)(value % 10000));
 }

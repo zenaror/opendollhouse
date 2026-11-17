@@ -14,6 +14,7 @@
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/engine/VMTS1Neighbourhood.h"
 #include "simantics/engine/VMTS1Travel.h"
+#include "simantics/primitives/VMTS1Budget.h"
 #include "simantics/primitives/VMFindLocationFor.h"
 #include "content/ContentManager.h"
 #include "content/TS1NeighbourProvider.h"
@@ -105,8 +106,8 @@ std::vector<VMAvatar*> VMTS1FamilyLoader::LoadFamily(int16_t houseNumber, FAMI* 
     if (prov->Neighborhood != nullptr) prov->Neighborhood->NeighborhoodData[2] = houseNumber;
     family->SelectWholeFamily();
     VM->SetGlobalValue(VMTS1Neighbourhood::GLOBAL_CURRENT_FAMILY, (int16_t)family->ChunkID);
-    VM->SetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_MOD, (int16_t)(family->Budget % 10000));
-    VM->SetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_DIV, (int16_t)(family->Budget / 10000));
+    VM->TS1Budget.LegacyOwnerRestricted = false;
+    FSO::SimAntics::Primitives::VMTS1Budget::SetBudget(VM, family->Budget);
     VMTS1Travel::ApplyFamilySpells(VM); // FIX(sims): Makin' Magic family spells into the Magic Controller
 
     auto arrival = FindArrivalPoint();

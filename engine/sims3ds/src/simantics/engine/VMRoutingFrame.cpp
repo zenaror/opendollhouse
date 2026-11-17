@@ -132,7 +132,16 @@ void VMRoutingFrame::HardFail(VMRouteFailCode code, VMEntity* blocker) {
     auto avatar = (VMAvatar*)Caller;
     if (CallFailureTrees && ParentRoute == nullptr) {
         auto bhav = Global()->Resource->Get<BHAV>(ROUTE_FAIL_TREE);
+        const auto depth=Thread->Stack.size();
         Thread->ExecuteSubRoutine(this, bhav, CodeOwner, Primitives::VMSubRoutineOperand((int16_t)code, (blocker == nullptr) ? (int16_t)0 : blocker->ObjectID, 0, 0));
+        if (VM()->TS1 && !Thread->IsCheck && Thread->Stack.size()>depth) {
+            auto target=VM()->GetObjectById(StackObjectID());
+            if (target && !target->Dead) {
+                auto child=Thread->Stack.back();
+                child->Callee=target;child->StackObject=target;child->StackObjectRawID=target->ObjectID;
+                Thread->AcquireTS1ObjectUse(target);
+            }
+        }
     }
     avatar->SetPersonData(VMPersonDataVariable::RouteResult, (int16_t)code);
     // ADDED(sims): diagnostics for simlife (ROUTE_DEBUG=1).
@@ -395,7 +404,8 @@ bool VMRoutingFrame::PushEntryPoint(int32_t entryPoint, VMEntity* ent) {
             childFrame->Args.assign(routine->Arguments, 0);
             if (VM()->TS1 && TS1PendingFootprintKnown)
                 static_cast<VMAvatar*>(Caller)->SetPersonData(VMPersonDataVariable::RouteFootprintMask, 0);
-            Thread->Push(childFrame);
+            if (Thread->Push(childFrame) && VM()->TS1 && !Thread->IsCheck)
+                Thread->AcquireTS1ObjectUse(ent);
             return true;
         } else {
             return false; //could not execute portal function. todo: re-evaluate room route

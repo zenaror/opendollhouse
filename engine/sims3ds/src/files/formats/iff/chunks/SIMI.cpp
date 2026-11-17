@@ -6,61 +6,44 @@
 // Translated from FreeSims sims.files/formats/iff/chunks/SIMI.cs
 #include "files/formats/iff/chunks/SIMI.h"
 #include "files/formats/iff/IffFile.h"
+#include "files/Hash.h"
+#include "simantics/utils/VMTS1InteractionCheckpoint.h"
+#include <algorithm>
 
 namespace FSO { namespace Files { namespace Formats { namespace IFF { namespace Chunks {
 
-void SIMI::Read(IffFile* iff, st::Reader& stream)
-{
-    (void)iff;
-    st::Reader& io = stream;
-    io.ByteOrder(st::Endian::Little);
-    {
-        io.ReadUInt32(); //pad
-        Version = io.ReadUInt32();
-        std::string magic = io.ReadCString(4);
-        (void)magic;
-        if (Version < 0x12) throw std::runtime_error("SIMI: unsupported pre-0x12 layout");
-        const auto items = SerializedGlobalCount(Version);
+void SIMI::ReadMetadata(st::Reader& stream) {
+    if (stream.size() > INT32_MAX) throw std::runtime_error("SIMI: payload too large");
+    stream.seek(0);SourceBytes=uint32_t(stream.size());
+    SourceSignature=Files::Hash::CalculateHash(stream.raw(stream.size()),int32_t(stream.size()));
+    stream.seek(0);stream.ByteOrder(st::Endian::Little);
+    stream.ReadUInt32();Version=stream.ReadUInt32();
+    if (stream.ReadCString(4)!="IMIS") throw std::runtime_error("SIMI: invalid magic");
+    if (Version<0x12) throw std::runtime_error("SIMI: unsupported pre-0x12 layout");
+    const auto items=SerializedGlobalCount(Version);GlobalData.assign(38,0);GlobalTail.clear();
+    for(size_t i=0;i<items;++i) {auto value=stream.ReadInt16();if(i<GlobalData.size())GlobalData[i]=value;else GlobalTail.push_back(value);}
+    SimulationTicks=stream.ReadUInt32();SchedulerCursor=stream.ReadInt16();Unknown3=stream.ReadInt32();
+    GUID1=stream.ReadInt32();GUID2=stream.ReadInt32();Unknown4=stream.ReadInt32();
+    if (Version>=0x25) { LotValue=stream.ReadInt32();ObjectsValue=stream.ReadInt32();ArchitectureValue=stream.ReadInt32(); }
+    else { LotValue=4500;ObjectsValue=0;ArchitectureValue=0; }
+    BudgetDays.clear();UnknownTail.clear();LegacyBudgetCandidate=false;
+}
 
-        GlobalData = std::vector<int16_t>(38);
-        GlobalTail.clear();
-
-        for (size_t i=0; i<items; i++)
-        {
-            auto dat = io.ReadInt16();
-            if (i < GlobalData.size())
-                GlobalData[i] = dat;
-            else GlobalTail.push_back(dat);
-        }
-
-        SimulationTicks = io.ReadUInt32();
-        SchedulerCursor = io.ReadInt16();
-        Unknown3 = io.ReadInt32();
-        GUID1 = io.ReadInt32();
-        GUID2 = io.ReadInt32();
-        Unknown4 = io.ReadInt32();
-        LotValue = io.ReadInt32();
-        ObjectsValue = io.ReadInt32();
-        ArchitectureValue = io.ReadInt32();
-
-        //int Unknown3 (0)
-        //int GUID1
-        //int GUID2 (changes on bulldoze)
-        //int Unknown4 (0)
-        //int LotValue
-        //int ObjectsValue
-        //int ArchitectureValue 
-
-        //the sims tracked a sim's budget over the past few days of gameplay.
-        //this drove the budget window, which never actually came of much use to anyone ever.
-
-        BudgetDays.clear();
-        BudgetDays.reserve(6);
-        for (int i=0; i<6; i++)
-        {
-            BudgetDays.push_back(SIMIBudgetDay(io));
+void SIMI::Read(IffFile* iff, st::Reader& stream) {
+    ReadMetadata(stream);
+    // Old native writer emitted six marker-only zeros. This compatibility
+    // candidate is not proof of origin and requires a matching legacy ODHI
+    // envelope; full execution validation remains mandatory before admission.
+    if (Version>=0x26 && stream.size()-stream.pos()==24 && iff) {
+        const auto start=stream.pos();const auto bytes=stream.ReadBytes(24);stream.seek(start);
+        if (std::all_of(bytes.begin(),bytes.end(),[](uint8_t b){return b==0;}) &&
+            FSO::SimAntics::Engine::Utils::VMTS1InteractionCheckpoint::PreflightLegacyBudget(*iff)) {
+            stream.ReadBytes(24);BudgetDays.assign(6,SIMIBudgetDay{});if(Version<0x34)GlobalData[28]=0;LegacyBudgetCandidate=true;return;
         }
     }
+    if (Version>=0x26) for(int i=0;i<6;++i) BudgetDays.emplace_back(stream);
+    if (Version<0x34) {BudgetDays.assign(6,SIMIBudgetDay{});GlobalData[28]=0;}
+    UnknownTail=stream.ReadBytes(stream.size()-stream.pos());
 }
 
 bool SIMI::Write(IffFile* iff, st::Writer& stream)
@@ -92,15 +75,14 @@ bool SIMI::Write(IffFile* iff, st::Writer& stream)
         io.WriteInt32(GUID1);
         io.WriteInt32(GUID2);
         io.WriteInt32(Unknown4);
-        io.WriteInt32(LotValue);
-        io.WriteInt32(ObjectsValue);
-        io.WriteInt32(ArchitectureValue);
+        if (version>=0x25) { io.WriteInt32(LotValue); io.WriteInt32(ObjectsValue); io.WriteInt32(ArchitectureValue); }
 
-        for (int i = 0; i < 6; i++)
+        if (version >= 0x26) for (int i = 0; i < 6; i++)
         {
             if (size_t(i) < BudgetDays.size()) BudgetDays[size_t(i)].Write(io);
-            else io.WriteInt32(0);
+            else { SIMIBudgetDay empty; empty.Write(io); }
         }
+        io.WriteBytes(UnknownTail);
     }
     return true;
 }

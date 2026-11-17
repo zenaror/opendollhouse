@@ -162,6 +162,11 @@ void VMEntity::GetUsers(VMContext* context, std::unordered_set<VMEntity*>* users
     for (auto ava : context->SetToNextCache->Avatars) { // C#: ObjectQueries.Avatars (here only SetToNextCache tracks avatars)
         if (ava == this || ava->Thread == nullptr) continue;
         bool found = false;
+        if (context->VM->TS1) {
+            for (const auto& use : ava->Thread->TS1ObjectUses) if (use.Target == this) { found=true; break; }
+            if (found) users->insert(ava);
+            continue;
+        }
         auto& q = ava->Thread->Queue;
         for (int i = 0; i <= ava->Thread->ActiveQueueBlock && i < (int)q.size(); i++) {
             if (q[i]->Callee == this) { found = true; break; }
@@ -179,7 +184,9 @@ int16_t VMEntity::UseCount() {
     // acquiring an object-use frame increments only its exact target. Separate
     // interaction leaders in one multitile object can therefore be used apart.
     // Group-wide placement/reservation safety remains in IsInUse.
-    if (Thread->Context->VM->TS1) GetUsers(Thread->Context, &users);
+    if (Thread->Context->VM->TS1) {
+        return ObjectData.at(size_t(VMStackObjectVariable::UseCount));
+    }
     else if (MultitileGroup != nullptr) for (auto obj : MultitileGroup->Objects) obj->GetUsers(Thread->Context, &users);
     else GetUsers(Thread->Context, &users);
     return (int16_t)users.size();
@@ -399,6 +406,7 @@ void VMEntity::RestartAfterRestore(VMContext* context) {
 void VMEntity::Reset(VMContext* context) {
     if (this->Thread == nullptr) return;
     if (context->VM->TS1) TS1SetSchedulerDelay(-1);
+    if (context->VM->TS1) Thread->DiscardTS1ObjectUses();
     this->Thread->Stack.clear();
     this->Thread->Queue.clear();
     Thread->QueueDirty = true;

@@ -17,9 +17,15 @@ public:
     // Only a freshly synchronized, validated ObjM can carry authoritative
     // manager words. Direct execution overlays retain the v8 compatibility path.
     static void Capture(VM& vm, Files::Formats::IFF::IffRawFile& house, bool departing,
-                        bool schedulerWordsBound = false);
+                        bool schedulerWordsBound = false, uint32_t outputVersion = 12);
+    // Verify v11 SIMI binding before publishing globals or constructing a lot.
+    // Structural preflight only: never proves origin or admits a legacy candidate.
+    static bool PreflightLegacyBudget(Files::Formats::IFF::IffFile& house);
+    static void ValidateFinanceBinding(Files::Formats::IFF::IffFile& house);
     static bool IsDeparture(Files::Formats::IFF::IffFile& house);
-    static void Restore(VM& vm, Files::Formats::IFF::IffFile& house, bool resumeDispatch = false);
+    static void Restore(VM& vm, Files::Formats::IFF::IffFile& house, bool resumeDispatch = false,
+                        bool validateOnly = false, int32_t* legacyPurse = nullptr,
+                        bool previewUnpublishedPortals = false);
 };
 }}
 }}

@@ -41,6 +41,14 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Saving retains the full household balance and daily expense history,
+  including the tested transition to a new day.
+- Sims release objects when their interaction returns, instead of leaving
+  stale use counts and occupied space that can block the next action.
+- Reopening a saved house no longer rejects an in-progress route just because
+  its door connections have not yet been registered during loading.
+- New objects receive the current game date. Existing objects retain their
+  saved creation date and value when loaded.
 - Sims retain their requested and occupied space while walking, turning and
   sitting. Saving and reopening preserves that space and the pending route.
 - Job dialogs use the game's localized offers, titles, descriptions and time

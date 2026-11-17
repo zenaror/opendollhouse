@@ -119,6 +119,8 @@ public:
     int32_t GetEnvironmentRoomAt(const FSO::LotView::Model::LotTilePos& pos) const;
     float GetEnvironmentScore(const FSO::LotView::Model::LotTilePos& pos);
     void AddRoomPortal(VMEntity* obj, uint16_t room);
+    // Derive exactly the edge AddRoomPortal would publish, without mutations.
+    bool FindRoomPortal(VMEntity* obj, uint16_t room, Model::VMRoomPortal& edge);
     void RemoveRoomPortal(VMEntity* obj, uint16_t room);
     void RegisterObjectPos(VMEntity* obj);
     void UnregisterObjectPos(VMEntity* obj);

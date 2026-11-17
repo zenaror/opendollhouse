@@ -18,6 +18,7 @@ namespace FSO { namespace SimAntics { namespace Engine { namespace Utils { class
 #include "simantics/engine/VMQueuedAction.h"
 #include "simantics/engine/VMSubRoutineOperand.h"
 #include "simantics/model/TSOPlatform/VMAsyncState.h"
+#include "files/formats/iff/chunks/OBJM.h"
 
 namespace FSO { namespace SimAntics {
 class VM;
@@ -69,6 +70,19 @@ public:
     std::vector<VMPieMenuInteraction>* ActionStrings = nullptr;
 
     std::vector<std::shared_ptr<VMStackFrame>> Stack;
+
+    struct TS1ObjectUse { VMEntity* Target = nullptr; int32_t StackDepth = 0; uint8_t Flag = 0; };
+    // Ordered original person use records; independent of the UI queue.
+    std::vector<TS1ObjectUse> TS1ObjectUses;
+    VMEntity* TS1FlaggedUseTarget = nullptr;
+    FSO::Files::Formats::IFF::Chunks::OBJMInteraction TS1LastInteraction;
+    void RememberTS1CurrentInteraction();
+    void AcquireTS1ObjectUse(VMEntity* target, uint8_t flag = 0);
+    void RetireTS1ObjectUse();
+    void DiscardTS1ObjectUses();
+    void TS1ObjectUseTargetRemoved(VMEntity* target);
+    int32_t TS1ClassicUseDepth(int32_t nativeDepth) const;
+    int32_t TS1NativeUseDepth(int32_t classicDepth) const;
 
     std::vector<std::shared_ptr<VMQueuedAction>> Queue;
     /// Set when a change to the queue or an item's priority is changed. Internal functions set this, but since you can modify the queue

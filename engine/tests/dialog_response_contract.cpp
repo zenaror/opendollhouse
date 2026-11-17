@@ -40,7 +40,7 @@ static std::vector<uint8_t> captureVersion7(VM& vm,IffRawFile& house){
  // Read the current header, then remove its v10 scheduler-authority byte
  // before combining it with the genuinely encoded v7 body.
  IffRawFile captured;captured.Set("ObjM",1,house.Find("ObjM",1)->Data);
- VMTS1InteractionCheckpoint::Capture(vm,captured,false);const auto& modern=captured.Find("ODHI",1)->Data;
+ VMTS1InteractionCheckpoint::Capture(vm,captured,false,false,10);const auto& modern=captured.Find("ODHI",1)->Data;
  st::Reader input(modern);Require(input.u32()==10,"modern fixture version");input.u32();Archive header(input);
  bool departing=false;header.value(departing);Require(!departing,"legacy fixture unexpectedly departing");
  bool schedulerBound=false;header.value(schedulerBound);Require(!schedulerBound,"direct fixture unexpectedly bound");
@@ -88,7 +88,7 @@ int main(){try{
   auto liveThread=std::move(caller.Thread);
   Rejects([&]{VMTS1InteractionCheckpoint::Capture(vm,saved,false);},"v8 capture silently omitted a persistent threadless instance");
   caller.Thread=std::move(liveThread);
-  vm.TS1TextInput=input;VMTS1InteractionCheckpoint::Capture(vm,saved,false);const auto odhi=saved.Find("ODHI",1);Require(odhi&&odhi->Data[0]==10,"native name state did not version10");
+  vm.TS1TextInput=input;VMTS1InteractionCheckpoint::Capture(vm,saved,false,false,10);const auto odhi=saved.Find("ODHI",1);Require(odhi&&odhi->Data[0]==10,"native name state did not version10");
   IffFile house;auto objm=new OBJM();objm->ChunkID=1;objm->ChunkProcessed=true;objm->Decoded=true;objm->SourceSignature=FSO::Files::Hash::CalculateHash(saved.Find("ObjM",1)->Data);objm->ObjectData[caller.ObjectID]=OBJM::MappedObject{};house.AddChunk(objm);auto chunk=new ODHI();chunk->ChunkID=1;chunk->ChunkProcessed=true;chunk->Data=odhi->Data;house.AddChunk(chunk);vm.TS1TextInput="changed after capture";VMTS1InteractionCheckpoint::Restore(vm,house);Require(vm.TS1TextInput==input,"native roundtrip lost last text including empty");
   // Manual decoded fixture must contain the same persistent identity domain.
   // Missing/additional IDs are rejected before any execution state publishes.

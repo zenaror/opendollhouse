@@ -5,6 +5,7 @@
  * http://mozilla.org/MPL/2.0/.
  */
 #include "simantics/primitives/VMGenericTSOCall.h"
+#include "simantics/primitives/VMTS1Budget.h"
 #include "simantics/primitives/VMGenericTS1Call.h" // TS1(sims)
 #include <cstring>
 #include <algorithm>
@@ -107,8 +108,7 @@ VMPrimitiveExitCode VMGenericTSOCall::Execute(VMStackFrame* context, VMPrimitive
                 other->FamilyGUIDs.clear();
                 other->RuntimeSubset.clear();
                 // the lot's budget lives in globals 13/14 ("Budget Mod/Div 10000") while the family is loaded
-                context->VM()->SetGlobalValue(FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::GLOBAL_BUDGET_MOD, (int16_t)(fam->Budget % 10000));
-                context->VM()->SetGlobalValue(FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::GLOBAL_BUDGET_DIV, (int16_t)(fam->Budget / 10000));
+                VMTS1Budget::SetBudget(context->VM(), fam->Budget);
                 return VMPrimitiveExitCode::GOTO_TRUE;
             }
             case 6: { // Remove from family: 'kill person for good', 'do kick out', 'check for military school'

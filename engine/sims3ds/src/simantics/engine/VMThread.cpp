@@ -218,6 +218,10 @@ VMPrimitiveExitCode VMThread::AttemptTS1Push(VMStackFrame* context) {
             action->Callee->ExecuteEntryPoint(4, Context, true, Entity);
         return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
     }
+    if (Context->VM->TS1 && !IsCheck) if (auto avatar=dynamic_cast<VMAvatar*>(Entity)) {
+        AcquireTS1ObjectUse(action->Callee); RememberTS1CurrentInteraction(); avatar->ClearTS1InteractionFootprint();
+        TS1FlaggedUseTarget=action->IconOwner();
+    }
     Queue.insert(Queue.begin() + next, action);
     ++ActiveQueueBlock;
     Entity->SetFlag(VMEntityFlags::InteractionCanceled, false);
@@ -258,6 +262,10 @@ VMPrimitiveExitCode VMThread::ExecuteTS1SelectedAction(VMStackFrame* context) {
     if (target->TreeTableStrings) action->Name = target->TreeTableStrings->GetString(index);
     if (!action->ActionRoutine || action->ActionRoutine->Instructions.empty() || !ExecuteAction(action))
         return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    if (Context->VM->TS1 && !IsCheck) if (auto avatar=dynamic_cast<VMAvatar*>(Entity)) {
+        AcquireTS1ObjectUse(action->Callee); RememberTS1CurrentInteraction(); avatar->ClearTS1InteractionFootprint();
+        TS1FlaggedUseTarget=action->Callee;
+    }
     action->UID = ActionUID++;
     Queue.insert(Queue.begin() + (ActiveQueueBlock + 1), action);
     ++ActiveQueueBlock;
@@ -306,6 +314,103 @@ void VMThread::ResetInteractionState() {
     }
 }
 
+void VMThread::AcquireTS1ObjectUse(VMEntity* target, uint8_t flag) {
+    if (!Context || !Context->VM->TS1 || IsCheck || !dynamic_cast<VMAvatar*>(Entity) || !target) return;
+    TS1ObjectUses.push_back({target, int32_t(Stack.size()), flag});
+    if (flag) TS1FlaggedUseTarget=target;
+    auto& count=target->ObjectData.at(size_t(VMStackObjectVariable::UseCount));
+    const uint16_t bits=uint16_t(count)+uint16_t(1);
+    count=bits<=0x7fff ? int16_t(bits) : int16_t(int32_t(bits)-65536);
+}
+
+void VMThread::RememberTS1CurrentInteraction() {
+    auto action=ActiveAction();if (!action || !action->Callee) return;
+    using FSO::Files::Formats::IFF::Chunks::OBJMInteractionFlags;
+    auto& out=TS1LastInteraction;out={};out.UID=action->UID;out.CallerID=Entity->ObjectID;
+    out.TargetID=action->Callee->ObjectID;out.Icon=TS1FlaggedUseTarget ? TS1FlaggedUseTarget->ObjectID : 0;
+    out.TTAIndex=action->InteractionNumber;
+    for (size_t i=0;i<4 && i<action->Args.size();++i) out.Args[i]=action->Args[i];
+    out.Priority=action->Priority;out.ActionTreeID=action->ActionRoutine ? int16_t(action->ActionRoutine->ID) : 0;
+    if ((action->Flags & TTABFlags::FSOPushHead)>0) out.Flags|=int32_t(OBJMInteractionFlags::PushHeadContinuation);
+    if ((action->Flags & TTABFlags::TS1InheritActionName)>0) out.Flags|=int32_t(OBJMInteractionFlags::CarryNameOver);
+    if (action->UserQueued) out.Flags|=int32_t(OBJMInteractionFlags::UserInitiated);
+    if (action->Cancelled) out.Flags|=int32_t(OBJMInteractionFlags::UserInterrupted);
+}
+
+void VMThread::RetireTS1ObjectUse() {
+    if (!Context || !Context->VM->TS1 || IsCheck || TS1ObjectUses.empty()) return;
+    if (Stack.size() < size_t(TS1ObjectUses.back().StackDepth)) {
+        if (Stack.size()+1==size_t(TS1ObjectUses.back().StackDepth)) {
+            for (const auto& use : TS1ObjectUses) if (use.Flag) TS1FlaggedUseTarget=use.Target;
+        }
+        auto target=TS1ObjectUses.back().Target;
+        if (target) {
+            auto& count=target->ObjectData.at(size_t(VMStackObjectVariable::UseCount));
+            const uint16_t bits=uint16_t(count)-uint16_t(1);
+            count=bits<=0x7fff ? int16_t(bits) : int16_t(int32_t(bits)-65536);
+        }
+        TS1ObjectUses.pop_back();
+        if (TS1ObjectUses.empty()) {
+            RememberTS1CurrentInteraction();
+            TS1FlaggedUseTarget=nullptr;
+            if (auto avatar=dynamic_cast<VMAvatar*>(Entity)) avatar->ClearTS1InteractionFootprint();
+        }
+    }
+}
+
+void VMThread::DiscardTS1ObjectUses() {
+    // Reset/interrupt previously discarded the interpreter stack outright.
+    // Release counts without inventing additional person-field Reset behavior.
+    for (const auto& use : TS1ObjectUses) if (use.Target) {
+        auto& count=use.Target->ObjectData.at(size_t(VMStackObjectVariable::UseCount));
+        const uint16_t bits=uint16_t(count)-uint16_t(1);
+        count=bits<=0x7fff ? int16_t(bits) : int16_t(int32_t(bits)-65536);
+    }
+    TS1ObjectUses.clear();
+    TS1FlaggedUseTarget=nullptr;
+}
+
+int32_t VMThread::TS1ClassicUseDepth(int32_t nativeDepth) const {
+    if (nativeDepth<=0 || size_t(nativeDepth)>Stack.size()) throw std::runtime_error("invalid object use depth");
+    const auto& last=Stack[size_t(nativeDepth-1)];
+    if (!last || last->IsRoutingFrame() || !last->Routine) throw std::runtime_error("object use ends on a non-authored frame");
+    int32_t depth=0;for(int32_t i=0;i<nativeDepth;++i) if(Stack[size_t(i)] && !Stack[size_t(i)]->IsRoutingFrame() && Stack[size_t(i)]->Routine) ++depth;
+    return depth;
+}
+
+int32_t VMThread::TS1NativeUseDepth(int32_t classicDepth) const {
+    if (classicDepth<=0) throw std::runtime_error("invalid classic object use depth");
+    int32_t classic=0,native=0;
+    for (const auto& frame : Stack) { ++native;if (frame && !frame->IsRoutingFrame() && frame->Routine) ++classic; if (classic==classicDepth) return native; }
+    throw std::runtime_error("invalid classic object use depth");
+}
+
+void VMThread::TS1ObjectUseTargetRemoved(VMEntity* target) {
+    if (!target || !Context || !Context->VM->TS1 || IsCheck) return;
+    auto clearLast=[&] {
+        if (TS1LastInteraction.TargetID==target->ObjectID) TS1LastInteraction={};
+        else if (TS1LastInteraction.Icon==target->ObjectID) TS1LastInteraction.Icon=0;
+    };
+    const auto pending=std::min(Queue.size(),size_t(ActiveQueueBlock+1));
+    const auto first=Queue.begin()+pending;
+    const auto kept=std::remove_if(first,Queue.end(),[&](const auto& action){
+        return action && (action->Callee==target || action->IconOwner()==target);
+    });
+    if (kept!=Queue.end()) { Queue.erase(kept,Queue.end());QueueDirty=true; }
+    bool matched=TS1FlaggedUseTarget==target;
+    for (const auto& use : TS1ObjectUses) if (use.Target==target) matched=true;
+    if (!matched) { clearLast();return; }
+    while (!TS1ObjectUses.empty()) {
+        const auto depth=TS1ObjectUses.back().StackDepth;
+        if (depth<=0 || size_t(depth)>Stack.size()) { DiscardTS1ObjectUses(); break; }
+        while (Stack.size()>=size_t(depth)) { Stack.pop_back(); RetireTS1ObjectUse(); }
+    }
+    // Unwinding can copy the just-ended current record into LastInteraction.
+    clearLast();
+    if (auto avatar=dynamic_cast<VMAvatar*>(Entity)) avatar->ClearTS1InteractionFootprint();
+    Entity->Reset(Context);
+}
+
 // TS1(sims): FreeSO VMThread.EndCurrentInteraction.
 void VMThread::EndCurrentInteraction() {
     QueueDirty = true;
@@ -338,7 +443,7 @@ void VMThread::AbortCurrentInteraction() {
     int ind = -1;
     for (int i = (int)Stack.size() - 1; i >= 0; i--) if (Stack[i]->SpecialResult == VMSpecialResult::Interaction) { ind = i; break; }
     if (ind != -1) {
-        while ((int)Stack.size() > ind) Stack.pop_back();
+        while ((int)Stack.size() > ind) { Stack.pop_back(); RetireTS1ObjectUse(); }
         EndCurrentInteraction();
     }
 }
@@ -632,6 +737,7 @@ void VMThread::HandleResult(VMStackFrame* frame, VMInstruction* instruction, VMP
             ContinueExecution = true;
             break;
         case VMPrimitiveExitCode::INTERRUPT:
+            if (Context->VM->TS1 && !IsCheck) DiscardTS1ObjectUses();
             Stack.clear();
             QueueDirty = true;
             if (Queue.size() > 0) Queue.erase(Queue.begin());
@@ -697,6 +803,7 @@ void VMThread::Breakpoint(VMStackFrame* frame) {
 void VMThread::Pop(VMPrimitiveExitCode result) {
     auto discardResult = Stack[Stack.size() - 1]->SpecialResult;
     Stack.pop_back();
+    RetireTS1ObjectUse();
     LastStackExitCode = result;
 
     if (discardResult == VMSpecialResult::Interaction) //interaction switching back to main (it cannot be the other way...)

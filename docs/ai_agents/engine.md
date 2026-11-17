@@ -82,6 +82,31 @@ characters when migrating. Builds that understand only an older continuation
 format cannot reopen newer saves; use an updated engine on every device sharing
 those saves.
 
+Version 11 binds the synchronized `SIMI` balance and expense history to the
+native snapshot. Version 12 makes that binding explicit and preserves the
+ordered object-use records and current/last interaction context. Readers for
+versions 2 through 11 remain supported. Older packages cannot read version 12;
+use matching updated builds on every device sharing a development save.
+
+Household accounting keeps a 32-bit balance and six records of eight expense
+categories. Loading restores persisted balances and records; family activation
+and travel synchronize balances without posting a transaction. Committed
+transactions in categories 0–7 update the balance and current record once.
+Checks and the original unlimited-funds mode do not post transactions.
+Expense 8 updates the balance and reports a diagnostic without writing outside
+the eight-category record. Saving synchronizes `SIMI` and the family's balance.
+The day change follows the
+original game's record-copy order, including its repeated older entries.
+Do not replace that order with a conventional history rotation.
+
+Object use is separate from the visible action queue. A Sim can acquire the
+same object more than once at different script depths. Keep each ordered
+target/depth/flag record and retire it when its child frame returns. Classic
+saves count authored frames; native routing frames require an explicit depth
+conversion. Loading restores counts already stored in the object; it must not
+acquire those uses again. Object removal also reconciles pending action icons
+and the current/last interaction context.
+
 ## Routing and occupied space
 
 A Sim's requested space for a route and its currently applied space are
@@ -102,6 +127,13 @@ Continuation version 10 preserves the route-owned request and the exact cached
 rectangle. Bound saves cross-check the rectangle against the classic `ObjM`
 record. Older native snapshots do not contain the route-owned request; loading
 them must not invent one. Original classic saves retain their saved rectangle.
+
+Validate saved routes before running load callbacks. At that point, the loader
+has object poses but has not registered the room's door connections yet. Its
+explicit candidate check uses the same pure connection rule as registration,
+without publishing positions or running scripts. Final restoration still
+requires the actual registered connection. Direct snapshot validation does not
+silently fall back to the candidate check when a connection is missing.
 
 Script room numbers are signed. An object outside the world reports `-5` to
 game scripts; a real outdoor room can report `0`. Keep this distinction separate

@@ -9,7 +9,9 @@
 #include "simantics/utils/VMTS1ObjectNames.h"
 #include "files/Hash.h"
 #include "files/formats/iff/chunks/SIMI.h"
+#include "simantics/primitives/VMTS1Budget.h"
 #include "simantics/utils/VMTS1InteractionCheckpoint.h"
+#include "simantics/utils/VMTS1BudgetPersistence.h"
 #include "simantics/utils/VMTS1ActionIcon.h"
 #include "simantics/VM.h"
 #include "simantics/VMContext.h"
@@ -428,6 +430,10 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
     IffRawFile file;
     std::string err;
     if (!file.Load(sourcePath, &err)) { Error = err; return false; }
+    // Normalize only in this private output copy before ObjM is rewritten;
+    // a legacy candidate must still match the previously validated trio.
+    try { FSO::SimAntics::Utils::SyncTS1Budget(*VM,file); }
+    catch (const std::exception& e) { Error=e.what(); return false; }
     auto ctx = VM->Context;
     auto arch = ctx->Architecture();
     if (arch == nullptr) { Error = "no lot loaded"; return false; }
@@ -946,6 +952,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             p.ActiveInteraction = OBJMInteraction();
             p.InteractionQueue.clear();
             if (e->Thread) {
+                p.LastInteraction=e->Thread->TS1LastInteraction;
                 auto& q = e->Thread->Queue;
                 int active = e->Thread->ActiveQueueBlock;
                 for (int i = 0; i < (int)q.size(); i++) {
@@ -953,19 +960,20 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                     if (i <= active && i == active) p.ActiveInteraction = conv(q[(size_t)i]);
                     else if (i > active) p.InteractionQueue.push_back(conv(q[(size_t)i]));
                 }
+                if (p.ActiveInteraction.IsValid())
+                    p.ActiveInteraction.Icon=e->Thread->TS1FlaggedUseTarget ? e->Thread->TS1FlaggedUseTarget->ObjectID : 0;
             }
-            // object uses: FreeSO sets Stack[i].Callee = use.TargetID for i >= StackLength - 1
+            // Preserve the ordered original use records, including duplicates.
             p.ObjectUses.clear();
-            {
-                int16_t prev = e->ObjectID;
-                for (size_t i = 0; i < frames.size(); i++) {
-                    int16_t callee = frames[i]->Callee ? frames[i]->Callee->ObjectID : e->ObjectID;
-                    if (callee != prev) {
-                        OBJMObjectUse u; u.TargetID = callee; u.StackLength = (int32_t)i + 1; u.Unknown2 = 0;
-                        p.ObjectUses.push_back(u);
-                        prev = callee;
-                    }
-                }
+            int32_t previousUseDepth=0;
+            if (e->Thread) for (const auto& use : e->Thread->TS1ObjectUses) {
+                if ((use.Target && use.Target->Dead) || use.StackDepth<=0 || size_t(use.StackDepth)>e->Thread->Stack.size())
+                    throw std::runtime_error("TS1 save: invalid live object use");
+                const int32_t classicDepth=e->Thread->TS1ClassicUseDepth(use.StackDepth);
+                if (classicDepth<=previousUseDepth) throw std::runtime_error("TS1 save: object use depths are not increasing");
+                previousUseDepth=classicDepth;
+                OBJMObjectUse u;u.TargetID=use.Target ? use.Target->ObjectID : 0;u.StackLength=classicDepth;u.Unknown2=use.Flag;
+                p.ObjectUses.push_back(u);
             }
             // Classic float records retain registration order and duplicates.
             p.MotiveDeltas.clear();
@@ -1454,9 +1462,9 @@ bool VMTS1LotSaver::UpdateNeighbourhood() {
     // the lot family's money (globals 13/14 = budget mod/div 10000) into its FAMI
     using FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood;
     int16_t famNum = VM->GetGlobalValue(VMTS1Neighbourhood::GLOBAL_CURRENT_FAMILY);
-    int32_t budget = VM->GetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_DIV) * 10000 + VM->GetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_MOD);
+    int32_t budget = Primitives::VMTS1Budget::GetRawBudget(VM);
     auto fami = famNum > 0 ? prov->GetFamily(famNum) : nullptr;
-    if (fami != nullptr && budget >= 0 && fami->Budget != budget) {
+    if (fami != nullptr && fami->Budget != budget) {
         Log.push_back("family " + std::to_string(famNum) + " budget " + std::to_string(fami->Budget) + " -> " + std::to_string(budget));
         fami->Budget = budget;
     }

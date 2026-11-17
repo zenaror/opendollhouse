@@ -943,6 +943,15 @@ void VMAvatar::RefreshTS1Footprint() {
     Footprint = GetObstacle(Position(), Direction());
 }
 
+void VMAvatar::ClearTS1InteractionFootprint() {
+    if (GetPersonData(Model::VMPersonDataVariable::FootprintExtension) != 0) {
+        SetPersonData(Model::VMPersonDataVariable::FootprintExtension, 0);
+        RefreshTS1Footprint();
+    }
+    SetPersonData(Model::VMPersonDataVariable::RouteFootprintMask, 0);
+    SetPersonData(Model::VMPersonDataVariable::NonInterruptable, 0);
+}
+
 void VMAvatar::RestoreTS1Footprint(int minX, int minY, int maxX, int maxY) {
     if (Container || Position() == LotTilePos::OUT_OF_WORLD) { Footprint.reset(); return; }
     Footprint = std::make_unique<Routing::VMObstacle>();

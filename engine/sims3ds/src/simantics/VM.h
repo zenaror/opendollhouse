@@ -6,6 +6,7 @@
 // FSO.SimAntics.VM — Simantics Virtual Machine.
 #pragma once
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 #include <memory>
@@ -41,6 +42,21 @@ public:
     std::unique_ptr<Model::VMSetToNextCache> SetToNext;
 };
 
+// TS1 source purse and six ordered daily records: current, then five older.
+// Initialized distinguishes a loaded/assigned purse from a fresh VM's legacy mirrors.
+struct VMTS1BudgetState {
+    using DaysType = std::array<std::array<int32_t, 8>, 6>;
+    int32_t Purse = 0;
+    DaysType Days{};
+    bool Initialized = false;
+    // In-memory admission token for a validated old marker-only SIMI. Never
+    // serialized as provenance; binds its exact loaded chunk trio for saving.
+    bool LegacyCandidateValidated = false;
+    bool LegacyOwnerRestricted = false, LegacyPromoted = false;
+    int16_t LegacyOwnerID = 0;
+    uint32_t LegacySIMIHash = 0, LegacyOBJMHash = 0, LegacyODHIHash = 0;
+};
+
 /// Simantics Virtual Machine.
 class VM {
 public:
@@ -70,6 +86,7 @@ public:
     bool TS1 = true;   // sims: this port runs The Sims 1 content only (FreeSims defaulted to false)
 
     std::vector<int16_t> GlobalState;
+    VMTS1BudgetState TS1Budget;
     std::shared_ptr<Model::VMPlatformState> PlatformState;
     Model::TSOPlatform::VMTSOLotState* TSOState() const;
     std::string LotName;

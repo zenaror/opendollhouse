@@ -6,6 +6,9 @@
 #include "files/formats/iff/chunks/ODMP.h"
 #include "simantics/utils/VMTS1MotivePersistence.h"
 #include "simantics/utils/VMTS1SchedulerState.h"
+#include "simantics/utils/VMTS1BudgetPersistence.h"
+#include "simantics/primitives/VMTS1Budget.h"
+#include "files/formats/iff/chunks/SIMI.h"
 #include "files/formats/iff/IffRawFile.h"
 #include "files/formats/iff/IffFile.h"
 #include "files/Hash.h"
@@ -222,6 +225,7 @@ std::shared_ptr<VMAnimationState> ClassicAnimation(Vitaboy::Animation* resource,
 class InteractionCheckpointCodec {
 public:
     InteractionCheckpointCodec(VM& vm, Archive& archive, uint32_t version) : vm(vm), io(archive), version(version) {}
+    bool PreviewUnpublishedPortals = false;
 
     static int64_t motivePhase(const VMAvatar& avatar) { return avatar.MotiveDecay->LastTick; }
 
@@ -477,8 +481,10 @@ public:
                         return result;
                     };
                     const bool active = person.ActiveInteraction.IsValid();
+                    thread.TS1LastInteraction=person.LastInteraction;
                     thread.ActiveQueueBlock = active ? 0 : -1;
                     if (active) thread.Queue.push_back(action(person.ActiveInteraction));
+                    if (person.ActiveInteraction.Icon) thread.TS1FlaggedUseTarget=entity(person.ActiveInteraction.Icon);
                     std::set<uint16_t> uids;
                     for (const auto& item : person.InteractionQueue) thread.Queue.push_back(action(item));
                     for (const auto& item : thread.Queue) {
@@ -489,11 +495,14 @@ public:
                         do { ++thread.ActionUID; } while (uids.count(thread.ActionUID));
                     }
                     int boundaries = 0;
+                    int32_t previousUseDepth=0;
                     for (const auto& use : person.ObjectUses) {
-                        Require(use.StackLength > 0 && size_t(use.StackLength) <= inst.Stack.size(),
+                        Require(use.StackLength > previousUseDepth && size_t(use.StackLength) <= inst.Stack.size(),
                                 "classic object use has invalid stack depth");
-                        auto target = entity(use.TargetID);
+                        previousUseDepth=use.StackLength;
+                        auto target = use.TargetID ? entity(use.TargetID) : nullptr;
                         if (candidate.reset) continue;
+                        thread.TS1ObjectUses.push_back({target,use.StackLength,use.Unknown2});
                         bool inAction = false;
                         auto& frame = thread.Stack[size_t(use.StackLength - 1)];
                         if (use.StackLength > 1) {
@@ -501,12 +510,14 @@ public:
                             const auto opcode = parent->Routine->Instructions[parent->InstructionPointer].Opcode;
                             if (opcode == 27 || opcode == 45) frame->SpecialResult = VMSpecialResult::Retry;
                             else if (opcode == 30 || opcode == 17) {
-                                Require(frame->SpecialResult == VMSpecialResult::Normal, "duplicate classic interaction boundary");
-                                frame->SpecialResult = VMSpecialResult::Interaction; inAction = true; ++boundaries;
+                                if (frame->SpecialResult == VMSpecialResult::Normal) {
+                                    frame->SpecialResult = VMSpecialResult::Interaction; ++boundaries;
+                                } else Require(frame->SpecialResult == VMSpecialResult::Interaction, "conflicting classic interaction boundary");
+                                inAction = true;
                             }
                         }
                         for (size_t i = size_t(use.StackLength - 1); i < thread.Stack.size(); ++i) {
-                            thread.Stack[i]->Callee = target;
+                            if (target) thread.Stack[i]->Callee = target;
                             thread.Stack[i]->ActionTree |= inAction;
                         }
                     }
@@ -674,8 +685,15 @@ public:
         const auto& graph = vm.Context->RoomInfo;
         Require(sourceRoom == actualRoom && sourceRoom < graph.size() && saved.TargetRoom < graph.size(),
                 "route portal room changed");
-        const auto& edges = graph[sourceRoom].Portals;
-        Require(std::find(edges.begin(), edges.end(), saved) != edges.end(), "missing directed portal edge");
+        if (PreviewUnpublishedPortals) {
+            Model::VMRoomPortal candidate;
+            Require(!entity->GhostImage && entity->Position().Level>=1 && entity->MultitileGroup &&
+                    vm.Context->FindRoomPortal(entity,sourceRoom,candidate) && candidate==saved,
+                    "missing directed portal edge");
+        } else {
+            const auto& edges = graph[sourceRoom].Portals;
+            Require(std::find(edges.begin(), edges.end(), saved) != edges.end(), "missing directed portal edge");
+        }
     }
 
     void roomRoute(VMRoutingFrame& r) {
@@ -912,6 +930,25 @@ public:
                 if (io.in) { result->HasDisplayed = false; t.BlockingState = result; }
             } else if (io.in) t.BlockingState.reset();
         }
+        if (version >= 12) {
+            auto uses=io.count(t.TS1ObjectUses.size(),1024);
+            if (io.in) t.TS1ObjectUses.resize(uses);
+            int32_t previous=0;
+            for (auto& use : t.TS1ObjectUses) {
+                reference(use.Target,"object use target");io.value(use.StackDepth);io.value(use.Flag);
+                Require(use.StackDepth>0 && size_t(use.StackDepth)<=t.Stack.size() && use.StackDepth>previous,
+                        "invalid object use depth");
+                const auto& ownerFrame=t.Stack[size_t(use.StackDepth-1)];
+                Require(ownerFrame && !ownerFrame->IsRoutingFrame() && ownerFrame->Routine,
+                        "object use ends on a non-authored frame");
+                previous=use.StackDepth;
+            }
+            reference(t.TS1FlaggedUseTarget,"flagged object use target");
+            auto& last=t.TS1LastInteraction;
+            io.value(last.UID);io.value(last.CallerID);io.value(last.TargetID);io.value(last.Icon);
+            io.value(last.TTAIndex);for(auto& argument : last.Args)io.value(argument);
+            io.value(last.Priority);io.value(last.ActionTreeID);io.value(last.Attenuation);io.value(last.Flags);
+        }
     }
     void outfit(uint64_t& id) {
         io.value(id);
@@ -1058,7 +1095,7 @@ public:
         if (isAvatar) { r.avatar = std::make_unique<AvatarRecord>(); avatar(*r.avatar, *av); }
     }
 
-    void publish(std::map<int16_t, Record>& records, const OBJM& objm) {
+    void publish(std::map<int16_t, Record>& records, const OBJM& objm, bool validateOnly = false) {
         for (auto& p : participants) Require(records.count(p.first), "partial participant group");
         for (auto& p : records) {
             auto& r = p.second;
@@ -1106,6 +1143,7 @@ public:
                 Require(!r.entity->GetSlot(i) || records.count(r.entity->GetSlot(i)->ObjectID), "slot acquired an external occupant");
             Require(!r.entity->Container || records.count(r.entity->Container->ObjectID), "unexpected external container");
         }
+        if (validateOnly) return;
         // Candidate belongs solely to the loader until it returns success. Detach
         // before rebuilding links; PlaceInSlot(false) dispatches no position EP.
         for (auto& p : records) {
@@ -1250,8 +1288,11 @@ void VerifyDeparture(VM& vm, const TS1Departure& departure, VMThread* thread) {
 
 }
 
-void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departing,
-                                       bool schedulerWordsBound) {
+void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool departing,
+                                       bool schedulerWordsBound, uint32_t outputVersion) {
+    // Publish no portion of a failed capture, including synchronized SIMI.
+    IffRawFile house=destination;
+    FSO::SimAntics::Utils::SyncTS1Budget(vm, house);
     if (schedulerWordsBound) {
         auto rawObjects = house.Find("ObjM", 1);
         auto rawTypes = house.Find("objt", 0);
@@ -1290,7 +1331,10 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
             }
         }
     }
-    const uint32_t captureVersion = 10;
+    bool financeBound = vm.TS1 && vm.TS1Budget.Initialized;
+    Require(outputVersion==12 || (outputVersion==10 && !financeBound) || (outputVersion==11 && financeBound),
+            "unsupported capture compatibility version");
+    const uint32_t captureVersion = outputVersion;
     st::Writer body(st::Endian::Little);
     Archive fields(body);
     Require(VM::IsTS1TextInputValid(vm.TS1TextInput), "invalid TS1 text input");
@@ -1305,7 +1349,7 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
         Require(bool(e->Thread), "persistent instance has no execution thread " + std::to_string(e->ObjectID));
         codec.include(e);
     }
-    if (codec.participants.empty()) { house.Remove("ODHI", 1); house.Remove("ODMP", 1); return; }
+    if (codec.participants.empty()) { house.Remove("ODHI", 1); house.Remove("ODMP", 1); destination=std::move(house); return; }
     if (departing) {
         auto caller = vm.GetObjectById(vm.Departure.caller);
         VerifyDeparture(vm, vm.Departure, caller ? caller->Thread.get() : nullptr);
@@ -1332,6 +1376,13 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
     header.value(departing);
     if (departing) DepartureState(header, vm.Departure);
     header.value(schedulerWordsBound);
+    if (captureVersion>=12) header.value(financeBound);
+    if (financeBound) {
+        auto simi=house.Find("SIMI",1);
+        Require(simi && simi->Data.size() <= UINT32_MAX, "missing or oversized synchronized SIMI");
+        uint32_t length=uint32_t(simi->Data.size()), hash=Files::Hash::CalculateHash(simi->Data);
+        header.value(length);header.value(hash);
+    }
     auto clock = *vm.Context->Clock;
     auto seed = vm.Context->RandomSeed;
     ClockState(header, clock, seed);
@@ -1361,6 +1412,56 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
     Require(marker.size() <= ODMP::MaxBytes, "motive marker exceeds limit");
     house.Set("ODHI", 1, native, "OpenDollhouse interactions");
     house.Set("ODMP", 1, marker.ToArray(), "OpenDollhouse motive precision");
+    destination=std::move(house);
+}
+
+bool VMTS1InteractionCheckpoint::PreflightLegacyBudget(IffFile& house) {
+    auto native=house.List<ODHI>();
+    if(native.empty()) return false;
+    Require(native.size()==1 && native.front()->ChunkID==1, "ambiguous ODHI");
+    st::Reader input(native.front()->Data);const auto version=input.u32();
+    if(version<2 || version>10) return false;
+    auto classics=house.List<OBJM>();
+    Require(classics.size()==1 && classics.front()->ChunkID==1, "ambiguous ObjM");
+    const auto objmHash=input.u32();
+    Require(objmHash==classics.front()->SourceSignature, "ObjM changed since capture");
+    Archive fields(input);bool departing=false;
+    if(version>=3) fields.value(departing);
+    TS1Departure departure;if(departing)DepartureState(fields,departure);
+    bool scheduler=false;if(version>=10)fields.value(scheduler);
+    VMClock clock;uint64_t seed=0;ClockState(fields,clock,seed);
+    bool ready=false,alternate=false,buildBuy=false;
+    fields.value(ready);fields.value(alternate);fields.value(buildBuy);
+    std::vector<int16_t> globals;fields.vector(globals,4096);
+    std::string textInput;if(version>=7)fields.string(textInput,VM::TS1TextInputMaxBytes);
+    Require(VM::IsTS1TextInputValid(textInput), "invalid TS1 text input");
+    Require(fields.count(0,32767)>0, "empty execution supplement");
+    auto markers=house.List<ODMP>();
+    Require(markers.size()<=1 && (markers.empty() || markers.front()->ChunkID==1), "ambiguous ODMP");
+    if(!markers.empty()) MotivePersistence::ReadMarker(markers.front()->Data,objmHash,
+        Files::Hash::CalculateHash(native.front()->Data),native.front()->Data.size(),clock.Ticks);
+    return true;
+}
+
+void VMTS1InteractionCheckpoint::ValidateFinanceBinding(IffFile& house) {
+    auto native=house.List<ODHI>();
+    if (native.empty()) return;
+    Require(native.size()==1 && native.front()->ChunkID==1, "ambiguous ODHI");
+    st::Reader input(native.front()->Data);const auto version=input.u32();
+    Require(version>=2 && version<=12, "unsupported ODHI version");
+    if (version<11) return;
+    input.u32(); // ObjM signature is independently checked on restore.
+    Archive header(input);bool departing=false;header.value(departing);
+    TS1Departure departure;if(departing)DepartureState(header,departure);
+    bool scheduler=false;header.value(scheduler);
+    bool financeBound=true;if(version>=12)header.value(financeBound);
+    if (!financeBound) return;
+    uint32_t length=0,hash=0;header.value(length);header.value(hash);
+    auto simis=house.List<SIMI>();
+    Require(simis.size()==1 && simis.front()->ChunkID==1 &&
+            simis.front()->SourceBytes==length && simis.front()->SourceSignature==hash,
+            "SIMI changed since financial capture");
+    Require(simis.front()->Unknown4==0, "bound SIMI has unconsumed financial delta");
 }
 
 bool VMTS1InteractionCheckpoint::IsDeparture(IffFile& house) {
@@ -1370,7 +1471,7 @@ bool VMTS1InteractionCheckpoint::IsDeparture(IffFile& house) {
     st::Reader input(chunks.front()->Data);
     auto version = input.u32();
     if (version == 2) return false;
-    Require(version >= 3 && version <= 10, "unsupported ODHI version");
+    Require(version >= 3 && version <= 12, "unsupported ODHI version");
     input.u32(); // ObjM signature is checked during restore.
     Archive header(input);
     bool departing = false;
@@ -1378,14 +1479,15 @@ bool VMTS1InteractionCheckpoint::IsDeparture(IffFile& house) {
     return departing;
 }
 
-void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDispatch) {
+void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDispatch, bool validateOnly, int32_t* legacyPurse, bool previewUnpublishedPortals) {
+    Require(!previewUnpublishedPortals || validateOnly, "portal preview requires validation-only mode");
     auto chunks = house.List<ODHI>();
     if (chunks.empty()) return;
     Require(chunks.size() == 1 && chunks.front()->ChunkID == 1, "ambiguous ODHI");
     auto objm = house.Get<OBJM>(1);
     st::Reader input(chunks.front()->Data);
     const auto version = input.u32();
-    Require(version >= 2 && version <= 10, "unsupported ODHI version");
+    Require(version >= 2 && version <= 12, "unsupported ODHI version");
     Require(objm && objm->Decoded && input.u32() == objm->SourceSignature, "ObjM changed since capture");
     Archive fields(input);
     bool departing = false;
@@ -1394,6 +1496,16 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     if (departing) DepartureState(fields, departure);
     bool schedulerWordsBound = version == 9;
     if (version >= 10) fields.value(schedulerWordsBound);
+    SIMI* finance=nullptr;
+    bool financeBound=version>=11;if(version>=12)fields.value(financeBound);
+    if (financeBound) {
+        uint32_t length=0, hash=0;fields.value(length);fields.value(hash);
+        auto simis=house.List<SIMI>();
+        Require(simis.size()==1 && simis.front()->ChunkID==1, "ambiguous financial SIMI");
+        finance=simis.front();
+        Require(finance->SourceBytes==length && finance->SourceSignature==hash, "SIMI changed since financial capture");
+        Require(finance->Unknown4==0, "bound SIMI has unconsumed financial delta");
+    }
     VMClock clock; uint64_t seed = 0;
     ClockState(fields, clock, seed);
     bool ready=false, alternate=false, buildBuy=false;
@@ -1401,6 +1513,9 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     std::vector<int16_t> globals;
     fields.vector(globals,4096);
     Require(globals.size()==vm.GlobalState.size(),"global bank size changed");
+    if (finance) Require(globals.size()>14 && finance->GlobalData.size()>14 &&
+        globals[13]==finance->GlobalData[13] && globals[14]==finance->GlobalData[14],
+        "native and classic budget mirrors differ");
     // Versions2-6 did not store this channel. Empty is the original default;
     // do not infer a missing submitted name from a living parent's identity.
     std::string textInput;
@@ -1411,6 +1526,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     const auto n = fields.count(0, 32767);
     Require(n, "empty execution supplement");
     InteractionCheckpointCodec codec(vm, fields, version);
+    codec.PreviewUnpublishedPortals=previewUnpublishedPortals;
     std::map<int16_t, Record> records;
     for (uint32_t i = 0; i < n; ++i) {
         Record r;
@@ -1439,6 +1555,26 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
                 "scheduler state instance identity changed");
         entry.second.schedulerState = TS1SavedSchedulerState(
             *saved->second.Instance, objm->Version, version);
+        // Pre-v12 bound snapshots can recover the authoritative classic list.
+        // Unbound older overlays have no trustworthy use list: do not infer it
+        // from queue targets or callee changes.
+        if (version<12 && entry.second.avatar && saved->second.Instance->HasPersonData) {
+            auto& uses=entry.second.preparedThread->TS1ObjectUses;
+            const auto& person=saved->second.Instance->PersonData;
+            entry.second.preparedThread->TS1LastInteraction=person.LastInteraction;
+            if (person.ActiveInteraction.Icon) {
+                auto icon=vm.GetObjectById(person.ActiveInteraction.Icon);
+                Require(icon && !icon->Dead,"invalid classic current interaction icon");
+                entry.second.preparedThread->TS1FlaggedUseTarget=icon;
+            }
+            for (const auto& source : person.ObjectUses) {
+                auto target=vm.GetObjectById(source.TargetID);
+                const int32_t nativeDepth=entry.second.preparedThread->TS1NativeUseDepth(source.StackLength);
+                Require(!source.TargetID || (target && !target->Dead),
+                        "invalid classic object use");
+                uses.push_back({target,nativeDepth,source.Unknown2});
+            }
+        }
     }
     if (version >= 10) for (const auto& entry : records) if (entry.second.avatar) {
         const auto& record = entry.second; const auto& a = *record.avatar;
@@ -1458,7 +1594,28 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     }
     codec.preparePrimitiveStates(records, *objm, house.Get<OBJT>(0));
     codec.prepareMotives(records, house, *objm, *chunks.front(), clock.Ticks);
-    codec.publish(records, *objm);
+    codec.publish(records, *objm, validateOnly);
+    if (validateOnly) {
+        if (legacyPurse) {
+            Require(globals.size()>14, "budget mirrors missing");
+            const auto familyID=globals[VMTS1Neighbourhood::GLOBAL_CURRENT_FAMILY];
+            if (version<=10) {
+                auto provider=VMTS1Neighbourhood::Provider();
+                auto family=provider ? provider->GameState.ActiveFamily : nullptr;
+                *legacyPurse=(family && familyID>0 && int16_t(family->ChunkID)==familyID)
+                    ? family->Budget : int32_t(globals[14])*10000+globals[13];
+            }
+            vm.TS1Budget.LegacyOwnerID=familyID;
+        }
+        auto simis=house.List<SIMI>();
+        if (simis.size()==1 && simis.front()->LegacyBudgetCandidate) {
+            vm.TS1Budget.LegacySIMIHash=simis.front()->SourceSignature;
+            vm.TS1Budget.LegacyOBJMHash=objm->SourceSignature;
+            vm.TS1Budget.LegacyODHIHash=Files::Hash::CalculateHash(chunks.front()->Data);
+            vm.TS1Budget.LegacyCandidateValidated=true;
+        }
+        return;
+    }
     *vm.Context->Clock = clock;
     vm.Context->RandomSeed = seed;
     vm.Ready=ready; vm.AlternateTick=alternate; vm.TS1BuildBuyEnabled=buildBuy;
@@ -1468,11 +1625,26 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
         for (int index : {VMTS1Neighbourhood::GLOBAL_CURRENT_FAMILY, VMTS1Neighbourhood::GLOBAL_BUDGET_MOD,
                           VMTS1Neighbourhood::GLOBAL_BUDGET_DIV}) globals.at(index)=vm.GlobalState.at(index);
     }
+    const bool activeFamily = vm.GetGlobalValue(VMTS1Neighbourhood::GLOBAL_CURRENT_FAMILY)>0;
     vm.GlobalState=std::move(globals);
+    if (vm.TS1 && finance) {
+        Primitives::VMTS1Budget::DaysType days{};
+        for(size_t i=0;i<days.size() && i<finance->BudgetDays.size();++i) days[i]=finance->BudgetDays[i].Values();
+        // Existing family/visit ownership wins over stale source-lot cash.
+        const auto purse=activeFamily ? Primitives::VMTS1Budget::GetRawBudget(&vm) : finance->Unknown3;
+        Primitives::VMTS1Budget::LoadState(&vm,purse,days);
+    } else if (vm.TS1 && version<=10 && vm.TS1Budget.Initialized && !activeFamily) {
+        // Older ODHI stored cash in the signed short mirrors, not SIMI.Unknown3.
+        const int32_t purse=vm.TS1Budget.LegacyPromoted ? vm.TS1Budget.Purse : int32_t(vm.GlobalState[14])*10000+vm.GlobalState[13];
+        Primitives::VMTS1Budget::LoadState(&vm,purse,vm.TS1Budget.Days);
+    }
     vm.TS1TextInput=std::move(textInput);
     // Reopening the source of a saved visit must finish its accepted transfer.
     // Loading a previous home snapshot on arrival must never rearm that trip.
     if (departing && resumeDispatch) vm.Departure = std::move(departure);
+    // The pre-publication promotion applies to this restore only. A later
+    // snapshot on the same VM must use its own saved financial authority.
+    vm.TS1Budget.LegacyPromoted = false;
 }
 }}}}
 

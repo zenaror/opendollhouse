@@ -163,6 +163,8 @@ public:
     std::unique_ptr<Model::Routing::VMObstacle> GetObstacle(const LotTilePos& pos, DirectionT dir) override;
     // Rebuild the occupied TS1 rectangle without executing placement trees.
     void RefreshTS1Footprint();
+    // DVD 0045e839: reset the person interaction's route footprint state.
+    void ClearTS1InteractionFootprint();
     void RestoreTS1Footprint(int minX, int minY, int maxX, int maxY);
     void PositionChange(VMContext* context, bool noEntryPoint) override;
     void PrePositionChange(VMContext* context) override;

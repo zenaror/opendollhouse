@@ -18,6 +18,7 @@
 #include "simantics/engine/VMTS1PersonDataState.h"
 #include "content/TS1NeighbourProvider.h"
 #include "simantics/VM.h"
+#include "simantics/primitives/VMTS1Budget.h"
 #include "simantics/VMContext.h"
 #include "simantics/VMArchitecture.h"
 #include "simantics/VMClock.h"
@@ -127,6 +128,14 @@ template<class T> static T* Req(T* p, const char* what) {
 
 VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool deferInteractionRestore) {
     SIMI* simi = Req(iff->Get<SIMI>(1), "SIMI#1");
+    Engine::Utils::VMTS1InteractionCheckpoint::ValidateFinanceBinding(*iff);
+    const bool legacyFinance = Engine::Utils::VMTS1InteractionCheckpoint::PreflightLegacyBudget(*iff);
+    // Until family activation, this candidate may only synchronize the
+    // source lot's family; an unrelated active visitor belongs elsewhere.
+    if (VM->TS1) {
+        VM->TS1Budget.LegacyOwnerRestricted=true;
+        VM->TS1Budget.LegacyOwnerID=simi->GlobalData.at(9);
+    }
     HOUS* hous = Req(iff->Get<HOUS>(0), "HOUS#0");
     int16_t size = simi->GlobalData[23];
     int16_t type = simi->GlobalData[35];
@@ -134,6 +143,12 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     InstallBlueprint(VM, size, BlueprintPtr);
     FlipRoad = (hous->CameraDir & 1) > 0;
     VM->GlobalState = simi->GlobalData;
+    if (VM->TS1 && !legacyFinance) {
+        Primitives::VMTS1Budget::DaysType days{};
+        for (size_t i=0;i<days.size() && i<simi->BudgetDays.size();++i)
+            days[i]=simi->BudgetDays[i].Values();
+        Primitives::VMTS1Budget::LoadState(VM,simi->LoadedPurse(),days);
+    }
     if (VM->GlobalState.size() < 38) VM->GlobalState.resize(38, 0); // FIX(sims): 38 TS1 globals (FreeSO)
     VM->GlobalState[20] = 255;
     VM->GlobalState[25] = 4;
@@ -392,6 +407,10 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
         }
         printf("WA: saved position vs ARRY grid: %d agree, %d disagree, %d out of world\n", agree, disagree, out);
     }
+    // A marker-only legacy candidate must never enter the heuristic path:
+    // that path runs Init before the native execution graph can be validated.
+    if (iff->HasChunkType<ODHI>() && (!objm->Decoded || getenv("WA_NO_RESTORE")))
+        throw std::runtime_error("native checkpoint requires a decoded ObjM graph");
     // TS1(sims): keep the saved object ids free for the saved objects (see VM::ReservedObjectIDs).
     if (objm->Decoded) for (auto& kv : objm->ObjectData) if (kv.first > 0) VM->ReservedObjectIDs.insert((int16_t)kv.first);
     auto content = FSO::Content::Content::Get();
@@ -417,7 +436,7 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
             throw std::runtime_error("Interaction checkpoint: ambiguous ODHI");
         st::Reader header(snapshots.front()->Data);
         const auto snapshotVersion = header.u32();
-        if (snapshotVersion >= 7 && snapshotVersion <= 10) {
+        if (snapshotVersion >= 7 && snapshotVersion <= 12) {
             if (!objm->Decoded || header.u32() != objm->SourceSignature)
                 throw std::runtime_error("Interaction checkpoint: ObjM changed since capture");
             completeNativeSnapshot = true;
@@ -811,6 +830,24 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
         bound.insert(id);
     };
     for (const auto& saved : objm->ObjectData) bind(saved.first);
+    // Validate any native graph before root PositionChange can execute entry 8.
+    // Only old checkpoints require separate legacy purse promotion.
+    if (objm->ChunkParent) {
+        auto simi=objm->ChunkParent->Get<SIMI>(1);
+        if (simi && objm->ChunkParent->HasChunkType<ODHI>()) {
+            const bool legacy=Engine::Utils::VMTS1InteractionCheckpoint::PreflightLegacyBudget(*objm->ChunkParent);
+            int32_t purse=0;
+            Engine::Utils::VMTS1InteractionCheckpoint::Restore(*VM,*objm->ChunkParent,false,true,&purse,true);
+            if (VM->TS1 && legacy) {
+                Primitives::VMTS1Budget::DaysType days{};
+                for (size_t i=0;i<days.size() && i<simi->BudgetDays.size();++i)
+                    days[i]=simi->BudgetDays[i].Values();
+                Primitives::VMTS1Budget::LoadState(VM,purse,days);
+                VM->TS1Budget.LegacyOwnerRestricted=true;
+                VM->TS1Budget.LegacyPromoted=true;
+            }
+        }
+    }
     // PositionChange recurses through the complete containment graph. Publish
     // roots only, as VM.Load does in both reference pins, not each child twice.
     for (const auto& saved : objm->ObjectData) {

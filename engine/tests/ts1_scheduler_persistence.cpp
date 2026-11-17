@@ -84,7 +84,7 @@ static void provenance() {
     entity.MultitileGroup=&group; group.AddObject(&entity); vm.AddEntity(&entity);
     entity.Thread=std::make_unique<VMThread>(&context,&entity,16);
     IffRawFile raw; raw.Set("ObjM",1,{1,2,3});
-    VMTS1InteractionCheckpoint::Capture(vm,raw,false);
+    VMTS1InteractionCheckpoint::Capture(vm,raw,false,false,10);
     auto native=raw.Find("ODHI",1)->Data;
     need(native[0]==10,"unbound execution overlay claimed scheduler provenance");
     rejects([&]{VMTS1InteractionCheckpoint::Capture(vm,raw,false,true);},
@@ -110,7 +110,7 @@ static void provenance() {
     rejects([&]{VMTS1InteractionCheckpoint::Restore(vm,house);},"corrupt word identity accepted");
     need(entity.Thread.get()==thread && entity.TS1SchedulerState==0xabc10005u,
          "corrupt binding partially published a thread or manager word");
-    entry.GUID=definition.GUID; chunk->Data[0]=11;
+    entry.GUID=definition.GUID; chunk->Data[0]=13;
     rejects([&]{VMTS1InteractionCheckpoint::Restore(vm,house);},"future native version accepted");
     need(entity.Thread.get()==thread && entity.TS1SchedulerState==0xabc10005u,
          "bad version partially published state");
@@ -158,7 +158,7 @@ static void samePoseFootprint() {
     VMTS1LotSaver saver(&vm);std::vector<uint8_t> bytes;
     if(!saver.BuildHouse(sourcePath.string(),bytes))throw std::runtime_error("synthetic lot save: "+saver.Error);
     IffRawFile saved;need(saved.Parse(bytes,&error),"decode saved IFF");
-    auto rawObjm=saved.Find("ObjM",1);auto rawOdhi=saved.Find("ODHI",1);need(rawObjm&&rawOdhi&&rawOdhi->Data[0]==10,"bound save emitted ObjM and ODHI10");
+    auto rawObjm=saved.Find("ObjM",1);auto rawOdhi=saved.Find("ODHI",1);need(rawObjm&&rawOdhi&&rawOdhi->Data[0]==12,"bound save emitted ObjM and ODHI12");
     st::Reader savedTypesInput(saved.Find("objt",0)->Data);OBJT savedTypes;savedTypes.Read(nullptr,savedTypesInput);
     auto objm=new OBJM();objm->ChunkID=1;objm->ChunkProcessed=true;st::Reader objmInput(rawObjm->Data);objm->Read(nullptr,objmInput);
     need(objm->Prepare([&](uint16_t id){OBJMResource result;for(auto& t:savedTypes.Entries)if(t.TypeID==id){result.OBJT=&t;result.OBJD=&definition;}return result;}),"decode actual saved classic object");

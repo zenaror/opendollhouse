@@ -1,3 +1,4 @@
+#include "simantics/primitives/VMTS1Budget.h"
 /*
  * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
  * If a copy of the MPL was not distributed with this file, You can obtain one at
@@ -5,6 +6,8 @@
  */
 // FSO.SimAntics.VM
 #include "simantics/VM.h"
+#include "simantics/utils/VMTS1ObjectAge.h"
+#include "simantics/model/VMStackObjectVariable.h"
 #include "hit/HITSound.h"
 #include "simantics/VMContext.h"
 #include "simantics/VMAI.h"
@@ -168,18 +171,65 @@ void VM::Tick() {
     Ready = true;
 }
 
+// DVD daily callback4322f2: calendar age precedes value depreciation.
+static void TS1DailyObjects(VM& vm) {
+    using V=FSO::SimAntics::Model::VMStackObjectVariable;
+    auto narrow=[](int32_t n) { uint16_t b=uint16_t(n);return b<=0x7fff?int16_t(b):int16_t(int32_t(b)-0x10000); };
+    for (auto e:vm.Entities) {
+        if (!e || e->Dead || e->GhostImage) continue;
+        Utils::RefreshTS1ObjectAge(*e,*vm.Context->Clock);
+        auto def=e->Object?e->Object->OBJ:nullptr;
+        if (!def) continue;
+        if (def->MasterID!=0) {
+            if (!dynamic_cast<VMGameObject*>(e) || !e->MultitileGroup ||
+                e->MultitileGroup->BaseObject()!=e || !e->MasterDefinition) continue;
+            def=e->MasterDefinition;
+        }
+        if (def->SelfDepreciating) continue;
+        const int value=e->GetValue(V::CurrentValue);
+        const int loss=(value==narrow(def->Price) && def->InitialDepreciation)
+            ? narrow(def->InitialDepreciation):narrow(def->DailyDepreciation);
+        const auto next=std::max<int16_t>(narrow(value-loss),narrow(def->DepreciationLimit));
+        e->SetValue(V::CurrentValue,next);
+        if (e->MultitileGroup && e->MultitileGroup->BaseObject()==e) e->MultitileGroup->Price=next;
+    }
+}
+
 void VM::InternalTick() {
     // STUB(3ds): GlobalLink.Tick / EODHost.Tick — no TSO server.
-    Context->Clock->Tick();
-    GlobalState[6] = (int16_t)Context->Clock->Seconds();
-    GlobalState[5] = (int16_t)Context->Clock->Minutes;
-    GlobalState[0] = (int16_t)Context->Clock->Hours;
-    // TS1(sims): FreeSO GetGlobalValue reads Day of Month / Month / Year (globals 1, 7, 8) from the clock.
-    GlobalState[1] = (int16_t)Context->Clock->DayOfMonth;
-    GlobalState[7] = (int16_t)Context->Clock->Month;
-    GlobalState[8] = (int16_t)Context->Clock->Year;
-    GlobalState[4] = (int16_t)Context->Clock->TimeOfDay();
-    Context->ObserveSpatialPeriod();
+    auto publishClock = [&]() {
+        GlobalState[6] = (int16_t)Context->Clock->Seconds();
+        GlobalState[5] = (int16_t)Context->Clock->Minutes;
+        GlobalState[0] = (int16_t)Context->Clock->Hours;
+        // TS1(sims): FreeSO GetGlobalValue reads Day of Month / Month / Year (globals 1, 7, 8) from the clock.
+        GlobalState[1] = (int16_t)Context->Clock->DayOfMonth;
+        GlobalState[7] = (int16_t)Context->Clock->Month;
+        GlobalState[8] = (int16_t)Context->Clock->Year;
+        GlobalState[4] = (int16_t)Context->Clock->TimeOfDay();
+        Context->ObserveSpatialPeriod();
+    };
+    auto advanceClock = [&]() {
+        const auto previousDay=Context->Clock->DayOfMonth;
+        Context->Clock->Tick(TS1);
+        publishClock();
+        if (TS1 && Context->Clock->DayOfMonth!=previousDay) {
+            // The original increments this short once at the ordinary day carry.
+            const uint16_t bits=uint16_t(GlobalState[28])+uint16_t(1);
+            GlobalState[28]=bits<=0x7fff ? int16_t(bits) : int16_t(int32_t(bits)-0x10000);
+            TS1DailyObjects(*this);
+            // FAMh statistical-history append is a separate source callback;
+            // it is still unimplemented, not a second financial transaction.
+            Primitives::VMTS1Budget::RolloverDay(this);
+            Context->Clock->FinishCalendarCarry();
+            GlobalState[1]=int16_t(Context->Clock->DayOfMonth);
+            GlobalState[7]=int16_t(Context->Clock->Month);
+            GlobalState[8]=int16_t(Context->Clock->Year);
+        }
+    };
+    // TS1 dispatch observes the old time; the clock advances only after the
+    // completed ordinary sweep. Keep the independent TSO order unchanged.
+    if (TS1) publishClock();
+    else advanceClock();
 
     Context->Architecture()->Tick();
 
@@ -202,6 +252,7 @@ void VM::InternalTick() {
             obj->Tick(); //run object specific tick behaviors, like lockout count decrement
         }
     }
+    if (TS1) advanceClock();
     if (TS1) Engine::Utils::VMTS1Travel::KeepSelectedSim(this); // FIX(sims) H1: global 3 names a living Sim
     //Context.SetToNextCache.VerifyPositions(); use only for debug!
 }
@@ -246,6 +297,9 @@ void VM::AddToObjList(std::vector<VMEntity*>& list, VMEntity* entity) {
 
 /// Removes an entity from this Virtual Machine.
 void VM::RemoveEntity(VMEntity* entity) {
+    if (TS1) for (auto other : Entities)
+        if (other && other!=entity && other->Thread) other->Thread->TS1ObjectUseTargetRemoved(entity);
+    if (TS1 && entity && entity->Thread) entity->Thread->DiscardTS1ObjectUses();
     if (TS1) if (auto avatar = dynamic_cast<VMAvatar*>(entity)) {
         for (auto other : Entities) if (other && other->Thread)
             for (const auto& frame : other->Thread->Stack)

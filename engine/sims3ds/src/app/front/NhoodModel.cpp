@@ -556,11 +556,11 @@ void NhoodModel::LoadArea(Area a, const std::map<int,std::pair<int,int>>* mapPos
             SIMI simi;
             try {
                 st::Reader r(si->second);
-                simi.Read(nullptr, r);
+                simi.ReadMetadata(r);
                 lot.MagicHouseFlag = simi.GlobalData.at(22) != 0;
-            } catch (...) {}
-            lot.Value = simi.PurchaseValue();
-            lot.EmptyLot = simi.ArchitectureValue == 0;
+                lot.Value = simi.PurchaseValue();
+                lot.EmptyLot = simi.ArchitectureValue == 0;
+            } catch (const std::exception& e) { std::fprintf(stderr, "SIMI metadata for house %d: %s\n", h, e.what()); }
         }
         Lots.push_back(std::move(lot));
     }

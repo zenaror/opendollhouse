@@ -291,7 +291,7 @@ bool SaveLot(LotSession& session, std::string& error, std::string& log, bool dep
         const FSO::Content::TS1::RawIffChunk* info=nullptr;
         for(const auto& chunk:chunks)if(chunk.Type=="SIMI"&&chunk.ID==1){if(info){error="Saved home has ambiguous SIMI";return false;}info=&chunk;}
         if(!info){error="Saved home has no SIMI property value";return false;}
-        FSO::Files::Formats::IFF::Chunks::SIMI simi;st::Reader reader(info->Data);simi.Read(nullptr,reader);
+        FSO::Files::Formats::IFF::Chunks::SIMI simi;st::Reader reader(info->Data);simi.ReadMetadata(reader);
         const int value=simi.PurchaseValue();
         if(value<0){error="Saved home has a negative property value";return false;}
         family->NetWorth=value; // Legacy C++ member name; raw FAMI offset24 excludes cash.

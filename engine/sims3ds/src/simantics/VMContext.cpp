@@ -1,3 +1,4 @@
+#include "simantics/utils/VMTS1ObjectAge.h"
 /*
  * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
  * If a copy of the MPL was not distributed with this file, You can obtain one at
@@ -662,15 +663,21 @@ float VMContext::GetEnvironmentScore(const LotTilePos& pos) {
     return score;
 }
 
-void VMContext::AddRoomPortal(VMEntity* obj, uint16_t room) {
+bool VMContext::FindRoomPortal(VMEntity* obj, uint16_t room, VMRoomPortal& edge) {
     //find other portal part, must be in other room to count...
     for (auto obj2 : obj->MultitileGroup->Objects) {
         auto room2 = GetObjectRoom(obj2);
         if (obj != obj2 && room2 != room && obj2->EntryPoints[15].ActionFunction != 0) {
-            RoomInfo[room].Portals.push_back(VMRoomPortal(obj->ObjectID, room2));
-            break;
+            edge=VMRoomPortal(obj->ObjectID, room2);
+            return true;
         }
     }
+    return false;
+}
+
+void VMContext::AddRoomPortal(VMEntity* obj, uint16_t room) {
+    VMRoomPortal edge;
+    if (FindRoomPortal(obj,room,edge)) RoomInfo[room].Portals.push_back(edge);
 }
 
 void VMContext::RemoveRoomPortal(VMEntity* obj, uint16_t room) {
@@ -1050,7 +1057,16 @@ Entities::VMMultitileGroup* VMContext::CreateObjectInstance(uint32_t GUID, const
             }
         }
 
+        if (VM->TS1) {
+            for(auto e:group->Objects) Utils::StampTS1ObjectCreation(*e,*Clock);
+            if(auto base=group->BaseObject()) base->SetValue(VMStackObjectVariable::CurrentValue,Utils::TS1AgeShort(objDefinition->OBJ->Price));
+            group->Price=objDefinition->OBJ->Price;
+        }
         group->Init(this);
+        if (VM->TS1) {
+            for(auto e:group->Objects) Utils::RefreshTS1ObjectAge(*e,*Clock);
+            if(auto base=group->BaseObject()) group->Price=base->GetValue(VMStackObjectVariable::CurrentValue);
+        }
         VMPlacementError couldPlace = group->ChangePosition(pos, direction, this).Status;
         (void)couldPlace;
         return group;
@@ -1069,7 +1085,13 @@ Entities::VMMultitileGroup* VMContext::CreateObjectInstance(uint32_t GUID, const
             vmObject->MainParam = MainParam;
             vmObject->MainStackOBJ = MainStackOBJ;
 
+            if (VM->TS1) Utils::StampTS1ObjectCreation(*vmObject,*Clock);
             group->Init(this);
+            if (VM->TS1) {
+                Utils::RefreshTS1ObjectAge(*vmObject,*Clock);
+                vmObject->SetValue(VMStackObjectVariable::CurrentValue,Utils::TS1AgeShort(objDefinition->OBJ->Price));
+                group->Price=vmObject->GetValue(VMStackObjectVariable::CurrentValue);
+            }
             vmObject->SetPosition(pos, direction, this);
 
             return group;
@@ -1088,7 +1110,13 @@ Entities::VMMultitileGroup* VMContext::CreateObjectInstance(uint32_t GUID, const
             vmObject->MainParam = MainParam;
             vmObject->MainStackOBJ = MainStackOBJ;
 
+            if (VM->TS1) Utils::StampTS1ObjectCreation(*vmObject,*Clock);
             group->Init(this);
+            if (VM->TS1) {
+                Utils::RefreshTS1ObjectAge(*vmObject,*Clock);
+                vmObject->SetValue(VMStackObjectVariable::CurrentValue,Utils::TS1AgeShort(objDefinition->OBJ->Price));
+                group->Price=vmObject->GetValue(VMStackObjectVariable::CurrentValue);
+            }
             vmObject->SetPosition(pos, direction, this);
 
             return group;
