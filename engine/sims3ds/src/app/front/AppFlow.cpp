@@ -142,6 +142,10 @@ void App::ApplyPlaySettings() {
             world->State.SimpleTerrain = st.HandheldGraphics;
             world->Get2DWorld().Invalidate();
         }
+        const int terrainDetail = st.HandheldGraphics ? 0 : st.TerrainDetail;
+        if (world->State.TerrainDetail != terrainDetail) {
+            world->State.TerrainDetail = terrainDetail;
+        }
         if (st.HandheldGraphics)
             std::printf("[portable-graphics] shadows=%d terrain_grain=off slope_shading=off "
                         "avatar_filter=nearest room_lighting=on\n", int(st.Shadows));

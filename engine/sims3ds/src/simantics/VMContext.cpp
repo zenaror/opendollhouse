@@ -542,6 +542,7 @@ void VMContext::PrepareVisualLighting() {
             record.VisualMapByte = uint8_t(record.VisualEventByte);
     auto& visual = Blueprint->VisualLight;
     const bool wasEnabled = visual.Enabled;
+    const bool periodChanged = visual.Period != period;
     const bool geometryChanged = visual.GeometryGeneration != VisualGeometryVersion;
     std::vector<std::vector<uint32_t>> maps;
     if (geometryChanged) maps.assign(EnvironmentMaps.begin(), EnvironmentMaps.begin() + std::min<size_t>(2, EnvironmentMaps.size()));
@@ -572,6 +573,7 @@ void VMContext::PrepareVisualLighting() {
     if (geometryChanged) { visual.Maps.swap(maps); visual.GeometryGeneration = VisualGeometryVersion; }
     visual.Grid.swap(grid);
     visual.Enabled = true;
+    visual.Period = period;
     const bool intensityChanged = !wasEnabled || visual.Intensities != intensities;
     const bool tonesChanged = !wasEnabled || visual.Tones != tones;
     if (spatialChanged) { visual.SpatialMaps.swap(spatialMaps); ++visual.SpatialGeneration; }
@@ -581,7 +583,7 @@ void VMContext::PrepareVisualLighting() {
     if (tonesChanged) {
         visual.Tones.swap(tones); ++visual.Generation;
     }
-    if (tonesChanged || intensityChanged || spatialChanged)
+    if (tonesChanged || intensityChanged || spatialChanged || periodChanged)
         Blueprint->Damage.push_back(BlueprintDamage(BlueprintDamageType::LIGHTING_CHANGED));
     SpatialSnapshotDirty = false;
     VisualLightingDirty = false;

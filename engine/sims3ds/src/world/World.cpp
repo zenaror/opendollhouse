@@ -181,6 +181,8 @@ void World::PreDraw() {
     State._2D->PreciseZoom = State.PreciseZoom();
     _2DWorld.ClearColor = ClearColor;
     State.OutsideColor = Blueprint->OutsideColor;
+    State.TerrainPeriod = !State.RenderingThumbnail && Blueprint->VisualLight.Enabled ?
+        Blueprint->VisualLight.Period : -1;
     for (auto ent : Blueprint->Objects) {
         ent->Update(State);
     }

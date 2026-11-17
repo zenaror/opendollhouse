@@ -21,6 +21,7 @@ Blueprint::Blueprint(int32_t width, int32_t height) : Width(width), Height(heigh
     RoomColors.assign(65536, st::Color()); // C# new Color[65536]: transparent black
     RoomMap.resize((size_t)Stories, nullptr);
     this->Cutaway.assign((size_t)numTiles, false);
+    TerrainPoolBlocked.assign((size_t)numTiles, 0); // new original pool layer defaults to255
 }
 
 Blueprint::~Blueprint() {}

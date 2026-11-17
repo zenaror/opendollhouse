@@ -19,6 +19,7 @@
 #include "core/math.h"
 #include "world/components/WorldComponent.h"
 #include "world/utils/TriangleRaster.h"
+#include "common/TS1/TS1TerrainBlades.h"
 
 namespace FSO { namespace LotView {
 class Framebuffer;
@@ -58,6 +59,7 @@ public:
     void Draw(WorldState& world) override { (void)world; }
 
     Utils::RasterStats LastStats;
+    int MaxOriginalStripHeight() const { return LastOriginalStripHeight; }
 
 private:
     st::Color LightGreen = st::Color(80, 116, 59);
@@ -70,6 +72,21 @@ private:
     int32_t HeightWidth = 0;
     FSO::LotView::Model::Blueprint* Blueprint = nullptr;
     Utils::RasterTexture Blades; // 128x128 tileable luminance (x200 = 1.0)
+
+    // Original terrain caches indices, never RGB from a room/outside tint.
+    std::vector<uint8_t> OriginalShades;
+    int LastOriginalStripHeight = 0;
+    std::array<int,4> OriginalStripHeights{};
+    bool OriginalBoundsDirty = true;
+    FSO::Common::TS1::TerrainBladePool OriginalBladePool;
+    std::vector<uint16_t> OriginalBladeSeeds;
+    int OriginalBladeSeedWidth = 0;
+    int OriginalShadePeriod = -1;
+    int OriginalShadeRotation = -1;
+    int OriginalShadeSourceWidth = 0;
+    bool BuildOriginalShades(int period, int rotation, int sourceWidth);
+    int OriginalGrassSample(int x, int y) const;
+    int OriginalGrassAt(int x, int y) const;
 
     void GenerateGrassStates();
     void GenerateBlades();

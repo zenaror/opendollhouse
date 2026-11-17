@@ -92,6 +92,11 @@ public:
     // Portable lots omit decorative grass grain and slope shading. Ambient
     // room light, time of day, tile heights and the build grid stay active.
     bool SimpleTerrain = false;
+    int TerrainDetail = 2;
+    int TerrainPeriod = -1;
+    // True source viewport in the current batch target; dirty scissoring must
+    // not change the original strip's interpolation or dither parity.
+    st::Rectangle TerrainSourceClip;
     // Presentation only: authored object light can be hidden without changing
     // the simulation's contributions or room score. Daylight remains visible.
     bool ObjectLighting = true;

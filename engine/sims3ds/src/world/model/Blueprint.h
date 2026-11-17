@@ -73,6 +73,9 @@ public:
 
     std::vector<st::Color> RoomColors;
     FSO::Common::TS1::VisualLighting VisualLight;
+    // Original cPoolLayer cells 0..16 suppress decorative grass. Keep the
+    // dry rim (16) distinct from the simulation's strict water test (<16).
+    std::vector<uint8_t> TerrainPoolBlocked;
     st::Rectangle BuildableArea;
     st::Rectangle TargetBuildableArea;
 

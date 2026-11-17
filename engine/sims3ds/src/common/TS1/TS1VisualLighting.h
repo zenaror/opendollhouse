@@ -51,6 +51,7 @@ struct VisualLighting {
     static constexpr uint16_t FirstKey = 32768;
     static constexpr uint16_t BaseKey = 65531;
     bool Enabled = false;
+    int Period = -1; // original discrete period, independent of legacy RGB tint
     int Width = 0, Height = 0;
     uint64_t Generation = 0, GeometryGeneration = 0;
     std::vector<std::vector<uint32_t>> Maps; // renderer snapshot; copied only with geometry

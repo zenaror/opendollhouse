@@ -616,6 +616,14 @@ bool VMArchitecture::SetFloor(int16_t tileX, int16_t tileY, int8_t level, const 
                 for (size_t i = 0; i < TS1PoolTiles.size(); ++i) TS1PoolTiles[i] = Floors[0][i].Pattern == 65535;
             }
             TS1PoolTiles[offset] = floor.Pattern == 65535;
+            if (auto* blueprint = Context->Blueprint) {
+                auto& blocked = blueprint->TerrainPoolBlocked;
+                if (blocked.size() != Floors[0].size()) blocked.assign(Floors[0].size(), 0);
+                // Preserve imported dry-rim metadata on unrelated floor edits.
+                // Explicit pool water insertion/removal updates this cell.
+                if (floor.Pattern == 65535 || Floors[0][offset].Pattern == 65535)
+                    blocked[offset] = floor.Pattern == 65535;
+            }
         }
     }
     Floors[level - 1][offset] = floor;
@@ -683,7 +691,10 @@ void VMArchitecture::SyncTerrain(bool vis) {
         std::vector<float> fh(h.size());
         for (int y = 0; y < Height; y++) for (int x = 0; x < Width; x++) {
             size_t i = (size_t)(y * Width + x);
-            fh[i] = (x <= 0 || y <= 0) ? 0.0f : (h[i] - WorldUI->BaseAlt) * WorldUI->TerrainFactor;
+            // The outer authored vertices also supply neighboring terrain
+            // normals. Replacing them with zero changes the first visible
+            // row's light even though the drawn mesh starts at tile (1,1).
+            fh[i] = (h[i] - WorldUI->BaseAlt) * WorldUI->TerrainFactor;
         }
         WorldUI->Terrain->SetHeights(fh, Width);
         if (!g.empty()) WorldUI->Terrain->SetGrassState(g, Width);

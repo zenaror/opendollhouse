@@ -7,6 +7,9 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Ordinary grass uses the original color tables and detail levels in the default
+  camera direction. Other terrain and scene-lighting differences remain under
+  review.
 - Floors, walls and ordinary objects use the original room-lighting palette
   and day/night limits. Standard floors and walls also use the game's local
   lamp-light masks. Sim shading, terrain, roofs and special surfaces still

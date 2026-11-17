@@ -342,6 +342,8 @@ static bool BuildBulldozedLot(int houseNumber, std::vector<uint8_t>* prepared, s
             if (i < arch->TS1WallStyleTopLeft[lvl].size()) arch->TS1WallStyleTopLeft[lvl][i] = 0;
             if (i < arch->TS1WallStyleTopRight[lvl].size()) arch->TS1WallStyleTopRight[lvl][i] = 0;
             if (lvl == 0 && i < arch->TS1PoolTiles.size()) arch->TS1PoolTiles[i] = 0;
+            if (lvl == 0 && vm->Context->Blueprint && i < vm->Context->Blueprint->TerrainPoolBlocked.size())
+                vm->Context->Blueprint->TerrainPoolBlocked[i] = 0;
         }
     }
     arch->RegenWallsAt();

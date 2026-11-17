@@ -9,9 +9,11 @@
 #include "world/model/Blueprint.h"
 #include "world/WorldState.h"
 #include "world/Framebuffer.h"
+#include "common/TS1/TS1TerrainLighting.h"
 #include "world/utils/_2DWorldBatch.h"
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 namespace FSO { namespace LotView { namespace Components {
 
@@ -84,6 +86,8 @@ void TerrainComponent::SetGrassState(const std::vector<uint8_t>& grass, int32_t 
 void TerrainComponent::SetHeights(const std::vector<float>& heights, int32_t width) {
     Heights = heights;
     HeightWidth = width;
+    OriginalShadePeriod = -1;
+    OriginalBoundsDirty = true;
     TerrainDirty = true;
 }
 
@@ -180,14 +184,94 @@ float TerrainComponent::StateAt(int x, int y) const {
     return (i < GrassState.size()) ? GrassState[i] / 255.0f : 0.0f;
 }
 
+int TerrainComponent::OriginalGrassSample(int x,int y) const {
+    if (GrassWidth<=0 || GrassState.empty()) return 0;
+    x=std::clamp(x,0,GrassWidth-1); y=std::clamp(y,0,GrassWidth-1);
+    const size_t index=size_t(y)*GrassWidth+x;
+    return index<GrassState.size() ? 127-int(GrassState[index]) : 0;
+}
+int TerrainComponent::OriginalGrassAt(int x,int y) const {
+    return FSO::Common::TS1::TerrainGrassLevel({{OriginalGrassSample(x,y),OriginalGrassSample(x-1,y),
+        OriginalGrassSample(x-1,y-1),OriginalGrassSample(x,y-1)}});
+}
+
+bool TerrainComponent::BuildOriginalShades(int period,int rotation,int sourceWidth) {
+    // Other rotations need the original camera-coordinate RNG origin contract.
+    // Their established renderer remains available until that binding is proven.
+    if (period<0 || period>3 || rotation!=0 || sourceWidth<HeightWidth ||
+        HeightWidth<=0 || Heights.size()!=size_t(HeightWidth)*HeightWidth ||
+        Blueprint==nullptr || Blueprint->TerrainFactor<=0) return false;
+    if (OriginalShadePeriod==period && OriginalShadeRotation==rotation &&
+        OriginalShadeSourceWidth==sourceWidth) return true;
+    using namespace FSO::Common::TS1;
+    const TerrainNormals normals(period);
+    TerrainRandom random;
+    OriginalShades.assign(size_t(HeightWidth)*HeightWidth,0);
+    // Rendered heights retain previews. Their common base altitude cancels in
+    // slope differences; undo only the established TS1 altitude conversion.
+    const auto height = [&](int x,int y) {
+        return int(std::lround(double(GetElevationPoint(x,y))/(double(Blueprint->TerrainFactor)*10)));
+    };
+    const auto corners = [&](int x,int y) {
+        return TerrainCorners{{height(x,y+1),height(x,y),height(x+1,y),height(x+1,y+1)}};
+    };
+    // Consume the renderer grid, rather than the ARRY storage stride. The
+    // original rebuilds in x-major/y-inner order; retain the rendered crop.
+    for(int x=1;x<sourceWidth;++x) for(int y=1;y<sourceWidth;++y) {
+        if (x<HeightWidth && y<HeightWidth)
+            OriginalShades[size_t(y)*HeightWidth+x]=uint8_t(normals.Vertex(corners(x,y),
+                corners(x-1,y),corners(x-1,y-1),corners(x,y-1),&random));
+        else (void)random.Triangular(3);
+    }
+    OriginalShadePeriod=period; OriginalShadeRotation=rotation;
+    OriginalShadeSourceWidth=sourceWidth;
+    if(OriginalBoundsDirty) {
+        OriginalStripHeights.fill(0);
+        // Source geometry-wide bounds are independent of the current dirty
+        // scissor. Retained scrolling needs the old fringe even on small draws.
+        const int x0=std::max(Area.Left(),1), y0=std::max(Area.Top(),1);
+        const int x1=std::min(Area.Right(),HeightWidth-1), y1=std::min(Area.Bottom(),HeightWidth-1);
+        for(int x=x0;x<x1;++x) for(int y=y0;y<y1;++y) {
+            const auto h=corners(x,y);
+            for(int zoom=1;zoom<=3;++zoom) for(int side : {0,2}) {
+                const int first=h[size_t(side)]-h[3]+2;
+                const int last=first+((2<<zoom)-1)*(h[1]-h[3]+4);
+                OriginalStripHeights[size_t(zoom)]=std::max(OriginalStripHeights[size_t(zoom)],
+                    std::max(first,last));
+            }
+        }
+        OriginalBoundsDirty=false;
+    }
+    return true;
+}
+
 void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
     LastStats = RasterStats();
+    LastOriginalStripHeight = 0;
     if (Blueprint == nullptr) return;
+    // Unsupported camera/environment/detail paths retain their established
+    // rendering while the ordinary DVD grass surface uses its own source ramp.
+    const bool original = !world.RenderingThumbnail &&
+        LightType==TerrainType::GRASS && DarkType==TerrainType::GRASS &&
+        GrassWidth==HeightWidth && GrassState.size()==size_t(GrassWidth)*GrassWidth &&
+        BuildOriginalShades(world.TerrainPeriod,int(world.Rotation()),Blueprint->Width);
     const bool grain = !world.SimpleTerrain || world.RenderingThumbnail;
-    if (grain) GenerateBlades();
+    if (grain && !original) GenerateBlades();
     auto& ws = world.WorldSpace;
     auto K = TileProjectionOrigin(world);
     auto cam = world.Camera();
+    const int zoom = int(world.Zoom());
+    LastOriginalStripHeight=original && zoom>=1 && zoom<=3 ? OriginalStripHeights[size_t(zoom)] : 0;
+    const int detail = world.SimpleTerrain ? 0 : world.TerrainDetail;
+    const bool originalBlades = original && detail>0 && detail<=2 && zoom>=1 && zoom<=3;
+    if(originalBlades) {
+        if(OriginalBladePool.Detail!=detail || OriginalBladePool.Zoom!=zoom)
+            OriginalBladePool.Reset(zoom,detail);
+        if(OriginalBladeSeedWidth!=Blueprint->Width) {
+            OriginalBladeSeeds=FSO::Common::TS1::TerrainBladeTileSeeds(Blueprint->Width);
+            OriginalBladeSeedWidth=Blueprint->Width;
+        }
+    }
 
     st::Color out = world.OutsideColor;
     if (out.A == 0 || !target.Room.empty() || target.DeferredOutsideTint) out = st::Color::White(); // tint after raster clamp
@@ -215,6 +299,11 @@ void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
         auto& v = verts[(size_t)((y - y0) * vw + (x - x0))];
         v.x = s.X + K.X; v.y = s.Y + K.Y;
         v.z = cam->Depth(WorldSpace::GetWorldFromTile(p));
+        if (original) {
+            v.u=float(OriginalGrassAt(x,y));
+            v.v=float(OriginalShades[size_t(y)*HeightWidth+x]);
+            continue;
+        }
         v.u = x * tpt; v.v = y * tpt;
         auto c = st::Color::Lerp(LightGreen, LightBrown, state);
         auto d = st::Color::Lerp(DarkGreen, DarkBrown, state);
@@ -239,6 +328,14 @@ void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
     float cx0 = (float)std::max<int32_t>(0, target.ClipX0), cy0 = (float)std::max<int32_t>(0, target.ClipY0);
     float cx1 = (float)std::min(target.Width, target.ClipX1), cy1 = (float)std::min(target.Height, target.ClipY1);
     const auto* grassTexture = grain ? &Blades : nullptr;
+    const FSO::Common::TS1::TerrainPalette* originalPalette = nullptr;
+    if (original) {
+        static const FSO::Common::TS1::TerrainPalette palette;
+        originalPalette = &palette;
+    }
+    const auto sourceHeight = [&](int x,int y) {
+        return int(std::lround(double(GetElevationPoint(x,y))/(double(Blueprint->TerrainFactor)*10)));
+    };
     // The vertex colors are normalized for the grass texture's neutral value (200).
     constexpr uint32_t flatGrass = 0xffc8c8c8u;
     for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
@@ -248,9 +345,47 @@ void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
         auto& d = verts[(size_t)((y + 1 - y0) * vw + (x - x0))];
         float minX = std::min(std::min(a.x, b.x), std::min(c.x, d.x)), maxX = std::max(std::max(a.x, b.x), std::max(c.x, d.x));
         float minY = std::min(std::min(a.y, b.y), std::min(c.y, d.y)), maxY = std::max(std::max(a.y, b.y), std::max(c.y, d.y));
-        if (maxX < cx0 || maxY < cy0 || minX >= cx1 || minY >= cy1) continue;
-        DrawTriangle(target, a, b, c, grassTexture, flatGrass, bias, &LastStats);
-        DrawTriangle(target, a, c, d, grassTexture, flatGrass, bias, &LastStats);
+        if (original) {
+            // Source H order is left, top, right, bottom. The native depth
+            // corners remain available; source heights drive strip geometry.
+            const std::array<int,4> heights{{sourceHeight(x,y+1),sourceHeight(x,y),
+                sourceHeight(x+1,y),sourceHeight(x+1,y+1)}};
+            // Source projection differs from the inherited mesh on slopes.
+            // Cull using the exact source bounds, not that legacy mesh's Y.
+            const int baseY=int(std::lround(ws.GetScreenFromTile(st::Vector3(float(x),float(y+1),0)).Y+K.Y));
+            const int n=2<<zoom;
+            int sourceTop=std::numeric_limits<int>::max();
+            int sourceBottom=std::numeric_limits<int>::min();
+            for(int side : {0,2}) for(int k : {0,n-1}) {
+                const int firstY=baseY-n*heights[size_t(side)]-
+                    k*(heights[1]-heights[size_t(side)]+2);
+                const int span=heights[size_t(side)]-heights[3]+2+
+                    k*(heights[1]-heights[3]+4);
+                sourceTop=std::min(sourceTop,firstY);
+                sourceBottom=std::max(sourceBottom,firstY+span);
+            }
+            const int bladeMargin=originalBlades && zoom==3 ? 3 : 0;
+            if(maxX<cx0 || sourceBottom<cy0 || minX>=cx1 || sourceTop-bladeMargin>=cy1) continue;
+            const std::array<RasterVertex,4> corners{{d,a,b,c}};
+            const auto* sourceClip=world.TerrainSourceClip.Width>0 ? &world.TerrainSourceClip : nullptr;
+            FSO::Common::TS1::TerrainBladeSelection blades;
+            const size_t tile=size_t(y)*Blueprint->Width+x;
+            // Ordinary no-floor grass is the bounded source admission here.
+            // Split floors and alternate environment selectors stay separate.
+            const bool noFloor=Blueprint->Floors && !Blueprint->Floors->empty() &&
+                tile<(*Blueprint->Floors)[0].size() && (*Blueprint->Floors)[0][tile].Pattern==0;
+            const bool poolClear=tile<Blueprint->TerrainPoolBlocked.size() &&
+                Blueprint->TerrainPoolBlocked[tile]==0;
+            if(originalBlades && noFloor && poolClear && tile<OriginalBladeSeeds.size())
+                blades=FSO::Common::TS1::SelectTerrainBlades(OriginalBladePool,
+                    OriginalBladeSeeds[tile],OriginalGrassSample(x,y));
+            DrawOriginalTerrainQuad(target,corners,heights,baseY,zoom,*originalPalette,bias,&LastStats,
+                sourceClip,blades.Pool ? &blades : nullptr);
+        } else {
+            if (maxX < cx0 || maxY < cy0 || minX >= cx1 || minY >= cy1) continue;
+            DrawTriangle(target, a, b, c, grassTexture, flatGrass, bias, &LastStats);
+            DrawTriangle(target, a, c, d, grassTexture, flatGrass, bias, &LastStats);
+        }
     }
     if (!world.RenderingThumbnail && (DrawGrid || world.BuildMode()>0)) {
         const auto eligible=[&](int x,int y) -> bool {

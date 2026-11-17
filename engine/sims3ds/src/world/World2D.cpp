@@ -27,6 +27,41 @@ static WorldObjectRenderInfo* GetRenderInfo(WorldComponent* component) {
     return (obj == nullptr) ? nullptr : &obj->renderInfo;
 }
 
+// Old and current source viewports in the same buffer coordinate system. The
+// overlap is reusable where neither clip boundary can affect a four-pixel
+// strip. Include the vacated area so the overscan also matches a cold render.
+static std::vector<st::Rectangle> TerrainPanAreas(const st::Rectangle& old, const st::Rectangle& view,
+                                                   int stripHeight, int bufferWidth, int bufferHeight) {
+    std::vector<st::Rectangle> areas;
+    const int dx = view.X-old.X, dy = view.Y-old.Y;
+    if (!dx && !dy) return areas;
+    const int left = std::max(0,std::min(old.Left(),view.Left()));
+    const int top = std::max(0,std::min(old.Top(),view.Top()));
+    const int right = std::min(bufferWidth,std::max(old.Right(),view.Right()));
+    const int bottom = std::min(bufferHeight,std::max(old.Bottom(),view.Bottom()));
+    const auto add = [&](int x0, int y0, int x1, int y1) {
+        if (x1>x0 && y1>y0) areas.emplace_back(x0,y0,x1-x0,y1-y0);
+    };
+    // A vertical move by an odd number of displayed pixels swaps both dither
+    // rows even in the interior. Floor sprites can occlude or blend with this
+    // terrain, so redraw their normal layer order across the changed view.
+    const int marginX = dx ? 3 : 0;
+    const int marginY = dy ? stripHeight+4 : 0;
+    const int x0 = std::max(left,std::max(old.Left(),view.Left())+marginX);
+    const int y0 = std::max(top,std::max(old.Top(),view.Top())+marginY);
+    const int x1 = std::min(right,std::min(old.Right(),view.Right())-marginX);
+    const int y1 = std::min(bottom,std::min(old.Bottom(),view.Bottom())-marginY);
+    if ((dy%2)!=0 || x1<=x0 || y1<=y0) {
+        add(left,top,right,bottom);
+    } else {
+        add(left,top,right,y0);
+        add(left,y1,right,bottom);
+        add(left,y0,x0,y1);
+        add(x1,y0,right,y1);
+    }
+    return areas;
+}
+
 bool World2D::ObjectView::operator==(const ObjectView& o) const {
     return Object == o.Object && Graphic == o.Graphic && Definition == o.Definition && Position == o.Position &&
         Bounds.X == o.Bounds.X && Bounds.Y == o.Bounds.Y && Bounds.Width == o.Bounds.Width &&
@@ -364,7 +399,7 @@ void World2D::PreDraw(WorldState& state) {
 
     int32_t bw = (int32_t)state.WorldSpace.WorldPxWidth + SCROLL_BUFFER, bh = (int32_t)state.WorldSpace.WorldPxHeight + SCROLL_BUFFER;
     AmbientLight = state.RenderingThumbnail ? nullptr : Blueprint->RoomColors.data();
-    // Exterior geometry shares the settled palette/cadence of outside sprites.
+    // Roofs and legacy terrain use the settled outside sprite color.
     OutsideLight = state.RenderingThumbnail ? st::Color::White() :
         (Blueprint->Light.size() > 1 ? Blueprint->RoomColors[1] : state.OutsideColor);
     if (OutsideLight.A == 0) OutsideLight = st::Color::White();
@@ -424,6 +459,11 @@ void World2D::PreDraw(WorldState& state) {
     RenderVisualEnabled = VisualLight != nullptr;
     RenderVisualGeneration = VisualLight ? VisualLight->Generation : 0;
     RenderVisualGeometry = VisualLight ? VisualLight->GeometryGeneration : 0;
+    const int terrainPeriod = Blueprint->Terrain && !state.RenderingThumbnail ? state.TerrainPeriod : -1;
+    const int terrainDetail = terrainPeriod >= 0 ? (state.SimpleTerrain ? 0 : state.TerrainDetail) : -1;
+    redrawFloor |= terrainPeriod != RenderTerrainPeriod || terrainDetail != RenderTerrainDetail;
+    RenderTerrainPeriod = terrainPeriod;
+    RenderTerrainDetail = terrainDetail;
     bool sizeChanged = Composite.Width != bw || Composite.Height != bh;
     auto newOrigin = GetBufferOrigin(pxOffset);
     const bool bufferShifted = HaveOrigin && newOrigin != Origin;
@@ -452,6 +492,22 @@ void World2D::PreDraw(WorldState& state) {
             else if (sy < 0) strips.push_back(st::Rectangle(0, bh + sy, bw, -sy));
         }
     }
+    // Set the physical source view before either cache rendering or direct
+    // fragment replay. Dirty scissors only restrict framebuffer writes.
+    const st::Rectangle view(int(pxOffset.X-newOrigin.X), int(pxOffset.Y-newOrigin.Y),
+                             int(state.WorldSpace.WorldPxWidth), int(state.WorldSpace.WorldPxHeight));
+    state.TerrainSourceClip = terrainPeriod >= 0 ? view : st::Rectangle();
+    std::vector<st::Rectangle> terrainAreas;
+    if (!redraw[FLOOR] && terrainPeriod >= 0 && TerrainWorldView.Width > 0) {
+        const int height = Blueprint->Terrain->MaxOriginalStripHeight();
+        if (height > 0 || StaticFloor.Buffer.HasOriginalTerrain) {
+            const st::Rectangle old(TerrainWorldView.X-int(newOrigin.X), TerrainWorldView.Y-int(newOrigin.Y),
+                                    TerrainWorldView.Width, TerrainWorldView.Height);
+            terrainAreas = TerrainPanAreas(old,view,height,bw,bh);
+        }
+    }
+    TerrainWorldView = terrainPeriod >= 0 ? st::Rectangle(view.X+int(newOrigin.X), view.Y+int(newOrigin.Y),
+                                                         view.Width, view.Height) : st::Rectangle();
     Origin = newOrigin;
     HaveOrigin = true;
     for (int l = 0; l < 3; l++) {
@@ -463,6 +519,11 @@ void World2D::PreDraw(WorldState& state) {
     for (int l = 0; l < 3; l++) {
         if (redraw[l]) { RenderLayer(l, state, nullptr); StaticRedraws++; }
         else for (auto& r : strips) { RenderLayer(l, state, &r); StripRedraws++; StripPixels += (int64_t)r.Width * r.Height; }
+    }
+    for (const auto& area : terrainAreas) {
+        RenderLayer(FLOOR,state,&area);
+        ++TerrainPanRedraws;
+        TerrainPanPixels += int64_t(area.Width)*area.Height;
     }
     std::vector<st::Rectangle> compositeRects;
     if (!compositeAll) compositeRects = strips;
@@ -498,7 +559,7 @@ void World2D::PreDraw(WorldState& state) {
     bool memberChanged = false;
     const bool hadGroups = ResolveAllObjects || !ResolveRegions.empty();
     const bool objectsChanged = CaptureObjects(state, memberChanged);
-    if (compositeAll || !compositeRects.empty() || objectsChanged || bufferShifted || !HaveObjectView)
+    if (compositeAll || !compositeRects.empty() || !terrainAreas.empty() || objectsChanged || bufferShifted || !HaveObjectView)
         PrepareResolvedGroups(memberChanged);
     // With an unchanged group topology, a member can only alter pixels inside
     // its old/new drawing bounds. Reconstruct that footprint against all source
@@ -539,7 +600,12 @@ void World2D::PreDraw(WorldState& state) {
         compositeRects.resize(1);
     }
     if (compositeAll) BuildComposite(st::Rectangle(0, 0, bw, bh), state);
-    else for (const auto& r : compositeRects) BuildComposite(r, state);
+    else {
+        for (const auto& r : compositeRects) BuildComposite(r, state);
+        // Opposite viewport fringes can be far apart. Keep their damage
+        // disjoint when recompositing translucent objects over the terrain.
+        for (const auto& r : terrainAreas) BuildComposite(r, state);
+    }
     FullCompositeDamage = false;
     if (!ObjectViewFallback) {
         for (auto& view : FrameObjects) view.Resolved = view.Object->renderInfo.Composited;

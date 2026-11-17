@@ -56,6 +56,8 @@ public:
         FrameObjects.clear(); PreviousObjects.clear(); HaveObjectView = false;
         ResolveTiles.clear(); ResolveRegions.clear(); ResolveAllObjects = false;
         RenderVisualEnabled = false;
+        RenderTerrainPeriod = RenderTerrainDetail = -1;
+        TerrainWorldView = {};
         RenderSpatialGeneration = RenderIntensityGeneration = RenderMaskGeneration = 0;
         HaveSpatialSources = RenderSpatialEnabled = false;
         SpatialMasks.Reset();
@@ -80,6 +82,8 @@ public:
     int32_t PrelitReplays = 0;   // mixed-domain clips replayed when their cache changes
     int32_t CompositeReplays = 0; // ambiguous coverage rebuilt against final depth
     int64_t CompositeReplayPixels = 0;
+    int32_t TerrainPanRedraws = 0; // floor rectangles affected by the source viewport
+    int64_t TerrainPanPixels = 0;
     int64_t StripPixels = 0;     // pixels of those partial renders
 
 private:
@@ -104,6 +108,8 @@ private:
     const FSO::Common::TS1::VisualLighting* VisualLight = nullptr;
     uint64_t RenderVisualGeneration = 0, RenderVisualGeometry = 0;
     bool RenderVisualEnabled = false;
+    int RenderTerrainPeriod = -1, RenderTerrainDetail = -1;
+    st::Rectangle TerrainWorldView; // last physical viewport in world pixels, independent of cache origin
     Utils::TS1LightMap SpatialMasks;
     uint64_t RenderSpatialGeneration = 0, RenderIntensityGeneration = 0, RenderMaskGeneration = 0;
     bool HaveSpatialSources = false, RenderSpatialEnabled = false;

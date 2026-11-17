@@ -43,6 +43,7 @@ public:
     // Potential dependency, even with no active source, Lighting off or an
     // ambient base-palette bypass. A new source must invalidate that cache.
     bool HasSpatialSurface = false;
+    bool HasOriginalTerrain = false;
     static constexpr int TRANSPARENCY_TILE = 16;
     // Conservative coverage, independent of the lighting dependency above.
     // Partial clears retain blocks; a full clear rebuilds exact coverage.
@@ -103,6 +104,7 @@ public:
         if (ResolvePrelit) return;
         Prelit.clear(); HasPrelit = PrelitAll = false; NewPrelitPixels = 0;
         HasSpatialSurface = false;
+        HasOriginalTerrain = false;
         Transparency.clear(); TransparencyAll = false;
     }
     st::Color CachedLight(uint16_t room) const {

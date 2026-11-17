@@ -7,11 +7,16 @@
 // GrassEffect (roofs, terrain). Writes the same world depth as _2DWorldBatch (WorldCamera::Depth, smaller = nearer,
 // LessEqual test) into a Framebuffer, so the triangles sort against the 2D sprites exactly like the GPU z-buffer did.
 #pragma once
+#include <array>
 #include <cstdint>
 #include <vector>
 #include "world/Framebuffer.h"
 #include "core/math.h"
 
+namespace FSO { namespace Common { namespace TS1 {
+struct TerrainPalette;
+struct TerrainBladeSelection;
+}}}
 namespace FSO { namespace LotView { class WorldState; } }
 
 namespace FSO { namespace LotView { namespace Utils {
@@ -46,5 +51,14 @@ st::Vector2 TileProjectionOrigin(WorldState& world);
 void DrawTriangle(Framebuffer& fb, const RasterVertex& a, const RasterVertex& b, const RasterVertex& c,
                   const RasterTexture* tex, uint32_t flatColor = 0xFF808080u, float depthBias = 0.0f,
                   RasterStats* stats = nullptr, uint16_t room = Framebuffer::OUTSIDE_LIGHT_ROOM);
+
+/// Original terrain scan in left, top, right, bottom order. Vertex u/v carry
+/// grass/shade indices. The source clip defines the DVD sampling frame in
+/// target coordinates; the framebuffer clip independently limits writes.
+void DrawOriginalTerrainQuad(Framebuffer& fb, const std::array<RasterVertex,4>& corners,
+                             const std::array<int,4>& sourceHeights, int baseYAtZero, int zoom,
+                             const FSO::Common::TS1::TerrainPalette& palette, float depthBias,
+                             RasterStats* stats, const st::Rectangle* sourceClip = nullptr,
+                             const FSO::Common::TS1::TerrainBladeSelection* blades = nullptr);
 
 }}}

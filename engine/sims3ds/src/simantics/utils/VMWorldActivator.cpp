@@ -21,6 +21,7 @@
 #include "simantics/VMContext.h"
 #include "simantics/VMArchitecture.h"
 #include "simantics/VMClock.h"
+#include "common/TS1/TS1TerrainBlades.h"
 #include "simantics/VMPlacementResult.h"
 #include "simantics/entities/VMEntity.h"
 #include "simantics/entities/VMAvatar.h"
@@ -212,9 +213,14 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     std::vector<uint8_t> pools = Req(iff->Get<ARRY>(9), "ARRY#9")->TransposeData();
     std::vector<uint8_t> water = Req(iff->Get<ARRY>(10), "ARRY#10")->TransposeData();
     arch->TS1PoolTiles.assign(size_t(size) * size, 0);
+    if (BlueprintPtr) BlueprintPtr->TerrainPoolBlocked.assign(size_t(size) * size, 0);
     for (int y = 0; y < size && y < 64; ++y) for (int x = 0; x < size && x < 64; ++x) {
         const size_t source = size_t(y) * 64 + x;
-        if (source < pools.size()) arch->TS1PoolTiles[size_t(y) * size + x] = pools[source] < 16;
+        if (source < pools.size()) {
+            arch->TS1PoolTiles[size_t(y) * size + x] = pools[source] < 16;
+            if (BlueprintPtr) BlueprintPtr->TerrainPoolBlocked[size_t(y) * size + x] =
+                FSO::Common::TS1::TerrainPoolBlocksBlades(pools[source]);
+        }
     }
     for (size_t j = 0; j < pools.size() && j < arch->Floors[0].size(); j++) {
         // ARRY9 values 0..15 are pool adjacency masks; 16 is the dry rim.

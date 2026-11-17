@@ -266,6 +266,7 @@ target_include_directories(odh_engine PUBLIC "${ODH_ENGINE_SOURCE_ROOT}")
 # Reuse portable presentation services without an old VM dependency.
 target_sources(odh_engine PRIVATE sims3ds/src/app/ui/OriginalPCUI.cpp
   sims3ds/src/world/utils/TS1LightMap.cpp
+  sims3ds/src/world/utils/TS1TerrainRaster.cpp
   sims3ds/src/app/ui/DesktopHousePanel.cpp
   sims3ds/src/app/ui/DesktopOptionsPanel.cpp
   sims3ds/src/app/ui/DesktopLivePanels.cpp
@@ -415,7 +416,7 @@ if(BUILD_TESTING)
     target_link_options(odh-visual-lighting PRIVATE -Wl,--strip-debug)
   endif()
   add_test(NAME visual-lighting COMMAND odh-visual-lighting)
-  foreach(lighting_test spatial-lighting spatial-light-render desktop-family-friends)
+  foreach(lighting_test spatial-lighting spatial-light-render desktop-family-friends terrain-lighting terrain-raster)
     string(REPLACE "-" "_" lighting_source "${lighting_test}")
     add_executable(odh-${lighting_test} tests/${lighting_source}.cpp)
     target_link_libraries(odh-${lighting_test} PRIVATE odh_engine)
