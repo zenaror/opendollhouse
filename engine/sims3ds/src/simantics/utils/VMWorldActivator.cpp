@@ -152,6 +152,9 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     VM->Context->Clock->Hours = VM->GlobalState[0];
     VM->Context->Clock->DayOfMonth = VM->GlobalState[1];
     VM->Context->Clock->Minutes = VM->GlobalState[5];
+    // The DVD keeps the full simulation counter separately from wall-clock
+    // globals. Native interaction metadata may replace it later on restore.
+    VM->Context->Clock->Ticks = simi->SimulationTicks;
     // SIMI global 6 stores seconds within the minute. Lots opened for editing
     // may be saved before any simulation tick advances this clock.
     const auto seconds = VM->GlobalState[6];
@@ -414,7 +417,7 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
             throw std::runtime_error("Interaction checkpoint: ambiguous ODHI");
         st::Reader header(snapshots.front()->Data);
         const auto snapshotVersion = header.u32();
-        if (snapshotVersion == 7 || snapshotVersion == 8) {
+        if (snapshotVersion == 7 || snapshotVersion == 8 || snapshotVersion == 9) {
             if (!objm->Decoded || header.u32() != objm->SourceSignature)
                 throw std::runtime_error("Interaction checkpoint: ObjM changed since capture");
             completeNativeSnapshot = true;

@@ -228,12 +228,15 @@ void OBJMInstance::Read(uint32_t version, IffFieldEncode& iop, const std::functi
     if (OBJT->OBJDType == OBJDType::Person) {
         HasPersonData = true;
         PersonData.Read(version, iop);
-        UnknownInt = iop.ReadInt32();
     } else {
         HasPersonData = false;
-        // "Placeholder" tends to go out of bounds here
-        UnknownInt = iop.ReadInt32();
     }
+    // Installed Placeholder records can end exactly here. Retain this narrow
+    // observed omission; a missing ordinary manager word is not a zero word.
+    HasSchedulerStateTail = !(OBJT->GUID == 0x3c08965fu && OBJT->Name == "*Placeholder" &&
+        OBJT->OBJDType == static_cast<OBJDType>(4) && iop.RemainingBits() == 0);
+    if (HasSchedulerStateTail)
+        UnknownInt = version >= 0x36 ? iop.ReadInt32Strict() : iop.ReadInt32();
 }
 
 // ---------------------------------------------------------------- OBJM

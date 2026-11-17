@@ -29,6 +29,9 @@ public:
     uint16_t ReadUInt16() override;
     int16_t ReadInt16() override;
     int32_t ReadInt32() override;
+    // Unlike the legacy reader, a scheduler tail cannot be invented at EOF.
+    uint64_t RemainingBits() const;
+    int32_t ReadInt32Strict();
     uint32_t ReadUInt32() override;
     float ReadFloat() override;
     uint8_t ReadByte();

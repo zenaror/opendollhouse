@@ -172,6 +172,7 @@ struct OBJMInstance {
     OBJMPerson PersonData;
 
     int32_t UnknownInt = 0;
+    bool HasSchedulerStateTail = true;
 
     /// Throws std::runtime_error on an unexpected layout (FreeSO throws the same cases).
     void Read(uint32_t version, IffFieldEncode& iop, const std::function<OBJMResource(int16_t)>& idToOBJD);

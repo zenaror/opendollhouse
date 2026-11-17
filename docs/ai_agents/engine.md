@@ -53,6 +53,24 @@ to those two records. Restore one validated source of needs; do not combine the
 legacy projections and precise values. An older build can rewrite the records
 without updating `ODMP`, so stale metadata must not overwrite its new progress.
 
+`SIMI` also stores the full simulation counter. Restore that counter before
+initializing classic need-decay timing; the displayed hour alone is not enough.
+Native continuation metadata preserves the resident's existing decay phase.
+
+The manager word at the end of an ordinary classic `ObjM` instance controls
+whether its normal update may run and how long it must wait. Preserve that word
+separately from its saved script frames. An inactive character can still exist
+on the lot and be referenced by another script. Temporary checks and immediate
+callbacks do not go through the normal-update gate.
+
+Native continuation version 9 binds those manager words to a freshly saved
+classic graph. Saving validates the graph before marking that version; loading
+validates all participating instances before publishing their execution state.
+Version 8 and earlier did not maintain these words, so their stale classic tails
+must not disable native characters when migrating. Builds that understand only
+the older continuation format cannot reopen version 9 saves; use an updated
+engine on every device sharing those saves.
+
 Room satisfaction has a separate cached logical map in
 `TS1EnvironmentGeometry` and `VMContext`. Query it by the Sim's position;
 rendering and routing room numbers are not interchangeable with this map.

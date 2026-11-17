@@ -41,6 +41,11 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Loading original-game saves preserves inactive characters and scheduled
+  waits instead of immediately running every retained character. Saving and
+  reopening keeps the simulation counter and the updated waiting state.
+- The first decrease in needs after loading an original-game save uses the
+  original simulation counter and initial timing.
 - Selecting an unchanged roof style or pitch no longer rebuilds the roof.
 - Loading terrain preserves the final byte of literal data and the authored
   edge heights when changing the camera direction or previewing construction.
@@ -72,10 +77,9 @@ Notable changes for players and contributors, following
 - Actions preserve simultaneous changes to the same need in their original
   order. Clearing a change no longer leaves progress that can cause a sudden
   jump when another action starts.
-- Updated saves preserve precise needs and active changes while keeping the
-  existing continuation format readable by older builds. Older builds still
-  apply their previous simulation rules; their resaved state is migrated when
-  reopened by the updated engine.
+- Updated saves preserve precise needs and active changes. Previous native
+  saves remain readable, but the new continuation format requires an updated
+  engine on every device that opens a newly saved game.
 
 ## [0.0.1](https://github.com/zenaror/opendollhouse/releases/tag/v0.0.1) — 2026-11-15
 

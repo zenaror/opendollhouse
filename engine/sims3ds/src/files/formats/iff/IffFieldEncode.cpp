@@ -6,6 +6,7 @@
 // Translated from FreeSims sims.files/formats/iff/IffFieldEncode.cs
 #include "files/formats/iff/IffFieldEncode.h"
 #include <cstring>
+#include <stdexcept>
 
 namespace FSO { namespace Files { namespace Formats { namespace IFF { namespace Chunks {
 
@@ -29,6 +30,24 @@ int16_t IffFieldEncode::ReadInt16()
 int32_t IffFieldEncode::ReadInt32()
 {
     return (int32_t)ReadField(true);
+}
+
+uint64_t IffFieldEncode::RemainingBits() const
+{
+    if (StreamEnd) return 0;
+    return uint64_t(io->Length() - io->Position()) * 8 + (8 - bitPos);
+}
+
+int32_t IffFieldEncode::ReadInt32Strict()
+{
+    if (RemainingBits() < 1) throw std::runtime_error("OBJM: missing scheduler tail");
+    if (ReadBit() == 0) return 0;
+    if (RemainingBits() < 2) throw std::runtime_error("OBJM: truncated scheduler tail code");
+    const auto width = widths2[ReadBits(2)];
+    if (RemainingBits() < width) throw std::runtime_error("OBJM: truncated scheduler tail value");
+    const uint32_t value = ReadBits(width);
+    const uint32_t sign = uint32_t(1) << (width - 1);
+    return static_cast<int32_t>((value ^ sign) - sign);
 }
 
 uint32_t IffFieldEncode::ReadUInt32()

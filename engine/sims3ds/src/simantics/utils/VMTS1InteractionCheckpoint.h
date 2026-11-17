@@ -14,7 +14,10 @@ class VMTS1InteractionCheckpoint {
 public:
     static void PresentDialogs(VM& vm);
     static void RestoreClassic(VM& vm, Files::Formats::IFF::IffFile& house);
-    static void Capture(VM& vm, Files::Formats::IFF::IffRawFile& house, bool departing);
+    // Only a freshly synchronized, validated ObjM can carry authoritative
+    // manager words. Direct execution overlays retain the v8 compatibility path.
+    static void Capture(VM& vm, Files::Formats::IFF::IffRawFile& house, bool departing,
+                        bool schedulerWordsBound = false);
     static bool IsDeparture(Files::Formats::IFF::IffFile& house);
     static void Restore(VM& vm, Files::Formats::IFF::IffFile& house, bool resumeDispatch = false);
 };

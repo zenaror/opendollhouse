@@ -8,6 +8,7 @@
 #include "simantics/utils/VMTS1LotSaver.h"
 #include "simantics/utils/VMTS1ObjectNames.h"
 #include "files/Hash.h"
+#include "files/formats/iff/chunks/SIMI.h"
 #include "simantics/utils/VMTS1InteractionCheckpoint.h"
 #include "simantics/utils/VMTS1ActionIcon.h"
 #include "simantics/VM.h"
@@ -673,6 +674,9 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         }
         if (base) LastStats.Kept++; else LastStats.Added++;
         inst.OBJD = const_cast<OBJD*>(objd);
+        // Complete live manager word, including the signed delay and unknown
+        // high bits; ODHI9 binds this tail to its exact execution graph.
+        inst.UnknownInt = static_cast<int32_t>(e->TS1SchedulerState);
         inst.OBJT = nullptr; // set after the objt table is final (pointer into ownedEntries below)
 
         // position (FreeSO: Position = X,Y,Level or OUT_OF_WORLD for -16,-16); contained objects carry the root
@@ -1333,7 +1337,10 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         auto& d = simi->Data;
         if (d.size() >= 12) {
             uint32_t version = LE32(d.data() + 4);
-            int items = (version > 0x3F) ? 0x40 : 0x20; // SIMI.cs
+            if (version < 0x12) throw std::runtime_error("SIMI: unsupported pre-0x12 layout");
+            const auto items = SIMI::SerializedGlobalCount(version);
+            const auto tickAt = 12 + items * 2;
+            if (tickAt + 6 > d.size()) throw std::runtime_error("SIMI: truncated simulation counter");
             // globals the loader overrides for this engine (VMWorldActivator / FreeSO VMTS1ActivatorNew: 17 runtime code
             // version, 20 game edition, 25 idle setting, 32, 33 machine level) keep the values the game saved
             static const std::set<int> keepSaved = { 17, 20, 25, 32, 33 };
@@ -1344,7 +1351,11 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                 int16_t v = VM->GlobalState[(size_t)i];
                 d[at] = (uint8_t)v; d[at + 1] = (uint8_t)((uint16_t)v >> 8);
             }
-            // TS1(sims): LotValue / ObjectsValue / ArchitectureValue after the globals, a short and five ints
+            // Emit only the DWORD counter; the following signed cursor and
+            // unrelated original metadata remain byte-for-byte untouched.
+            const auto ticks = static_cast<uint32_t>(VM->Context->Clock->Ticks);
+            for (size_t k = 0; k < 4; ++k) d[tickAt + k] = uint8_t(ticks >> (8 * k));
+            // Value fields follow the DWORD counter, a short cursor and four ints.
             size_t lv = 12 + (size_t)items * 2 + 2 + 4 * 5;
             if (lv + 12 <= d.size() && (ArchitectureDelta != 0 || ObjectsDelta != 0 || SetArchitectureValue >= 0 || SetObjectsValue >= 0)) {
                 auto put = [&](size_t at, int32_t v) { for (int k = 0; k < 4; k++) d[at + (size_t)k] = (uint8_t)((uint32_t)v >> (8 * k)); };
@@ -1408,7 +1419,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
     }
 
     progress(2); // ADDED(sims) save progress
-    try { FSO::SimAntics::Engine::Utils::VMTS1InteractionCheckpoint::Capture(*VM, file, Departing); }
+    try { FSO::SimAntics::Engine::Utils::VMTS1InteractionCheckpoint::Capture(*VM, file, Departing, true); }
     catch (const std::exception& e) { Error = e.what(); return false; }
     out = file.Write();
     char buf[256];

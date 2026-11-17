@@ -176,6 +176,20 @@ public:
     int16_t MainParam = 0; //parameters passed to main on creation.
     int16_t MainStackOBJ = 0;
 
+    // TS1 manager word: register FFFF, then successful creation enables bit16.
+    // This is independent of authored ObjectData flags and retained BHAV frames.
+    uint32_t TS1SchedulerState = 0x0001ffffu;
+    int16_t TS1SchedulerDelay() const { return static_cast<int16_t>(TS1SchedulerState & 0xffffu); }
+    void TS1SetSchedulerDelay(int16_t value) {
+        TS1SchedulerState = (TS1SchedulerState & 0xffff0000u) | static_cast<uint16_t>(value);
+    }
+    bool TS1AdmitSchedulerTick() {
+        if ((TS1SchedulerState & 0x00010000u) == 0) return false;
+        const auto delay = TS1SchedulerDelay();
+        if (delay > 0) { TS1SetSchedulerDelay(static_cast<int16_t>(delay - 1)); return false; }
+        return true;
+    }
+
     std::vector<VMEntity*> Contained;
     VMEntity* Container = nullptr;
     int16_t ContainerSlot = 0;

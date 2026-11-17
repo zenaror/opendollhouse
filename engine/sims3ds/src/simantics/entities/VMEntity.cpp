@@ -398,6 +398,7 @@ void VMEntity::RestartAfterRestore(VMContext* context) {
 
 void VMEntity::Reset(VMContext* context) {
     if (this->Thread == nullptr) return;
+    if (context->VM->TS1) TS1SetSchedulerDelay(-1);
     this->Thread->Stack.clear();
     this->Thread->Queue.clear();
     Thread->QueueDirty = true;

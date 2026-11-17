@@ -19,19 +19,22 @@ void SIMI::Read(IffFile* iff, st::Reader& stream)
         Version = io.ReadUInt32();
         std::string magic = io.ReadCString(4);
         (void)magic;
-        auto items = (Version > 0x3F) ? 0x40 : 0x20;
+        if (Version < 0x12) throw std::runtime_error("SIMI: unsupported pre-0x12 layout");
+        const auto items = SerializedGlobalCount(Version);
 
         GlobalData = std::vector<int16_t>(38);
+        GlobalTail.clear();
 
-        for (int i=0; i<items; i++)
+        for (size_t i=0; i<items; i++)
         {
             auto dat = io.ReadInt16();
-            if (i < (int)GlobalData.size())
+            if (i < GlobalData.size())
                 GlobalData[i] = dat;
+            else GlobalTail.push_back(dat);
         }
 
-        Unknown1 = io.ReadInt16();
-        Unknown2 = io.ReadInt32();
+        SimulationTicks = io.ReadUInt32();
+        SchedulerCursor = io.ReadInt16();
         Unknown3 = io.ReadInt32();
         GUID1 = io.ReadInt32();
         GUID2 = io.ReadInt32();
@@ -40,8 +43,6 @@ void SIMI::Read(IffFile* iff, st::Reader& stream)
         ObjectsValue = io.ReadInt32();
         ArchitectureValue = io.ReadInt32();
 
-        //short Unknown1 (0x7E1E, 0x702B)
-        //int Unknown2 (2 on house 1, 1 on house 66)
         //int Unknown3 (0)
         //int GUID1
         //int GUID2 (changes on bulldoze)
@@ -69,22 +70,24 @@ bool SIMI::Write(IffFile* iff, st::Writer& stream)
     io.ByteOrder(st::Endian::Little);
     {
         io.WriteInt32(0);
-        io.WriteInt32(0x3E);
+        const auto version = Version == 0 ? uint32_t(0x3E) : Version;
+        if (version < 0x12) throw std::runtime_error("SIMI: unsupported pre-0x12 layout");
+        io.WriteInt32(static_cast<int32_t>(version));
         io.WriteCString("IMIS", 4);
-        auto items = (Version > 0x3E) ? 0x40 : 0x20;
+        const auto items = SerializedGlobalCount(version);
 
-        GlobalData = std::vector<int16_t>(38); //(sic) C# zeroes GlobalData before writing
-
-        for (int i = 0; i < items; i++)
+        for (size_t i = 0; i < items; i++)
         {
-            if (i < (int)GlobalData.size())
+            if (i < GlobalData.size())
                 io.WriteInt16(GlobalData[i]);
+            else if (i >= 38 && i - 38 < GlobalTail.size())
+                io.WriteInt16(GlobalTail[i - 38]);
             else
                 io.WriteInt16(0);
         }
 
-        io.WriteInt16(Unknown1);
-        io.WriteInt32(Unknown2);
+        io.WriteUInt32(SimulationTicks);
+        io.WriteInt16(SchedulerCursor);
         io.WriteInt32(Unknown3);
         io.WriteInt32(GUID1);
         io.WriteInt32(GUID2);
@@ -95,7 +98,8 @@ bool SIMI::Write(IffFile* iff, st::Writer& stream)
 
         for (int i = 0; i < 6; i++)
         {
-            BudgetDays[i].Write(io);
+            if (size_t(i) < BudgetDays.size()) BudgetDays[size_t(i)].Write(io);
+            else io.WriteInt32(0);
         }
     }
     return true;

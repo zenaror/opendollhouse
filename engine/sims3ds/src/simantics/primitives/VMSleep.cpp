@@ -11,6 +11,8 @@
 #include "core/io.h"
 #include "simantics/engine/VMStackFrame.h"
 #include "simantics/engine/VMThread.h"
+#include "simantics/engine/VMSimanticsException.h"
+#include "simantics/VM.h"
 
 namespace FSO { namespace SimAntics { namespace Primitives {
 
@@ -19,6 +21,26 @@ using namespace FSO::SimAntics::Engine;
 VMPrimitiveExitCode VMSleep::Execute(VMStackFrame* context, VMPrimitiveOperand* args)
 {
     auto operand = static_cast<VMSleepOperand*>(args);
+
+    if (context->VM()->TS1) {
+        // Original PC Sleep (00451c87): a saved manager countdown is
+        // independent of its original duration in the frame's arguments.
+        if (operand->StackVarToDec < 0 || size_t(operand->StackVarToDec) >= context->Args.size())
+            throw VMSimanticsException("Sleep: parameter out of range", context);
+        auto& counter = context->Args[size_t(operand->StackVarToDec)];
+        if (context->Caller && context->Caller->TS1SchedulerDelay() == 0) {
+            counter = 0;
+            context->Caller->TS1SetSchedulerDelay(-1);
+        }
+        if (counter < 0) counter = 0;
+        if (counter == 0) return VMPrimitiveExitCode::GOTO_TRUE;
+
+        // The ordinary per-call path has the same wait duration as the
+        // original manager suspension. Do not infer the latter's object
+        // record-vector predicate from native thread/queue flags.
+        --counter;
+        return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    }
 
     if (context->Thread->Interrupt)
     {

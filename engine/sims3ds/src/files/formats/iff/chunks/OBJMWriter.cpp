@@ -165,7 +165,7 @@ void WriteOBJMInstance(const OBJMInstance& inst, uint32_t version, IffFieldEncod
     }
 
     if (inst.HasPersonData) WriteOBJMPerson(inst.PersonData, version, iop);
-    iop.WriteInt32(inst.UnknownInt);
+    if (inst.HasSchedulerStateTail) iop.WriteInt32(inst.UnknownInt);
 
     iop.WriteBitString(unhandledBits);
 }

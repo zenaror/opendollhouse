@@ -5,6 +5,7 @@
  */
 // Translated from FreeSims sims.files/formats/iff/chunks/SIMI.cs
 #pragma once
+#include <cstddef>
 #include "files/formats/iff/AbstractIffChunk.h"
 
 namespace FSO { namespace Files { namespace Formats { namespace IFF { namespace Chunks {
@@ -16,9 +17,10 @@ public:
 
     uint32_t Version = 0;
     std::vector<int16_t> GlobalData;
-    
-    int16_t Unknown1 = 0;
-    int32_t Unknown2 = 0;
+    // Preserve serialized globals beyond the runtime's existing 38 entries.
+    std::vector<int16_t> GlobalTail;
+    uint32_t SimulationTicks = 0;
+    int16_t SchedulerCursor = 0;
     int32_t Unknown3 = 0;
     int32_t GUID1 = 0;
     int32_t GUID2 = 0;
@@ -26,6 +28,10 @@ public:
     int32_t LotValue = 0;
     int32_t ObjectsValue = 0;
     int32_t ArchitectureValue = 0;
+
+    static std::size_t SerializedGlobalCount(uint32_t version) {
+        return version >= 0x41 ? 64 : 32;
+    }
 
     class SIMIBudgetDay
     {

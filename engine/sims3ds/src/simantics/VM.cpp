@@ -194,6 +194,10 @@ void VM::InternalTick() {
         auto entCpy = Entities;
         for (auto obj : entCpy) {
             Context->NextRandom(1);
+            // The DVD gates the whole virtual Tick, including person motive
+            // work. Direct checks/Init/callbacks do not enter this dispatch.
+            // Its conditional bit17 context has no native binding yet.
+            if (TS1 && (obj->Dead || !obj->TS1AdmitSchedulerTick())) continue;
             obj->Tick(); //run object specific tick behaviors, like lockout count decrement
         }
     }

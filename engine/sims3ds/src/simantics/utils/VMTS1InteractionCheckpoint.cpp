@@ -5,6 +5,7 @@
 #include "files/formats/iff/chunks/ODHI.h"
 #include "files/formats/iff/chunks/ODMP.h"
 #include "simantics/utils/VMTS1MotivePersistence.h"
+#include "simantics/utils/VMTS1SchedulerState.h"
 #include "files/formats/iff/IffRawFile.h"
 #include "files/formats/iff/IffFile.h"
 #include "files/Hash.h"
@@ -158,6 +159,7 @@ struct Record {
     std::vector<int16_t> attributes, objectData, list;
     uint64_t sprites = 0, sprites2 = 0;
     int16_t mainParam = 0, mainStack = 0, slot = -1;
+    uint32_t schedulerState = 0x0001ffffu;
     LotView::Model::LotTilePos position;
     VMEntity* container = nullptr;
     std::vector<VMEntity*> slots;
@@ -363,6 +365,7 @@ public:
         struct Candidate {
             VMEntity* entity;
             std::unique_ptr<VMThread> thread;
+            uint32_t schedulerState = 0x0001ffffu;
             VMAvatar* avatar = nullptr;
             bool reset = false;
             std::vector<std::shared_ptr<VMAnimationState>> animations;
@@ -379,6 +382,7 @@ public:
                 Require(inst.OBJT && live->Object->OBJ->GUID == inst.OBJT->GUID,
                         "classic instance definition changed");
                 Candidate candidate; candidate.entity = live;
+                candidate.schedulerState = TS1SavedSchedulerState(inst, objm.Version);
                 candidate.thread = std::make_unique<VMThread>(vm.Context, live, 16);
                 auto& thread = *candidate.thread;
                 Require(inst.TempRegisters.size() <= thread.TempRegisters.size(), "classic temp bank too large");
@@ -508,7 +512,10 @@ public:
                     auto current = animation(person.Animation, person.AnimEventCount);
                     if (current) candidate.animations.push_back(current);
                     candidate.carry = animation(person.CarryAnimation, 0);
-                    candidate.precision = classicMotives(person, vm.Context->Clock->Ticks);
+                    // The original actor constructor clears its decay stamp;
+                    // its loaded global counter decides whether the first
+                    // ordinary tick is due. Native ODMP phases are separate.
+                    candidate.precision = classicMotives(person, 0);
                 }
                 candidates.push_back(std::move(candidate));
             } catch (const std::exception& e) {
@@ -527,6 +534,7 @@ public:
                 candidate.avatar->MotiveDecay->LastTick = candidate.precision.lastTick;
             }
             candidate.entity->Thread = std::move(candidate.thread);
+            candidate.entity->TS1SchedulerState = candidate.schedulerState;
         }
         for (auto& candidate : candidates) if (candidate.reset) candidate.entity->Reset(vm.Context);
     }
@@ -1112,6 +1120,7 @@ public:
             e->ObjectData = std::move(r.objectData);
             e->Attributes = std::move(r.attributes); e->MyList.assign(r.list.begin(), r.list.end());
             e->MainParam = r.mainParam; e->MainStackOBJ = r.mainStack;
+            e->TS1SchedulerState = r.schedulerState;
             for (int i=0; i<128; ++i) {
                 const auto flags = i < 64 ? r.sprites : r.sprites2;
                 e->SetDynamicSpriteFlag(i, ((flags >> (i % 64)) & 1) != 0);
@@ -1208,11 +1217,44 @@ void VerifyDeparture(VM& vm, const TS1Departure& departure, VMThread* thread) {
 
 }
 
-void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departing) {
+void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departing,
+                                       bool schedulerWordsBound) {
+    if (schedulerWordsBound) {
+        auto rawObjects = house.Find("ObjM", 1);
+        auto rawTypes = house.Find("objt", 0);
+        Require(rawObjects && rawTypes, "scheduler binding lacks classic graph");
+        OBJT types; st::Reader typeInput(rawTypes->Data); types.Read(nullptr, typeInput);
+        OBJM objects; st::Reader objectInput(rawObjects->Data); objects.Read(nullptr, objectInput);
+        std::map<uint32_t, OBJD*> definitions;
+        size_t count = 0;
+        for (auto e : vm.Entities) if (e && !e->Dead && !e->GhostImage && e->Object && e->Object->OBJ) {
+            definitions.emplace(e->Object->OBJ->GUID, e->Object->OBJ); ++count;
+        }
+        Require(objects.Prepare([&](uint16_t id) {
+            OBJMResource resource;
+            for (auto& type : types.Entries) if (type.TypeID == id) {
+                resource.OBJT = &type;
+                auto definition = definitions.find(type.GUID);
+                if (definition != definitions.end()) resource.OBJD = definition->second;
+                break;
+            }
+            return resource;
+        }), "scheduler binding cannot decode classic graph");
+        Require(objects.ObjectData.size() == count, "scheduler binding instance count changed");
+        for (auto e : vm.Entities) if (e && !e->Dead && !e->GhostImage && e->Object && e->Object->OBJ) {
+            const auto saved = objects.ObjectData.find(e->ObjectID);
+            Require(saved != objects.ObjectData.end() && saved->second.Instance &&
+                    saved->second.Instance->OBJT && saved->second.Instance->OBJT->GUID == e->Object->OBJ->GUID,
+                    "scheduler binding instance identity changed");
+            Require(TS1SavedSchedulerState(*saved->second.Instance, objects.Version, 9) == e->TS1SchedulerState,
+                    "scheduler binding manager word changed");
+        }
+    }
+    const uint32_t captureVersion = schedulerWordsBound ? 9 : 8;
     st::Writer body(st::Endian::Little);
     Archive fields(body);
     Require(VM::IsTS1TextInputValid(vm.TS1TextInput), "invalid TS1 text input");
-    InteractionCheckpointCodec codec(vm, fields, 8);
+    InteractionCheckpointCodec codec(vm, fields, captureVersion);
     // Every persisted instance owns its Main routine, even when no avatar or
     // global controller currently references it. Restarting that routine can
     // replay one-time lifecycle effects (for example, naming a resident baby).
@@ -1242,7 +1284,9 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& house, bool departi
         }
     }
     st::Writer data(st::Endian::Little);
-    data.WriteUInt32(8);
+    // v9 makes the signature-bound ObjM manager tail authoritative. No extra
+    // copy is appended to each execution record; v8 and older tails were stale.
+    data.WriteUInt32(captureVersion);
     data.WriteUInt32(Files::Hash::CalculateHash(objm->Data));
     Archive header(data);
     header.value(departing);
@@ -1285,7 +1329,7 @@ bool VMTS1InteractionCheckpoint::IsDeparture(IffFile& house) {
     st::Reader input(chunks.front()->Data);
     auto version = input.u32();
     if (version == 2) return false;
-    Require(version >= 3 && version <= 8, "unsupported ODHI version");
+    Require(version >= 3 && version <= 9, "unsupported ODHI version");
     input.u32(); // ObjM signature is checked during restore.
     Archive header(input);
     bool departing = false;
@@ -1300,7 +1344,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     auto objm = house.Get<OBJM>(1);
     st::Reader input(chunks.front()->Data);
     const auto version = input.u32();
-    Require(version >= 2 && version <= 8, "unsupported ODHI version");
+    Require(version >= 2 && version <= 9, "unsupported ODHI version");
     Require(objm && objm->Decoded && input.u32() == objm->SourceSignature, "ObjM changed since capture");
     Archive fields(input);
     bool departing = false;
@@ -1340,6 +1384,18 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
         for (const auto& saved : objm->ObjectData)
             Require(records.count(saved.first) != 0,
                     "v7 lacks ObjM instance " + std::to_string(saved.first));
+    }
+    // Prepare manager words from the same signature-bound classic graph before
+    // publishing any field or thread. Older native supplements retain their
+    // historical admitted behavior, rather than consuming a stale source word.
+    if (version >= 9) for (auto& entry : records) {
+        const auto saved = objm->ObjectData.find(entry.first);
+        Require(saved != objm->ObjectData.end() && saved->second.Instance &&
+                saved->second.Instance->OBJT &&
+                saved->second.Instance->OBJT->GUID == entry.second.entity->Object->OBJ->GUID,
+                "scheduler state instance identity changed");
+        entry.second.schedulerState = TS1SavedSchedulerState(
+            *saved->second.Instance, objm->Version, version);
     }
     if (departing) {
         auto caller = records.find(departure.caller);
