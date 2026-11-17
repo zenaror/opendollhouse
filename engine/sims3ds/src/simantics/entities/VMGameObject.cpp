@@ -211,6 +211,7 @@ bool VMGameObject::PlaceInSlot(VMEntity* obj, int32_t slot, bool cleanOld, VMCon
             obj->WorldUI->ContainerSlot = slot;
         }
         obj->Position(Position()); //TODO: is physical position the same as the slot offset position?
+        if (context && !obj->GhostImage) context->InvalidateRoofObject(obj);
         if (cleanOld) obj->PositionChange(context, false);
         return true;
     }
@@ -230,6 +231,7 @@ int32_t VMGameObject::GetSlotHeight(int32_t slot) {
 void VMGameObject::ClearSlot(int32_t slot) {
     if (slot > -1 && slot < (int32_t)Contained.size()) {
         if (Contained[slot] == nullptr) return; //what..
+        if (Thread && Thread->Context) Thread->Context->InvalidateRoofObject(Contained[slot]);
         Contained[slot]->Container = nullptr;
         Contained[slot]->ContainerSlot = -1;
         if (UseWorld && Contained[slot]->WorldUI) {

@@ -467,11 +467,12 @@ void World2D::PreDraw(WorldState& state) {
     // Roof light is already resolved by its own material pass. It neither
     // follows the sprite outside palette nor requires rebuilding geometry.
     // Settle one input for both the retained WALL layer and fragment replay.
-    const auto roofLight = state.RenderingThumbnail ? FSO::Common::TS1::RoofLightingInput{} :
-        Blueprint->RoofComp.GetLighting();
-    if (!RenderRoofLighting.SameMaterialAs(roofLight)) {
+    const auto roofLight = Blueprint->RoofComp.GetLighting();
+    const auto roofGeneration = Blueprint->RoofComp.GetRenderGeneration();
+    if (!RenderRoofLighting.SameMaterialAs(roofLight) || RenderRoofGeneration != roofGeneration) {
         if (state.DrawRoofs) redrawWall = true;
         RenderRoofLighting = roofLight;
+        RenderRoofGeneration = roofGeneration;
     }
     bool sizeChanged = Composite.Width != bw || Composite.Height != bh;
     auto newOrigin = GetBufferOrigin(pxOffset);

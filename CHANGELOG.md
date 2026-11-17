@@ -7,9 +7,10 @@ Notable changes for players and contributors, following
 
 ### Changed
 
-- Roof shading uses the recovered original light on the existing roof planes,
-  replacing camera-based brightness. Character Detail now affects roof materials.
-  Original roof shapes, textures and some material histories still need work.
+- Roofs use the original game's piece shapes, texture coordinates and placement,
+  including their response to terrain and upper floors. Character Detail follows
+  the original material history when roofs change or house pictures are taken.
+  Texture filtering and the dedicated roof-view control still need work.
 - Ordinary grass uses the original color tables, detail levels and wall-edge
   shading in all four camera directions. Other terrain and scene-lighting
   differences remain under review.

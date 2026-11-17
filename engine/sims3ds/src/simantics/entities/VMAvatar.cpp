@@ -997,6 +997,7 @@ bool VMAvatar::PlaceInSlot(VMEntity* obj, int32_t slot, bool cleanOld, VMContext
         }
     }
     obj->Position(Position()); //TODO: is physical position the same as the slot offset position?
+    if (context && !obj->GhostImage) context->InvalidateRoofObject(obj);
     if (cleanOld) obj->PositionChange(context, false);
     return true;
 }
@@ -1013,6 +1014,7 @@ VMEntity* VMAvatar::GetSlot(int32_t slot) {
 void VMAvatar::ClearSlot(int32_t slot) {
     auto child = GetSlot(slot);
     if (child == nullptr) return;
+    if (Thread && Thread->Context) Thread->Context->InvalidateRoofObject(child);
     child->Container = nullptr;
     child->ContainerSlot = -1;
     if (slot == 0) CarryAnimationState = nullptr; // independent effect slots do not own the hand pose

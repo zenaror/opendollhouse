@@ -55,6 +55,11 @@ public:
     void SetOriginalSource(const std::vector<uint8_t>& heightQuads,
                            const std::vector<uint8_t>& grassBytes,int32_t storageWidth);
     std::array<int,4> OriginalTerrainShadeCorners(int worldX,int worldY) const;
+    // Shared original roof/terrain input. Includes authored corners outside the
+    // cropped live lot and current preview edits; no archive reads are needed.
+    std::vector<uint8_t> CopyOriginalHeightQuads(int storageWidth = 64,
+        const FSO::LotView::Model::Blueprint* sourceBlueprint = nullptr) const;
+    uint64_t OriginalHeightGeneration() const { return HeightGeneration; }
     float GetElevationPoint(int x, int y) const;
 
     void RegenTerrain(WorldState& world, FSO::LotView::Model::Blueprint* blueprint);
@@ -74,6 +79,7 @@ private:
     int32_t GrassWidth = 0;
     std::vector<float> Heights;
     int32_t HeightWidth = 0;
+    uint64_t HeightGeneration = 1;
     FSO::LotView::Model::Blueprint* Blueprint = nullptr;
     Utils::RasterTexture Blades; // 128x128 tileable luminance (x200 = 1.0)
 
@@ -91,7 +97,8 @@ private:
     int OriginalShadeRotation = -1;
     int OriginalShadeSourceWidth = 0;
     bool BuildOriginalShades(int period, int rotation, int sourceWidth);
-    std::array<int,4> OriginalHeightQuad(int worldX,int worldY) const;
+    std::array<int,4> OriginalHeightQuad(int worldX,int worldY,
+        const FSO::LotView::Model::Blueprint* sourceBlueprint = nullptr) const;
     int OriginalGrassSample(int x, int y) const;
     int OriginalGrassAt(int x, int y) const;
 

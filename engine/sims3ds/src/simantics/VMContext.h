@@ -64,6 +64,12 @@ public:
     int VisualLightingPeriod = -1;
     uint64_t VisualLightingRefreshes = 0;
     uint64_t VisualGeometryVersion = 1;
+    // Renderer-owned original roof inputs. Relevant architecture/object edits
+    // coalesce here; camera, time and unrelated actor ticks do not rebuild it.
+    bool RoofAdmissionDirty = true;
+    uint64_t RoofAdmissionPublishes = 0;
+    uint64_t RoofAdmissionGeometryVersion = 0, RoofAdmissionHeightVersion = 0;
+    std::vector<uint8_t> RoofGroundStairs;
     uint64_t VisualScoreVersion = 0;
     std::array<uint8_t, 2048> VisualOverhead{}; // original records survive ID reuse
     std::array<uint8_t, 2048> VisualRoomFlags{}; // last record outside/pool flags, including inactive IDs
@@ -100,6 +106,8 @@ public:
     void RebuildEnvironmentGeometry(); // original logical map, independent of routing/graphics
     void RefreshEnvironmentScores();
     void PrepareVisualLighting(); // coalesced render preparation; never advances the VM
+    void PrepareRoofGeometry();
+    void InvalidateRoofObject(VMEntity* entity);
     void ObserveSpatialPeriod(); // clock event boundary; never advances the clock
     void FlushSpatialLighting();
     void RefreshSpatialObject(VMEntity* entity); // original F2/refresh1 -> F1

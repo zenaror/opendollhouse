@@ -73,15 +73,19 @@ inline RoofRGB RoofNormalToSource(const RoofRGB& nativeNormal) {
 
 // Ideal fixed-function white material / white roof-owned directional light.
 // This models API RGB arithmetic, not an original driver byte-rounding rule.
-inline RoofRGB RoofMaterialFactors(const RoofRGB& unitWorldNormal,const RoofLightingInput& input) {
+inline RoofRGB RoofSourceMaterialFactors(const RoofRGB& normal,const RoofLightingInput& input) {
     if(!input.Available() || input.Mode==0) return {{1,1,1}};
-    const auto normal=RoofNormalToSource(unitWorldNormal);
     constexpr auto toLight=RoofSourceLightToSurface();
     const float diffuse=std::max(0.0f,normal[0]*toLight[0]+
         normal[1]*toLight[1]+normal[2]*toLight[2]);
     return {{std::clamp(input.Ambient[0]+diffuse,0.0f,1.0f),
         std::clamp(input.Ambient[1]+diffuse,0.0f,1.0f),
         std::clamp(input.Ambient[2]+diffuse,0.0f,1.0f)}};
+}
+// Existing native-plane callers retain their explicit architectural adapter.
+// Original prototype normals are already source D3D and use the helper above.
+inline RoofRGB RoofMaterialFactors(const RoofRGB& unitWorldNormal,const RoofLightingInput& input) {
+    return RoofSourceMaterialFactors(RoofNormalToSource(unitWorldNormal),input);
 }
 inline RoofRGB RoofMaterialRGB(const RoofRGB& texture,const RoofRGB& unitWorldNormal,
                                const RoofLightingInput& input) {

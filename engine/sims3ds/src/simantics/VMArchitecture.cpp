@@ -38,6 +38,8 @@ const st::Point VMArchitecture::SupportSpread[4] = { st::Point(0, 1), st::Point(
 
 void VMArchitecture::SyncBlueprint() {
     if (WorldUI == nullptr) return;
+    if (Context && (WorldUI->Walls != &Walls || WorldUI->Floors != &Floors))
+        Context->RoofAdmissionDirty = true;
     WorldUI->Walls = &Walls;
     WorldUI->WallsAt = &WallsAt;
     WorldUI->Floors = &Floors;
@@ -279,6 +281,7 @@ int32_t VMArchitecture::SimulateCommands(std::vector<VMArchitectureCommand>& com
         WallsAt = std::move(oldWallsAt);
         RealMode = true;
         if (visualChange && WorldUI != nullptr) {
+            if (Context) Context->RoofAdmissionDirty = true;
             //upload modified walls to blueprint (C#: WorldUI.Walls = Walls; WorldUI.WallsAt = WallsAt; WorldUI.Floors = Floors)
             WorldUI->Walls = &VisWalls;
             WorldUI->WallsAt = &VisWallsAt;

@@ -83,6 +83,7 @@ static void RenderThumbnail(LotSession& s, int w, int h, int ax, int ay, bool ro
     const auto oldRenderingThumbnail = st.RenderingThumbnail;
     const auto oldThumbnailBounds = st.ThumbnailGroundBounds;
     const auto oldAmbientLight = st._2D->AmbientLight;
+    const auto oldRoofAmbient = bp->RoofComp.GetLighting().Ambient;
     const auto oldDrawAvatars = world->DrawAvatars;
     auto oldAvatarDrawHook = world->AvatarDrawHook;
     const bool oldBounds = world->TS1ScrollBounds, oldFreeCenter = world->FreeCenter;
@@ -96,6 +97,7 @@ static void RenderThumbnail(LotSession& s, int w, int h, int ax, int ay, bool ro
         st.RenderingThumbnail = oldRenderingThumbnail;
         st.ThumbnailGroundBounds = oldThumbnailBounds;
         st._2D->AmbientLight = oldAmbientLight;
+        bp->RoofComp.SetLightingAmbient(oldRoofAmbient);
         world->DrawAvatars = oldDrawAvatars;
         world->AvatarDrawHook = std::move(oldAvatarDrawHook);
         st.Zoom(oldZoom); st.Rotation(oldRot); st.Level(oldLevel); st.BuildMode(oldBuildMode);
@@ -128,6 +130,10 @@ static void RenderThumbnail(LotSession& s, int w, int h, int ax, int ay, bool ro
     st.CenterTile(st::Vector2(arch->Width / 2.0f, arch->Height / 2.0f));
     bp->Cutaway.assign((size_t)(arch->Width * arch->Height), false);
     st.RenderingThumbnail = true;
+    // The DVD picture entry and actual cached roof mesh both inherit ambient0.
+    // Reuse the canonical factory: new picture-created kinds must survive the
+    // return, while existing per-kind material modes remain unchanged.
+    bp->RoofComp.SetLightingAmbient({{0,0,0}});
     world->DrawAvatars = false; // GetLotThumb renders the lot, not live actors.
     world->AvatarDrawHook = {};
     // Neutral capture lighting is a renderer input, never a simulation-time edit.

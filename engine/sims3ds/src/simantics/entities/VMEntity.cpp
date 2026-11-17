@@ -601,6 +601,13 @@ int16_t VMEntity::GetValue(VMStackObjectVariable var) {
 
 bool VMEntity::SetValue(VMStackObjectVariable var, int16_t value) {
     if (Thread && Thread->Context && int(var) >= 0 && int(var) < int(ObjectData.size()) &&
+        ObjectData[int(var)] != value &&
+        ((var == VMStackObjectVariable::Category &&
+          (value == 8 || ObjectData[int(var)] == 8)) ||
+         ((var == VMStackObjectVariable::Hidden || var == VMStackObjectVariable::Room) &&
+          ObjectData[int(VMStackObjectVariable::Category)] == 8)))
+        Thread->Context->RoofAdmissionDirty = true;
+    if (Thread && Thread->Context && int(var) >= 0 && int(var) < int(ObjectData.size()) &&
         ObjectData[int(var)] != value && (var == VMStackObjectVariable::Hidden ||
         var == VMStackObjectVariable::Room || var == VMStackObjectVariable::LightingContribution ||
         var == VMStackObjectVariable::FlagField2)) Thread->Context->VisualLightingDirty = true;

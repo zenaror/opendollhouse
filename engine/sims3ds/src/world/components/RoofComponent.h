@@ -5,19 +5,13 @@
  */
 // FSO.LotView.Components.RoofComponent (World/components/RoofComponent.cs)
 //
-// TS1 roofs are generated, not built: every level-N tile that is above an indoor room of level N-1 (plus the
-// half-tile eave around it) and has no room/floor of its own is "roofable"; the roofable area is split into
-// rectangles (RoofSpread) and each rectangle becomes a hip roof (4 slopes meeting at a ridge) of the lot's pitch,
-// textured with GameData/Roofs/<HOUS.RoofName>.bmp. This is a translation of the FreeSims algorithm (RegenRoof /
-// RoofSpread / IsRoofable / MeshRects) with the 3D draw (GrassEffect "DrawBase" on the GPU) replaced by the
-// software TriangleRaster writing world depth into the static wall layer (World2D), like the original roofs that
-// are part of the cached house image.
-// Shown like TS1: only in the "Roof" view (WorldState::DrawRoofs, control panel button above "Second Story") and in
-// lot thumbnails; never with walls down/cutaway or while a story is selected.
-// An explicit source material input enables flat world-space face lighting;
-// unbound inputs and neutral thumbnails retain the previous lighting path.
-// Native fascia geometry/style, roof tiling/UVs and mip sampling remain distinct
-// geometry/material limitations; the ordinary body light does not prove them.
+// Original roofs use a128-half-cell admission grid, topology-selected reusable
+// prototypes and factory-scoped material modes. Admission/height inputs come
+// from the scene producer; this component keeps classification and CPU geometry
+// until those inputs, style or pitch change. Camera placement is cached apart
+// from canonical prototype identity and material history.
+// The previous rectangle mesh remains for explicitly unbound source contexts.
+// Source UVs/normals do not establish original driver raster/filter parity.
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -27,6 +21,7 @@
 #include "world/model/LotTilePos.h"
 #include "world/utils/TriangleRaster.h"
 #include "common/TS1/TS1RoofLighting.h"
+#include "common/TS1/TS1RoofGeometry.h"
 
 namespace FSO { namespace LotView {
 class Framebuffer;
@@ -43,6 +38,21 @@ public:
     bool ShapeDirty = true;
 
     void SetStylePitch(uint32_t style, float pitch);
+    // Full original storage, source stories1/2. Producer owns room/floor/stair
+    // admission and publishes only on input changes; no scene inference here.
+    bool SetSourceAdmission(const std::vector<FSO::Common::TS1::RoofAdmissionLevel>& levels,
+        const std::vector<uint8_t>& heightQuads,int sourceWidth=64);
+    bool HasSourceAdmission() const {return SourceWidth==64;}
+    const std::vector<FSO::Common::TS1::RoofClassification>& GetSourceClassifications() const {return SourceClassifications;}
+    const FSO::Common::TS1::RoofPrototypeFactory& GetSourceFactory() const {return SourceFactory;}
+    size_t GetSourceUnsupportedGroundCount(int camera) const;
+    const std::vector<FSO::Common::TS1::RoofAdmissionLevel>& GetSourceAdmissions() const {return SourceAdmission;}
+    const std::vector<uint8_t>& GetSourceHeightQuads() const {return SourceHeightQuads;}
+    uint64_t GetRenderGeneration() const {return RenderGeneration;}
+    // Original-source CPU work, independent of retained raster redraw counts.
+    uint64_t GetClassificationBuildCount() const {return ClassificationBuildCount;}
+    uint64_t GetMeshBuildCount() const {return MeshBuildCount;}
+
     // Explicit source material snapshot. The world owns cache invalidation when
     // this returns true; geometry rebuilds do not infer or reset mesh modes.
     bool SetLighting(const FSO::Common::TS1::RoofLightingInput& input);
@@ -50,7 +60,7 @@ public:
     bool SetCharacterDetail(int rawDetail,bool applyExisting);
     bool SetLightingAmbient(const FSO::Common::TS1::RoofRGB& ambient);
     int GetRawCharacterDetail() const { return MaterialState.RawDetail; }
-    bool HasMaterials() const { return MaterialState.HasMaterials; }
+    bool HasMaterials() const { return MaterialState.HasMaterials || !SourceFactory.Prototypes().empty(); }
 
     class RoofRect {
     public:
@@ -86,10 +96,31 @@ private:
     struct RoofQuad { RoofVertex V[4]; int Face; bool Fascia; };
     std::vector<std::vector<RoofRect>> RoofRects; // index level-2
     std::vector<std::vector<RoofQuad>> Meshes;    // index level-2
+    Utils::RasterTexture SourceTexture; // Actual authored dimensions/base level.
     Utils::RasterTexture Mips[3];                 // 32x32, 16x16, 8x8
     std::string LoadedTexture;
     FSO::Common::TS1::RoofLightingInput Lighting;
     FSO::Common::TS1::RoofUniformMaterialState MaterialState;
+
+    struct SourceTriangle {
+        FSO::Common::TS1::RoofPrototypeTriangle Geometry;
+        uint16_t Kind;
+    };
+    struct SourceLevelMeshes {
+        std::array<std::vector<SourceTriangle>,4> Camera;
+        std::array<bool,4> Valid{{false,false,false,false}};
+        std::array<size_t,4> UnsupportedGround{{0,0,0,0}};
+    };
+    uint64_t RenderGeneration=1,ClassificationBuildCount=0,MeshBuildCount=0;
+    int SourceWidth=0;
+    std::vector<uint8_t> SourceHeightQuads;
+    std::vector<FSO::Common::TS1::RoofAdmissionLevel> SourceAdmission;
+    std::vector<FSO::Common::TS1::RoofClassification> SourceClassifications;
+    std::vector<SourceLevelMeshes> SourceMeshes;
+    FSO::Common::TS1::RoofPrototypeFactory SourceFactory;
+    void InvalidateSourceMeshes();
+    void BuildSourceMesh(size_t level,int camera);
+    void DrawSourceRoof(WorldState& world,Framebuffer& target);
 
     void MeshRects(int level);
     void PrepTexture();

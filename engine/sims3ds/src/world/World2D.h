@@ -103,6 +103,7 @@ private:
     int32_t TicksSinceLight = 0;
     bool LastDrawRoofs = false;
     FSO::Common::TS1::RoofLightingInput RenderRoofLighting;
+    uint64_t RenderRoofGeneration = 0;
     std::vector<uint32_t> LastRoomColors;
     std::vector<uint32_t> RenderRoomColors;
     uint32_t RenderOutside = 0;

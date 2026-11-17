@@ -504,6 +504,7 @@ void VMContext::RemoveSpatialEntity(VMEntity* entity) {
         if (source.Flags2 & 0x400) RefreshSpatialObject(entity);
         SpatialSnapshotDirty = true;
     }
+    InvalidateRoofObject(entity);
     // 0044127f captures old room before removing and sends F3 afterward,
     // including the normal path that has already unregistered its placement.
     if (found != SpatialPlacements.end() && entity->GetValue(VMStackObjectVariable::RoomImpact) != 0)
@@ -513,6 +514,7 @@ void VMContext::RemoveSpatialEntity(VMEntity* entity) {
 
 void VMContext::PrepareVisualLighting() {
     if (!VM || !VM->TS1 || !Blueprint || !Architecture()) return;
+    PrepareRoofGeometry();
     ObserveSpatialPeriod();
     FlushSpatialLighting();
     const int period = Clock ? Clock->TimeOfDay() : 0;
@@ -694,6 +696,7 @@ void VMContext::RegisterObjectPos(VMEntity* obj) {
         if (!obj->Container && SpatialLights.Interior(source.Position))
             SpatialTileHeads[size_t(source.Position.Story - 1)][size_t(source.Position.Y) * SpatialLights.Width + source.Position.X] = obj->ObjectID;
     }
+    InvalidateRoofObject(obj);
     if (obj->GetValue(VMStackObjectVariable::LightingContribution) > 0)
         RefreshLighting(room, true);
     else if (room < RoomInfo.size() && MovedObjectAffectsEnvironment(this, obj))
@@ -713,6 +716,7 @@ void VMContext::UnregisterObjectPos(VMEntity* obj) {
         if (source.Flags2 & 0x400) RefreshSpatialObject(obj);
         SpatialSnapshotDirty = true;
     }
+    InvalidateRoofObject(obj);
     //remove object from room
 
     auto room = GetObjectRoom(obj);

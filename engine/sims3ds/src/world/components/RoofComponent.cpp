@@ -37,6 +37,9 @@ void RoofComponent::SetStylePitch(uint32_t style, float pitch) {
     if(styleChanged) Style=style;
     if(pitchChanged) Pitch=clampedPitch;
     MaterialState.ResetFactory();
+    SourceFactory.ResetFactory();
+    InvalidateSourceMeshes();
+    ++RenderGeneration;
     auto input=Lighting; input.Mode=MaterialState.Mode; SetLighting(input);
     if (blueprint != nullptr) blueprint->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::ROOF_STYLE_CHANGED, 0, 0, 1));
 }
@@ -45,18 +48,104 @@ bool RoofComponent::SetLighting(const FSO::Common::TS1::RoofLightingInput& input
     const bool changed=!Lighting.SameMaterialAs(input);
     Lighting=input;
     MaterialState.Mode=input.Mode;
+    if(changed) ++RenderGeneration;
     return changed;
 }
 
 bool RoofComponent::SetCharacterDetail(int rawDetail,bool applyExisting) {
+    const bool sourceChanged=SourceFactory.SetCharacterDetail(rawDetail,applyExisting);
     MaterialState.SetCharacterDetail(rawDetail,applyExisting);
     auto input=Lighting; input.Mode=MaterialState.Mode;
-    return SetLighting(input);
+    const bool changed=SetLighting(input);
+    if(sourceChanged && !changed) ++RenderGeneration;
+    return changed || sourceChanged;
 }
 
 bool RoofComponent::SetLightingAmbient(const FSO::Common::TS1::RoofRGB& ambient) {
     auto input=Lighting; input.Ambient=ambient;
     return SetLighting(input);
+}
+
+bool RoofComponent::SetSourceAdmission(
+    const std::vector<FSO::Common::TS1::RoofAdmissionLevel>& levels,
+    const std::vector<uint8_t>& heightQuads,int sourceWidth) {
+    if(sourceWidth!=64 || heightQuads.size()!=size_t(sourceWidth)*sourceWidth*4)
+        throw std::invalid_argument("Original roof heights require the full64 source domain");
+    bool changed=SourceWidth!=sourceWidth || SourceHeightQuads!=heightQuads || levels.size()!=SourceAdmission.size();
+    if(!changed) for(size_t i=0;i<levels.size();++i) {
+        const auto& a=levels[i];const auto& b=SourceAdmission[i];
+        if(a.Story!=b.Story || a.Width!=b.Width || a.StoryUnit!=b.StoryUnit ||
+           a.Eligible!=b.Eligible || a.Blocked!=b.Blocked) {changed=true;break;}
+    }
+    if(!changed) return false;
+    for(const auto& level:levels)
+        if(level.Width!=128 || level.Story<1 || level.Story>2)
+            throw std::invalid_argument("Original roof admission requires128 half cells and source story1 or2");
+    auto classified=FSO::Common::TS1::ClassifyRoofLevels(levels);
+    ++ClassificationBuildCount;
+    SourceWidth=sourceWidth;SourceHeightQuads=heightQuads;
+    SourceAdmission=levels;SourceClassifications=std::move(classified);
+    SourceMeshes.assign(levels.size(),SourceLevelMeshes{});
+    ++RenderGeneration;
+    ShapeDirty=true;
+    return true;
+}
+void RoofComponent::InvalidateSourceMeshes() {
+    for(auto& level:SourceMeshes) level.Valid.fill(false);
+}
+void RoofComponent::BuildSourceMesh(size_t index,int camera) {
+    ++MeshBuildCount;
+    using namespace FSO::Common::TS1;
+    auto& result=SourceMeshes[index];
+    auto& triangles=result.Camera[size_t(camera)];
+    triangles.clear();
+    result.UnsupportedGround[size_t(camera)]=0;
+    const auto& level=SourceAdmission[index];
+    for(const auto& cell:SourceClassifications[index].Cells) {
+        // Source cache selection precedes ground admission and viewport culling.
+        auto& prototype=SourceFactory.GetOrCreate(cell.Prototype.Kind,Pitch);
+        MaterialState.HasMaterials=true; // Existing-material proxy; per-kind modes stay in the factory.
+        const auto ground=SelectRoofGround(cell,SourceHeightQuads,SourceWidth);
+        if(!ground.Supported) {++result.UnsupportedGround[size_t(camera)];continue;}
+        if(!ground.Draw) continue;
+        auto placed=PlaceRoofPrototype(prototype.Geometry,cell,ground.Height,level.Story,camera,Pitch,level.StoryUnit);
+        for(auto& triangle:placed) triangles.push_back({std::move(triangle),cell.Prototype.Kind});
+    }
+    result.Valid[size_t(camera)]=true;
+}
+size_t RoofComponent::GetSourceUnsupportedGroundCount(int camera) const {
+    if(camera<0 || camera>3) return 0;
+    size_t count=0;for(const auto& level:SourceMeshes) count+=level.UnsupportedGround[size_t(camera)];
+    return count;
+}
+void RoofComponent::DrawSourceRoof(WorldState& world,Framebuffer& target) {
+    using namespace FSO::Common::TS1;
+    PrepTexture();
+    const int camera=int(world.Rotation())&3;
+    const auto origin=TileProjectionOrigin(world);
+    auto* cam=world.Camera();
+    const auto* texture=&SourceTexture;
+    for(size_t level=0;level<SourceAdmission.size();++level) {
+        if(SourceAdmission[level].Story>world.Level()) continue;
+        if(!SourceMeshes[level].Valid[size_t(camera)]) BuildSourceMesh(level,camera);
+        for(const auto& triangle:SourceMeshes[level].Camera[size_t(camera)]) {
+            const auto& material=SourceFactory.Prototypes().at(triangle.Kind);
+            auto input=Lighting;input.Mode=material.Mode;
+            const auto factors=RoofSourceMaterialFactors(triangle.Geometry.Normal,input);
+            std::array<RasterVertex,3> raster;
+            for(size_t i=0;i<3;++i) {
+                const auto& vertex=triangle.Geometry.Vertices[i];
+                const auto& p=vertex.Position;
+                const st::Vector3 tile(p[2]/3.0f,p[0]/3.0f,p[1]/3.0f);
+                const auto screen=world.WorldSpace.GetScreenFromTile(tile);
+                auto& v=raster[i];v.x=screen.X+origin.X;v.y=screen.Y+origin.Y;
+                v.z=cam->Depth(WorldSpace::GetWorldFromTile(tile));
+                v.u=vertex.UV[0]*float(texture->Width);v.v=vertex.UV[1]*float(texture->Height);
+                v.r=factors[0];v.g=factors[1];v.b=factors[2];
+            }
+            DrawTriangle(target,raster[0],raster[1],raster[2],texture,0,-.05f,&LastStats,65535);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- RoofRect
@@ -354,13 +443,24 @@ void RoofComponent::MeshRects(int level) {
 void RoofComponent::PrepTexture() {
     auto roofs = FSO::Content::Content::Get()->WorldRoofs.get();
     std::string path = (roofs != nullptr) ? roofs->GetPath((int32_t)Style) : std::string();
-    if (path == LoadedTexture && Mips[0].Valid()) return;
+    if (path == LoadedTexture && Mips[0].Valid() && SourceTexture.Valid()) return;
     LoadedTexture = path;
     for (auto& m : Mips) m = RasterTexture();
+    SourceTexture=RasterTexture();
     std::vector<uint8_t> data;
     FSO::Vitaboy::Texture bmp;
     if (!path.empty() && FSO::Content::ReadAllBytes(path, data) && bmp.LoadBMP(data) && bmp.Width > 0 && bmp.Height > 0) {
-        // resample to 32x32 (all TS1 roofs are 32x32 already)
+        SourceTexture.Width=bmp.Width;SourceTexture.Height=bmp.Height;
+        SourceTexture.Pixels.resize(size_t(bmp.Width)*bmp.Height);
+        uint64_t ar=0,ag=0,ab=0;
+        for(int y=0;y<bmp.Height;++y) for(int x=0;x<bmp.Width;++x) {
+            const uint32_t color=bmp.Fetch(x,y)|0xff000000u;
+            SourceTexture.Pixels[size_t(y)*bmp.Width+x]=color;
+            ar+=color&255;ag+=(color>>8)&255;ab+=(color>>16)&255;
+        }
+        const auto count=SourceTexture.Pixels.size();
+        SourceTexture.Average=Framebuffer::Pack(uint8_t(ar/count),uint8_t(ag/count),uint8_t(ab/count),255);
+        // Retain the previous fallback mesh's texture/mip convention separately.
         RasterTexture t;
         t.Width = 32; t.Height = 32;
         t.Pixels.resize(32 * 32);
@@ -380,7 +480,7 @@ void RoofComponent::PrepTexture() {
         t.Width = 2; t.Height = 2;
         t.Pixels.assign(4, Framebuffer::Pack(110, 90, 80, 255));
         t.Average = t.Pixels[0];
-        Mips[0] = Mips[1] = Mips[2] = t;
+        Mips[0] = Mips[1] = Mips[2] = SourceTexture = t;
     }
 }
 
@@ -389,6 +489,11 @@ void RoofComponent::PrepTexture() {
 void RoofComponent::DrawInto(WorldState& world, Framebuffer& target) {
     LastStats = RasterStats();
     if (blueprint == nullptr) return;
+    if(HasSourceAdmission() && Lighting.Available()) {
+        DrawSourceRoof(world,target);
+        ShapeDirty=false;StyleDirty=false;
+        return;
+    }
     if (ShapeDirty) {
         RegenRoof();
         ShapeDirty = false;

@@ -14,6 +14,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <stdexcept>
 
 namespace FSO { namespace LotView { namespace Components {
 
@@ -84,8 +85,10 @@ void TerrainComponent::SetGrassState(const std::vector<uint8_t>& grass, int32_t 
 }
 
 void TerrainComponent::SetHeights(const std::vector<float>& heights, int32_t width) {
+    if (HeightWidth == width && Heights == heights) return;
     Heights = heights;
     HeightWidth = width;
+    ++HeightGeneration;
     OriginalShadePeriod = -1;
     OriginalBoundsDirty = true;
     TerrainDirty = true;
@@ -97,6 +100,7 @@ void TerrainComponent::SetOriginalSource(const std::vector<uint8_t>& heightQuads
     OriginalStorageWidth=cells && heightQuads.size()==cells*4 && grassBytes.size()==cells ? storageWidth : 0;
     if(OriginalStorageWidth) { OriginalSourceHeights=heightQuads; OriginalSourceGrass=grassBytes; }
     else { OriginalSourceHeights.clear(); OriginalSourceGrass.clear(); }
+    ++HeightGeneration;
     OriginalShadePeriod=-1; OriginalBoundsDirty=true; TerrainDirty=true;
     if(Blueprint) Blueprint->SignalFloorChange();
 }
@@ -209,17 +213,19 @@ int TerrainComponent::OriginalGrassSample(int x,int y) const {
     return index<GrassState.size() ? 127-int(GrassState[index]) : 0;
 }
 
-std::array<int,4> TerrainComponent::OriginalHeightQuad(int x,int y) const {
+std::array<int,4> TerrainComponent::OriginalHeightQuad(int x,int y,
+        const FSO::LotView::Model::Blueprint* sourceBlueprint) const {
     using namespace FSO::Common::TS1;
+    if (!sourceBlueprint) sourceBlueprint = Blueprint;
     const bool haveSource=x>=0 && y>=0 && x<OriginalStorageWidth && y<OriginalStorageWidth;
     TerrainCorners authored{},baseline{},current{};
     const int xs[4]={x,x,x+1,x+1},ys[4]={y+1,y,y,y+1};
     for(int i=0;i<4;++i) {
         const int vx=xs[i],vy=ys[i];
         const bool live=vx>=0 && vy>=0 && vx<HeightWidth && vy<HeightWidth;
-        const int liveValue=Blueprint && Blueprint->TerrainFactor>0 ?
-            int(std::lround(double(GetElevationPoint(vx,vy))/(double(Blueprint->TerrainFactor)*10)+
-                double(Blueprint->BaseAlt)/10)) : 0;
+        const int liveValue=sourceBlueprint && sourceBlueprint->TerrainFactor>0 ?
+            int(std::lround(double(GetElevationPoint(vx,vy))/(double(sourceBlueprint->TerrainFactor)*10)+
+                double(sourceBlueprint->BaseAlt)/10)) : 0;
         authored[size_t(i)]=haveSource ? OriginalSourceHeights[(size_t(y)*OriginalStorageWidth+x)*4+i] : liveValue;
         // The full saved B1 grid supplies vertices outside the live crop.
         // Never substitute the nearest live boundary for an available source.
@@ -228,7 +234,26 @@ std::array<int,4> TerrainComponent::OriginalHeightQuad(int x,int y) const {
         current[size_t(i)]=live ? liveValue : baseline[size_t(i)];
     }
     auto result=BindTerrainHeightQuad(authored,baseline,current,haveSource);
-    if(Blueprint) for(auto& value:result) value=int(std::lround(double(value)-double(Blueprint->BaseAlt)/10));
+    if(sourceBlueprint) for(auto& value:result) value=int(std::lround(double(value)-double(sourceBlueprint->BaseAlt)/10));
+    return result;
+}
+
+std::vector<uint8_t> TerrainComponent::CopyOriginalHeightQuads(int storageWidth,
+        const FSO::LotView::Model::Blueprint* sourceBlueprint) const {
+    if (storageWidth <= 0 || storageWidth > 64)
+        throw std::invalid_argument("Invalid original terrain storage width");
+    std::vector<uint8_t> result(size_t(storageWidth) * storageWidth * 4);
+    if (!sourceBlueprint) sourceBlueprint = Blueprint;
+    const double base = sourceBlueprint ? double(sourceBlueprint->BaseAlt) / 10 : 0;
+    for (int y = 0; y < storageWidth; ++y) for (int x = 0; x < storageWidth; ++x) {
+        const auto corners = OriginalHeightQuad(x,y,sourceBlueprint);
+        for (size_t c = 0; c < corners.size(); ++c) {
+            const auto value = std::lround(double(corners[c]) + base);
+            if (value < 0 || value > 255)
+                throw std::runtime_error("Original terrain height exceeds byte range");
+            result[(size_t(y) * storageWidth + x) * 4 + c] = uint8_t(value);
+        }
+    }
     return result;
 }
 
