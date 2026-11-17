@@ -97,6 +97,9 @@ public:
     // True source viewport in the current batch target; dirty scissoring must
     // not change the original strip's interpolation or dither parity.
     st::Rectangle TerrainSourceClip;
+    // Offscreen capture's complete source viewport in output coordinates.
+    // Tiled pictures keep one raster/dither frame while bounding cache memory.
+    st::Rectangle TerrainSourceViewport;
     // Presentation only: authored object light can be hidden without changing
     // the simulation's contributions or room score. Daylight remains visible.
     bool ObjectLighting = true;

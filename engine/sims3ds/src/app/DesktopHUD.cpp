@@ -44,8 +44,10 @@ void LotScreen::DrawDesktop() {
     state.pointer=DesktopPointerPosition();state.press_origin=DesktopPressOrigin();
     state.paused=Speed==0;state.simulation_speed=Speed==1?1:Speed==2?3:Speed==3?10:1;
     state.walls_down=S->WallsMode==1;state.cutaway=S->WallsMode==0;
+    state.roof=S->RoofView();
     state.options_enabled=true;state.options_open=CurrentMode==Mode::Options;
-    state.can_level_up=S->World()->State.Level()<2;state.can_level_down=S->World()->State.Level()>1;
+    state.can_level_up=S->CanChangeLevel(1,CurrentMode==Mode::Build);
+    state.can_level_down=S->CanChangeLevel(-1,CurrentMode==Mode::Build);
     const auto selected=S->SelectedSim();
     // The VM supplies every interest word for each living human. Fetch the
     // values only when the player actually opens the interests tab.
@@ -73,6 +75,7 @@ void LotScreen::DrawDesktop() {
     hit(layout.zoom_in,"zoom_in");hit(layout.zoom_out,"zoom_out");
     hit(layout.level_up,"level_up");hit(layout.level_down,"level_down");
     hit(layout.walls_up,"walls_up");hit(layout.walls_down,"walls_down");hit(layout.walls_cutaway,"walls_cut");
+    hit(layout.roof,"roof");
     hit(layout.options,"mode_options");hit(layout.pause,"speed0");
     hit(layout.speeds[0],"speed1");hit(layout.speeds[1],"speed2");hit(layout.speeds[2],"speed3");
     original::OfferDesktopControlHelp(c,*this);

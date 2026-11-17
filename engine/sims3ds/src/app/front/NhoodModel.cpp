@@ -7,11 +7,13 @@
 #include "files/SafeFile.h" // FIX(sims) SAVE
 #include "files/LoadProgress.h"
 #include <set>
+#include <optional>
 #include "files/SafeFile.h" // FIX(sims) SAVE
 #include "files/LoadProgress.h"
 #include "content/TS1FamilyImport.h"
 #include <cstdio>
 #include "app/front/NhoodModel.h"
+#include "odh/lot_picture_placement.hpp"
 #include "app/front/LotSave.h"
 #include "files/LotRezoneTransaction.h"
 #include "files/formats/iff/IffRawFile.h"
@@ -448,15 +450,13 @@ bool NhoodModel::HousePicture(const std::string& userDir, int house, Canvas& out
 }
 
 bool NhoodModel::OpenPicture(const LotInfo& lot, Canvas& out) const {
-    // FIX(sims) FB1: BMP_ 512 (no roof), the picture the game fades in over the hovered house
-    auto chunks = ReadChunks(ReadHousePath(UserDir, lot.House), { { "BMP_", 512 }, { "BMP_", 1024 } });
-    Canvas full;
-    auto it = chunks.find(std::make_pair(std::string("BMP_"), 512));
-    if (it == chunks.end() || !DecodeImage(it->second, full)) return false;
-    if (lot.Scale <= 1) { out = std::move(full); return true; }
-    auto h = chunks.find(std::make_pair(std::string("BMP_"), 1024));
-    if (h != chunks.end() && DecodeImage(h->second, out) && std::abs(out.Width - full.Width / 2) <= 2) return true;
-    Resample(full, out, std::max(1, full.Width / 2), std::max(1, full.Height / 2));
+    const int id=lot.HalfPictureFamily?1024:512;
+    auto chunks=ReadChunks(ReadHousePath(UserDir,lot.House),{{"BMP_",id}});
+    auto it=chunks.find(std::make_pair(std::string("BMP_"),id));
+    Canvas picture;
+    if(it==chunks.end()||!DecodeImage(it->second,picture))return false;
+    if(lot.HalfPictureFamily||lot.Scale<=1)out=std::move(picture);
+    else Resample(picture,out,std::max(1,picture.Width/lot.Scale),std::max(1,picture.Height/lot.Scale));
     return true;
 }
 
@@ -504,40 +504,52 @@ void NhoodModel::LoadArea(Area a, const std::map<int,std::pair<int,int>>* mapPos
         lot.Address = FormatStreetAddress(streets.get(), h);
         auto fam = FamilyInHouse(h);
         lot.Family = fam ? fam->ChunkID : -1;
-        // FIX(sims) FB1: the house picture as the game places it (FreeSO UINeighborhoodHouseButton, which matches the
-        // original): BMP_ 513 (roof on) at 1:1 on the 1.0 neighbourhood and the EP towns, at half size on the Unleashed
-        // neighbourhood (its own half-size copy BMP_ 1025 when the file has one), centred on the LotLocations point and
-        // moved by THMB 512 (base y offset, x offset) / (2 x scale). Before, the point was taken as the top-left of the
-        // half-size open picture (BMP_ 1024) on every map: the EP towns' houses were drawn at half size, off their plots
-        // (over the roads), and houses saved by the port showed BMP_ 512, which it wrote as an unkeyed night rectangle.
+        // Each original picture family has its own centroid/crop packet.
+        // Use half-size artwork with THMB1024, or scale the full family and
+        // THMB512 together; independent crops need not have matching bounds.
         lot.Scale = (a == Area::Neighbourhood && unleashed) ? 2 : 1;
         // The one-screen presentation has already decoded its map thumbnails.
         // Lot value, zoning and magic-house rules still come from the saved lot.
         static const std::vector<std::pair<std::string,int>> facts{{"SIMI",1}};
         static const std::vector<std::pair<std::string,int>> factsAndArt{
-            {"SIMI",1},{"BMP_",513},{"BMP_",512},{"BMP_",1025},{"THMB",512}};
+            {"SIMI",1},{"BMP_",513},{"BMP_",512},{"BMP_",1025},{"BMP_",1024},{"THMB",512},{"THMB",1024}};
         auto chunks = ReadChunks(path,loadThumbnail ? factsAndArt : facts);
         if (loadThumbnail) {
             auto bmp = [&](int id) { auto it = chunks.find(std::make_pair(std::string("BMP_"), id)); return it == chunks.end() ? (const std::vector<uint8_t>*)nullptr : &it->second; };
             Canvas full;
-            int fullW = 0, fullH = 0;
-            for (int id : { 513, 512 }) if (auto b = bmp(id)) if (DecodeImage(*b, full)) { fullW = full.Width; fullH = full.Height; break; }
-            if (lot.Scale == 1) lot.Thumb = std::move(full);
-            else {
-                Canvas half;
-                if (auto b = bmp(1025)) if (DecodeImage(*b, half) && fullW > 0 && std::abs(half.Width - fullW / 2) <= 2) lot.Thumb = std::move(half);
-                if (lot.Thumb.Width == 0 && fullW > 0) Resample(full, lot.Thumb, std::max(1, fullW / 2), std::max(1, fullH / 2));
+            int fullW = 0, fullH = 0, fullID = 0;
+            for (int id : { 513, 512 }) if (auto b = bmp(id)) if (DecodeImage(*b, full)) { fullW = full.Width; fullH = full.Height; fullID = id; break; }
+            const auto readMetadata=[&](int id)->std::optional<std::array<int,5>>{
+                const auto found=chunks.find(std::make_pair(std::string("THMB"),id));
+                if(found==chunks.end()||found->second.size()<20)return {};
+                std::array<int,5> values;
+                for(size_t i=0;i<5;++i){const auto* q=found->second.data()+i*4;
+                    values[i]=int(int32_t(uint32_t(q[0])|(uint32_t(q[1])<<8)|(uint32_t(q[2])<<16)|(uint32_t(q[3])<<24)));
+                    if(values[i]<-32768||values[i]>32767)return {};
+                }
+                return values;
+            };
+            lot.HalfPictureFamily=false;
+            const auto halfMetadata=readMetadata(1024);
+            if(lot.Scale>1&&halfMetadata){
+                Canvas half,halfBase;
+                const auto base=bmp(1024),roof=bmp(1025);
+                if(base&&roof&&DecodeImage(*base,halfBase)&&DecodeImage(*roof,half)){
+                    lot.Thumb=std::move(half);lot.HalfPictureFamily=true;
+                }
             }
-            int baseY = 0, offX = 0, addY = 0;
-            auto th = chunks.find(std::make_pair(std::string("THMB"), 512));
-            if (th != chunks.end() && th->second.size() >= 20) {
-                auto le = [&](size_t o) { const uint8_t* q = th->second.data() + o; return (int)(int32_t)((uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24)); };
-                baseY = le(8); offX = le(12); addY = le(16);
+            if(!lot.HalfPictureFamily){
+                if(lot.Scale==1)lot.Thumb=std::move(full);
+                else if(fullW>0)Resample(full,lot.Thumb,std::max(1,fullW/lot.Scale),std::max(1,fullH/lot.Scale));
             }
-            int sc = lot.Scale;
-            lot.X = lot.CX - (fullW > 0 ? fullW : lot.Thumb.Width * sc) / (2 * sc) + offX / (2 * sc);
-            lot.Y = lot.CY - (fullH > 0 ? fullH : lot.Thumb.Height * sc) / (2 * sc) + baseY / (2 * sc);
-            lot.OpenDY = -addY / sc;
+            const int divisor=lot.HalfPictureFamily?1:lot.Scale;
+            const auto metadata=lot.HalfPictureFamily?*halfMetadata:
+                readMetadata(512).value_or(std::array<int,5>{{fullW/2,fullH/2,0,0,0}});
+            const auto origins=odh::lot_picture_origins(lot.CX,lot.CY,metadata,divisor);
+            const bool baseFallback=!lot.HalfPictureFamily&&fullID==512;
+            const auto selected=baseFallback?origins.base:origins.roofed;
+            lot.X=selected[0];lot.Y=selected[1];
+            lot.OpenDX=origins.base[0]-lot.X;lot.OpenDY=origins.base[1]-lot.Y;
         }
         auto si = chunks.find(std::make_pair(std::string("SIMI"), 1));
         if (si != chunks.end() && !si->second.empty()) {

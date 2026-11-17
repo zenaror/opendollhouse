@@ -13,8 +13,13 @@
 #include <cstdint>
 
 namespace simapp { class LotSession; }
+class VMTS1LotSaver;
 
 namespace simapp { namespace front {
+
+/// Prepares the lot's map pictures in memory, restoring the live view afterward.
+/// Does not write a save or advance the simulation.
+void RenderPictures(LotSession& session, const std::string& source, VMTS1LotSaver& saver);
 
 /// Writes <UserData>/Houses/HouseNN.iff (never the install or a template) and updates the neighbourhood in memory.
 /// Returns false with `error` set; `log` gets the saver's notes.

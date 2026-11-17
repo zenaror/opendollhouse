@@ -55,6 +55,15 @@ struct Fixture {
              "cpanel/buttons/objects.bmp","cpanel/buttons/people.bmp","cpanel/buttons/arch.bmp",
              "cpanel/buttons/scrollleft.bmp","cpanel/buttons/scrollright.bmp"})entries.push_back({key,bmp(4,1)});
         for(const auto key:odh_host::original_panel_category_art)entries.push_back({key,bmp(4,1)});
+        for(const auto key:{"NoCut","NoWall","DynaCut","LevRoof"}){
+            auto button=bmp(4,1);
+            for(unsigned frame=0;frame<4;++frame){
+                button[54+frame*3]=char(30+20*frame);
+                button[55+frame*3]=char(50+20*frame);
+                button[56+frame*3]=char(70+20*frame);
+            }
+            entries.push_back({std::string("cpanel/buttons/")+key+".bmp",std::move(button)});
+        }
         entries.push_back({"CPanel/People/PeopleTemplate.bmp",bmp(180,45)});
         entries.push_back({"CPanel/Catalog/ThumbTemplate.bmp",bmp(180,45)});
         entries.push_back({"CPanel/Buttons/IconFrame.bmp",bmp(90,45)});
@@ -195,6 +204,32 @@ void needs_panel_cache(){
     compare(false); compare(true);
     input.Px[0]^=127; compare(true);
 }
+void original_roof_view_controls(){
+    // DVD four-way selection: Roof uses full walls but does not highlight Up.
+    Fixture fixture;odh_host::OriginalControlPanelArt art(fixture.path);
+    original::RetainedControlPanel retained(art);
+    const auto l=odh_host::original_control_panel_layout(800,600);
+    const std::array<odh_host::BuyUiRect,4> boxes{{l.walls_up,l.walls_down,l.walls_cutaway,l.roof}};
+    for(unsigned selected=0;selected<4;++selected){
+        odh_host::OriginalPanelState state;
+        state.walls_down=selected==1;state.cutaway=selected==2;state.roof=selected==3;
+        auto frame=old_raster(background(800,600,93)),cached=frame;
+        art.draw(frame,odh_host::OriginalPanelMode::live,state);
+        retained.draw(odh::UiBitmapSurface::from(cached),odh_host::OriginalPanelMode::live,state);
+        check(cached.pixels==frame.pixels,"changing roof/wall selection must match a complete HUD redraw");
+        for(unsigned i=0;i<4;++i){
+            const auto& b=boxes[i];const int x=b.x+b.width*3/4,y=b.y+b.height*3/4;
+            const auto& pixel=frame.pixels[size_t(y)*800+x];
+            check((pixel==Pixel{90,70,50,255})==(i==selected),"roof and wall buttons must select exactly one authored frame");
+        }
+        const auto& b=l.roof;
+        check(art.hit(l,b.x+b.width*3/4,b.y+b.height*3/4,state)==odh_host::OriginalPanelAction::roof,
+            "roof can be selected and selected again through its visible authored button");
+    }
+    odh_host::OriginalPanelState unavailable;
+    check(art.hit(l,l.roof.x+l.roof.width*3/4,l.roof.y+l.roof.height*3/4,unavailable)==odh_host::OriginalPanelAction::none,
+        "missing roof consumer stays disabled");
+}
 void retained_handheld_layers(){
     Fixture fixture;
     odh_host::OriginalControlPanelArt art(fixture.path);
@@ -295,5 +330,5 @@ int main(int argc,char**){try{
 #else
     std::cout<<"backend=existing-host-text\n";
 #endif
-    portrait_blend();transfers();retained_tooltip();needs();needs_panel_cache();retained_handheld_layers();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
+    portrait_blend();transfers();retained_tooltip();needs();needs_panel_cache();original_roof_view_controls();retained_handheld_layers();portraits_and_queue();std::cout<<"checks="<<checks<<" pixel_comparisons="<<pixel_comparisons<<" passed\n";if(argc>1)benchmark();}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

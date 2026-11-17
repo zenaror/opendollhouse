@@ -66,6 +66,13 @@ bool RoofComponent::SetLightingAmbient(const FSO::Common::TS1::RoofRGB& ambient)
     return SetLighting(input);
 }
 
+bool RoofComponent::SetSampling(const Utils::RasterSampling& sampling) {
+    if(Sampling==sampling) return false;
+    Sampling=sampling;
+    ++RenderGeneration;
+    return true;
+}
+
 bool RoofComponent::SetSourceAdmission(
     const std::vector<FSO::Common::TS1::RoofAdmissionLevel>& levels,
     const std::vector<uint8_t>& heightQuads,int sourceWidth) {
@@ -143,7 +150,7 @@ void RoofComponent::DrawSourceRoof(WorldState& world,Framebuffer& target) {
                 v.u=vertex.UV[0]*float(texture->Width);v.v=vertex.UV[1]*float(texture->Height);
                 v.r=factors[0];v.g=factors[1];v.b=factors[2];
             }
-            DrawTriangle(target,raster[0],raster[1],raster[2],texture,0,-.05f,&LastStats,65535);
+            DrawTriangle(target,raster[0],raster[1],raster[2],texture,0,-.05f,&LastStats,65535,&Sampling);
         }
     }
 }

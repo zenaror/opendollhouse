@@ -19,8 +19,13 @@
 #include "content/TS1CharacterFiles.h"
 #include "files/formats/iff/chunks/SIMI.h"
 #include "world/World.h"
+#include "common/TS1/TS1LotPictures.h"
+#include "world/utils/TriangleRaster.h"
+#include <cmath>
+#include <stdexcept>
 #include "world/model/Blueprint.h"
 #include "world/components/ObjectComponent.h"
+#include "world/components/TerrainComponent.h"
 #include <algorithm>
 #include <limits>
 #include "simantics/VMClock.h"
@@ -35,17 +40,8 @@
 
 namespace simapp { namespace front {
 
-/// FIX(sims) FB1: the neighbourhood pictures as the game saves them. BMP_ 512 = the whole lot with walls up and no roof,
-/// BMP_ 513 = the same with the roof (the map shows 513, the hovered/selected house 512), magenta (248,0,248) around
-/// the lot, daylight, every story, and the lot's centre at the THMB 512 anchor (x, y) so the map's anchoring (THMB +
-/// LotLocations, see NhoodModel::LoadArea) stays right. Before, only 512 was written: a night-time rectangle of the
-/// view centred on the walls, with no transparency, so a saved house covered the roads around it on the map.
-// ADDED(sims) save progress: the pictures report their work (files/LoadProgress.h "save: house pictures"), so the
-// "Saving..." overlay redraws and the sound keeps playing in between. Measured with the host's 3DS estimate (House05,
-// Goths): the first far-zoom draw read ~6.5 MB of object sprites (~0.6 s of SD time inside one World::Draw), and each
-// of the 2x2 passes was 0.25-0.4 s of CPU. Now the sprites are loaded object by object first (PrewarmSprites), a
-// 16x16 draw takes the zoom / level / light changes, and the 4x canvas is drawn in 4x4 passes (0.1-0.15 s each, the
-// same total): no stretch without a report is longer than ~0.18 s.
+// The DVD saves independently resized full/half pairs. The second image adds
+// roofs to the retained base canvas; the first inherits the live roof view.
 static const int kPictureGrid = 4;
 struct PictureProgress {
     double Units = 0, Total = 0;
@@ -66,14 +62,18 @@ static void PrewarmSprites(FSO::LotView::Model::Blueprint* bp, FSO::LotView::Wor
     prog.Add(units * (double)(objs.size() & 3) / (double)std::max<size_t>(1, objs.size()));
 }
 
-static void RenderThumbnail(LotSession& s, int w, int h, int ax, int ay, bool roofs, std::vector<uint8_t>& rgb, PictureProgress& prog) {
+using namespace FSO::Common::TS1;
+static std::array<LotPictureSurface,2> RenderPicturePair(LotSession& s,
+    const LotPicturePlan& requested,const std::vector<uint8_t>& heights,float scale,
+    int centroidX,int centroidY,LotPictureMetadata& metadata,PictureProgress& prog) {
     auto world = s.World();
     auto ctx = s.Context();
     auto bp = s.Blueprint;
-    if (!world || !ctx || !bp || !ctx->Architecture() || w <= 0 || h <= 0) return;
+    if (!world || !ctx || !bp || !ctx->Architecture()) return {};
     ctx->PrepareVisualLighting();
     auto arch = ctx->Architecture();
     auto& st = world->State;
+    const auto oldPreciseZoom=st.PreciseZoom();
     auto oldZoom = st.Zoom(); auto oldRot = st.Rotation(); auto oldLevel = st.Level(); auto oldCenter = st.CenterTile();
     auto oldCut = bp->Cutaway;
     const auto oldBuildMode = st.BuildMode();
@@ -82,6 +82,12 @@ static void RenderThumbnail(LotSession& s, int w, int h, int ax, int ay, bool ro
     const auto oldStateOutside = st.OutsideColor;
     const auto oldRenderingThumbnail = st.RenderingThumbnail;
     const auto oldThumbnailBounds = st.ThumbnailGroundBounds;
+    auto oldVisualLight = bp->VisualLight;
+    const auto oldTerrainPeriod=st.TerrainPeriod;
+    const auto oldTerrainDetail=st.TerrainDetail;
+    const auto oldSimpleTerrain=st.SimpleTerrain;
+    const auto oldTerrainSourceViewport=st.TerrainSourceViewport;
+    const auto oldTerrainSourceClip=st.TerrainSourceClip;
     const auto oldAmbientLight = st._2D->AmbientLight;
     const auto oldRoofAmbient = bp->RoofComp.GetLighting().Ambient;
     const auto oldDrawAvatars = world->DrawAvatars;
@@ -96,11 +102,17 @@ static void RenderThumbnail(LotSession& s, int w, int h, int ax, int ay, bool ro
     } restoreView{[&] {
         st.RenderingThumbnail = oldRenderingThumbnail;
         st.ThumbnailGroundBounds = oldThumbnailBounds;
+        bp->VisualLight=std::move(oldVisualLight);
+        st.TerrainPeriod=oldTerrainPeriod;
+        st.TerrainDetail=oldTerrainDetail;
+        st.SimpleTerrain=oldSimpleTerrain;
+        st.TerrainSourceViewport=oldTerrainSourceViewport;
+        st.TerrainSourceClip=oldTerrainSourceClip;
         st._2D->AmbientLight = oldAmbientLight;
         bp->RoofComp.SetLightingAmbient(oldRoofAmbient);
         world->DrawAvatars = oldDrawAvatars;
         world->AvatarDrawHook = std::move(oldAvatarDrawHook);
-        st.Zoom(oldZoom); st.Rotation(oldRot); st.Level(oldLevel); st.BuildMode(oldBuildMode);
+        st.Zoom(oldZoom); st.Rotation(oldRot); st.Level(oldLevel); st.BuildMode(oldBuildMode); st.PreciseZoom(oldPreciseZoom);
         st.SetDimensions(oldDimensions);
         st.CenterTile(oldCenter);
         st.DrawRoofs = oldRoofs;
@@ -115,124 +127,110 @@ static void RenderThumbnail(LotSession& s, int w, int h, int ax, int ay, bool ro
         bp->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::PRECISE_ZOOM));
         bp->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::WALL_CUT_CHANGED));
     }};
-    int top = 1;
-    for (int l = 1; l <= (int)arch->Floors.size(); l++) {
-        bool any = false;
-        for (auto& f : arch->Floors[(size_t)(l - 1)]) if (f.Pattern != 0) { any = true; break; }
-        if (!any && l - 1 < (int)arch->Walls.size()) for (auto& wt : arch->Walls[(size_t)(l - 1)]) if (wt.Segments != 0) { any = true; break; }
-        if (any) top = std::max(top, l);
-    }
-    st.BuildMode(0); // A saved house picture never includes interactive build/buy grid.
+    // Source picture entry scopes DAY0 and High terrain quality independently
+    // of the live clock and F5 actor/roof settings. The detached snapshot leaves
+    // logical room scores, events and canonical light generations untouched.
+    bp->VisualLight=ctx->BuildPictureVisualLighting(0);
+    st.TerrainPeriod=0;st.TerrainDetail=2;st.SimpleTerrain=false;
+    const int width=int(requested.RequestedWidth/scale+.5f);
+    const int height=int(requested.RequestedHeight/scale+.5f);
+    if(width<=0 || height<=0)throw std::runtime_error("Invalid lot-picture canvas");
+    const auto bounds=PlanLotPictures(heights,arch->Width,width,height,1,0,58);
+    const int screenX=(std::clamp(requested.OffsetX,bounds.MinX,bounds.MaxX)+1)&~3;
+    const int screenY=std::clamp(requested.OffsetY,bounds.MinY,bounds.MaxY);
+    const int shift=scale==.25f?2:3;
+    metadata={(16*(centroidX-centroidY)+screenX)>>shift,
+        (8*(centroidX+centroidY)+screenY)>>shift,bounds.BaseYOff>>shift,0,0};
+    st.BuildMode(0);st.PreciseZoom(1);
     st.Zoom(FSO::LotView::WorldZoom::Far);
     st.Rotation(FSO::LotView::WorldRotation::TopLeft);
-    st.Level((int8_t)top);
-    st.DrawRoofs = roofs;
-    st.CenterTile(st::Vector2(arch->Width / 2.0f, arch->Height / 2.0f));
-    bp->Cutaway.assign((size_t)(arch->Width * arch->Height), false);
-    st.RenderingThumbnail = true;
-    // The DVD picture entry and actual cached roof mesh both inherit ambient0.
-    // Reuse the canonical factory: new picture-created kinds must survive the
-    // return, while existing per-kind material modes remain unchanged.
+    st.Level(2);st.DrawRoofs=oldRoofs;
+    bp->Cutaway.assign(size_t(arch->Width)*arch->Height,false);
+    st.RenderingThumbnail=true;
     bp->RoofComp.SetLightingAmbient({{0,0,0}});
-    world->DrawAvatars = false; // GetLotThumb renders the lot, not live actors.
-    world->AvatarDrawHook = {};
-    // Neutral capture lighting is a renderer input, never a simulation-time edit.
+    world->DrawAvatars=false;world->AvatarDrawHook={};
+    // Flags bit20h is the canonical fine buildable mask. MapEdit is a UI
+    // override and source picture entry explicitly clears its override.
+    int rx0=arch->Width,ry0=arch->Height,rx1=-1,ry1=-1;
+    for(int y=0;y<arch->Height;++y)for(int x=0;x<arch->Width;++x) {
+        const bool accepted=!arch->FineBuildableArea.empty()
+            ? arch->FineBuildableArea[size_t(y)*arch->Width+x]
+            : arch->BuildableArea.Contains(x,y);
+        if(accepted){rx0=std::min(rx0,x);ry0=std::min(ry0,y);rx1=std::max(rx1,x);ry1=std::max(ry1,y);}
+    }
+    if(rx1<0){rx0=ry0=0;rx1=arch->Width-1;ry1=arch->Height-1;}
+    st.ThumbnailGroundBounds=st::Rectangle(rx0,ry0,rx1-rx0+1,ry1-ry0+1);
+    world->TS1ScrollBounds=false;world->FreeCenter=true;
     bp->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::LIGHTING_CHANGED));
     bp->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::WALL_CUT_CHANGED));
-    // The game's pictures are a quarter of this renderer's far zoom (a 4x4 average). The view is centred on the lot's
-    // centre, which lands on the anchor (ax, ay). To keep the world's layer caches small (3DS memory) the 4x canvas is
-    // drawn as 2x2 passes of twice the picture's size, moving the view between passes.
-    const int S = 4;
-    int hw = std::max(ax, w - ax), hh = std::max(ay, h - ay);
-    int bw = hw * 2, bh = hh * 2, ox = hw - ax, oy = hh - ay;  // box symmetric around the anchor, picture inside it
-    const int G = kPictureGrid; // ADDED(sims) save progress: was 2 (see PictureProgress)
-    int NW = bw * S, NH = bh * S;
-    // ADDED(sims): the passes' sizes are multiples of S, so every pass starts on a picture pixel (its S x S samples)
-    int PW = ((NW + G - 1) / G + S - 1) / S * S, PH = ((NH + G - 1) / G + S - 1) / S * S;
-    // the lot proper (the tiles the player may build on; the street and sidewalk around it are not in the picture)
-    int rx0 = arch->Width, ry0 = arch->Height, rx1 = -1, ry1 = -1;
-    for (int y = 0; y < arch->Height; y++) for (int x = 0; x < arch->Width; x++)
-        if (!ctx->IsUserOutOfBounds(FSO::LotView::Model::LotTilePos::FromBigTile((int16_t)x, (int16_t)y, 1))) {
-            rx0 = std::min(rx0, x); ry0 = std::min(ry0, y); rx1 = std::max(rx1, x); ry1 = std::max(ry1, y);
+    PrewarmSprites(&*bp,st,prog,1);
+    std::array<LotPictureSurface,2> canvases;
+    for(auto& canvas:canvases){canvas.Width=width;canvas.Height=height;canvas.Pixels.assign(size_t(width)*height,canvas.Key);}
+    // Keep renderer layer buffers bounded on portable targets. Stitch raw565
+    // words first; cubic support spans tile boundaries only after assembly.
+    const int pw=(width+kPictureGrid-1)/kPictureGrid,ph=(height+kPictureGrid-1)/kPictureGrid;
+    FSO::LotView::Framebuffer fb(pw,ph);
+    auto copy=[&](LotPictureSurface& canvas,int x0,int y0) {
+        for(int y=0;y<ph && y0+y<height;++y)for(int x=0;x<pw && x0+x<width;++x) {
+            const size_t at=size_t(y)*pw+x;
+            if(!std::isfinite(fb.Depth[at]))continue;
+            const uint32_t c=fb.Color[at];
+            canvas.Pixels[size_t(y0+y)*width+x0+x]=PackLotPictureRGB({{uint8_t(c),uint8_t(c>>8),uint8_t(c>>16)}},canvas.Format);
         }
-    if (rx1 < 0) { rx0 = 0; ry0 = 0; rx1 = arch->Width - 1; ry1 = arch->Height - 1; }
-    st.ThumbnailGroundBounds = st::Rectangle(rx0, ry0, rx1-rx0+1, ry1-ry0+1);
-    st::Vector2 C((rx0 + rx1 + 1) / 2.0f, (ry0 + ry1 + 1) / 2.0f);
-    world->TS1ScrollBounds = false;
-    world->FreeCenter = true; // ADDED(sims): the outer passes' centres lie off the lot (World::PreDraw kept them on it)
-    std::vector<uint32_t> acc((size_t)w * h * 4, 0); // r, g, b, samples
-    FSO::LotView::Framebuffer fb(PW, PH);
-    st.CenterTile(C);
-    PrewarmSprites(&*bp, st, prog, 0.5); // ADDED(sims) save progress
-    { // ADDED(sims) save progress: a 16x16 draw takes the zoom / level / light / cut changes (terrain, walls, lights),
-      // so the first pass only renders its pixels like the others
-        FSO::LotView::Framebuffer tiny(16, 16);
-        world->Draw(tiny);
-        prog.Add(0.5);
-    }
-    // ADDED(sims) save progress: the view takes the passes' size here, as World::Draw does for a new target size; a
-    // whole draw of the passes' size did it before (an extra pass, ~0.2-0.3 s on the 3DS, its pixels unused)
-    if ((int)st.WorldSpace.WorldPxWidth != PW || (int)st.WorldSpace.WorldPxHeight != PH) {
-        st.SetDimensions(st::Vector2((float)PW, (float)PH));
-        world->InvalidateScroll();
-        bp->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::PRECISE_ZOOM));
-    }
-    auto& ws = st.WorldSpace;
-    // Ground projection is used only to align passes, never to clip the
-    // completed image: elevated object silhouettes may exceed the footprint.
-    const float wallH = 57.0f * (top - 1);
-    auto ground = [&](const st::Vector2& p) { return ws.GetTileAtPosWithScroll(st::Vector2(p.X, p.Y - wallH)); };
-    for (int pj = 0; pj < G; pj++) for (int pi = 0; pi < G; pi++) {
-        st.CenterTile(C);
-        float wh = ws.TilePxWidthHalf > 0 ? ws.TilePxWidthHalf : 1, th = ws.TilePxHeightHalf > 0 ? ws.TilePxHeightHalf : 1;
-        // where the lot centre is on screen now (the inverse of the picking transform: level and terrain height included)
-        st::Vector2 at(PW / 2.0f, PH / 2.0f);
-        for (int it = 0; it < 6; it++) {
-            st::Vector2 t = ground(at);
-            float ex = C.X - t.X, ey = C.Y - t.Y;
-            at = at + st::Vector2((ex - ey) * wh, (ex + ey) * th);
+    };
+    for(int y0=0;y0<height;y0+=ph)for(int x0=0;x0<width;x0+=pw) {
+        const float cx=pw*.5f-(screenX-x0),cy=ph*.5f-(screenY-y0);
+        // At rotation0 TileProjectionOrigin = viewport/2 - projectedCenter.
+        st.CenterTile(st::Vector2((cx/16+cy/8)*.5f,(cy/8-cx/16)*.5f));
+        // Raster parity/clipping uses the complete offscreen source viewport,
+        // while the tile framebuffer only restricts writes.
+        st.TerrainSourceViewport=st::Rectangle(-x0,-y0,width,height);
+        st.DrawRoofs=oldRoofs;world->Draw(fb);copy(canvases[0],x0,y0);
+        // The retained source target itself is565, including before any roof
+        // blending. Keep its expanded WORD values in the software framebuffer.
+        for(size_t i=0;i<fb.Color.size();++i) {
+            const auto c=fb.Color[i];
+            const auto word=std::isfinite(fb.Depth[i])
+                ? PackLotPictureRGB({{uint8_t(c),uint8_t(c>>8),uint8_t(c>>16)}},LotPictureFormat::RGB565)
+                : uint16_t(0xf81f);
+            const auto rgb=ExpandLotPictureRGB(word,LotPictureFormat::RGB565);
+            fb.Color[i]=uint32_t(rgb[0])|(uint32_t(rgb[1])<<8)|(uint32_t(rgb[2])<<16)|0xff000000u;
         }
-        float dx = (NW / 2.0f - pi * PW) - at.X, dy = (NH / 2.0f - pj * PH) - at.Y;   // where it has to be
-        st.CenterTile(st::Vector2(C.X - (dx / wh + dy / th) / 2.0f, C.Y - (dy / th - dx / wh) / 2.0f));
-        world->Draw(fb);
-        prog.Add(1); // ADDED(sims)
-        for (int y = 0; y < PH; y++) {
-            int py = (pj * PH + y) / S - oy;
-            if (py < 0 || py >= h) continue;
-            for (int x = 0; x < PW; x++) {
-                int px = (pi * PW + x) / S - ox;
-                if (px < 0 || px >= w) continue;
-                size_t i = (size_t)y * fb.Width + x;
-                if (!(fb.Depth[i] < std::numeric_limits<float>::infinity())) continue; // nothing drawn: outside the lot
-                uint32_t c = fb.Color[i];
-                uint32_t* a = &acc[((size_t)py * w + px) * 4];
-                a[0] += c & 0xFF; a[1] += (c >> 8) & 0xFF; a[2] += (c >> 16) & 0xFF; a[3]++;
-            }
-        }
+        // Preserve this actual base/depth canvas, then add the original roof
+        // producer. No second cleared screenshot or overlay-only BMP.
+        st.DrawRoofs=true;bp->RoofComp.DrawInto(st,fb);copy(canvases[1],x0,y0);
+        prog.Add(1);
     }
-    rgb.assign((size_t)w * h * 3, 0);
-    for (size_t i = 0; i < (size_t)w * h; i++) {
-        uint32_t* a = &acc[i * 4];
-        uint8_t* p = &rgb[i * 3];
-        if (a[3] < (uint32_t)(S * S / 2)) { p[0] = 248; p[1] = 0; p[2] = 248; continue; } // outside the lot: magenta
-        p[0] = (uint8_t)(a[0] / a[3]); p[1] = (uint8_t)(a[1] / a[3]); p[2] = (uint8_t)(a[2] / a[3]);
-        if (p[0] == 248 && p[1] == 0 && p[2] == 248) p[1] = 1; // never the key colour inside the lot
-    }
-
+    return {{ResizeLotPicture(canvases[0],scale,scale),ResizeLotPicture(canvases[1],scale,scale)}};
 }
 
-/// FIX(sims) FB1: both neighbourhood pictures (+ the half-size copies the expansion packs read) into the saver.
-static void RenderPictures(LotSession& s, const std::string& source, VMTS1LotSaver& saver) {
-    FSO::Files::LoadProgress::Step("save: house pictures"); // ADDED(sims) save progress
-    int32_t tw, th, ax, ay, openYOff;
-    VMTS1LotSaver::ThumbnailSizeOf(source, tw, th, &ax, &ay, &openYOff);
-    PictureProgress prog; // per picture: sprites 1 unit, one per pass
-    prog.Total = 2.0 * (1 + kPictureGrid * kPictureGrid);
-    prog.Add(0);
-    for (int roofs = 0; roofs < 2; roofs++) {
-        std::vector<uint8_t> rgb;
-        RenderThumbnail(s, tw, th, ax, ay + (roofs ? 0 : openYOff), roofs != 0, rgb, prog);
-        if (!rgb.empty()) saver.SetPicture(512 + roofs, tw, th, rgb);
+void RenderPictures(LotSession& s,const std::string&,VMTS1LotSaver& saver) {
+    auto world=s.World();auto ctx=s.Context();if(!world||!ctx||!s.Blueprint||!ctx->Architecture())return;
+    auto arch=ctx->Architecture();auto& state=world->State;
+    const auto heights=s.Blueprint->Terrain->CopyOriginalHeightQuads(64,s.Blueprint);
+    const int zoom=int(state.Zoom());
+    const auto plan=PlanLotPictures(heights,arch->Width,int(state.WorldSpace.WorldPxWidth),
+        int(state.WorldSpace.WorldPxHeight),zoom,int(state.Rotation()),58<<(zoom-1));
+    int sumX=0,sumY=0,count=0;
+    for(int y=0;y<arch->Height;++y)for(int x=0;x<arch->Width;++x) {
+        const bool accepted=!arch->FineBuildableArea.empty()?arch->FineBuildableArea[size_t(y)*arch->Width+x]
+            :arch->BuildableArea.Contains(x,y);
+        if(accepted){sumX+=x;sumY+=y;++count;}
+    }
+    count=std::max(count,1);const int cx=int(double(sumX)/count+.5),cy=int(double(sumY)/count+.5);
+    FSO::Files::LoadProgress::Step("save: house pictures");
+    PictureProgress progress;progress.Total=2*(1+kPictureGrid*kPictureGrid);progress.Add(0);
+    for(int half=0;half<2;++half) {
+        auto requested=plan;if(half){requested.RequestedWidth/=2;requested.RequestedHeight/=2;}
+        LotPictureMetadata metadata;
+        const auto pair=RenderPicturePair(s,requested,heights,half?.125f:.25f,cx,cy,metadata,progress);
+        const auto baseTrim=TrimLotPicture(pair[0]),roofTrim=TrimLotPicture(pair[1]);
+        metadata=PlaceLotPictures(metadata,baseTrim,roofTrim);
+        for(int roof=0;roof<2;++roof) {
+            const auto cropped=CropLotPicture(pair[size_t(roof)],roof?roofTrim:baseTrim);
+            saver.SetPicture((half?1024:512)+roof,cropped.Width,cropped.Height,LotPictureRGB(cropped));
+        }
+        saver.SetPictureMetadata(half?1024:512,metadata.Words());
     }
 }
 

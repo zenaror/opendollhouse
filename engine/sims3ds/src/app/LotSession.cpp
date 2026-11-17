@@ -725,17 +725,26 @@ void LotSession::Zoom(int dir) {
     FSO::Files::Formats::IFF::IffFile::DropDecodedFrames();
 }
 
-void LotSession::ChangeLevel(int dir) {
-    auto& st = _World->State;
-    int l = st.Level() + dir;
+bool LotSession::CanChangeLevel(int dir, bool allowEmpty) const {
+    if (!_World || !_Ctx || dir == 0) return false;
+    int l = _World->State.Level() + dir;
     auto arch = _Ctx->Architecture();
-    if (l < 1 || l > (int)arch->Stories || (size_t)l > arch->Floors.size()) return;
-    if (dir > 0) { // only go up if something is built there
+    // The shared architecture reserves extra layers; the TS1 player controls
+    // expose only the two original stories.
+    if (l < 1 || l > 2 || l > (int)arch->Stories || (size_t)l > arch->Floors.size()) return false;
+    if (dir > 0 && !allowEmpty) {
         bool any = false;
         for (auto& f : arch->Floors[(size_t)(l - 1)]) if (f.Pattern != 0) { any = true; break; }
         if (!any) for (auto& w : arch->Walls[(size_t)(l - 1)]) if ((int)w.Segments != 0) { any = true; break; }
-        if (!any) return;
+        if (!any) return false;
     }
+    return true;
+}
+
+void LotSession::ChangeLevel(int dir, bool allowEmpty) {
+    if (!CanChangeLevel(dir, allowEmpty)) return;
+    auto& st = _World->State;
+    int l = st.Level() + dir;
     st.Level((int8_t)l);
     UpdateCutaway();
 }
@@ -759,7 +768,20 @@ void LotSession::CenterOn(VMEntity* e) {
     if (_World->CenterTo(e->WorldUI.get()) && level != _World->State.Level() && Blueprint) UpdateCutaway();
 }
 
-void LotSession::SetWallsMode(int mode) { WallsMode = mode % 3; UpdateCutaway(); }
+void LotSession::SetWallsMode(int mode) {
+    // DVD view word48 and roof byte51 are separate. Selecting uncut walls
+    // explicitly hides the roof even when the wall mode was already Up.
+    WallsMode = ((mode % 3) + 3) % 3;
+    _RoofView = false;
+    UpdateCutaway();
+}
+
+void LotSession::ShowRoof() {
+    if (_RoofView && WallsMode == 2) return;
+    WallsMode = 2;
+    _RoofView = true;
+    UpdateCutaway();
+}
 
 void LotSession::UpdateCutaway() {
     auto arch = _Ctx->Architecture();
@@ -777,14 +799,11 @@ void LotSession::UpdateCutaway() {
         Blueprint->Cutaway.assign((size_t)(arch->Width * arch->Height), false);
         st.DynamicCutaway = false;
     }
-    // HOOK(world roofs): TS1 shows the roof with walls up when the top story is in view (the original's "Roof"
-    // view); never with walls cutaway/down or while a lower story is selected.
-    {
-        int top = 1;
-        for (int l = 1; l <= (int)arch->Floors.size(); l++)
-            for (auto& f : arch->Floors[(size_t)(l - 1)]) if (f.Pattern != 0) { top = std::max(top, l); break; }
-        st.DrawRoofs = (WallsMode == 2) && st.Level() >= top;
-    }
+    // The authored Roof control selects a separate view. Walls Up alone does
+    // not enable roofs; the DVD exposes both choices independently.
+    // The DVD also shows lower-story roof pieces while an upper story exists.
+    // RoofComponent admits the pieces up to the currently displayed story.
+    st.DrawRoofs = _RoofView;
     Blueprint->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::WALL_CUT_CHANGED));
 }
 

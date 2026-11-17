@@ -512,6 +512,48 @@ void VMContext::RemoveSpatialEntity(VMEntity* entity) {
     SpatialPlacements.erase(entity);
 }
 
+Common::TS1::VisualLighting VMContext::BuildPictureVisualLighting(int period) {
+    if (period < 0 || period > 3) throw std::invalid_argument("Invalid picture lighting period");
+    if (!Blueprint || !Architecture()) return {};
+    // PrepareVisualLighting must settle the actual live period before this
+    // detached snapshot. Picture capture never changes the simulation's clock,
+    // room scores, event bytes, occupancy history or refresh counters.
+    auto visual = Blueprint->VisualLight;
+    visual.Period=period;
+    if (!visual.Enabled || !VM || !VM->TS1) return visual;
+    const Common::TS1::EnvironmentTunings defaults;
+    const auto content = Content::Content::Get();
+    const auto provider = content ? content->WorldObjectGlobals.get() : nullptr;
+    const auto& tuning = provider ? provider->Environment : defaults;
+    std::array<int,2048> people{},lamps{};
+    CollectVisualCounts(*this,people,lamps,false);
+    visual.Tones.assign(EnvironmentRooms.size()*2,0);
+    visual.Intensities.assign(EnvironmentRooms.size()*2,0);
+    visual.Grid.assign(size_t(2)*visual.Width*visual.Height,0);
+    for (size_t i=1;i<EnvironmentRooms.size();++i) {
+        const auto& room=EnvironmentRooms[i];
+        const auto light=Common::TS1::EvaluateEnvironment(room.Environment,tuning,room.Outside,
+            Common::TS1::EnvironmentDaylight(period)).LightFactor;
+        const auto id=room.CanonicalID;
+        const auto direct=Common::TS1::DirectVisualFactor(light,room.Pool,
+            VisualOverhead[id],lamps[id],people[id]);
+        const auto byte=Common::TS1::VisualByte(room.Outside?light:direct);
+        constexpr float inv255=1.0f/255.0f;
+        visual.Tones[i*2]=Common::TS1::VisualTone(float(byte*inv255),period);
+        visual.Tones[i*2+1]=Common::TS1::VisualTone(direct,period);
+        visual.Intensities[i*2]=Common::TS1::VisualIntensity(float(byte*inv255),period);
+        visual.Intensities[i*2+1]=Common::TS1::VisualIntensity(direct,period);
+        for (const auto& tile:room.EnvironmentTileVisits)
+            visual.Grid[size_t(room.Story-1)*visual.Width*visual.Height+size_t(tile.first)]=byte;
+    }
+    visual.Period=period;
+    // A different renderer snapshot must not inherit a token for cached pixels
+    // with different colors. Capture restores the original snapshot and tokens.
+    ++visual.Generation;
+    ++visual.IntensityGeneration;
+    return visual;
+}
+
 void VMContext::PrepareVisualLighting() {
     if (!VM || !VM->TS1 || !Blueprint || !Architecture()) return;
     PrepareRoofGeometry();

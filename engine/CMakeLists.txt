@@ -200,6 +200,7 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/vitaboy/content/TS1AvatarProvider.cpp
   sims3ds/src/common/TS1/TS1Curve.cpp
   sims3ds/src/common/TS1/TS1RoofGeometry.cpp
+  sims3ds/src/common/TS1/TS1LotPictures.cpp
   sims3ds/src/hit/AmbiencePlayer.cpp
   sims3ds/src/hit/FSCPlayer.cpp
   sims3ds/src/hit/HITInterpreter.cpp
@@ -423,7 +424,7 @@ if(BUILD_TESTING)
     target_link_options(odh-visual-lighting PRIVATE -Wl,--strip-debug)
   endif()
   add_test(NAME visual-lighting COMMAND odh-visual-lighting)
-  foreach(lighting_test spatial-lighting spatial-light-render desktop-family-friends terrain-lighting terrain-raster roof-lighting roof-geometry)
+  foreach(lighting_test spatial-lighting spatial-light-render desktop-family-friends terrain-lighting terrain-raster roof-lighting roof-geometry roof-sampling lot-picture-placement lot-picture-generation)
     string(REPLACE "-" "_" lighting_source "${lighting_test}")
     add_executable(odh-${lighting_test} tests/${lighting_source}.cpp)
     target_link_libraries(odh-${lighting_test} PRIVATE odh_engine)

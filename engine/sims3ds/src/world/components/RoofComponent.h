@@ -59,6 +59,10 @@ public:
     const FSO::Common::TS1::RoofLightingInput& GetLighting() const { return Lighting; }
     bool SetCharacterDetail(int rawDetail,bool applyExisting);
     bool SetLightingAmbient(const FSO::Common::TS1::RoofRGB& ambient);
+    // Filtering belongs to the render context, independently of per-kind mesh
+    // detail. Changing it invalidates raster output, never prototype geometry.
+    bool SetSampling(const Utils::RasterSampling& sampling);
+    const Utils::RasterSampling& GetSampling() const {return Sampling;}
     int GetRawCharacterDetail() const { return MaterialState.RawDetail; }
     bool HasMaterials() const { return MaterialState.HasMaterials || !SourceFactory.Prototypes().empty(); }
 
@@ -99,6 +103,7 @@ private:
     Utils::RasterTexture SourceTexture; // Actual authored dimensions/base level.
     Utils::RasterTexture Mips[3];                 // 32x32, 16x16, 8x8
     std::string LoadedTexture;
+    Utils::RasterSampling Sampling; // Point matches the original context default.
     FSO::Common::TS1::RoofLightingInput Lighting;
     FSO::Common::TS1::RoofUniformMaterialState MaterialState;
 

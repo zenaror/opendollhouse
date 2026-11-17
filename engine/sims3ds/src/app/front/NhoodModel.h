@@ -77,10 +77,11 @@ struct LotInfo {
     int Value = 0;             // SIMI purchase value
     int16_t Family = -1;       // FAMI chunk id of the family living here
     Canvas Thumb;              // house picture at map scale (BMP 513 roofed / 1025 for the Unleashed map), alpha keyed
-    // FIX(sims) FB1: X, Y are the picture's top-left, placed like the game (FreeSO UINeighborhoodHouseButton): the
-    // LotLocations point is the lot's centre, the picture is centred on it and moved by THMB 512's offsets
+    // X/Y are the roofed picture's origin, using its family's THMB centroid
+    // anchor and independent crop displacement from the base picture.
     int CX = 0, CY = 0;        // LotLocations point
-    int OpenDY = 0;            // the open picture (BMP 512, no roof: the selected lot) is drawn OpenDY lower (THMB AddYOff)
+    int OpenDX = 0, OpenDY = 0; // Base picture displacement relative to the independently cropped roofed picture.
+    bool HalfPictureFamily = false; // BMP1024/1025 use their own THMB1024 anchors.
     int Scale = 1;             // map scale divisor (2 = the Unleashed neighbourhood)
 };
 

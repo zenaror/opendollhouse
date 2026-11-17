@@ -2,6 +2,7 @@
 #include "odh/host_filesystem.hpp"
 // These resource/profile implementations were moved from neighborhood_screen.cpp.
 #include "neighborhood_resources.hpp"
+#include "odh/lot_picture_placement.hpp"
 #include "resource.hpp"
 #include <algorithm>
 #include <iomanip>
@@ -87,8 +88,9 @@ std::optional<NeighborhoodHouseArt> load_house_art(const std::filesystem::path& 
     const int divisor=static_cast<int>(scale),width=static_cast<int>(closed->width)/divisor,height=static_cast<int>(closed->height)/divisor;
     if(width<1||height<2)return std::nullopt;
     const auto& o=*offsets;
-    odh::UiBitmapRect box{location.x+(o[3]-o[0])/divisor,location.y-(o[1]+o[2])/divisor,width,height};
-    auto open_box=box;open_box.y=location.y-(o[1]+o[2]+o[4])/divisor;
+    const auto origins=odh::lot_picture_origins(location.x,location.y,o,divisor);
+    odh::UiBitmapRect box{origins.roofed[0],origins.roofed[1],width,height};
+    auto open_box=box;open_box.x=origins.base[0];open_box.y=origins.base[1];
     if(open){
         open_box.width=static_cast<int>(open->width)/divisor;open_box.height=static_cast<int>(open->height)/divisor;
         if(open_box.width<1||open_box.height<1){pixels_left+=open->pixels.size();open.reset();}

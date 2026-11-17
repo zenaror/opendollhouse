@@ -162,8 +162,8 @@ void UIBuildMode::Refresh() {
         static const char* pitchArt[4] = { "cpanel/Build/roofshallow.bmp", "cpanel/Build/roofmedium.bmp", "cpanel/Build/roofsteep.bmp", "cpanel/Build/roofflat.bmp" };
         static const char* pitchName[4] = { "Shallow Roof", "Medium Roof", "Steep Roof", "Flat Roof" };
         for (int i = 0; i < 4; i++) { SubTool t; t.Art = pitchArt[i]; t.Popup = "cpanel/Build/popuproofpitch.bmp"; t.Name = pitchName[i]; t.Id = i; SubTools.push_back(t); }
-        // the roof is only drawn with walls up (TS1 shows it while the roof tool is open)
-        if (L->S->WallsMode != 2) L->S->SetWallsMode(2);
+        // Opening the catalogue preserves the current view. Applying a roof
+        // choice below selects Roof view, as in the DVD.
         _RoofPage = 0;
     }
     Page = 0;
@@ -249,7 +249,7 @@ void UIBuildMode::SetRoof(float pitch, int style) {
     uint32_t st = style < 0 ? arch->RoofStyle : (uint32_t)style;
     arch->SetRoof(pitch, st);
     arch->RoofUserSet = true;
-    if (L->S->WallsMode != 2) L->S->SetWallsMode(2);
+    L->S->ShowRoof();
     if (L->Log) { char b[96]; snprintf(b, sizeof b, "build: roof pitch %.2f style %u\n", pitch, st); *L->Log += b; }
 }
 

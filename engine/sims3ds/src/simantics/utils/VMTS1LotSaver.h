@@ -24,11 +24,12 @@
 //   Arry 1/101/2/102 (or 11/111/12/112)  floors and walls: tiles the VM changed are encoded, others keep their bytes
 //   FLRm/WALm    entries for custom floors/walls that were not in the house before
 //   SIMI     the simulation globals (time of day, date, selected Sim, family, budget, ...)
-//   BMP_ 512 / 513 the house pictures for the neighbourhood (+ 1024 / 1025 at half size when the file has them;
-//   when the caller supplies them: SetPicture, FIX(sims) FB1)
+//   BMP_ 512 / 513 and1024 / 1025: independently generated picture pairs when supplied
+//   THMB512 / 1024: five fresh centroid anchor and crop offset DWORDs
 // See src/simantics/STUBS_save.md for what is approximated.
 #pragma once
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <map>
 #include <string>
@@ -53,17 +54,18 @@ public:
     // A committed lot switch is a source-lot checkpoint, not an ordinary resume.
     bool Departing = false;
 
-    /// Optional picture of the lot (24-bit, top-down rows of R,G,B), written as the BMP_ #512 "Thumbnail" the
-    /// neighbourhood screen shows (and #513 when the house has one). Width/height should be the original's (264x144).
-    /// Size of the house picture already in `housePath` (BMP_ #512; it varies per house), else 264x144.
-    /// The roofed picture's lot-centre anchor is (THMB.Width-XOff, THMB.Height+BaseYOff).
-    /// The roofless picture adds AddYOff to its anchor so the map's paired offset cancels.
-    /// openYOff returns that signed adjustment, or zero when no complete THMB is present.
+    /// Compatibility reader for callers displaying an existing authored image.
+    /// Fresh scene-picture generation does not use these dimensions or anchors.
     static void ThumbnailSizeOf(const std::string& housePath, int32_t& width, int32_t& height, int32_t* ax = nullptr, int32_t* ay = nullptr, int32_t* openYOff = nullptr);
-    void SetThumbnail(int32_t width, int32_t height, const std::vector<uint8_t>& rgb) { SetPicture(512, width, height, rgb); }
-    /// FIX(sims) FB1: BMP_ 512 (no roof) / 513 (roof); the half-size copy (+512: 1024 / 1025) is written too when the
-    /// house file has one (Unleashed and later templates).
-    void SetPicture(int id, int32_t width, int32_t height, const std::vector<uint8_t>& rgb) { Picture& p = Pictures[id]; p.W = width; p.H = height; p.RGB = rgb; }
+    void SetThumbnail(int32_t width, int32_t height, const std::vector<uint8_t>& rgb) { SetPicture(512, width, height, rgb); LegacyThumbnailHalf = true; }
+    /// A complete independent image: IDs512/513 are full,1024/1025 half.
+    /// Rows are top-down RGB24; the scene producer performs source WORD
+    /// quantization and crop before supplying them.
+    void SetPicture(int id, int32_t width, int32_t height, const std::vector<uint8_t>& rgb) { if(id==512) LegacyThumbnailHalf=false; Picture& p = Pictures[id]; p.W = width; p.H = height; p.RGB = rgb; }
+
+    // Five source THMB anchor/offset DWORDs, paired with independently rendered
+    // full or half BMPs. These are not image dimensions.
+    void SetPictureMetadata(int baseID,const std::array<int32_t,5>& words) { PictureMetadata[baseID]=words; }
 
     /// Builds the new house file from `sourcePath` (the file the lot was loaded from) and the VM, and writes it to
     /// `destPath` (may be the same file; written atomically). Returns false with Error set.
@@ -90,5 +92,7 @@ public:
 private:
     FSO::SimAntics::VM* VM;
     struct Picture { int32_t W = 0, H = 0; std::vector<uint8_t> RGB; };
+    bool LegacyThumbnailHalf=false; // SetThumbnail-only compatibility for the headless tool.
+    std::map<int,std::array<int32_t,5>> PictureMetadata;
     std::map<int, Picture> Pictures; // FIX(sims) FB1
 };

@@ -140,11 +140,14 @@ public:
     FSO::LotView::Framebuffer& LastFrame() { return Frame; }
     void Rotate(int dir);       // +1 clockwise
     void Zoom(int dir);         // +1 = closer
-    void ChangeLevel(int dir);
+    bool CanChangeLevel(int dir, bool allowEmpty = false) const;
+    void ChangeLevel(int dir, bool allowEmpty = false);
     void ScrollScreen(float dxPx, float dyPx); // moves the view by screen pixels
     void CenterOn(FSO::SimAntics::VMEntity* e);
     int WallsMode = 0;          // 0 cutaway (TS1 default "walls cutaway"), 1 walls down, 2 walls up
     void SetWallsMode(int mode);
+    void ShowRoof();
+    bool RoofView() const { return _RoofView; }
     void UpdateCutaway();
     /// FreeSims UILotControl.Update "set cutaway around mouse": in walls-cutaway mode the walls in a 5x5 tile
     /// rectangle around the cursor (shifted towards the camera by CutCheckDir*2) are cut too. Call once per frame
@@ -176,6 +179,7 @@ private:
     std::unique_ptr<FSO::Files::Formats::IFF::IffFile> _House;
     FSO::LotView::Framebuffer Frame;
     bool _HalfResolutionLot = false;
+    bool _RoofView = false;
     int _DisplayWidth = 0, _DisplayHeight = 0;
     std::vector<bool> _RoomCuts;           // C# LastCuts: the room cut the rectangle is applied to
     st::Rectangle _MouseCutRect;           // C# MouseCutRect

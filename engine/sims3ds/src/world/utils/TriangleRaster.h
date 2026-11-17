@@ -28,7 +28,16 @@ struct RasterVertex {
     float r = 1, g = 1, b = 1;
 };
 
-/// RGBA texture with power-of-two size (wrap addressing). Pixels packed like Framebuffer (R | G<<8 | B<<16 | A<<24).
+enum class RasterFilter : uint8_t { Point, Linear };
+struct RasterSampling {
+    RasterFilter Filter=RasterFilter::Point;
+    bool operator==(const RasterSampling& other) const {
+        return Filter==other.Filter;
+    }
+    bool operator!=(const RasterSampling& other) const {return !(*this==other);}
+};
+
+/// RGBA texture. Pixels packed like Framebuffer (R | G<<8 | B<<16 | A<<24).
 struct RasterTexture {
     int32_t Width = 0, Height = 0;
     std::vector<uint32_t> Pixels;
@@ -37,6 +46,9 @@ struct RasterTexture {
     bool Valid() const { return Width > 0 && Height > 0 && (int32_t)Pixels.size() == Width * Height; }
     /// Box-filtered half size copy (mip level).
     RasterTexture Half() const;
+    /// Texel coordinates: texel(x,y) has center(x+.5,y+.5). Sampling occurs
+    /// before material modulation; the triangle's depth/coverage are unchanged.
+    uint32_t Sample(float u,float v,const RasterSampling& sampling) const;
 };
 
 struct RasterStats { int32_t Triangles = 0, Pixels = 0; };
@@ -50,7 +62,8 @@ st::Vector2 TileProjectionOrigin(WorldState& world);
 /// Draws one triangle. tex == nullptr: flat colour (flatColor) * light. depthBias is added to every depth value.
 void DrawTriangle(Framebuffer& fb, const RasterVertex& a, const RasterVertex& b, const RasterVertex& c,
                   const RasterTexture* tex, uint32_t flatColor = 0xFF808080u, float depthBias = 0.0f,
-                  RasterStats* stats = nullptr, uint16_t room = Framebuffer::OUTSIDE_LIGHT_ROOM);
+                  RasterStats* stats = nullptr, uint16_t room = Framebuffer::OUTSIDE_LIGHT_ROOM,
+                  const RasterSampling* sampling = nullptr);
 
 /// Original terrain scan in left, top, right, bottom order. Vertex u/v carry
 /// grass/shade indices. The source clip defines the DVD sampling frame in

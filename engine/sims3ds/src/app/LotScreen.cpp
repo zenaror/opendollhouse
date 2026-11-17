@@ -775,8 +775,9 @@ void LotScreen::HandleTap(const std::string& id) {
     if (id == "rotate_right") { S->Rotate(1); return; }
     if (id == "zoom_in") { S->Zoom(1); return; }
     if (id == "zoom_out") { S->Zoom(-1); return; }
-    if (id == "level_up") { S->ChangeLevel(1); return; }
-    if (id == "level_down") { S->ChangeLevel(-1); return; }
+    if (id == "level_up") { S->ChangeLevel(1, CurrentMode == Mode::Build); return; }
+    if (id == "level_down") { S->ChangeLevel(-1, CurrentMode == Mode::Build); return; }
+    if (id == "roof") { S->ShowRoof(); return; }
     if (id == "walls_up") { S->SetWallsMode(2); return; }
     if (id == "walls_down") { S->SetWallsMode(1); return; }
     if (id == "walls_cut") { S->SetWallsMode(0); return; }
@@ -810,8 +811,16 @@ void LotScreen::HandleButtons(const AppInput& in) {
         case C::ZoomIn: S->Zoom(1); break;
         case C::ZoomOut: S->Zoom(-1); break;
         case C::WallsUp: case C::WallsDown: {
-            S->SetWallsMode(original::StepOriginalWalls(S->WallsMode,
-                in.DesktopAction == C::WallsUp ? 1 : -1));
+            // In dedicated Roof view, the DVD leaves both Home and End
+            // unchanged. Explicit wall-view buttons remain available.
+            if (S->RoofView()) break;
+            // In the DVD's dedicated Roof view both wall hotkeys are no-ops.
+            if (S->RoofView()) break;
+            const auto next = original::StepOriginalWalls(S->WallsMode,
+                in.DesktopAction == C::WallsUp ? 1 : -1);
+            // Wall hotkeys stop at either limit. Explicit view-button clicks
+            // are handled separately above.
+            if (next != S->WallsMode) S->SetWallsMode(next);
             break;
         }
         case C::NextSim:
@@ -834,8 +843,8 @@ void LotScreen::HandleButtons(const AppInput& in) {
     }
     if (in.Down & BTN_UP) S->Zoom(+1);
     if (in.Down & BTN_DOWN) S->Zoom(-1);
-    if (in.Down & BTN_ZL) S->ChangeLevel(-1);
-    if (in.Down & BTN_ZR) S->ChangeLevel(+1);
+    if (in.Down & BTN_ZL) S->ChangeLevel(-1, CurrentMode == Mode::Build);
+    if (in.Down & BTN_ZR) S->ChangeLevel(+1, CurrentMode == Mode::Build);
     if (in.Down & BTN_SELECT) S->SetWallsMode(S->WallsMode + 1);
     if ((in.Down & BTN_X) && CurrentMode == Mode::Live) {
         if (Speed == 0) Speed = std::max(1, LastSpeed); else { LastSpeed = Speed; Speed = 0; }

@@ -1069,16 +1069,17 @@ void NeighbourhoodScreen::DrawTop(Canvas& top) {
         float pulse = 0.5f + 0.5f * std::sin((float)_Time / 260.0f);
         uint32_t tint = _Mode == Mode::Evict ? RGBA(255, 60, 40) : (_Mode == Mode::MoveIn ? RGBA(120, 255, 120) : RGBA(255, 255, 210));
         int a = _FE->IsDesktop() ? 0 : 30 + (int)(50 * pulse);
-        // FIX(sims) FB1: the selected house shows its inside (BMP_ 512 over the roofed picture, THMB AddYOff lower), as
-        // the game does for the house under the cursor (FreeSO UINeighborhoodHouseButton HouseOpenTex)
+        // Align the family's base picture (512 or1024) with its own crop,
+        // including an independently trimmed left edge.
         if (_OpenHouse != l.House) { _OpenPic = Canvas(); M.OpenPicture(l, _OpenPic); _OpenHouse = l.House; }
         const Canvas& pic = _OpenPic.Width > 0 ? _OpenPic : l.Thumb;
+        int px0 = _OpenPic.Width > 0 ? l.X + l.OpenDX : l.X;
         int py0 = _OpenPic.Width > 0 ? l.Y + l.OpenDY : l.Y;
-        if (_OpenPic.Width > 0) top.Blit(_OpenPic.Px.data(), _OpenPic.Width, _OpenPic.Height, l.X - cx, py0 - cy, true);
+        if (_OpenPic.Width > 0) top.Blit(_OpenPic.Px.data(), _OpenPic.Width, _OpenPic.Height, px0 - cx, py0 - cy, true);
         for (int y = 0; y < pic.Height; y++) for (int x = 0; x < pic.Width; x++) {
             uint32_t p = pic.Px[(size_t)y * pic.Width + x];
             if ((p >> 24) < 128) continue;
-            top.BlendA(l.X - cx + x, py0 - cy + y, tint, a);
+            top.BlendA(px0 - cx + x, py0 - cy + y, tint, a);
         }
         // popup beside the lot
         int lx = l.X - cx, ly = l.Y - cy;

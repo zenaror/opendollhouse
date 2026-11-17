@@ -106,6 +106,7 @@ public:
     void RebuildEnvironmentGeometry(); // original logical map, independent of routing/graphics
     void RefreshEnvironmentScores();
     void PrepareVisualLighting(); // coalesced render preparation; never advances the VM
+    Common::TS1::VisualLighting BuildPictureVisualLighting(int period);
     void PrepareRoofGeometry();
     void InvalidateRoofObject(VMEntity* entity);
     void ObserveSpatialPeriod(); // clock event boundary; never advances the clock

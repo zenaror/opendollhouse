@@ -1378,8 +1378,10 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             else file.Set("BMP_", (int16_t)id, bmp, label, 0);
         };
         writeBmp(kv.first, pic.W, pic.H, pic.RGB, kv.first == 512 ? "Thumbnail" : "Thumbnail");
-        // FIX(sims) FB1: the half-size copy (BMP_ 1024 / 1025) when the file has one: 2x2 average, magenta stays magenta
-        if (auto half = file.Find("BMP_", (int16_t)(kv.first + 512))) {
+        // The old headless SetThumbnail API supplies one finished RGB image.
+        // Preserve its existing-half compatibility only for that explicit API;
+        // App SetPicture pairs always carry independent source render outputs.
+        if (LegacyThumbnailHalf && kv.first==512 && !Pictures.count(1024)) if (auto half = file.Find("BMP_", (int16_t)(kv.first + 512))) {
             int32_t hw = std::max<int32_t>(1, pic.W / 2), hh = std::max<int32_t>(1, pic.H / 2);
             std::vector<uint8_t> small((size_t)hw * hh * 3);
             for (int y = 0; y < hh; y++) for (int x = 0; x < hw; x++) {
@@ -1397,6 +1399,12 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             (void)half;
             writeBmp(kv.first + 512, hw, hh, small, "Thumbnail");
         }
+    }
+    for(const auto& entry:PictureMetadata) {
+        std::vector<uint8_t> data;data.reserve(20);
+        for(auto word:entry.second)Put32(data,uint32_t(word));
+        if(auto chunk=file.Find("THMB",int16_t(entry.first)))chunk->Data=std::move(data);
+        else file.Set("THMB",int16_t(entry.first),data,"Thumbnail",0);
     }
 
     progress(2); // ADDED(sims) save progress

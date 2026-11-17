@@ -10,7 +10,12 @@ Notable changes for players and contributors, following
 - Roofs use the original game's piece shapes, texture coordinates and placement,
   including their response to terrain and upper floors. Character Detail follows
   the original material history when roofs change or house pictures are taken.
-  Texture filtering and the dedicated roof-view control still need work.
+  Texture filtering remains under comparison.
+- The dedicated roof view and the three wall views have separate selections.
+  Floor controls respect the current mode, and applying a roof style shows it.
+- Saving a changed house refreshes both sizes of its map pictures and their
+  placement information. Picture capture uses daytime and high terrain detail,
+  then restores the live view without advancing the simulation.
 - Ordinary grass uses the original color tables, detail levels and wall-edge
   shading in all four camera directions. Other terrain and scene-lighting
   differences remain under review.

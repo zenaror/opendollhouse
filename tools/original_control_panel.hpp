@@ -17,11 +17,12 @@ inline constexpr const char* original_panel_category_art[8]={"cpanel\\catalog\\b
     "cpanel\\catalog\\buyfdecorative.bmp","cpanel\\catalog\\buyfmisc.bmp","cpanel\\catalog\\buyflighting.bmp"};
 using BuyUiRect=odh::UiBitmapRect;
 enum class OriginalPanelMode { live,buy,build,options };
-enum class OriginalPanelAction { none,pause,rotate_camera_left,rotate_camera_right,zoom_in,zoom_out,walls_up,walls_down,level_up,level_down,walls_cutaway,options,live_needs,live_relationships,live_career,live_personality,live_interests,live_house,live_inventory,speed_normal,speed_fast,speed_ultra };
+enum class OriginalPanelAction { none,pause,rotate_camera_left,rotate_camera_right,zoom_in,zoom_out,walls_up,walls_down,level_up,level_down,walls_cutaway,options,live_needs,live_relationships,live_career,live_personality,live_interests,live_house,live_inventory,speed_normal,speed_fast,speed_ultra,roof };
 struct OriginalPanelState {bool paused=false,walls_down=false,build_buy_enabled=true;std::optional<std::int16_t> mood={};bool show_family_funds=true;
     // Optional capabilities come from actual host view state. Missing ones are
     // drawn disabled, with no invented floor/roof or simulation state.
     std::optional<bool> can_level_up,can_level_down,cutaway;
+    std::optional<bool> roof;
     bool options_enabled=false,options_open=false;
     bool inventory_enabled=false,inventory_selected=false;
     std::array<bool,6> live_tabs{};

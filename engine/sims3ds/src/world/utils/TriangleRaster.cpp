@@ -46,8 +46,60 @@ RasterTexture RasterTexture::Half() const {
     return r;
 }
 
-void DrawTriangle(Framebuffer& fb, const RasterVertex& a, const RasterVertex& b0, const RasterVertex& c0,
+namespace {
+struct PreparedTextureSampler {
+    const uint32_t* Pixels;
+    int Width,Height,MaskU,MaskV;
+    bool PowerOfTwoU,PowerOfTwoV;
+    explicit PreparedTextureSampler(const RasterTexture* texture)
+        :Pixels(texture ? texture->Pixels.data() : nullptr),
+         Width(texture ? texture->Width : 1),Height(texture ? texture->Height : 1),
+         MaskU(Width-1),MaskV(Height-1),
+         PowerOfTwoU((Width&(Width-1))==0),PowerOfTwoV((Height&(Height-1))==0) {}
+    int Axis(int coordinate,int size,int mask,bool powerOfTwo) const {
+        if(powerOfTwo) return coordinate&mask;
+        const int wrapped=coordinate%size;
+        return wrapped<0 ? wrapped+size : wrapped;
+    }
+    uint32_t Fetch(int x,int y) const {
+        x=Axis(x,Width,MaskU,PowerOfTwoU);
+        y=Axis(y,Height,MaskV,PowerOfTwoV);
+        return Pixels[size_t(y)*Width+x];
+    }
+    template<RasterFilter Filter,bool FastWrap=false> uint32_t Sample(float u,float v) const {
+        if constexpr(Filter==RasterFilter::Point) {
+            const int x=int(std::floor(u)),y=int(std::floor(v));
+            if constexpr(FastWrap) return Pixels[size_t(y&MaskV)*Width+(x&MaskU)];
+            return Fetch(x,y);
+        } else {
+            const float tx=u-.5f,ty=v-.5f;
+            const float floorX=std::floor(tx),floorY=std::floor(ty);
+            const int x=int(floorX),y=int(floorY);
+            const float ax=tx-floorX,ay=ty-floorY;
+            const uint32_t c00=Fetch(x,y),c10=Fetch(x+1,y),c01=Fetch(x,y+1),c11=Fetch(x+1,y+1);
+            uint32_t result=0;
+            for(int shift=0;shift<32;shift+=8) {
+                const float top=float((c00>>shift)&255)*(1-ax)+float((c10>>shift)&255)*ax;
+                const float bottom=float((c01>>shift)&255)*(1-ax)+float((c11>>shift)&255)*ax;
+                const uint32_t channel=uint32_t(top*(1-ay)+bottom*ay+.5f);
+                result|=std::min(channel,uint32_t(255))<<shift;
+            }
+            return result;
+        }
+    }
+};
+}
+uint32_t RasterTexture::Sample(float u,float v,const RasterSampling& sampling) const {
+    if(!Valid()) return 0;
+    const PreparedTextureSampler sampler(this);
+    if(sampling.Filter==RasterFilter::Linear) return sampler.Sample<RasterFilter::Linear>(u,v);
+    return sampler.Sample<RasterFilter::Point>(u,v);
+}
+
+template<RasterFilter Filter,bool FastWrap=false>
+static void DrawSampledTriangle(Framebuffer& fb, const RasterVertex& a, const RasterVertex& b0, const RasterVertex& c0,
                   const RasterTexture* tex, uint32_t flatColor, float depthBias, RasterStats* stats, uint16_t room) {
+
     const RasterVertex* B = &b0; const RasterVertex* C = &c0;
     float area = (B->x - a.x) * (C->y - a.y) - (B->y - a.y) * (C->x - a.x);
     if (std::fabs(area) < 1e-6f) return;
@@ -86,9 +138,8 @@ void DrawTriangle(Framebuffer& fb, const RasterVertex& a, const RasterVertex& b0
     float ex2 = -(b.y - a.y), ey2 = (b.x - a.x);
 
     const bool hasTex = tex != nullptr && tex->Valid();
-    const int32_t tw = hasTex ? tex->Width : 1, th = hasTex ? tex->Height : 1;
-    const int32_t tmx = tw - 1, tmy = th - 1;
-    const uint32_t* tp = hasTex ? tex->Pixels.data() : nullptr;
+    // Select filter/fast wrapping once per triangle, outside the pixel loop.
+    const PreparedTextureSampler sampler(hasTex ? tex : nullptr);
     int32_t drawn = 0;
 
     for (int32_t y = minY; y <= maxY; y++) {
@@ -103,7 +154,7 @@ void DrawTriangle(Framebuffer& fb, const RasterVertex& a, const RasterVertex& b0
         uint16_t* rrow = fb.Room.empty() ? nullptr : &fb.Room[(size_t)y * fb.Width];
         for (int32_t x = minX; x <= maxX; x++) {
             if (w0 >= 0 && w1 >= 0 && w2 >= 0 && z <= drow[x]) {
-                uint32_t t = hasTex ? tp[(((int32_t)std::floor(v)) & tmy) * tw + (((int32_t)std::floor(u)) & tmx)] : flatColor;
+                uint32_t t = hasTex ? sampler.Sample<Filter,FastWrap>(u,v) : flatColor;
                 int32_t r = (int32_t)((t & 0xFF) * lr), g = (int32_t)(((t >> 8) & 0xFF) * lg), bb = (int32_t)(((t >> 16) & 0xFF) * lb);
                 const size_t pixel = (size_t)y * fb.Width + x;
                 if (rrow) {
@@ -128,6 +179,20 @@ void DrawTriangle(Framebuffer& fb, const RasterVertex& a, const RasterVertex& b0
         (void)ey0; (void)ey1; (void)ey2;
     }
     if (stats) stats->Pixels += drawn;
+}
+
+void DrawTriangle(Framebuffer& fb,const RasterVertex& a,const RasterVertex& b,const RasterVertex& c,
+                  const RasterTexture* texture,uint32_t flatColor,float depthBias,RasterStats* stats,uint16_t room,
+                  const RasterSampling* sampling) {
+    static constexpr RasterSampling pointWrap{};
+    const auto& state=sampling ? *sampling : pointWrap;
+    if(state.Filter==RasterFilter::Linear) {
+        DrawSampledTriangle<RasterFilter::Linear>(fb,a,b,c,texture,flatColor,depthBias,stats,room);
+    } else if(!texture || !texture->Valid() || ((texture->Width&(texture->Width-1))==0 && (texture->Height&(texture->Height-1))==0)) {
+        DrawSampledTriangle<RasterFilter::Point,true>(fb,a,b,c,texture,flatColor,depthBias,stats,room);
+    } else {
+        DrawSampledTriangle<RasterFilter::Point>(fb,a,b,c,texture,flatColor,depthBias,stats,room);
+    }
 }
 
 }}}

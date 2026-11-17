@@ -165,6 +165,7 @@ void OfferDesktopControlHelp(Canvas& canvas,LotScreen& screen){
         screen.OfferDesktopHover(assets.control_tips[index],"control:"+std::to_string(index),"controls",0,
             Rect(r.x,r.y,r.width,r.height));
     };
+    offer(0,common.level_down);offer(1,common.level_up);offer(2,common.roof);
     offer(3,common.rotate_left);offer(4,common.rotate_right);offer(5,common.zoom_in);offer(6,common.zoom_out);
     offer(7,common.walls_up);offer(8,common.walls_cutaway);offer(9,common.walls_down);
     offer(10,common.modes[0]);offer(11,common.modes[1]);offer(12,common.modes[2]);offer(13,common.options);

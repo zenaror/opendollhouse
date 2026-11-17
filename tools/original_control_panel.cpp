@@ -217,6 +217,7 @@ OriginalPanelAction OriginalControlPanelArt::hit(const OriginalControlPanelLayou
     if(state.can_level_up.value_or(false)&&visible("lev2",l.level_up))return OriginalPanelAction::level_up;
     if(state.can_level_down.value_or(false)&&visible("lev1",l.level_down))return OriginalPanelAction::level_down;
     if(state.cutaway&&visible("dynacut",l.walls_cutaway))return OriginalPanelAction::walls_cutaway;
+    if(state.roof&&visible("levroof",l.roof))return OriginalPanelAction::roof;
     if(state.options_enabled&&visible("options",l.options))return OriginalPanelAction::options;
     if(!state.options_open&&state.simulation_speed&&
        (*state.simulation_speed==1||*state.simulation_speed==3||*state.simulation_speed==10)){
@@ -305,10 +306,10 @@ void OriginalControlPanelArt::draw(UiBitmapSurface frame,OriginalPanelMode mode,
     const auto button=[&](const char* leaf,const BuyUiRect& box,unsigned selected){const auto key=std::string("cpanel\\buttons\\")+leaf+".bmp";if(art_.find(key))control(key,box,visual(key,box,selected));};
     button("rotleft",l.rotate_left,0);button("rotright",l.rotate_right,0);
     button("zoomin",l.zoom_in,0);button("zoomout",l.zoom_out,0);
-    button("nocut",l.walls_up,!state.walls_down&&!state.cutaway.value_or(false)?1:0);button("nowall",l.walls_down,state.walls_down?1:0);
+    button("nocut",l.walls_up,!state.walls_down&&!state.cutaway.value_or(false)&&!state.roof.value_or(false)?1:0);button("nowall",l.walls_down,state.walls_down?1:0);
     button("lev2",l.level_up,state.can_level_up?(state.can_level_up.value()?0:3):3);
     button("lev1",l.level_down,state.can_level_down?(state.can_level_down.value()?0:3):3);
-    button("levroof",l.roof,3);button("dynacut",l.walls_cutaway,state.cutaway?(*state.cutaway?1:0):3);
+    button("levroof",l.roof,state.roof?(*state.roof?1:0):3);button("dynacut",l.walls_cutaway,state.cutaway?(*state.cutaway?1:0):3);
     button("camera",l.camera,3);button("options",l.options,state.options_enabled?(state.options_open?1:0):3);
     if(const auto* pause=art_.find("cpanel\\buttons\\pause.bmp")){
         const auto width=static_cast<int>(pause->width/4);

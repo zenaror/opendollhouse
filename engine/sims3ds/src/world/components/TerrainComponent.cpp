@@ -330,8 +330,9 @@ void TerrainComponent::DrawInto(WorldState& world, Framebuffer& target) {
     LastOriginalStripHeight = 0;
     if (Blueprint == nullptr) return;
     // Ordinary DVD grass uses its own indexed source ramp in every camera.
-    // Other lot types and neutral thumbnails retain their established path.
-    const bool original = !world.RenderingThumbnail &&
+    // Save pictures select the original DAY period and HIGH detail too.
+    // Other terrain types retain their established path.
+    const bool original =
         LightType==TerrainType::GRASS && DarkType==TerrainType::GRASS &&
         GrassWidth==HeightWidth && GrassState.size()==size_t(GrassWidth)*GrassWidth &&
         BuildOriginalShades(world.TerrainPeriod,int(world.Rotation()),Blueprint->Width);

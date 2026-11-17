@@ -387,21 +387,19 @@ void World2D::PreDraw(WorldState& state) {
     // FSO_CPP: World3D drew the roof every frame when State.DrawRoofs; here it lives in the cached wall layer.
     if (state.DrawRoofs != LastDrawRoofs) { LastDrawRoofs = state.DrawRoofs; redrawWall = true; }
 
-    // Save captures follow GetLotThumb's ClearLighting(false)/white exterior.
-    // Null means unlit in the sprite rasterizer; normal frames rebind rooms.
-    _2d->AmbientLight = state.RenderingThumbnail ? nullptr : Blueprint->RoomColors.data();
-    VisualLight = Blueprint->VisualLight.Enabled && !state.RenderingThumbnail ? &Blueprint->VisualLight : nullptr;
+    // Save pictures bind a detached original DAY snapshot. They do not disable
+    // room palettes; the simulation clock and live snapshot remain unchanged.
+    _2d->AmbientLight = Blueprint->RoomColors.data();
+    VisualLight = Blueprint->VisualLight.Enabled ? &Blueprint->VisualLight : nullptr;
     _2d->VisualLight = VisualLight;
-    if (state.RenderingThumbnail) state.OutsideColor = st::Color::White();
 
     if (recacheTerrain && Blueprint->Terrain)
         Blueprint->Terrain->RegenTerrain(state, Blueprint);
 
     int32_t bw = (int32_t)state.WorldSpace.WorldPxWidth + SCROLL_BUFFER, bh = (int32_t)state.WorldSpace.WorldPxHeight + SCROLL_BUFFER;
-    AmbientLight = state.RenderingThumbnail ? nullptr : Blueprint->RoomColors.data();
+    AmbientLight = Blueprint->RoomColors.data();
     // Roofs and legacy terrain use the settled outside sprite color.
-    OutsideLight = state.RenderingThumbnail ? st::Color::White() :
-        (Blueprint->Light.size() > 1 ? Blueprint->RoomColors[1] : state.OutsideColor);
+    OutsideLight = Blueprint->Light.size() > 1 ? Blueprint->RoomColors[1] : state.OutsideColor;
     if (OutsideLight.A == 0) OutsideLight = st::Color::White();
     const bool visualModeChanged = RenderVisualEnabled != (VisualLight != nullptr);
     const bool visualGeometryChanged = VisualLight && RenderVisualGeometry != VisualLight->GeometryGeneration;
@@ -459,7 +457,7 @@ void World2D::PreDraw(WorldState& state) {
     RenderVisualEnabled = VisualLight != nullptr;
     RenderVisualGeneration = VisualLight ? VisualLight->Generation : 0;
     RenderVisualGeometry = VisualLight ? VisualLight->GeometryGeneration : 0;
-    const int terrainPeriod = Blueprint->Terrain && !state.RenderingThumbnail ? state.TerrainPeriod : -1;
+    const int terrainPeriod = Blueprint->Terrain ? state.TerrainPeriod : -1;
     const int terrainDetail = terrainPeriod >= 0 ? (state.SimpleTerrain ? 0 : state.TerrainDetail) : -1;
     redrawFloor |= terrainPeriod != RenderTerrainPeriod || terrainDetail != RenderTerrainDetail;
     RenderTerrainPeriod = terrainPeriod;
@@ -506,18 +504,23 @@ void World2D::PreDraw(WorldState& state) {
     // fragment replay. Dirty scissors only restrict framebuffer writes.
     const st::Rectangle view(int(pxOffset.X-newOrigin.X), int(pxOffset.Y-newOrigin.Y),
                              int(state.WorldSpace.WorldPxWidth), int(state.WorldSpace.WorldPxHeight));
-    state.TerrainSourceClip = terrainPeriod >= 0 ? view : st::Rectangle();
+    auto sourceView=view;
+    if (state.RenderingThumbnail && state.TerrainSourceViewport.Width>0) {
+        const auto& source=state.TerrainSourceViewport;
+        sourceView=st::Rectangle(view.X+source.X,view.Y+source.Y,source.Width,source.Height);
+    }
+    state.TerrainSourceClip = terrainPeriod >= 0 ? sourceView : st::Rectangle();
     std::vector<st::Rectangle> terrainAreas;
     if (!redraw[FLOOR] && terrainPeriod >= 0 && TerrainWorldView.Width > 0) {
         const int height = Blueprint->Terrain->MaxOriginalStripHeight();
         if (height > 0 || StaticFloor.Buffer.HasOriginalTerrain) {
             const st::Rectangle old(TerrainWorldView.X-int(newOrigin.X), TerrainWorldView.Y-int(newOrigin.Y),
                                     TerrainWorldView.Width, TerrainWorldView.Height);
-            terrainAreas = TerrainPanAreas(old,view,height,bw,bh);
+            terrainAreas = TerrainPanAreas(old,sourceView,height,bw,bh);
         }
     }
-    TerrainWorldView = terrainPeriod >= 0 ? st::Rectangle(view.X+int(newOrigin.X), view.Y+int(newOrigin.Y),
-                                                         view.Width, view.Height) : st::Rectangle();
+    TerrainWorldView = terrainPeriod >= 0 ? st::Rectangle(sourceView.X+int(newOrigin.X), sourceView.Y+int(newOrigin.Y),
+                                                         sourceView.Width, sourceView.Height) : st::Rectangle();
     Origin = newOrigin;
     HaveOrigin = true;
     for (int l = 0; l < 3; l++) {

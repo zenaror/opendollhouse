@@ -421,13 +421,14 @@ std::string OriginalPCUI::ControlAt(int x,int y)const{
         case A::pause:return "speed0";case A::rotate_camera_left:return "rotate_left";case A::rotate_camera_right:return "rotate_right";
         case A::zoom_in:return "zoom_in";case A::zoom_out:return "zoom_out";case A::walls_up:return "walls_up";case A::walls_down:return "walls_down";
         case A::level_up:return "level_up";case A::level_down:return "level_down";case A::walls_cutaway:return "walls_cut";case A::options:return "mode_options";
+        case A::roof:return "roof";
         case A::live_needs:return "tab_mood";case A::live_relationships:return "tab_rel";case A::live_career:return "tab_job";case A::live_personality:return "tab_pers";case A::live_interests:return "tab_interest";case A::live_house:return "tab_house";
         case A::live_inventory:return "tab_inv";
         case A::speed_normal:return "speed1";case A::speed_fast:return "speed2";case A::speed_ultra:return "speed3";default:return {};
     }
 }
 bool OriginalPCUI::IsControl(const std::string& id){
-    static const std::set<std::string> ids={"speed0","speed1","speed2","speed3","rotate_left","rotate_right","zoom_in","zoom_out","walls_up","walls_down","level_up","level_down","walls_cut","mode_options","tab_mood","tab_rel","tab_job","tab_pers","tab_interest","tab_house","tab_inv"};
+    static const std::set<std::string> ids={"speed0","speed1","speed2","speed3","rotate_left","rotate_right","zoom_in","zoom_out","walls_up","walls_down","level_up","level_down","walls_cut","roof","mode_options","tab_mood","tab_rel","tab_job","tab_pers","tab_interest","tab_house","tab_inv"};
     return ids.count(id)!=0;
 }
 odh_host::CatalogObjectThumbnailResult OriginalPCUI::BuildCatalogThumbnail(std::uint32_t guid){
