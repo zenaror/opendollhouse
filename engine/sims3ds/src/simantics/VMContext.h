@@ -22,6 +22,7 @@
 #include "simantics/model/VMObjectQueries.h"
 #include "simantics/model/VMSetToNextCache.h"
 #include "simantics/engine/VMPrimitiveRegistration.h"
+#include "common/TS1/TS1SpatialLighting.h"
 
 namespace FSO { namespace SimAntics {
 class VM;
@@ -68,6 +69,15 @@ public:
     std::array<uint8_t, 2048> VisualRoomFlags{}; // last record outside/pool flags, including inactive IDs
     struct VisualActorRoom { int Room = -5; bool Human = false; };
     std::unordered_map<const VMEntity*, VisualActorRoom> VisualActorRooms;
+    FSO::Common::TS1::SpatialPublisher SpatialLights;
+    FSO::Common::TS1::SpatialRoomSchedule SpatialSchedule;
+    std::vector<int16_t> SpatialCanonicalIds;
+    std::array<std::vector<int16_t>, 2> SpatialTileHeads;
+    struct SpatialPlacement { int Room = -5; bool Registered = false; };
+    std::unordered_map<const VMEntity*, SpatialPlacement> SpatialPlacements;
+    int SpatialPeriod = -1;
+    bool SpatialSnapshotDirty = true;
+    uint64_t SpatialCollectorPasses = 0, SpatialObjectVisits = 0;
 
     FSO::SimAntics::VM* VM = nullptr;
 
@@ -90,6 +100,11 @@ public:
     void RebuildEnvironmentGeometry(); // original logical map, independent of routing/graphics
     void RefreshEnvironmentScores();
     void PrepareVisualLighting(); // coalesced render preparation; never advances the VM
+    void ObserveSpatialPeriod(); // clock event boundary; never advances the clock
+    void FlushSpatialLighting();
+    void RefreshSpatialObject(VMEntity* entity); // original F2/refresh1 -> F1
+    void RefreshSpatialRoom(VMEntity* entity); // original refresh2
+    void RemoveSpatialEntity(VMEntity* entity);
     void RemoveVisualActor(VMEntity* entity);
     void ObserveVisualActor(VMEntity* entity, bool removing = false); // actor tick cadence, not draw cadence
     int32_t GetEnvironmentRoomAt(const FSO::LotView::Model::LotTilePos& pos) const;

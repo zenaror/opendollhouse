@@ -24,6 +24,8 @@ void OfferDesktopLiveTabHelp(Canvas&,LotScreen&);
 // family controls and other locales retain their existing control-panel bounds.
 std::optional<odh::UiBitmapRect> DesktopNeedsPanelBounds(int width,int height,LotSession&);
 bool HandleDesktopCareerInput(LotSession&,DesktopCareerState&,const std::string&);
+// A missing family/provider is unavailable, distinct from a real zero count.
+std::optional<int> DesktopFamilyFriendsSnapshot(LotSession&);
 // Presentation DTO only: the current Sims3DS VM remains the sole authority.
 odh_host::LivePanelSnapshot DesktopLiveSnapshot(LotSession&, odh_host::LivePanelTab);
 void DrawDesktopLivePanel(Canvas&, LotScreen&, odh_host::LivePanelTab,

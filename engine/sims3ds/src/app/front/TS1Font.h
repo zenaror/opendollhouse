@@ -27,6 +27,8 @@ public:
 #ifndef __3DS__
     // Dedicated variablesans_48 caption face; other font profiles are unchanged.
     bool LoadCaption(const std::vector<uint8_t>& data);
+    // Original HUD counter: independent 10 pt face and authored FFN advance.
+    bool LoadPanelCounter(const std::vector<uint8_t>& data);
     bool CanDraw(const std::string& text) const;
 #endif
     bool Loaded() const { return !_Atlas.empty(); }
@@ -53,7 +55,14 @@ int TextH(TS1Size s);
 /// Draws Latin-1 text with its top at y; shadow (if non-zero alpha) is drawn 1px down-right first.
 int Text(Canvas& c, TS1Size s, int x, int y, const std::string& text, uint32_t color, uint32_t shadow = 0);
 void TextCentered(Canvas& c, TS1Size s, const Rect& r, const std::string& text, uint32_t color, uint32_t shadow = 0);
+enum class PanelLabelSlot { Clock, Funds, FamilyFriends };
 void DrawPanelLabel(Canvas&, TS1Size, const Rect&, const std::string&, uint32_t color);
+void DrawPanelLabel(Canvas&, TS1Size, const Rect&, const std::string&, uint32_t color,
+                    PanelLabelSlot, bool rightAligned = false);
+#ifndef __3DS__
+Rect FamilyFriendsCounterBounds(int canvasHeight);
+void DrawFamilyFriendsCounter(Canvas&, const std::string&);
+#endif
 std::vector<std::string> Wrap(TS1Size s, const std::string& text, int maxWidth);
 std::string Fit(TS1Size s, const std::string& text, int maxWidth);
 

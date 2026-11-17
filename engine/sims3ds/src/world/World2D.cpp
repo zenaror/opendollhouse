@@ -8,6 +8,7 @@
 #include "world/WorldState.h"
 #include "world/model/Blueprint.h"
 #include "world/utils/_2DWorldBatch.h"
+#include "content/ContentManager.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -370,6 +371,39 @@ void World2D::PreDraw(WorldState& state) {
     const bool visualModeChanged = RenderVisualEnabled != (VisualLight != nullptr);
     const bool visualGeometryChanged = VisualLight && RenderVisualGeometry != VisualLight->GeometryGeneration;
     const bool visualChanged = VisualLight && RenderVisualGeneration != VisualLight->Generation;
+    const uint64_t spatialGeneration = VisualLight ? VisualLight->SpatialGeneration : 0;
+    const uint64_t intensityGeneration = VisualLight ? VisualLight->IntensityGeneration : 0;
+    const bool spatialMapChanged = visualModeChanged || spatialGeneration != RenderSpatialGeneration;
+    if (spatialMapChanged) {
+        HaveSpatialSources = false;
+        if (VisualLight) for (const auto& map : VisualLight->SpatialMaps) {
+            if (std::any_of(map.begin(),map.end(),[](const auto& cell) { return cell.Slots[0].Dx != 127; })) {
+                HaveSpatialSources = true; break;
+            }
+        }
+    }
+    bool spatialEnabled = false;
+    if (VisualLight && HaveSpatialSources && state.ObjectLighting) {
+        const auto* content = FSO::Content::Content::Get();
+        spatialEnabled = content && SpatialMasks.Prepare(content->BasePath, int(state.Zoom()));
+    }
+    _2d->SpatialMasks = spatialEnabled ? &SpatialMasks : nullptr;
+    _2d->SpatialEnabled = spatialEnabled;
+    _2d->SpatialRotation = int(state.Rotation());
+    const bool spatialChanged = spatialMapChanged || visualChanged || intensityGeneration != RenderIntensityGeneration ||
+        SpatialMasks.Generation() != RenderMaskGeneration ||
+        spatialEnabled != RenderSpatialEnabled;
+    if (spatialChanged) {
+        // Potential dependencies include layers cached while no sources were
+        // active, the option was off, or the ambient used its base palette.
+        redrawFloor |= StaticFloor.Buffer.HasSpatialSurface;
+        redrawWall |= StaticWall.Buffer.HasSpatialSurface;
+        relight = true;
+    }
+    RenderSpatialGeneration = spatialGeneration;
+    RenderIntensityGeneration = intensityGeneration;
+    RenderSpatialEnabled = spatialEnabled;
+    RenderMaskGeneration = SpatialMasks.Generation();
     if (visualModeChanged || visualGeometryChanged) redrawFloor = redrawWall = redrawStaticObjects = true;
     bool paletteChanged = visualModeChanged || visualChanged || RenderLighting != (AmbientLight != nullptr) ||
         RenderOutside != OutsideLight.PackedValue() || RenderRoomColors.size() != Blueprint->Light.size();

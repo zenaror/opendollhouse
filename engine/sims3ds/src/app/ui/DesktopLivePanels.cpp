@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 #ifndef __3DS__
 #include "app/ui/DesktopLivePanels.h"
+#include "app/ui/DesktopFamilyFriends.h"
+#include "content/TS1NeighbourProvider.h"
 #include "app/ui/OriginalTextBackend.h"
 #include "app/ui/OriginalPCUI.h"
 #include "app/ui/DesktopHousePanel.h"
@@ -25,6 +27,7 @@
 #include "files/formats/iff/chunks/OBJD.h"
 #include "files/formats/iff/chunks/STR.h"
 #include "files/formats/iff/chunks/NBRS.h"
+#include "files/formats/iff/chunks/FCNS.h"
 #include "original_control_panel.hpp"
 #include "character_ui_images.hpp"
 #include "linux_ui_strings.hpp"
@@ -191,6 +194,24 @@ void OfferDesktopLiveTabHelp(Canvas& canvas,LotScreen& screen){
     const auto& r=common.tabs[5];
     screen.OfferDesktopHover(assets.tab_tips[6],"live-tab:inventory","live-tabs",0,
         Rect(common.tabs[3].x,r.y,r.width,r.height));
+}
+
+std::optional<int> DesktopFamilyFriendsSnapshot(LotSession& session) {
+    if(!session.HasFamilyBudget())return {};
+    auto* content=FSO::Content::Content::Get();
+    auto* provider=content->Neighborhood.get();
+    if(!provider||!provider->Neighbors)return {};
+    auto* family=provider->GameState.ActiveFamily;
+    if(!family)family=provider->GetFamilyForHouse(session.HouseNumber);
+    if(!family)return {};
+    // Read the VM's shared neighbour relations immediately; never rewrite the
+    // persisted FAMI cache, and never restrict friends to actors on this lot.
+    const odh::NamedFloatConstants* tuning=nullptr;
+    if(content->WorldObjectGlobals) {
+        auto* global=content->WorldObjectGlobals->Get("global",true);
+        if(global&&global->Resource)if(auto* constants=global->Resource->Get<FCNS>(2))tuning=&constants->Values;
+    }
+    return DesktopFamilyFriendCount(*family,*provider->Neighbors,DesktopFamilyFriendThreshold(tuning));
 }
 
 odh_host::LivePanelSnapshot DesktopLiveSnapshot(LotSession& session,odh_host::LivePanelTab tab){

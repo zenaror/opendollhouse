@@ -773,6 +773,18 @@ _2DSprite* WallComponent::GetWallSprite(Wall* pattern, WallStyle* style, int rot
         _Sprite->Pixel = world._2D->GetTexture(sprite->Frames[(size_t)rotation].get());
         _Sprite->Mask = ((size_t)rotation < mask->Frames.size()) ? world._2D->GetTexture(mask->Frames[(size_t)rotation].get()) : nullptr;
         _Sprite->SrcRect = st::Rectangle(0, 0, _Sprite->Pixel->Width, _Sprite->Pixel->Height);
+        if (rotation < 2 && _Sprite->Mask && _Sprite->Mask->Width == _Sprite->Pixel->Width &&
+            _Sprite->Mask->Height == _Sprite->Pixel->Height) {
+            // The original primary raster is the style/shape frame, not a
+            // shared height for both faces. In particular TR has one more row.
+            _Sprite->DestRect.Width = _Sprite->Mask->Width;
+            _Sprite->DestRect.Height = _Sprite->Mask->Height;
+            _Sprite->SpatialSurface = uint8_t(rotation + 2);
+            _Sprite->SpatialFrame = _Sprite->DestRect;
+            _Sprite->SpatialReferenceTop = _Sprite->DestRect.Bottom() - _Sprite->Pixel->Height;
+            _Sprite->SpatialFrameExact = _Sprite->Mask->Width == _Sprite->Pixel->Width &&
+                _Sprite->Mask->Height == _Sprite->Pixel->Height;
+        }
     }
 
     _Sprite->Room = (uint16_t)TileRoom;
@@ -803,8 +815,13 @@ _2DSprite* WallComponent::GetFloorSprite(Floor* pattern, int rotation, WorldStat
             break;
     }
     if (sprite != nullptr && (size_t)rotation < sprite->Frames.size()) {
-        _Sprite->Pixel = world._2D->GetTexture(sprite->Frames[(size_t)rotation].get());
+        auto* frame = sprite->Frames[(size_t)rotation].get();
+        _Sprite->Pixel = world._2D->GetTexture(frame);
         _Sprite->SrcRect = st::Rectangle(0, 0, _Sprite->Pixel->Width, _Sprite->Pixel->Height);
+        _Sprite->SpatialSurface = 1;
+        _Sprite->SpatialFrame = _Sprite->DestRect;
+        _Sprite->SpatialFrameExact = frame->Position.X == 0 && frame->Position.Y == 0 &&
+            _Sprite->DestRect.Width == _Sprite->Pixel->Width && _Sprite->DestRect.Height == _Sprite->Pixel->Height;
     }
 
     switch (cut) {
@@ -1007,7 +1024,13 @@ _2DSprite* WallComponent::CopySprite(WorldState& world, _2DSprite* _Sprite) {
     spr->SrcRect = _Sprite->SrcRect;
     spr->Pixel = _Sprite->Pixel;
     spr->Depth = _Sprite->Depth;
+    spr->Mask = _Sprite->Mask;
     spr->Room = _Sprite->Room;
+    spr->LogicalHalf = _Sprite->LogicalHalf;
+    spr->SpatialSurface = _Sprite->SpatialSurface;
+    spr->SpatialFrame = _Sprite->SpatialFrame;
+    spr->SpatialReferenceTop = _Sprite->SpatialReferenceTop;
+    spr->SpatialFrameExact = _Sprite->SpatialFrameExact;
     return spr;
 }
 

@@ -19,17 +19,17 @@ const float TextureGenerator::WallZBufferConfig[31][5] = {
     // format: width, height, startIntensity, Xdiff, Ydiff
 
     {64, 271, 74, 1, 0.5f}, //near top left
-    {64, 271, 135, -1, 0.5f}, //near top right
+    {64, 272, 135, -1, 0.5f}, //near top right; authored shape has one extra row
     {128, 240, 89.5f, 0, 0.5f}, //near horiz diag
     {16, 232, 45, 0, 0.5f}, //near vert diag
 
     {32, 135, 74, 2, 1.0f}, //med top left
-    {32, 135, 135, -2, 1.0f}, //med top right
+    {32, 136, 135, -2, 1.0f}, //med top right
     {64, 120, 89.5f, 0, 1.0f}, //med horiz diag
     {8, 116, 45, 0, 1.0f}, //med vert diag
 
     {16, 67, 74, 4, 2.0f}, //far top left
-    {16, 67, 135, -4, 2.0f}, //far top right
+    {16, 68, 135, -4, 2.0f}, //far top right
     {32, 60, 89.5f, 0, 2.0f}, //far horiz diag
     {4, 58, 45, 0, 2.0f}, //far vert diag
 

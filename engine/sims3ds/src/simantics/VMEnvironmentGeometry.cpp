@@ -58,6 +58,7 @@ void VMContext::RebuildEnvironmentGeometry() {
             EnvironmentRooms.emplace_back();
             auto& target = EnvironmentRooms.back();
             target.Environment = source.Inputs;
+            target.SpatialTileOrder.assign(source.Visits.begin(), source.Visits.end());
             target.Outside = source.Outside;
             target.CanonicalID = CanonicalRoomID(level + 1, unsigned(local));
             target.Story = uint8_t(level + 1);
@@ -72,5 +73,19 @@ void VMContext::RebuildEnvironmentGeometry() {
     EnvironmentPeriod = -1;
     VisualLightingDirty = true;
     ++VisualGeometryVersion;
+    // Architecture rebuilds change admission, not source-grid ownership. Keep
+    // existing cells and original record identities until actual visits erase
+    // and insert them. Only a new world's dimensions initialize the grid.
+    if (SpatialLights.Width != arch->Width || SpatialLights.Height != arch->Height) {
+        SpatialLights.Initialize(arch->Width, arch->Height);
+        for (auto& heads : SpatialTileHeads) heads.assign(size_t(arch->Width) * arch->Height, 0);
+        SpatialSnapshotDirty = true;
+    }
+    SpatialCanonicalIds.assign(EnvironmentRooms.size(), -1);
+    for (size_t i = 1; i < EnvironmentRooms.size(); ++i) {
+        const auto id = EnvironmentRooms[i].CanonicalID;
+        SpatialCanonicalIds[i] = int16_t(id);
+        SpatialSchedule.Mark(id);
+    }
 }
 }}

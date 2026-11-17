@@ -8,8 +8,9 @@ Notable changes for players and contributors, following
 ### Changed
 
 - Floors, walls and ordinary objects use the original room-lighting palette
-  and day/night limits. Local lamp effects, Sim shading, terrain and roofs
-  still need further work.
+  and day/night limits. Standard floors and walls also use the game's local
+  lamp-light masks. Sim shading, terrain, roofs and special surfaces still
+  need further work.
 - Studio Town uses separate music for its map and public lot editor. Entering
   an editor no longer restarts the opening music, and switching between its
   Buy and Build modes keeps the current song playing.
@@ -28,6 +29,8 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Restored the family-friend counter beside the household funds, using the
+  original mutual-friendship rule and counter typeface.
 - Transparent objects and overlapping lit and unlit parts keep their appearance
   when the renderer rebuilds or reuses their cached images.
 - In-lot audio settings use the original eleven volume positions and gain curve.

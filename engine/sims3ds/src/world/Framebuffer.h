@@ -40,6 +40,9 @@ public:
     const st::Color* CacheLight = nullptr;
     st::Color CacheOutsideLight = st::Color::White();
     bool DeferredOutsideTint = false; // direct replay preserves clamp-then-outside-tint order
+    // Potential dependency, even with no active source, Lighting off or an
+    // ambient base-palette bypass. A new source must invalidate that cache.
+    bool HasSpatialSurface = false;
     static constexpr int TRANSPARENCY_TILE = 16;
     // Conservative coverage, independent of the lighting dependency above.
     // Partial clears retain blocks; a full clear rebuilds exact coverage.
@@ -99,6 +102,7 @@ public:
     void ResetPrelit() {
         if (ResolvePrelit) return;
         Prelit.clear(); HasPrelit = PrelitAll = false; NewPrelitPixels = 0;
+        HasSpatialSurface = false;
         Transparency.clear(); TransparencyAll = false;
     }
     st::Color CachedLight(uint16_t room) const {

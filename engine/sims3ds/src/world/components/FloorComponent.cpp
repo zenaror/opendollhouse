@@ -249,8 +249,13 @@ _2DSprite* FloorComponent::GetFloorSprite(FSO::Content::Floor* pattern, int rota
             break;
     }
     if (sprite != nullptr && (size_t)rotation < sprite->Frames.size()) {
-        _Sprite->Pixel = world._2D->GetTexture(sprite->Frames[(size_t)rotation].get());
+        auto* frame = sprite->Frames[(size_t)rotation].get();
+        _Sprite->Pixel = world._2D->GetTexture(frame);
         _Sprite->SrcRect = st::Rectangle(0, 0, _Sprite->Pixel->Width, _Sprite->Pixel->Height);
+        _Sprite->SpatialSurface = 1;
+        _Sprite->SpatialFrame = _Sprite->DestRect;
+        _Sprite->SpatialFrameExact = frame->Position.X == 0 && frame->Position.Y == 0 &&
+            _Sprite->DestRect.Width == _Sprite->Pixel->Width && _Sprite->DestRect.Height == _Sprite->Pixel->Height;
 
         if (vertFlip) _Sprite->FlipVertically = true;
         if ((int)world.Rotation() > 1) _Sprite->FlipHorizontally = true;

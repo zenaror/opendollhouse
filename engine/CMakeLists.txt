@@ -265,6 +265,7 @@ add_library(odh_engine STATIC ${ODH_ENGINE_SOURCES})
 target_include_directories(odh_engine PUBLIC "${ODH_ENGINE_SOURCE_ROOT}")
 # Reuse portable presentation services without an old VM dependency.
 target_sources(odh_engine PRIVATE sims3ds/src/app/ui/OriginalPCUI.cpp
+  sims3ds/src/world/utils/TS1LightMap.cpp
   sims3ds/src/app/ui/DesktopHousePanel.cpp
   sims3ds/src/app/ui/DesktopOptionsPanel.cpp
   sims3ds/src/app/ui/DesktopLivePanels.cpp
@@ -414,6 +415,16 @@ if(BUILD_TESTING)
     target_link_options(odh-visual-lighting PRIVATE -Wl,--strip-debug)
   endif()
   add_test(NAME visual-lighting COMMAND odh-visual-lighting)
+  foreach(lighting_test spatial-lighting spatial-light-render desktop-family-friends)
+    string(REPLACE "-" "_" lighting_source "${lighting_test}")
+    add_executable(odh-${lighting_test} tests/${lighting_source}.cpp)
+    target_link_libraries(odh-${lighting_test} PRIVATE odh_engine)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_compile_options(odh-${lighting_test} PRIVATE -g0)
+      target_link_options(odh-${lighting_test} PRIVATE -Wl,--strip-debug)
+    endif()
+    add_test(NAME ${lighting_test} COMMAND odh-${lighting_test})
+  endforeach()
   add_executable(odh-lot-rezone-transaction tests/lot_rezone_transaction.cpp)
   target_link_libraries(odh-lot-rezone-transaction PRIVATE odh_engine)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

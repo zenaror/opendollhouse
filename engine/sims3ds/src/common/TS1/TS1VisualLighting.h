@@ -6,6 +6,7 @@
 #include <vector>
 #include "core/math.h"
 #include "common/TS1/TS1Environment.h"
+#include "common/TS1/TS1SpatialLighting.h"
 
 namespace FSO { namespace Common { namespace TS1 {
 
@@ -33,6 +34,9 @@ inline uint8_t VisualTone(float factor, int period) {
 inline uint8_t VisualByte(float factor) {
     return uint8_t(unsigned(double(factor) * 255.0 + .5));
 }
+inline uint8_t VisualIntensity(float factor, int period) {
+    return VisualByte(std::clamp(factor, .5f, period == 0 ? 1.0f : .8f));
+}
 inline float DirectVisualFactor(float light, bool pool, bool overhead, int lamps, int people) {
     return pool || (overhead && lamps == 0 && people != 0 && light < .8f) ? .8f : light;
 }
@@ -52,6 +56,20 @@ struct VisualLighting {
     std::vector<std::vector<uint32_t>> Maps; // renderer snapshot; copied only with geometry
     std::vector<uint8_t> Grid;
     std::vector<uint8_t> Tones; // even: byte path; odd: direct room path
+    // Spatial samples add authored mask bytes before quantizing to a LUT row.
+    // A change within one row still invalidates spatially dependent layers.
+    std::vector<uint8_t> Intensities;
+    uint64_t IntensityGeneration = 0;
+    std::vector<std::vector<SpatialCell>> SpatialMaps;
+    uint64_t SpatialGeneration = 0;
+
+    const SpatialCell* SpatialAt(int x, int y, int story) const {
+        if (!Enabled || story < 1 || size_t(story) > SpatialMaps.size() ||
+            x < 0 || y < 0 || x >= Width || y >= Height) return nullptr;
+        const auto& cells = SpatialMaps[story - 1];
+        const size_t index = size_t(y) * Width + x;
+        return index < cells.size() ? &cells[index] : nullptr;
+    }
 
     bool IsKey(uint16_t key) const {
         return Enabled && (key == BaseKey || (key >= FirstKey && size_t(key - FirstKey) < Tones.size()));

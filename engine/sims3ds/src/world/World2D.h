@@ -26,6 +26,7 @@
 #include "core/math.h"
 #include "world/Framebuffer.h"
 #include "common/TS1/TS1VisualLighting.h"
+#include "world/utils/TS1LightMap.h"
 
 namespace FSO { namespace LotView {
 
@@ -54,6 +55,10 @@ public:
         this->Blueprint = blueprint;
         FrameObjects.clear(); PreviousObjects.clear(); HaveObjectView = false;
         ResolveTiles.clear(); ResolveRegions.clear(); ResolveAllObjects = false;
+        RenderVisualEnabled = false;
+        RenderSpatialGeneration = RenderIntensityGeneration = RenderMaskGeneration = 0;
+        HaveSpatialSources = RenderSpatialEnabled = false;
+        SpatialMasks.Reset();
         Invalidate();
     }
 
@@ -99,6 +104,9 @@ private:
     const FSO::Common::TS1::VisualLighting* VisualLight = nullptr;
     uint64_t RenderVisualGeneration = 0, RenderVisualGeometry = 0;
     bool RenderVisualEnabled = false;
+    Utils::TS1LightMap SpatialMasks;
+    uint64_t RenderSpatialGeneration = 0, RenderIntensityGeneration = 0, RenderMaskGeneration = 0;
+    bool HaveSpatialSources = false, RenderSpatialEnabled = false;
     /// world-pixel bounds of every object painted into the static object layer (keys may be deleted components:
     /// never dereferenced, only looked up)
     std::unordered_map<const WorldComponent*, st::Rectangle> StaticBounds;

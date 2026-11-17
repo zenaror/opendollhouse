@@ -176,6 +176,8 @@ st::Rectangle VMContext::GetTSOBuildableArea(int32_t lotSInfo) {
     return st::Rectangle((int)lotBase.X, (int)lotBase.Y, dim, dim);
 }
 
+static Common::TS1::SpatialEmitter SpatialSource(VMContext& ctx, VMEntity* entity);
+
 void VMContext::RegeneratePortalInfo() {
     RoomInfo.assign(Architecture()->RoomData.size(), VMRoomInfo());
     for (size_t i = 0; i < RoomInfo.size(); i++) {
@@ -203,6 +205,16 @@ void VMContext::RegeneratePortalInfo() {
     EnvironmentObjectsDirty = true;
     for (uint16_t i = 0; i < RoomInfo.size(); i++) {
         RefreshLighting(i, i == (RoomInfo.size() - 1));
+    }
+    if (VM && VM->TS1) {
+        // F0 updates every object's Room29 after the new flood, before the
+        // synchronous manager pass. Preserve head/lifetime history; only the
+        // canonical room identity changes through a split or merge.
+        for (auto* entity : VM->Entities) {
+            const auto found = SpatialPlacements.find(entity);
+            if (found != SpatialPlacements.end()) found->second.Room = SpatialSource(*this, entity).ObjectRoom;
+        }
+        FlushSpatialLighting();
     }
     if (VM::UseWorld() && World != nullptr) World->InvalidateZoom();
 }
@@ -365,6 +377,9 @@ void VMContext::ObserveVisualActor(VMEntity* entity, bool removing) {
         if (id < 0 || VisualRoomFlags[size_t(id)] != 0 || bool(VisualOverhead[size_t(id)]) == value) return;
         VisualOverhead[size_t(id)] = value;
         for (auto& record : EnvironmentRooms) if (record.Story && record.CanonicalID == id) {
+            // The original setter tests the last manager collection, not a
+            // newly counted render snapshot. Keep source events independent.
+            if (record.SpatialLamps == 0 && record.SpatialLightFactor < .8f) SpatialSchedule.Mark(id);
             if (lamps[size_t(id)] == 0 && record.LightFactor < .8f) {
                 record.VisualEventByte = Common::TS1::VisualByte(value ? .8f : record.LightFactor);
                 record.VisualEventScoreVersion = EnvironmentScoreRefreshes;
@@ -383,14 +398,132 @@ void VMContext::RemoveVisualActor(VMEntity* entity) {
     VisualLightingDirty = true;
 }
 
+static Common::TS1::SpatialEmitter SpatialSource(VMContext& ctx, VMEntity* entity) {
+    Common::TS1::SpatialEmitter result;
+    const auto pos = entity->Position();
+    result.Position = {pos.TileX(), pos.TileY(), pos.Level};
+    const auto env = ctx.GetEnvironmentRoomAt(pos);
+    result.ObjectRoom = entity->GetValue(VMStackObjectVariable::Room) >= 0 && env > 0 && size_t(env) < ctx.EnvironmentRooms.size() ?
+        int16_t(ctx.EnvironmentRooms[size_t(env)].CanonicalID) : int16_t(-5);
+    result.Hidden = entity->GetValue(VMStackObjectVariable::Hidden);
+    result.SourceMode = entity->GetValue(VMStackObjectVariable::LightSource);
+    result.Contribution = entity->GetValue(VMStackObjectVariable::LightingContribution);
+    result.Flags2 = uint16_t(entity->GetValue(VMStackObjectVariable::FlagField2));
+    return result;
+}
+
+void VMContext::RefreshSpatialRoom(VMEntity* entity) {
+    if (!VM || !VM->TS1 || !entity || entity->GetValue(VMStackObjectVariable::Room) < 0) return;
+    const auto env = GetEnvironmentRoomAt(entity->Position());
+    if (env > 0 && size_t(env) < EnvironmentRooms.size()) SpatialSchedule.Mark(EnvironmentRooms[size_t(env)].CanonicalID);
+}
+
+void VMContext::RefreshSpatialObject(VMEntity* entity) {
+    // F2 resolves the object's current room and immediately broadcasts F1.
+    RefreshSpatialRoom(entity);
+}
+
+void VMContext::ObserveSpatialPeriod() {
+    if (!VM || !VM->TS1 || !Architecture()) return;
+    const int period = Clock ? Clock->TimeOfDay() : 0;
+    if (SpatialPeriod == period) return;
+    SpatialPeriod = period;
+    for (const auto& room : EnvironmentRooms) if (room.Story) SpatialSchedule.Mark(room.CanonicalID);
+    // 00416050 DD is followed immediately by 0046716c. Do not lose A->B->A
+    // phase transitions when multiple simulation ticks precede a single draw.
+    FlushSpatialLighting();
+}
+
+void VMContext::FlushSpatialLighting() {
+    if (!VM || !VM->TS1 || !Architecture() || !SpatialSchedule.StoryMask) return;
+    RefreshEnvironmentScores(); // independent existing logical-score cache
+    const auto* arch = Architecture();
+    Common::TS1::SpatialRoomMapView map{arch->Width, arch->Height, &EnvironmentMaps, &SpatialCanonicalIds};
+    std::vector<uint16_t> ordered;
+    std::array<size_t, 2048> indices{};
+    for (size_t i = 1; i < EnvironmentRooms.size(); ++i) {
+        const auto id = EnvironmentRooms[i].CanonicalID;
+        ordered.push_back(id); indices[id] = i;
+    }
+    std::sort(ordered.begin(), ordered.end());
+    // Allocate before consuming any dirty bit or mutating source cells. Reuse
+    // this bounded DFS workspace across occupied visits, rather than allocate
+    // once per tile during a partially completed collection.
+    std::vector<VMEntity*> pending;
+    pending.reserve(VM->Entities.size() + 1);
+    ++SpatialCollectorPasses;
+    SpatialSchedule.Flush(ordered, [&](uint16_t id) {
+        auto& room = EnvironmentRooms[indices[id]];
+        // 00466d14 snapshots BEFORE resetting counters. Overhead can have
+        // changed since the last collection, so caching the old effective
+        // result would introduce an extra F1 and alter future source order.
+        const float previousFactor = Common::TS1::DirectVisualFactor(room.SpatialLightFactor,
+            room.SpatialPool, VisualOverhead[id], room.SpatialLamps, room.SpatialPeople);
+        int people = 0, lamps = 0;
+        for (const auto tile : room.SpatialTileOrder) {
+            if (tile < 0 || size_t(tile) >= SpatialTileHeads[room.Story - 1].size()) continue;
+            auto* root = VM->GetObjectById(SpatialTileHeads[room.Story - 1][size_t(tile)]);
+            if (!root) continue;
+            // 0043f371/0043f3b9: root followed by ascending-slot preorder DFS.
+            // Never use the sorted TileToObjects cache or current entity order.
+            pending.clear(); pending.push_back(root);
+            size_t remaining = VM->Entities.size() + 1;
+            while (!pending.empty() && remaining--) {
+                auto* entity = pending.back(); pending.pop_back();
+                if (!entity || entity->Dead) continue;
+                const auto source = SpatialSource(*this, entity);
+                ++SpatialObjectVisits;
+                if (!source.Hidden && source.ObjectRoom >= 0 && entity->Object && entity->Object->OBJ) {
+                    const auto type = entity->Object->OBJ->ObjectType;
+                    if (type == OBJDType::Person) ++people;
+                    if ((source.Flags2 & 0x400) && SpatialLights.Interior(source.Position) && type != OBJDType::Portal) ++lamps;
+                }
+                SpatialLights.CollectVisit(source, map);
+                for (int slot = entity->TotalSlots() - 1; slot >= 0; --slot)
+                    if (auto* child = entity->GetSlot(slot)) pending.push_back(child);
+            }
+        }
+        const float factor = Common::TS1::DirectVisualFactor(room.LightFactor, room.Pool,
+            VisualOverhead[id], lamps, people);
+        room.SpatialLightFactor = room.LightFactor; room.SpatialPool = room.Pool;
+        room.SpatialLamps = lamps; room.SpatialPeople = people;
+        if (previousFactor != factor) SpatialSchedule.Mark(id); // synchronous original changed-factor F1
+    });
+    SpatialSnapshotDirty = true;
+}
+
+void VMContext::RemoveSpatialEntity(VMEntity* entity) {
+    // Normal removal already ran PrePositionChange. The fallback is for direct
+    // RemoveEntity users, without inventing a second duplicate-pair erasure.
+    const auto found = SpatialPlacements.find(entity);
+    if (found != SpatialPlacements.end() && found->second.Registered) {
+        const auto source = SpatialSource(*this, entity);
+        SpatialLights.Unregister(source);
+        if (SpatialLights.Interior(source.Position) && !entity->Container)
+            SpatialTileHeads[size_t(source.Position.Story - 1)][size_t(source.Position.Y) * SpatialLights.Width + source.Position.X] = 0;
+        if (source.Flags2 & 0x400) RefreshSpatialObject(entity);
+        SpatialSnapshotDirty = true;
+    }
+    // 0044127f captures old room before removing and sends F3 afterward,
+    // including the normal path that has already unregistered its placement.
+    if (found != SpatialPlacements.end() && entity->GetValue(VMStackObjectVariable::RoomImpact) != 0)
+        SpatialSchedule.Mark(found->second.Room);
+    SpatialPlacements.erase(entity);
+}
+
 void VMContext::PrepareVisualLighting() {
     if (!VM || !VM->TS1 || !Blueprint || !Architecture()) return;
+    ObserveSpatialPeriod();
+    FlushSpatialLighting();
     const int period = Clock ? Clock->TimeOfDay() : 0;
-    if (!VisualLightingDirty && !EnvironmentObjectsDirty && VisualLightingPeriod == period) return;
+    if (!VisualLightingDirty && !EnvironmentObjectsDirty && !SpatialSnapshotDirty && VisualLightingPeriod == period) return;
     RefreshEnvironmentScores();
     ++VisualLightingRefreshes;
     const auto* arch = Architecture();
-    if (!Blueprint->VisualLight.Enabled) for (auto* ent : VM->Entities) ObserveVisualActor(ent);
+    if (!Blueprint->VisualLight.Enabled) {
+        for (auto* ent : VM->Entities) ObserveVisualActor(ent);
+        FlushSpatialLighting(); // bootstrap actor F1 belongs before this snapshot
+    }
     std::array<int, 2048> people{}, lamps{};
     CollectVisualCounts(*this, people, lamps, true);
     for (size_t i = 1; i < EnvironmentRooms.size(); ++i) {
@@ -416,7 +549,11 @@ void VMContext::PrepareVisualLighting() {
         Blueprint->Light.size() >= Common::TS1::VisualLighting::FirstKey)
         throw std::runtime_error("TS1 visual sample capacity exceeded");
     std::vector<uint8_t> tones(EnvironmentRooms.size() * 2);
+    std::vector<uint8_t> intensities(EnvironmentRooms.size() * 2);
     std::vector<uint8_t> grid(size_t(2) * arch->Width * arch->Height, 0);
+    const bool spatialChanged = !wasEnabled || visual.Width != arch->Width || visual.Height != arch->Height || visual.SpatialMaps != SpatialLights.Maps;
+    std::vector<std::vector<Common::TS1::SpatialCell>> spatialMaps;
+    if (spatialChanged) spatialMaps = SpatialLights.Maps;
     for (size_t i = 1; i < EnvironmentRooms.size(); ++i) {
         const auto& room = EnvironmentRooms[i];
         const float direct = Common::TS1::DirectVisualFactor(room.LightFactor, room.Pool,
@@ -425,6 +562,8 @@ void VMContext::PrepareVisualLighting() {
         constexpr float inv255 = 1.0f / 255.0f;
         tones[i * 2] = Common::TS1::VisualTone(float(byte * inv255), period);
         tones[i * 2 + 1] = Common::TS1::VisualTone(direct, period);
+        intensities[i * 2] = Common::TS1::VisualIntensity(float(byte * inv255), period);
+        intensities[i * 2 + 1] = Common::TS1::VisualIntensity(direct, period);
         for (const auto& tile : room.EnvironmentTileVisits)
             grid[size_t(room.Story - 1) * arch->Width * arch->Height + size_t(tile.first)] = byte;
     }
@@ -433,10 +572,18 @@ void VMContext::PrepareVisualLighting() {
     if (geometryChanged) { visual.Maps.swap(maps); visual.GeometryGeneration = VisualGeometryVersion; }
     visual.Grid.swap(grid);
     visual.Enabled = true;
-    if (!wasEnabled || visual.Tones != tones) {
-        visual.Tones.swap(tones); ++visual.Generation;
-        Blueprint->Damage.push_back(BlueprintDamage(BlueprintDamageType::LIGHTING_CHANGED));
+    const bool intensityChanged = !wasEnabled || visual.Intensities != intensities;
+    const bool tonesChanged = !wasEnabled || visual.Tones != tones;
+    if (spatialChanged) { visual.SpatialMaps.swap(spatialMaps); ++visual.SpatialGeneration; }
+    if (intensityChanged) {
+        visual.Intensities.swap(intensities); ++visual.IntensityGeneration;
     }
+    if (tonesChanged) {
+        visual.Tones.swap(tones); ++visual.Generation;
+    }
+    if (tonesChanged || intensityChanged || spatialChanged)
+        Blueprint->Damage.push_back(BlueprintDamage(BlueprintDamageType::LIGHTING_CHANGED));
+    SpatialSnapshotDirty = false;
     VisualLightingDirty = false;
     VisualLightingPeriod = period;
     VisualScoreVersion = EnvironmentScoreRefreshes;
@@ -535,6 +682,16 @@ void VMContext::RegisterObjectPos(VMEntity* obj) {
         }
     }
     obj->SetRoom(room);
+    if (VM && VM->TS1) {
+        const auto source = SpatialSource(*this, obj);
+        auto& previous = SpatialPlacements[obj];
+        if (previous.Room != source.ObjectRoom && obj->GetValue(VMStackObjectVariable::RoomImpact) != 0) {
+            SpatialSchedule.Mark(previous.Room); SpatialSchedule.Mark(source.ObjectRoom);
+        }
+        previous = {source.ObjectRoom, true};
+        if (!obj->Container && SpatialLights.Interior(source.Position))
+            SpatialTileHeads[size_t(source.Position.Story - 1)][size_t(source.Position.Y) * SpatialLights.Width + source.Position.X] = obj->ObjectID;
+    }
     if (obj->GetValue(VMStackObjectVariable::LightingContribution) > 0)
         RefreshLighting(room, true);
     else if (room < RoomInfo.size() && MovedObjectAffectsEnvironment(this, obj))
@@ -545,6 +702,15 @@ void VMContext::RegisterObjectPos(VMEntity* obj) {
 
 void VMContext::UnregisterObjectPos(VMEntity* obj) {
     VisualLightingDirty = true;
+    if (VM && VM->TS1) {
+        const auto source = SpatialSource(*this, obj);
+        SpatialLights.Unregister(source);
+        if (!obj->Container && SpatialLights.Interior(source.Position))
+            SpatialTileHeads[size_t(source.Position.Story - 1)][size_t(source.Position.Y) * SpatialLights.Width + source.Position.X] = 0;
+        SpatialPlacements[obj].Registered = false;
+        if (source.Flags2 & 0x400) RefreshSpatialObject(obj);
+        SpatialSnapshotDirty = true;
+    }
     //remove object from room
 
     auto room = GetObjectRoom(obj);

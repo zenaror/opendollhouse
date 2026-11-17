@@ -45,11 +45,13 @@ VMPrimitiveExitCode VMRefresh::Execute(VMStackFrame* context, VMPrimitiveOperand
         case 1:
             // C# dereferences target here (NullReferenceException, caught by the thread) when TargetObject is unknown.
             if (target == nullptr) throw VMSimanticsException("Object reference not set to an instance of an object.", context);
+            context->VM()->Context->RefreshSpatialObject(target);
             context->VM()->Context->RefreshLighting(context->VM()->Context->GetObjectRoom(target), true);
             if (dynamic_cast<VMGameObject*>(target) != nullptr) static_cast<VMGameObject*>(target)->RefreshLight();
             break;
         case 2: // TS1(sims): FreeSO — "area contribution" (Behavior.iff STR#212 'room score contribution')
             if (target == nullptr) throw VMSimanticsException("Object reference not set to an instance of an object.", context);
+            context->VM()->Context->RefreshSpatialRoom(target);
             context->VM()->Context->RefreshRoomScore(context->VM()->Context->GetObjectRoom(target));
             break;
     }

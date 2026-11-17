@@ -45,6 +45,14 @@ bool TS1Font::Load(const std::vector<uint8_t>& d) {
 }
 
 #ifndef __3DS__
+bool TS1Font::LoadPanelCounter(const std::vector<uint8_t>& data) {
+    if(!Load(data))return false;
+    // The DVD counter's captured 0/1 masks and measured field agree with
+    // byte 9 as bearing/advance; byte 8 is not a second added bearing.
+    for(auto& glyph:_G){glyph.Left=glyph.Right;glyph.Right=0;}
+    return true;
+}
+
 bool TS1Font::LoadCaption(const std::vector<uint8_t>& data) {
     if(!Load(data))return false;
     // The authored pause face uses glyph width plus bearing for its advance.
@@ -113,6 +121,9 @@ int TS1Font::Draw(Canvas& c, int x, int y, const std::string& s, uint32_t color)
 // ---------------------------------------------------------------- registry + fallbacks
 
 static TS1Font g_Fonts[7];
+#ifndef __3DS__
+static TS1Font g_FamilyCounter;
+#endif
 static const int kSizes[7] = { 9, 10, 11, 12, 14, 16, 20 };
 static bool g_Loaded = false;
 static unsigned g_FontGeneration=0;
@@ -132,6 +143,9 @@ bool LoadTS1Fonts() {
         snprintf(name, sizeof name, "Fonts/variablesans_%02d.ffn", kSizes[i]);
         if (g_Fonts[i].Load(ui.Raw(name))) g_Loaded = true;
     }
+#ifndef __3DS__
+    g_FamilyCounter.LoadPanelCounter(ui.Raw("Fonts/variablesans_10.ffn"));
+#endif
     return g_Loaded;
 }
 
@@ -173,11 +187,12 @@ void TextCentered(Canvas& c, TS1Size s, const Rect& r, const std::string& text, 
     Text(c, s, r.X + (r.W - w) / 2, r.Y + (r.H - h) / 2, text, color, shadow);
 }
 
-void DrawPanelLabel(Canvas& c,TS1Size size,const Rect& box,const std::string& text,uint32_t color) {
+static void DrawPanelLabelWithFont(Canvas& c,const TS1Font* font,TS1Size size,const Rect& box,
+                                  const std::string& text,uint32_t color,PanelLabelSlot slot,bool rightAligned) {
 #if defined(__vita__) || defined(__SWITCH__)
-    if(const auto* font=FontFor(size)) {
-        // One bounded cell for the clock and one for family funds. The
-        // original font bearings can extend past the nominal label rectangle.
+    if(font) {
+        // Independent bounded cells: changing friends must not evict funds.
+        // Original font bearings can extend past the nominal label rectangle.
         struct Label {
             original::RetainedRegion pixels;
             std::string text;
@@ -187,21 +202,48 @@ void DrawPanelLabel(Canvas& c,TS1Size size,const Rect& box,const std::string& te
             unsigned generation=0;
             uint32_t color=0;
         };
-        static Label labels[2];
-        auto& label=labels[size==TS1Size::S9?0:1];
+        static Label labels[3];
+        auto& label=labels[static_cast<unsigned>(slot)];
         const bool same=label.font==font && label.generation==g_FontGeneration && label.text==text && label.color==color;
         if(!same) {
             label.ink=font->InkBounds(text);label.width=font->Width(text);
             label.text=text;label.color=color;label.font=font;label.generation=g_FontGeneration;
         }
-        const int x=box.X+(box.W-label.width)/2,y=box.Y+(box.H-font->LineHeight())/2;
+        const int x=box.X+(rightAligned?box.W-label.width:(box.W-label.width)/2),y=box.Y+(box.H-font->LineHeight())/2;
         auto area=label.ink;area.X+=x;area.Y+=y;
         label.pixels.draw(c,area,same,[&]{font->Draw(c,x,y,text,color);});
         return;
     }
 #endif
-    TextCentered(c,size,box,text,color);
+    const int width=font?font->Width(text):TextW(size,text),height=font?font->LineHeight():TextH(size);
+    const int x=box.X+(rightAligned?box.W-width:(box.W-width)/2),y=box.Y+(box.H-height)/2;
+    if(font)font->Draw(c,x,y,text,color);else Text(c,size,x,y,text,color);
 }
+
+void DrawPanelLabel(Canvas& c,TS1Size size,const Rect& box,const std::string& text,uint32_t color) {
+    DrawPanelLabel(c,size,box,text,color,size==TS1Size::S9?PanelLabelSlot::Clock:PanelLabelSlot::Funds);
+}
+
+void DrawPanelLabel(Canvas& c,TS1Size size,const Rect& box,const std::string& text,uint32_t color,
+                    PanelLabelSlot slot,bool rightAligned) {
+    DrawPanelLabelWithFont(c,FontFor(size),size,box,text,color,slot,rightAligned);
+}
+
+#ifndef __3DS__
+Rect FamilyFriendsCounterBounds(int canvasHeight) {
+    const auto* font=g_Loaded&&g_FamilyCounter.Loaded()?&g_FamilyCounter:FontFor(TS1Size::S10);
+    auto width=[&](const char* text){return font?font->Width(text):TextW(TS1Size::S10,text);};
+    const int right=178-width("$9,999,999"),w=width("999");
+    return {right-w,canvasHeight-22,w,font?font->LineHeight():TextH(TS1Size::S10)};
+}
+
+void DrawFamilyFriendsCounter(Canvas& c,const std::string& text) {
+    const auto* font=g_Loaded&&g_FamilyCounter.Loaded()?&g_FamilyCounter:FontFor(TS1Size::S10);
+    // DVD active color 0x29e65e after its RGB565 packing and presentation.
+    DrawPanelLabelWithFont(c,font,TS1Size::S10,FamilyFriendsCounterBounds(c.Height),text,
+                           RGBA(41,231,90),PanelLabelSlot::FamilyFriends,true);
+}
+#endif
 
 std::vector<std::string> Wrap(TS1Size s, const std::string& text, int maxWidth) {
     std::vector<std::string> lines;

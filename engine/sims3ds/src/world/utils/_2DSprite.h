@@ -57,6 +57,15 @@ public:
     uint16_t Room = 0xFFFF; //room to use for ambient light
     int32_t VisualSample = -1; // transient TS1 cache key; -1 retains legacy treatment
     int8_t LogicalHalf = -1; // canonical split side, explicitly assigned by architecture
+    // Original raster coordinates, independent of flipped texture coordinates.
+    // 0: none, 1: floor, 2/3: camera-space wall types 1/2.
+    uint8_t SpatialSurface = 0;
+    st::Rectangle SpatialFrame;
+    int32_t SpatialReferenceTop = 0;
+    bool SpatialFrameExact = false;
+    int16_t SpatialX = 0, SpatialY = 0, SpatialStory = 0;
+    st::Point SpatialFrameScreen;
+    int32_t SpatialReferenceScreenY = 0;
     bool PlacementRejected = false; // render-only feedback; tile cursors keep their authored colors
 
     st::Rectangle SrcRect;
@@ -81,6 +90,9 @@ public:
         Room = 0xFFFF;
         VisualSample = -1;
         LogicalHalf = -1;
+        SpatialSurface = 0;
+        SpatialFrameExact = false;
+        SpatialX = SpatialY = SpatialStory = 0;
         PlacementRejected = false;
 
         //rects are written always by sprite drawer

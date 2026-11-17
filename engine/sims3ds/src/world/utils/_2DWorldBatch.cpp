@@ -55,6 +55,12 @@ void _2DWorldBatch::Draw(_2DSprite* sprite) {
     auto height = sprite->DestRect.Height;
 
     sprite->AbsoluteDestRect = st::Rectangle((int32_t)(x + PxOffset.X), (int32_t)(y + PxOffset.Y), width, height);
+    if (sprite->SpatialSurface && HaveLightPosition) {
+        sprite->SpatialX = LightX; sprite->SpatialY = LightY; sprite->SpatialStory = LightStory;
+        sprite->SpatialFrameScreen = st::Point(int32_t(sprite->SpatialFrame.X + PxOffset.X),
+            int32_t(sprite->SpatialFrame.Y + PxOffset.Y));
+        sprite->SpatialReferenceScreenY = int32_t(sprite->SpatialReferenceTop + PxOffset.Y);
+    }
     sprite->AbsoluteWorldPosition = sprite->WorldPosition + WorldOffset;
     sprite->AbsoluteTilePosition = sprite->TilePosition + TileOffset;
     sprite->ObjectID = ObjectID;
@@ -237,7 +243,37 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
     // FSO_CPP: deferred room light (see Framebuffer::Room): write unlit colour + room id
     uint16_t* roomBuf = !fb.Room.empty() ? fb.Room.data() : nullptr;
     const bool visual = VisualLight && sprite->VisualSample >= 0;
-    const uint16_t roomId = visual ? uint16_t(sprite->VisualSample) :
+    if (visual && sprite->SpatialSurface) fb.HasSpatialSurface = true;
+    // At most two immutable authored views per sprite. Pixel coordinates stay
+    // in the unflipped full raster through source crops and viewport clipping.
+    struct MaskSample { TS1LightMask View; int X = 0, Y = 0; } masks[2];
+    int maskCount = 0;
+    uint8_t intensity = 0;
+    if (visual && sprite->SpatialSurface && sprite->SpatialFrameExact && SpatialEnabled &&
+        SpatialMasks && SpatialMasks->Ready() && sprite->VisualSample != Common::TS1::VisualLighting::BaseKey) {
+        const size_t sample = size_t(sprite->VisualSample - Common::TS1::VisualLighting::FirstKey);
+        if (sample < VisualLight->Tones.size() && sample < VisualLight->Intensities.size() && VisualLight->Tones[sample] != 32) {
+            intensity = VisualLight->Intensities[sample];
+            if (const auto* cell = VisualLight->SpatialAt(sprite->SpatialX, sprite->SpatialY, sprite->SpatialStory)) {
+                for (const auto offset : cell->Slots) {
+                    if (offset.Dx == 127) continue;
+                    int dx = offset.Dx, dy = offset.Dy;
+                    TS1LightMap::RotatePair(dx, dy, SpatialRotation);
+                    TS1LightMask view;
+                    int ox = 0, oy = 0;
+                    if (sprite->SpatialSurface == 1) {
+                        if (dx < -3 || dx > 3 || dy < -3 || dy > 3) continue;
+                        view = SpatialMasks->FloorMask();
+                        const int step = 32 << (SpatialMasks->SelectedZoom() - 1);
+                        ox = (6 + dx - dy) * (step / 2); oy = (6 + dx + dy) * (step / 4);
+                    } else view = SpatialMasks->WallMask(sprite->SpatialSurface - 1, dx, dy);
+                    if (view.Data) masks[maskCount++] = {view,ox,oy};
+                }
+            }
+        }
+    }
+    const bool spatial = maskCount != 0;
+    const uint16_t roomId = spatial ? uint16_t(65535) : visual ? uint16_t(sprite->VisualSample) :
         ((!useDepth || grayscale) ? (uint16_t)65535 : sprite->Room);
     if (roomBuf) fb.CacheLight = AmbientLight;
     if (roomBuf) { lr = lg = lb = la = 256; }
@@ -322,7 +358,23 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
             uint32_t r = c.R, g = c.G, b = c.B;
             // Cached opaque source RGB remains unlit. Every partial coverage
             // block is resolved from original fragments by World2D before use.
-            if (visual && !roomBuf) {
+            if (spatial) {
+                const int u = x + int32_t(Scroll.X) - sprite->SpatialFrameScreen.X;
+                const int v = sprite->SpatialSurface == 1 ? y + int32_t(Scroll.Y) - sprite->SpatialFrameScreen.Y :
+                    y + int32_t(Scroll.Y) - sprite->SpatialReferenceScreenY - (1 << SpatialMasks->SelectedZoom());
+                unsigned sum = intensity;
+                bool valid = true;
+                for (int i = 0; i < maskCount; ++i) {
+                    uint8_t value;
+                    if (!masks[i].View.Read(masks[i].X + u, masks[i].Y + v, value)) { valid = false; break; }
+                    sum += value; ++SpatialSamples;
+                }
+                // An unsupported full-frame adapter remains an explicit gate;
+                // it must not read outside an authored payload or wrap a row.
+                if (!valid) { ++SpatialInvalidCoordinates; sum = intensity; }
+                const auto lit = Common::TS1::PresentVisual565(c, uint8_t(std::min(sum,255u) >> 3));
+                r = lit.R; g = lit.G; b = lit.B;
+            } else if (visual && !roomBuf) {
                 const auto lit = VisualLight->Transform(c, roomId);
                 r = lit.R; g = lit.G; b = lit.B;
             }

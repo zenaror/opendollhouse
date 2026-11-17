@@ -178,6 +178,7 @@ void VM::InternalTick() {
     GlobalState[7] = (int16_t)Context->Clock->Month;
     GlobalState[8] = (int16_t)Context->Clock->Year;
     GlobalState[4] = (int16_t)Context->Clock->TimeOfDay();
+    Context->ObserveSpatialPeriod();
 
     Context->Architecture()->Tick();
 
@@ -240,6 +241,7 @@ void VM::AddToObjList(std::vector<VMEntity*>& list, VMEntity* entity) {
 
 /// Removes an entity from this Virtual Machine.
 void VM::RemoveEntity(VMEntity* entity) {
+    Context->RemoveSpatialEntity(entity);
     auto it = std::find(Entities.begin(), Entities.end(), entity);
     if (it != Entities.end()) {
         Context->SetToNextCache->RemoveObject(entity);

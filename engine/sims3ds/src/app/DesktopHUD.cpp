@@ -78,6 +78,8 @@ void LotScreen::DrawDesktop() {
     original::OfferDesktopControlHelp(c,*this);
     front::DrawPanelLabel(c,front::TS1Size::S9,Rect(83,535+dy,82,14),UIUCP::ClockText(*this),RGBA(0,255,100));
     if(S->HasFamilyBudget())front::DrawPanelLabel(c,front::TS1Size::S11,Rect(96,577+dy,92,18),UIUCP::Money(S->Budget()),RGBA(0,255,100));
+    if(const auto friends=original::DesktopFamilyFriendsSnapshot(*S))
+        front::DrawFamilyFriendsCounter(c,std::to_string(*friends));
     if (CurrentMode == Mode::Live) {
         Live->UpdateMotiveDisplay();
         // The same preserved queue layout supplies drawing and current UID hits.

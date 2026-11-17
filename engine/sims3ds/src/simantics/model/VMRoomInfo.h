@@ -45,6 +45,14 @@ struct VMEnvironmentRoom {
     FSO::Common::TS1::EnvironmentInputs Environment;
     // Original flood-fill can visit a tile more than once. Preserve multiplicity.
     std::unordered_map<int32_t, uint32_t> EnvironmentTileVisits;
+    // Original collector order, including duplicate coordinates. The score's
+    // unordered multiplicity cache cannot drive the stateful two-source grid.
+    std::vector<int32_t> SpatialTileOrder;
+    // Last room-manager collection, distinct from lazy score/render counts.
+    // The next comparison evaluates these with the CURRENT Overhead flag.
+    float SpatialLightFactor = 0;
+    int SpatialPeople = 0, SpatialLamps = 0;
+    bool SpatialPool = false;
     float Score = 0, LightFactor = 0;
     bool Outside = false;
     uint16_t CanonicalID = 0; // original record ID, independent of the global vector index
