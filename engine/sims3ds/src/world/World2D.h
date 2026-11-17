@@ -25,6 +25,7 @@
 #include <array>
 #include "core/math.h"
 #include "world/Framebuffer.h"
+#include "common/TS1/TS1VisualLighting.h"
 
 namespace FSO { namespace LotView {
 
@@ -95,6 +96,9 @@ private:
     std::vector<uint32_t> RenderRoomColors;
     uint32_t RenderOutside = 0;
     bool RenderLighting = true;
+    const FSO::Common::TS1::VisualLighting* VisualLight = nullptr;
+    uint64_t RenderVisualGeneration = 0, RenderVisualGeometry = 0;
+    bool RenderVisualEnabled = false;
     /// world-pixel bounds of every object painted into the static object layer (keys may be deleted components:
     /// never dereferenced, only looked up)
     std::unordered_map<const WorldComponent*, st::Rectangle> StaticBounds;

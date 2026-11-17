@@ -143,6 +143,7 @@ void WallComponent::Draw(WorldState& world) {
                     st::Vector3 tilePosition(x, y, (level - 1) * 2.95f + blueprint->GetAltitude(x, y)); // TS1(sims): FreeSO altitude
                     world._2D->OffsetPixel(world.WorldSpace.GetScreenFromTile(tilePosition));
                     world._2D->OffsetTile(tilePosition);
+                    world._2D->LightingPosition(x + .5f, y + .5f, level, blueprint->LightingSegments(x, y, level));
                     auto myCuts = Cuts[(size_t)off];
 
                     if ((uint8_t)comp.Segments < 16) myCuts = RotateCuts(rotation, myCuts, x, y);
@@ -432,12 +433,14 @@ void WallComponent::Draw(WorldState& world) {
                         auto _Sprite = GetWallSprite(trPattern, trStyle, 2, down, world);
 
                         _Sprite->Room = (uint16_t)(TileRoom >> roomSide);
+                        _Sprite->LogicalHalf = int8_t(blueprint->LightingHalf(x, y, level, roomSide / 16));
                         if (_Sprite->Pixel != nullptr) {
                             world._2D->Draw(_Sprite);
 
                             if (overlayID != 0) {
                                 auto spr = GetWallSprite(GetPattern(overlayID), nullptr, 2, down, world);
                                 spr->Room = 1;
+                                spr->LogicalHalf = _Sprite->LogicalHalf;
                                 if (spr->Pixel != nullptr) world._2D->Draw(spr);
                             }
 
@@ -445,11 +448,13 @@ void WallComponent::Draw(WorldState& world) {
                             if (comp.TopLeftPattern != 0) {
                                 auto floor = GetFloorSprite(floorContent->Get(comp.TopLeftPattern, false), 0, world, 3);
                                 floor->Room = (uint16_t)(TileRoom >> roomSide);
+                                floor->LogicalHalf = _Sprite->LogicalHalf;
                                 if (floor->Pixel != nullptr) world._2D->Draw(floor);
                             }
                             if (comp.TopLeftStyle != 0) {
                                 auto floor = GetFloorSprite(floorContent->Get(comp.TopLeftStyle, false), 0, world, 2);
                                 floor->Room = (uint16_t)(TileRoom >> (16 - roomSide));
+                                floor->LogicalHalf = _Sprite->LogicalHalf ^ 1;
                                 if (floor->Pixel != nullptr) world._2D->Draw(floor);
                             }
                         }
@@ -484,23 +489,27 @@ void WallComponent::Draw(WorldState& world) {
                         int roomSide = ((int)rotation / 2) * 16;
                         auto _Sprite = GetWallSprite(trPattern, trStyle, 3, down, world);
                         _Sprite->Room = (uint16_t)(TileRoom >> roomSide);
+                        _Sprite->LogicalHalf = int8_t(blueprint->LightingHalf(x, y, level, roomSide / 16));
                         if (_Sprite->Pixel != nullptr) {
                             world._2D->Draw(_Sprite);
 
                             if (overlayID != 0) {
                                 auto spr = GetWallSprite(GetPattern(overlayID), nullptr, 3, down, world);
                                 spr->Room = 1;
+                                spr->LogicalHalf = _Sprite->LogicalHalf;
                                 if (spr->Pixel != nullptr) world._2D->Draw(spr);
                             }
                             //draw diagonally cut floors
                             if (comp.TopLeftPattern != 0) {
                                 auto floor = GetFloorSprite(floorContent->Get(comp.TopLeftPattern, false), 0, world, 1);
                                 floor->Room = (uint16_t)(TileRoom >> roomSide);
+                                floor->LogicalHalf = _Sprite->LogicalHalf;
                                 if (floor->Pixel != nullptr) world._2D->Draw(floor);
                             }
                             if (comp.TopLeftStyle != 0) {
                                 auto floor = GetFloorSprite(floorContent->Get(comp.TopLeftStyle, false), 0, world, 0);
                                 floor->Room = (uint16_t)(TileRoom >> (16 - roomSide));
+                                floor->LogicalHalf = _Sprite->LogicalHalf ^ 1;
                                 if (floor->Pixel != nullptr) world._2D->Draw(floor);
                             }
                         }

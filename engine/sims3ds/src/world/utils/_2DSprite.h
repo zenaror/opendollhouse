@@ -55,6 +55,8 @@ public:
     st::Vector3 WorldPosition;
     int16_t ObjectID = 0; //used for mouse hit test render mode
     uint16_t Room = 0xFFFF; //room to use for ambient light
+    int32_t VisualSample = -1; // transient TS1 cache key; -1 retains legacy treatment
+    int8_t LogicalHalf = -1; // canonical split side, explicitly assigned by architecture
     bool PlacementRejected = false; // render-only feedback; tile cursors keep their authored colors
 
     st::Rectangle SrcRect;
@@ -77,6 +79,8 @@ public:
         TilePosition = st::Vector3();
         ObjectID = 0;
         Room = 0xFFFF;
+        VisualSample = -1;
+        LogicalHalf = -1;
         PlacementRejected = false;
 
         //rects are written always by sprite drawer

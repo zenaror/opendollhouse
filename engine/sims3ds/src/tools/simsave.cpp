@@ -386,6 +386,7 @@ struct Lot {
         BP->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::WALL_CUT_CHANGED));
         FSO::LotView::Framebuffer fb(width, height);
         (void)width;
+        Ctx->PrepareVisualLighting();
         World->Draw(fb);
         std::vector<uint8_t> rgba((size_t)fb.Width * fb.Height * 4);
         for (size_t i = 0; i < fb.Color.size(); i++) { uint32_t c = fb.Color[i];
@@ -411,6 +412,7 @@ struct Lot {
         BP->Damage.push_back(FSO::LotView::Model::BlueprintDamage(FSO::LotView::Model::BlueprintDamageType::WALL_CUT_CHANGED));
         // twice the picture's size at far zoom, averaged down 2x2 (World::Draw sizes its view to the target)
         FSO::LotView::Framebuffer fb(w * 2, h * 2);
+        Ctx->PrepareVisualLighting();
         World->Draw(fb);
         rgb.assign((size_t)w * h * 3, 0);
         for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {

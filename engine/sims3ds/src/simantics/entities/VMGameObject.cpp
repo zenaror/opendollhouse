@@ -6,6 +6,7 @@
 // FSO.SimAntics.VMGameObject (entities/VMGameObject.cs)
 #include "simantics/entities/VMGameObject.h"
 #include "simantics/entities/VMMultitileGroup.h"
+#include "simantics/engine/VMThread.h"
 #include "simantics/model/TSOPlatform/VMTSOObjectState.h"
 #include "simantics/model/TSOPlatform/VMTSOLotState.h"
 #include "simantics/VM.h"
@@ -83,10 +84,14 @@ void VMGameObject::RefreshLight() {
     if (UseWorld && WorldUI) {
         if (Disabled >= VMGameObjectDisableFlags::LotCategoryWrong) WorldUI->Room = 65533; //grayscale
         else {
-            auto flags = (VMEntityFlags2)GetValue(VMStackObjectVariable::FlagField2);
-            WorldUI->Room = ((flags & VMEntityFlags2::GeneratesLight) > 0 &&
-                GetValue(VMStackObjectVariable::LightingContribution) > 0 &&
-                (flags & (VMEntityFlags2::ArchitectualWindow | VMEntityFlags2::ArchitectualDoor)) == 0)
+            // DVD 00438022: signed nonzero contribution, excluding Portal(8).
+            const bool ts1 = Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1;
+            const auto flags = VMEntityFlags2(GetValue(VMStackObjectVariable::FlagField2));
+            const bool luminous = ts1 ? (GetValue(VMStackObjectVariable::LightingContribution) != 0 &&
+                Object && Object->OBJ && Object->OBJ->ObjectType != OBJDType::Portal) :
+                ((flags & VMEntityFlags2::GeneratesLight) > 0 && GetValue(VMStackObjectVariable::LightingContribution) > 0 &&
+                (flags & (VMEntityFlags2::ArchitectualWindow | VMEntityFlags2::ArchitectualDoor)) == 0);
+            WorldUI->Room = luminous
                 ? (uint16_t)65535 : (uint16_t)GetValue(VMStackObjectVariable::Room);
         }
     }

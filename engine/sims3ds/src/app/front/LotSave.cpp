@@ -71,6 +71,7 @@ static void RenderThumbnail(LotSession& s, int w, int h, int ax, int ay, bool ro
     auto ctx = s.Context();
     auto bp = s.Blueprint;
     if (!world || !ctx || !bp || !ctx->Architecture() || w <= 0 || h <= 0) return;
+    ctx->PrepareVisualLighting();
     auto arch = ctx->Architecture();
     auto& st = world->State;
     auto oldZoom = st.Zoom(); auto oldRot = st.Rotation(); auto oldLevel = st.Level(); auto oldCenter = st.CenterTile();

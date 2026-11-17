@@ -62,6 +62,7 @@ void FloorComponent::Draw(WorldState& world) {
                     st::Vector3 tilePosition(x, y, (level - 1) * 2.95f + blueprint->GetAltitude(x, y)); // TS1(sims): FreeSO altitude
                     world._2D->OffsetPixel(world.WorldSpace.GetScreenFromTile(tilePosition));
                     world._2D->OffsetTile(tilePosition);
+                    world._2D->LightingPosition(x + .5f, y + .5f, level, blueprint->LightingSegments(x, y, level));
 
                     if (comp.Pattern > 65533) {
                         //determine adjacent pool tiles

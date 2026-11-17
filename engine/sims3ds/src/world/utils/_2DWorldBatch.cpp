@@ -41,6 +41,14 @@ _2DSprite* _2DWorldBatch::NewSprite(_2DBatchRenderMode mode) {
 }
 
 void _2DWorldBatch::Draw(_2DSprite* sprite) {
+    sprite->VisualSample = -1;
+    if (VisualLight && HaveLightPosition && sprite->Room != 65533 && sprite->Room != 65534 &&
+        !sprite->PlacementRejected && sprite->RenderMode != _2DBatchRenderMode::NO_DEPTH) {
+        if (sprite->Room == 65535) {
+            if (LightObject) sprite->VisualSample = Common::TS1::VisualLighting::BaseKey;
+        } else sprite->VisualSample = VisualLight->Sample(LightX, LightY, LightSubX, LightSubY,
+            LightStory, LightSegments, sprite->LogicalHalf);
+    }
     auto x = sprite->DestRect.X;
     auto y = sprite->DestRect.Y;
     auto width = sprite->DestRect.Width;
@@ -58,6 +66,7 @@ void _2DWorldBatch::Draw(_2DSprite* sprite) {
 }
 
 void _2DWorldBatch::Begin(WorldCamera* worldCamera) {
+    HaveLightPosition = false;
     this->WorldCamera_ = worldCamera;
     for (auto& l : Sprites) l.clear();
     SpriteIndex = 0;
@@ -227,7 +236,9 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
     }
     // FSO_CPP: deferred room light (see Framebuffer::Room): write unlit colour + room id
     uint16_t* roomBuf = !fb.Room.empty() ? fb.Room.data() : nullptr;
-    const uint16_t roomId = (!useDepth || grayscale) ? (uint16_t)65535 : sprite->Room;
+    const bool visual = VisualLight && sprite->VisualSample >= 0;
+    const uint16_t roomId = visual ? uint16_t(sprite->VisualSample) :
+        ((!useDepth || grayscale) ? (uint16_t)65535 : sprite->Room);
     if (roomBuf) fb.CacheLight = AmbientLight;
     if (roomBuf) { lr = lg = lb = la = 256; }
 
@@ -239,7 +250,7 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
     const uint8_t* palpha = px->Alpha;
     const st::Color* ppal = px->Palette;
     const int32_t pw = px->Width;
-    const bool naturalColor = !grayscale && !sprite->PlacementRejected &&
+    const bool naturalColor = !visual && !grayscale && !sprite->PlacementRejected &&
         lr == 256 && lg == 256 && lb == 256 && la == 256;
     const int xStart = sprite->FlipHorizontally ? src.X + src.Width - 1 : src.X;
     const int xStep = sprite->FlipHorizontally ? -1 : 1;
@@ -294,7 +305,7 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
             if (rrow) {
                 // Discover domains before overwriting the previous room, and
                 // only for fragments which passed coverage and depth tests.
-                if (!fb.ResolvePrelit) {
+                if (!fb.ResolvePrelit && !visual) {
                     if (a == 255) fb.ClearPrelit(pixel);
                     else if ((crow[x] >> 24) != 0 && rrow[x] != roomId)
                         fb.MarkPrelit(pixel);
@@ -309,6 +320,12 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
                 continue;
             }
             uint32_t r = c.R, g = c.G, b = c.B;
+            // Cached opaque source RGB remains unlit. Every partial coverage
+            // block is resolved from original fragments by World2D before use.
+            if (visual && !roomBuf) {
+                const auto lit = VisualLight->Transform(c, roomId);
+                r = lit.R; g = lit.G; b = lit.B;
+            }
             if (grayscale || sprite->PlacementRejected) {
                 const uint32_t l = (r * 77 + g * 151 + b * 28) >> 8;
                 r = g = b = l;
@@ -320,7 +337,9 @@ void _2DWorldBatch::RenderSprite(_2DSprite* sprite) {
                     g = b = 3 * l / 4;
                 }
             }
-            if (prelit) {
+            if (visual) {
+                // Ambient is applied once above, or deferred for the cache.
+            } else if (prelit) {
                 const auto light = fb.CachedLight(roomId);
                 r = (r * (light.R + (light.R >> 7))) >> 8;
                 g = (g * (light.G + (light.G >> 7))) >> 8;

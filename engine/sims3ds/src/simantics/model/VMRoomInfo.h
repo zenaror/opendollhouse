@@ -47,6 +47,14 @@ struct VMEnvironmentRoom {
     std::unordered_map<int32_t, uint32_t> EnvironmentTileVisits;
     float Score = 0, LightFactor = 0;
     bool Outside = false;
+    uint16_t CanonicalID = 0; // original record ID, independent of the global vector index
+    uint8_t Story = 0;
+    bool Pool = false;
+    int VisualPeople = -1, VisualLamps = -1;
+    float VisualInputLight = -1;
+    uint8_t VisualMapByte = 0;
+    int VisualEventByte = -1;
+    uint64_t VisualEventScoreVersion = 0;
 };
 
 struct VMRoomInfo {

@@ -586,6 +586,7 @@ void VMAvatar::SubmitSourceVars(FSO::HIT::HITThread* thread, int16_t objectID) {
 }
 
 void VMAvatar::Tick() {
+    if (Thread && Thread->Context) Thread->Context->ObserveVisualActor(this);
     Velocity = st::Vector3(0, 0, 0);
     VMEntity::Tick();
 
@@ -857,6 +858,8 @@ void VMAvatar::ClearMotiveChanges() {
 }
 
 bool VMAvatar::SetPersonData(VMPersonDataVariable variable, int16_t value) {
+    if (variable == VMPersonDataVariable::Gender && Thread && Thread->Context &&
+        PersonData[int(variable)] != value) Thread->Context->VisualLightingDirty = true;
     if ((uint16_t)variable > 100) throw std::runtime_error("Person Data out of bounds!");
     switch (variable) {
         case VMPersonDataVariable::Priority:

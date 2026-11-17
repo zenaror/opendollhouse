@@ -672,6 +672,7 @@ void LotSession::RespondDialog(int code, const std::string& text) {
 }
 
 void LotSession::Draw() {
+    if (_VM && _VM->Context) _VM->Context->PrepareVisualLighting();
 #if defined(__vita__) || defined(__SWITCH__)
     _World->Draw(Frame, true);
 #else

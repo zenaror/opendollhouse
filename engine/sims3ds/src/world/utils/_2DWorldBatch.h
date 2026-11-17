@@ -20,6 +20,7 @@
 // (a GPU batching detail; it only matters for exactly equal depths).
 #pragma once
 #include <cstdint>
+#include <cmath>
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -27,6 +28,7 @@
 #include "world/Framebuffer.h"
 #include "world/utils/_2DSprite.h"
 #include "world/utils/WorldCamera.h"
+#include "common/TS1/TS1VisualLighting.h"
 
 namespace FSO { namespace Files { namespace Formats { namespace IFF { namespace Chunks { class SPRFrame; class SPR2Frame; } } } } }
 
@@ -40,6 +42,12 @@ public:
     bool OBJIDMode = false;
     /// Ambient light per room (C#: a 256x256 texture filled from Blueprint.RoomColors). 65536 entries.
     const st::Color* AmbientLight = nullptr;
+    const FSO::Common::TS1::VisualLighting* VisualLight = nullptr;
+    void LightingPosition(float x, float y, int story, uint8_t segments, bool object = false) {
+        LightX = int(std::floor(x)); LightY = int(std::floor(y)); LightStory = story;
+        LightSubX = int((x - LightX) * 16); LightSubY = int((y - LightY) * 16);
+        LightSegments = segments; LightObject = object; HaveLightPosition = true;
+    }
     float PreciseZoom = 1.0f;
 
     /// The render target (back buffer or one of the static layer buffers).
@@ -88,6 +96,9 @@ private:
     st::Vector3 TileOffset;
     int16_t ObjectID = 0;
     st::Vector2 Scroll;
+    int LightX = 0, LightY = 0, LightSubX = 8, LightSubY = 8, LightStory = 1;
+    uint8_t LightSegments = 0;
+    bool HaveLightPosition = false, LightObject = false;
 
     std::unordered_map<const void*, Texture2D> _TextureCache;
     std::unordered_map<const void*, Texture2D> _ZTextureCache;

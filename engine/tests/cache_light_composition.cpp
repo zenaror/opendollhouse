@@ -18,7 +18,10 @@
 #include "files/formats/iff/IffFile.h"
 #include "files/formats/iff/chunks/SPR2.h"
 #include "files/formats/iff/chunks/DGRP.h"
+#include "files/formats/iff/chunks/OBJD.h"
 #include "world/utils/TriangleRaster.h"
+#include "simantics/VM.h"
+#include "simantics/entities/VMGameObject.h"
 
 using namespace FSO::LotView;
 using namespace FSO::LotView::Utils;
@@ -237,9 +240,74 @@ void CheckResolved(Fixture& f,const char* why){
     Framebuffer full(shown.Width,shown.Height);f.world.Draw(f.state,full,false);
     Check(shown.Color==saved&&shown.Color==full.Color,"resolved retained/full redraw mismatch");
 }
-void ResolvedGroups(){
+void EnableOriginalAmbient(Fixture& f){
+    auto& light=f.blueprint.VisualLight;light.Enabled=true;light.Width=4;light.Height=2;
+    light.Generation=light.GeometryGeneration=1;light.Maps.emplace_back(8,uint32_t(1)|(uint32_t(1)<<16));
+    light.Tones.assign(4,16);light.Grid.assign(8,0);
+}
+void OriginalObjectPosition(){
+    Fixture f(false,false);
+    auto& light=f.blueprint.VisualLight;light.Enabled=true;light.Width=light.Height=8;
+    const auto whole=[](unsigned room){return room|(room<<16);};
+    light.Maps.assign(1,std::vector<uint32_t>(64,whole(1)));light.Tones={16,16,20,20,16,16,25,25};
+    light.Maps[0][3*8+3]=2|(3<<16);light.Maps[0][3*8+2]=whole(2);light.Maps[0][3*8+4]=whole(3);
+    light.Maps[0][2*8+3]=whole(2);light.Maps[0][4*8+3]=whole(3);
+    std::vector<std::vector<Model::WallTile>> walls(1,std::vector<Model::WallTile>(64));
+    walls[0][3*8+3].Segments=Model::WallSegments(16);
+    f.blueprint.Width=f.blueprint.Height=8;f.blueprint.Walls=&walls;
+    OBJD definition;definition.ObjectType=OBJDType::Normal;FSO::Content::GameObject gameObject;gameObject.OBJ=&definition;
+    // A real VMEntity needs a resource owner even with empty behavior tables.
+    FSO::Content::GameObjectResource resource(&f.iff,nullptr,nullptr,"visual-object-position-fixture",true);
+    gameObject.Resource=&resource;
+    FSO::SimAntics::VM::UseWorld(true);
+    FSO::SimAntics::VMGameObject entity(&gameObject,new ObjectComponent(&gameObject));
+    auto& object=*static_cast<ObjectComponent*>(entity.WorldUI.get());object.DGRP=&f.group;object.Room=7;object.blueprint=&f.blueprint;
+    f.batch.VisualLight=&light;
+    const auto draw=[&](int rawX,int rawY,int expected){
+        entity.Position(Model::LotTilePos(int16_t(rawX),int16_t(rawY),1));
+        Framebuffer target(4,2);target.Clear(0xff000000u);f.batch.Target=&target;
+        f.batch.SetScroll({0,0});f.batch.OffsetPixel({0,0});f.batch.OffsetTile({0,0,0});
+        f.batch.Begin(f.state.Camera());object.Draw(f.state);f.batch.End();f.batch.Target=nullptr;
+        Check(object.dgrp.Items[0].Sprite.VisualSample==expected,"object lighting did not sample the raw VM subtile/side");
+        return target.Color;
+    };
+    const auto low=draw(52,52,FSO::Common::TS1::VisualLighting::FirstKey+5);
+    const auto high=draw(56,56,FSO::Common::TS1::VisualLighting::FirstKey+7);
+    Check(low!=high,"subtile fixture did not change actual raster output");
+    draw(64,52,FSO::Common::TS1::VisualLighting::FirstKey+6);
+    f.group.Images[0].Sprites[0].ObjectOffset.X=16;f.group.Images[0].Sprites[0].SpriteOffset.X=7;
+    object.dgrp.InvalidateTextures();draw(52,52,FSO::Common::TS1::VisualLighting::FirstKey+5);
+}
+void OriginalAmbientCache(){
+    for(bool palette:{false,true})for(bool mixed:{false,true})for(bool opaque:{false,true}){
+        Fixture f(palette,mixed);
+        if(opaque){auto& frame=*f.spr.Frames[0];if(palette)frame.AlphaData[0]=255;else frame.PixelData[0].A=255;}
+        EnableOriginalAmbient(f);auto& light=f.blueprint.VisualLight;
+        Advance(f);CheckResolved(f,"TS1 source palette versus retained composition");
+        const auto initial=f.world.Composite.Color;
+        Check(initial!=std::vector<uint32_t>(initial.size(),f.world.ClearColor),"TS1 fixture must draw visible pixels");
+        const auto rasters=f.world.StaticRedraws;
+        light.Tones[2]=light.Tones[3]=25;++light.Generation;
+        Advance(f);CheckResolved(f,"TS1 actual light change without damage");
+        Check(f.world.StaticRedraws==rasters,"ambient relight rerasterized an unlit static layer");
+        Check(f.world.Composite.Color!=initial,"TS1 relight did not reach displayed pixels");
+        const auto changed=f.world.Composite.Color;
+        f.state.ObjectLighting=false;f.blueprint.Damage.emplace_back(Model::BlueprintDamageType::LIGHTING_CHANGED);
+        Advance(f);CheckResolved(f,"F5 must preserve ordinary ambient");
+        Check(f.world.Composite.Color==changed,"F5 changed an ambient-only source");
+        f.state.RenderingThumbnail=true;Advance(f);CheckResolved(f,"TS1 to existing neutral thumbnail mode");
+        f.state.RenderingThumbnail=false;Advance(f);CheckResolved(f,"thumbnail to TS1 ambient return");
+        Check(f.world.Composite.Color==changed,"thumbnail roundtrip lost TS1 cached material");
+        const auto stableRasters=f.world.StaticRedraws,stableReplays=f.world.CompositeReplays;
+        Advance(f);Check(f.world.StaticRedraws==stableRasters&&f.world.CompositeReplays==stableReplays,
+            "stable TS1 frame replayed retained geometry");
+    }
+    std::cout<<"TS1 ambient retained/full and static source-cache roundtrips passed\n";
+}
+void ResolvedGroups(bool original=false){
     Fixture f(true,true);
-    ObjectComponent other(nullptr);other.DGRP=&f.group;other.Room=6;other.Level=1;
+    if(original)EnableOriginalAmbient(f);
+    ObjectComponent other(nullptr);other.DGRP=&f.group;other.Room=original?65535:6;other.Level=1;
     other.TileX=other.TileY=0;other.blueprint=&f.blueprint;
     other.renderInfo.Layer=WorldObjectRenderLayer::DYNAMIC;other.ForceDynamic=true;
     f.blueprint.RoomColors[6]={160,96,48};f.blueprint.Objects.push_back(&other);
@@ -265,11 +333,11 @@ void ResolvedGroups(){
     f.blueprint.Objects.push_back(&other);Advance(f);CheckResolved(f,"new member omitted");
     other.Room=65533;f.blueprint.RoomColors[65533]=st::Color::Transparent();
     Advance(f);CheckResolved(f,"gray sentinel acquired dark unused-room tint in direct crop");
-    Check(f.world.Composite.Color[2]==Framebuffer::Pack(113,113,113,255),
+    Check(original||f.world.Composite.Color[2]==Framebuffer::Pack(113,113,113,255),
           "gray sentinel did not preserve its unlit grayscale sprites");
     Check(f.world.Composite.Color!=std::vector<uint32_t>(f.world.Composite.Color.size(),0xff000000u),
           "gray sentinel fixture drew nothing");
-    other.Room=6;Advance(f);
+    other.Room=original?65535:6;Advance(f);
     f.state.RenderingThumbnail=true;f.state.ThumbnailGroundBounds={1,1,1,1};
     Advance(f);CheckResolved(f,"thumbnail bounds did not remove group");
     f.state.ThumbnailGroundBounds={0,0,1,1};Advance(f);CheckResolved(f,"thumbnail bounds return");
@@ -279,8 +347,9 @@ void ResolvedGroups(){
     f.state.CenterTile({0.25f,0});Advance(f);CheckResolved(f,"scroll omitted old/new group bounds");
     f.state.CenterTile({0,0});Advance(f);CheckResolved(f,"scroll return");
 }
-void InterleavedDepth(){
+void InterleavedDepth(bool original=false){
     Fixture f(false,true);
+    if(original)EnableOriginalAmbient(f);
     f.state.SetDimensions({64,64});f.state.WorldSpace.Invalidate();f.state.SimpleTerrain=true;
     std::fill(f.blueprint.RoomColors.begin(),f.blueprint.RoomColors.end(),st::Color::White());
     f.spr.Frames[0]->PixelData[0]={200,40,20,255};
@@ -305,7 +374,7 @@ void InterleavedDepth(){
     f.world.MergeLayer(f.world.StaticFloor.Buffer,flattened,{0,0,64,64});
     f.world.MergeLayer(f.world.StaticObjects.Buffer,flattened,{0,0,64,64});
     const auto reference=Reference(f);
-    std::cout<<"depth interleave flattened_max="<<Maximum(flattened.Color,reference.Color)
+    std::cout<<"depth interleave ts1="<<original<<" flattened_max="<<Maximum(flattened.Color,reference.Color)
              <<" resolved_max="<<Maximum(f.world.Composite.Color,reference.Color)<<'\n';
     Check(flattened.Color!=reference.Color,"flattened depth fixture did not demonstrate loss");
     Check(f.world.Composite.Color==reference.Color,"direct crop did not resolve interleaved depth");
@@ -314,8 +383,9 @@ void InterleavedDepth(){
     f.world.Invalidate();Advance(f);
     Check(f.world.Composite.Color==before,"interleaved depth depends on static/dynamic membership");
 }
-void LocalMemberDamage(){
+void LocalMemberDamage(bool original=false){
     Fixture f(false,false);
+    if(original)EnableOriginalAmbient(f);
     f.state.SetDimensions({128,64});
     auto background=std::make_unique<SPR2Frame>(&f.spr);
     background->Width=background->Height=1;background->ZBufferData={128};
@@ -376,8 +446,8 @@ void LocalMemberDamage(){
     std::cout<<"resolved local movement_pixels="<<localPixels<<" animation_pixels="<<animationPixels
              <<" simultaneous_pixels="<<simultaneousPixels<<" full_group_pixels="<<fullArea<<'\n';
 }
-void GroupAllocationFallback(){
-    Fixture f(false,true);Advance(f);
+void GroupAllocationFallback(bool original=false){
+    Fixture f(false,true);if(original)EnableOriginalAmbient(f);Advance(f);
     std::vector<World2D::ObjectView>().swap(f.world.FrameObjects);
     bool changed=false;
     failedAllocation=false;failAllocationBytes=sizeof(World2D::ObjectView)*f.blueprint.Objects.size();
@@ -431,5 +501,5 @@ void AllocationFallback(){
 int main(){try{
     for(bool palette:{false,true})for(bool mix:{false,true})
         for(uint32_t bg:{0xff000000u,0xff3c2814u})CacheCases(palette,mix,bg);
-    Metadata();Triangle();SaturatedOutsideTint();OutsideProducerOrder();AllocationFallback();ResolvedGroups();GroupAllocationFallback();InterleavedDepth();LocalMemberDamage();return 0;
+    Metadata();Triangle();SaturatedOutsideTint();OutsideProducerOrder();AllocationFallback();ResolvedGroups();ResolvedGroups(true);GroupAllocationFallback();GroupAllocationFallback(true);InterleavedDepth();InterleavedDepth(true);LocalMemberDamage();LocalMemberDamage(true);OriginalAmbientCache();OriginalObjectPosition();return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

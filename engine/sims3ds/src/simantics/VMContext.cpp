@@ -20,6 +20,7 @@
 #include <random>
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace FSO { namespace SimAntics {
 using namespace FSO::LotView::Model;
@@ -242,6 +243,7 @@ void VMContext::RefreshLighting(uint16_t room, bool commit) {
 // Legacy non-TS1 consumer retains its existing visual-room score. TS1 uses the
 // separately cached original environment partitions, never native room aliases.
 void VMContext::RefreshRoomScore(uint16_t room) {
+    VisualLightingDirty = true;
     EnvironmentObjectsDirty = true;
     if (VM && VM->TS1) return;
     if (RoomInfo.empty() || room == 0 || room >= RoomInfo.size()) return;
@@ -318,6 +320,127 @@ void VMContext::RefreshEnvironmentScores() {
     OutdoorEnvironmentScore = Common::TS1::EvaluateOutdoorEnvironment(outdoorSum, tuning, period);
     EnvironmentPeriod = period;
     EnvironmentObjectsDirty = false;
+}
+
+static void CollectVisualCounts(VMContext& ctx, std::array<int, 2048>& people, std::array<int, 2048>& lamps, bool refreshGraphics = false) {
+    const auto* arch = ctx.Architecture();
+    for (auto* ent : ctx.VM->Entities) {
+        if (refreshGraphics) if (auto* object = dynamic_cast<VMGameObject*>(ent)) object->RefreshLight();
+        if (!ent || ent->Dead || !ent->Object || !ent->Object->OBJ ||
+            ent->GetValue(VMStackObjectVariable::Hidden) != 0 || ent->GetValue(VMStackObjectVariable::Room) < 0) continue;
+        const auto pos = ent->Position();
+        if (pos.Level < 1 || size_t(pos.Level) > ctx.EnvironmentTileRooms.size()) continue;
+        if (pos.TileX() < 0 || pos.TileY() < 0 || pos.TileX() >= arch->Width || pos.TileY() >= arch->Height) continue;
+        const auto& tiles = ctx.EnvironmentTileRooms[pos.Level - 1];
+        const auto found = tiles.find(pos.TileY() * arch->Width + pos.TileX());
+        if (found == tiles.end()) continue;
+        const auto type = ent->Object->OBJ->ObjectType;
+        const bool valid = pos.TileX() > 0 && pos.TileY() > 0 && pos.TileX() < arch->Width - 1 && pos.TileY() < arch->Height - 1;
+        for (const auto& visit : found->second) {
+            const auto id = ctx.EnvironmentRooms[visit.first].CanonicalID;
+            if (type == OBJDType::Person) people[id] += int(visit.second);
+            if (valid && type != OBJDType::Portal &&
+                (uint16_t(ent->GetValue(VMStackObjectVariable::FlagField2)) & 0x400)) lamps[id] += int(visit.second);
+        }
+    }
+}
+
+void VMContext::ObserveVisualActor(VMEntity* entity, bool removing) {
+    auto* actor = dynamic_cast<VMAvatar*>(entity);
+    if (!actor || (!removing && actor->Dead) || !VM || !VM->TS1 || !Blueprint || !Architecture()) return;
+    const int env = removing ? -5 : GetEnvironmentRoomAt(actor->Position());
+    const int room = env > 0 ? int(EnvironmentRooms[size_t(env)].CanonicalID) : -5;
+    const bool human = actor->GetPersonData(VMPersonDataVariable::Gender) < 2;
+    auto& previous = VisualActorRooms[actor];
+    const int old = previous.Room;
+    previous = {room, human};
+    if (old != room) VisualLightingDirty = true;
+    if (old == room || !human) return;
+    // Observe at the actor tick boundary. Several VM ticks may happen before
+    // one draw; publication must not erase an intermediate visit to a pet room.
+    RefreshEnvironmentScores();
+    std::array<int, 2048> people{}, lamps{};
+    CollectVisualCounts(*this, people, lamps);
+    const auto setOverhead = [&](int id, bool value) {
+        if (id < 0 || VisualRoomFlags[size_t(id)] != 0 || bool(VisualOverhead[size_t(id)]) == value) return;
+        VisualOverhead[size_t(id)] = value;
+        for (auto& record : EnvironmentRooms) if (record.Story && record.CanonicalID == id) {
+            if (lamps[size_t(id)] == 0 && record.LightFactor < .8f) {
+                record.VisualEventByte = Common::TS1::VisualByte(value ? .8f : record.LightFactor);
+                record.VisualEventScoreVersion = EnvironmentScoreRefreshes;
+            }
+            break;
+        }
+    };
+    if (old >= 0 && people[size_t(old)] == 0) setOverhead(old, false);
+    if (room >= 0) setOverhead(room, true);
+    VisualLightingDirty = true;
+}
+
+void VMContext::RemoveVisualActor(VMEntity* entity) {
+    ObserveVisualActor(entity, true);
+    VisualActorRooms.erase(entity);
+    VisualLightingDirty = true;
+}
+
+void VMContext::PrepareVisualLighting() {
+    if (!VM || !VM->TS1 || !Blueprint || !Architecture()) return;
+    const int period = Clock ? Clock->TimeOfDay() : 0;
+    if (!VisualLightingDirty && !EnvironmentObjectsDirty && VisualLightingPeriod == period) return;
+    RefreshEnvironmentScores();
+    ++VisualLightingRefreshes;
+    const auto* arch = Architecture();
+    if (!Blueprint->VisualLight.Enabled) for (auto* ent : VM->Entities) ObserveVisualActor(ent);
+    std::array<int, 2048> people{}, lamps{};
+    CollectVisualCounts(*this, people, lamps, true);
+    for (size_t i = 1; i < EnvironmentRooms.size(); ++i) {
+        auto& room = EnvironmentRooms[i];
+        const auto id = room.CanonicalID;
+        if (VisualScoreVersion != EnvironmentScoreRefreshes || room.VisualPeople != people[id] ||
+            room.VisualLamps != lamps[id] || room.VisualInputLight != room.LightFactor) {
+            const float direct = Common::TS1::DirectVisualFactor(room.LightFactor, room.Pool,
+                VisualOverhead[id], lamps[id], people[id]);
+            room.VisualMapByte = Common::TS1::VisualByte(room.Outside ? room.LightFactor : direct);
+            room.VisualPeople = people[id]; room.VisualLamps = lamps[id]; room.VisualInputLight = room.LightFactor;
+        }
+    }
+    for (auto& record : EnvironmentRooms)
+        if (record.VisualEventByte >= 0 && record.VisualEventScoreVersion == EnvironmentScoreRefreshes)
+            record.VisualMapByte = uint8_t(record.VisualEventByte);
+    auto& visual = Blueprint->VisualLight;
+    const bool wasEnabled = visual.Enabled;
+    const bool geometryChanged = visual.GeometryGeneration != VisualGeometryVersion;
+    std::vector<std::vector<uint32_t>> maps;
+    if (geometryChanged) maps.assign(EnvironmentMaps.begin(), EnvironmentMaps.begin() + std::min<size_t>(2, EnvironmentMaps.size()));
+    if (EnvironmentRooms.size() * 2 >= Common::TS1::VisualLighting::BaseKey - Common::TS1::VisualLighting::FirstKey ||
+        Blueprint->Light.size() >= Common::TS1::VisualLighting::FirstKey)
+        throw std::runtime_error("TS1 visual sample capacity exceeded");
+    std::vector<uint8_t> tones(EnvironmentRooms.size() * 2);
+    std::vector<uint8_t> grid(size_t(2) * arch->Width * arch->Height, 0);
+    for (size_t i = 1; i < EnvironmentRooms.size(); ++i) {
+        const auto& room = EnvironmentRooms[i];
+        const float direct = Common::TS1::DirectVisualFactor(room.LightFactor, room.Pool,
+            VisualOverhead[room.CanonicalID], lamps[room.CanonicalID], people[room.CanonicalID]);
+        const uint8_t byte = room.VisualMapByte;
+        constexpr float inv255 = 1.0f / 255.0f;
+        tones[i * 2] = Common::TS1::VisualTone(float(byte * inv255), period);
+        tones[i * 2 + 1] = Common::TS1::VisualTone(direct, period);
+        for (const auto& tile : room.EnvironmentTileVisits)
+            grid[size_t(room.Story - 1) * arch->Width * arch->Height + size_t(tile.first)] = byte;
+    }
+    // Publish one coherent renderer-owned snapshot after all allocations succeed.
+    visual.Width = arch->Width; visual.Height = arch->Height;
+    if (geometryChanged) { visual.Maps.swap(maps); visual.GeometryGeneration = VisualGeometryVersion; }
+    visual.Grid.swap(grid);
+    visual.Enabled = true;
+    if (!wasEnabled || visual.Tones != tones) {
+        visual.Tones.swap(tones); ++visual.Generation;
+        Blueprint->Damage.push_back(BlueprintDamage(BlueprintDamageType::LIGHTING_CHANGED));
+    }
+    VisualLightingDirty = false;
+    VisualLightingPeriod = period;
+    VisualScoreVersion = EnvironmentScoreRefreshes;
+    for (auto& record : EnvironmentRooms) record.VisualEventByte = -1;
 }
 
 int32_t VMContext::GetEnvironmentRoomAt(const LotTilePos& pos) const {
@@ -398,6 +521,7 @@ static bool MovedObjectAffectsEnvironment(VMContext* context, VMEntity* obj) {
 }
 
 void VMContext::RegisterObjectPos(VMEntity* obj) {
+    VisualLightingDirty = true;
     auto pos = obj->Position();
     if (pos.Level < 1) return;
 
@@ -420,6 +544,7 @@ void VMContext::RegisterObjectPos(VMEntity* obj) {
 }
 
 void VMContext::UnregisterObjectPos(VMEntity* obj) {
+    VisualLightingDirty = true;
     //remove object from room
 
     auto room = GetObjectRoom(obj);

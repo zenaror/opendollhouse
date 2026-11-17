@@ -248,6 +248,7 @@ void VM::RemoveEntity(VMEntity* entity) {
         if (entity->ObjectID < ObjectId) ObjectId = entity->ObjectID; //this id is now the smallest free object id.
     }
     entity->Dead = true;
+    Context->RemoveVisualActor(entity);
 }
 
 void VM::DeleteFromObjList(std::vector<VMEntity*>& list, VMEntity* entity) {

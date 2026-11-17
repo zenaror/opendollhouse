@@ -266,6 +266,8 @@ void World2D::PreDraw(WorldState& state) {
                 redrawFloor = redrawWall = redrawStaticObjects = true;
                 break;
             case BlueprintDamageType::LIGHTING_CHANGED: {
+                // TS1 sprite ambient uses VisualLight independently of F5.
+                // Leave the unproved legacy rig/terrain RGB path unchanged.
                 Blueprint->GenerateRoomLights(state.ObjectLighting);
                 state.OutsideColor = Blueprint->RoomColors[1];
                 _2d->AmbientLight = Blueprint->RoomColors.data();
@@ -352,6 +354,8 @@ void World2D::PreDraw(WorldState& state) {
     // Save captures follow GetLotThumb's ClearLighting(false)/white exterior.
     // Null means unlit in the sprite rasterizer; normal frames rebind rooms.
     _2d->AmbientLight = state.RenderingThumbnail ? nullptr : Blueprint->RoomColors.data();
+    VisualLight = Blueprint->VisualLight.Enabled && !state.RenderingThumbnail ? &Blueprint->VisualLight : nullptr;
+    _2d->VisualLight = VisualLight;
     if (state.RenderingThumbnail) state.OutsideColor = st::Color::White();
 
     if (recacheTerrain && Blueprint->Terrain)
@@ -363,7 +367,11 @@ void World2D::PreDraw(WorldState& state) {
     OutsideLight = state.RenderingThumbnail ? st::Color::White() :
         (Blueprint->Light.size() > 1 ? Blueprint->RoomColors[1] : state.OutsideColor);
     if (OutsideLight.A == 0) OutsideLight = st::Color::White();
-    bool paletteChanged = RenderLighting != (AmbientLight != nullptr) ||
+    const bool visualModeChanged = RenderVisualEnabled != (VisualLight != nullptr);
+    const bool visualGeometryChanged = VisualLight && RenderVisualGeometry != VisualLight->GeometryGeneration;
+    const bool visualChanged = VisualLight && RenderVisualGeneration != VisualLight->Generation;
+    if (visualModeChanged || visualGeometryChanged) redrawFloor = redrawWall = redrawStaticObjects = true;
+    bool paletteChanged = visualModeChanged || visualChanged || RenderLighting != (AmbientLight != nullptr) ||
         RenderOutside != OutsideLight.PackedValue() || RenderRoomColors.size() != Blueprint->Light.size();
     if (!paletteChanged) for (size_t i = 0; i < RenderRoomColors.size(); ++i)
         if (RenderRoomColors[i] != Blueprint->RoomColors[i].PackedValue()) { paletteChanged = true; break; }
@@ -375,10 +383,13 @@ void World2D::PreDraw(WorldState& state) {
         relight = true;
         // Only layers which contain resolved light mixtures depend on the
         // palette during rasterization. Opaque/single-domain layers stay unlit.
-        redrawFloor |= StaticFloor.Buffer.HasPrelit;
-        redrawWall |= StaticWall.Buffer.HasPrelit;
-        redrawStaticObjects |= StaticObjects.Buffer.HasPrelit;
+        redrawFloor |= !VisualLight && StaticFloor.Buffer.HasPrelit;
+        redrawWall |= !VisualLight && StaticWall.Buffer.HasPrelit;
+        redrawStaticObjects |= !VisualLight && StaticObjects.Buffer.HasPrelit;
     }
+    RenderVisualEnabled = VisualLight != nullptr;
+    RenderVisualGeneration = VisualLight ? VisualLight->Generation : 0;
+    RenderVisualGeometry = VisualLight ? VisualLight->GeometryGeneration : 0;
     bool sizeChanged = Composite.Width != bw || Composite.Height != bh;
     auto newOrigin = GetBufferOrigin(pxOffset);
     const bool bufferShifted = HaveOrigin && newOrigin != Origin;
@@ -644,7 +655,7 @@ void World2D::RenderLayer(int layer, WorldState& state, const st::Rectangle* cli
     }
     fb.ResetClip();
     _2d->Target = nullptr;
-    if (!resolving && (fb.NewPrelitPixels || fb.PrelitAll)) {
+    if (!VisualLight && !resolving && (fb.NewPrelitPixels || fb.PrelitAll)) {
         // Replay from the first fragment: lighting an already mixed RGB value
         // cannot recover its individual ordinary/luminous contributions.
         fb.ResolvePrelit = true;
@@ -702,7 +713,13 @@ void World2D::MergeLayer(const Framebuffer& src, Framebuffer& dst, const st::Rec
             float d = sd[x];
             if (d > td[x]) continue;
             td[x] = d;
-            if (rooms && AmbientLight != nullptr && !src.IsPrelit((size_t)y * src.Width + x)) {
+            const uint16_t key = rooms ? rooms[(size_t)y * src.Width + x] : uint16_t(65535);
+            if (rooms && VisualLight && VisualLight->IsKey(key)) {
+                if (a == 255) c = VisualLight->Transform(st::Color(c & 255, (c >> 8) & 255,
+                    (c >> 16) & 255, 255), key).PackedValue();
+                // Partial (including aggregated opaque) coverage is replaced
+                // by fragment replay in BuildComposite, never post-LUT blended.
+            } else if (rooms && AmbientLight != nullptr && !src.IsPrelit((size_t)y * src.Width + x)) {
                 // deferred ambient light (psZDepthSprite: colour * tex2D(ambientSampler, room))
                 uint16_t room = rooms[(size_t)y * src.Width + x];
                 if (room != 65535) {

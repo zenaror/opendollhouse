@@ -5,6 +5,7 @@
  */
 // FSO.LotView.Components.ObjectComponent (World/components/ObjectComponent.cs)
 #include "world/components/ObjectComponent.h"
+#include "world/utils/_2DWorldBatch.h"
 #include "world/model/Blueprint.h"
 #include "world/WorldState.h"
 #include "content/ContentManager.h"
@@ -241,6 +242,11 @@ void ObjectComponent::Draw(WorldState& world) {
     if (CutawayHidden()) return;
     if (this->DGRP != nullptr) {
         SyncRenderer();
+        // VMGameObject::VisualPosition stores raw/16 minus (.5,.5). Lighting
+        // samples the VM position, independent of container/draw/DGRP offsets.
+        const float lightX = Position.X + .5f, lightY = Position.Y + .5f;
+        world._2D->LightingPosition(lightX, lightY, Level,
+            blueprint ? blueprint->LightingSegments(int(std::floor(lightX)), int(std::floor(lightY)), Level) : 0, true);
         dgrp.Draw(world);
     }
     // STUB(3ds): headline balloons (Texture2D rendered by VMRuntimeHeadline) are not drawn.

@@ -59,6 +59,15 @@ public:
     std::vector<std::unordered_map<int32_t, std::vector<std::pair<uint16_t, uint32_t>>>> EnvironmentTileRooms;
     bool EnvironmentObjectsDirty = true;
     uint64_t EnvironmentScoreRefreshes = 0, EnvironmentObjectPasses = 0;
+    bool VisualLightingDirty = true;
+    int VisualLightingPeriod = -1;
+    uint64_t VisualLightingRefreshes = 0;
+    uint64_t VisualGeometryVersion = 1;
+    uint64_t VisualScoreVersion = 0;
+    std::array<uint8_t, 2048> VisualOverhead{}; // original records survive ID reuse
+    std::array<uint8_t, 2048> VisualRoomFlags{}; // last record outside/pool flags, including inactive IDs
+    struct VisualActorRoom { int Room = -5; bool Human = false; };
+    std::unordered_map<const VMEntity*, VisualActorRoom> VisualActorRooms;
 
     FSO::SimAntics::VM* VM = nullptr;
 
@@ -80,6 +89,9 @@ public:
     void RefreshRoomScore(uint16_t room);
     void RebuildEnvironmentGeometry(); // original logical map, independent of routing/graphics
     void RefreshEnvironmentScores();
+    void PrepareVisualLighting(); // coalesced render preparation; never advances the VM
+    void RemoveVisualActor(VMEntity* entity);
+    void ObserveVisualActor(VMEntity* entity, bool removing = false); // actor tick cadence, not draw cadence
     int32_t GetEnvironmentRoomAt(const FSO::LotView::Model::LotTilePos& pos) const;
     float GetEnvironmentScore(const FSO::LotView::Model::LotTilePos& pos);
     void AddRoomPortal(VMEntity* obj, uint16_t room);

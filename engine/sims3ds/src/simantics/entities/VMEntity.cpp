@@ -600,6 +600,10 @@ int16_t VMEntity::GetValue(VMStackObjectVariable var) {
 }
 
 bool VMEntity::SetValue(VMStackObjectVariable var, int16_t value) {
+    if (Thread && Thread->Context && int(var) >= 0 && int(var) < int(ObjectData.size()) &&
+        ObjectData[int(var)] != value && (var == VMStackObjectVariable::Hidden ||
+        var == VMStackObjectVariable::Room || var == VMStackObjectVariable::LightingContribution ||
+        var == VMStackObjectVariable::FlagField2)) Thread->Context->VisualLightingDirty = true;
     switch (var) //special cases
     {
         case VMStackObjectVariable::Flags: {

@@ -15,6 +15,7 @@
 #include "world/model/FloorTile.h"
 #include "world/model/Room.h"
 #include "world/model/RoomLighting.h"
+#include "common/TS1/TS1VisualLighting.h"
 #include "world/model/LotTilePos.h"
 #include "world/components/WorldComponents.h"
 
@@ -71,6 +72,7 @@ public:
     std::vector<Room> Rooms;
 
     std::vector<st::Color> RoomColors;
+    FSO::Common::TS1::VisualLighting VisualLight;
     st::Rectangle BuildableArea;
     st::Rectangle TargetBuildableArea;
 
@@ -91,6 +93,18 @@ public:
     ~Blueprint();
 
     void GenerateRoomLights(bool objectLighting = true);
+    uint8_t LightingSegments(int x, int y, int story) const {
+        const size_t tile = size_t(y) * Width + x;
+        return Walls && story >= 1 && size_t(story) <= Walls->size() &&
+            x >= 0 && y >= 0 && x < Width && y < Height && tile < (*Walls)[story - 1].size() ?
+            uint8_t((*Walls)[story - 1][tile].Segments) : 0;
+    }
+    int LightingHalf(int x, int y, int story, int graphicalHalf) const {
+        // SpreadOnto's inDir is the direction of travel into the tile.
+        // Both horizontal low halves are northwest. The graphical vertical
+        // low half is northeast, while the original logical low is southwest.
+        return graphicalHalf ^ int((LightingSegments(x, y, story) & 32) != 0);
+    }
 
     void AddAvatar(Components::AvatarComponent* avatar);
     void RemoveAvatar(Components::AvatarComponent* avatar) {

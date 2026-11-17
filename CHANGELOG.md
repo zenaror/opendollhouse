@@ -7,6 +7,9 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Floors, walls and ordinary objects use the original room-lighting palette
+  and day/night limits. Local lamp effects, Sim shading, terrain and roofs
+  still need further work.
 - Studio Town uses separate music for its map and public lot editor. Entering
   an editor no longer restarts the opening music, and switching between its
   Buy and Build modes keeps the current song playing.
@@ -29,9 +32,8 @@ Notable changes for players and contributors, following
   when the renderer rebuilds or reuses their cached images.
 - In-lot audio settings use the original eleven volume positions and gain curve.
   Background simulation preserves the player's selected speed and pause state.
-- The Lighting option controls rendered object light without changing room
-  satisfaction. Auto Centering controls scripted event focus while preserving
-  explicit camera commands.
+- Lighting preferences do not change room satisfaction. Auto Centering controls
+  scripted event focus while preserving explicit camera commands.
 - Settings captions support illustrated help, including manual help with Quick
   Tips off. Clicking an open settings category closes it, as in the original.
 - Corrected priority, waiting and cancellation in ordinary action queues.
