@@ -1153,6 +1153,12 @@ public:
                 live->Avatar->RightHandGesture = static_cast<Vitaboy::SimHandGesture>(a.rightHand);
             }
             e->Thread = std::move(r.preparedThread);
+            // Old native records kept internal room0 in ObjectData. Publication
+            // installs that bank after positioning, so normalize the script
+            // sentinel here without replaying placement, Init or Reset.
+            if (vm.TS1 && e->Position() == LotView::Model::LotTilePos::OUT_OF_WORLD) {
+                e->SetRoom(0);
+            }
         }
     }
 private:

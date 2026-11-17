@@ -193,7 +193,7 @@ std::vector<VMAvatar*> VMTS1FamilyLoader::LoadFamily(int16_t houseNumber, FAMI* 
         }
         // Existing OBJM fallback for non-resident visitors without a decoded
         // position. Never use it to guess an ambiguous resident's affiliation.
-        if (ava->Position() == LotTilePos::OUT_OF_WORLD && VMTS1Neighbourhood::NeighborIDOf(ava) > 0) {
+        if (!preserveSavedPositions && ava->Position() == LotTilePos::OUT_OF_WORLD && VMTS1Neighbourhood::NeighborIDOf(ava) > 0) {
             snprintf(buf, sizeof(buf), "  removed out-of-world non-family person %s", ent->ToString().c_str());
             Log.push_back(buf);
             stale.push_back(ava);

@@ -769,6 +769,12 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             }
         }
 
+        // The live TS1 off-world sentinel wins over an unmoved record/template
+        // that retained the old native internal room0. In-world room IDs keep
+        // their existing preservation/projection policy.
+        if (VM->TS1 && e->Position() == LotTilePos::OUT_OF_WORLD)
+            inst.ObjectData[(int)VMStackObjectVariable::Room] = -5;
+
         // ---- stack (inverse of FreeSO ConvertThread): BHAV frames only; routing frames have no TS1 record (the
         // routing primitive below them reruns, FreeSO "SpecialResult.Retry").
         inst.Stack.clear();

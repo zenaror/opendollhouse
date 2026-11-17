@@ -71,6 +71,19 @@ must not disable native characters when migrating. Builds that understand only
 the older continuation format cannot reopen version 9 saves; use an updated
 engine on every device sharing those saves.
 
+Script room numbers are signed. An object outside the world reports `-5` to
+game scripts; a real outdoor room can report `0`. Keep this distinction separate
+from the spatial cache, which uses room index `0` for off-world membership.
+Publish the script value after positioning and after restoring old native
+object-data banks. Saving must retain it even when an unchanged template has
+the former native value `0`. For example, the original billing script skips
+negative rooms; treating an absent Sim as an outdoor object adds it to the bill.
+
+A decoded off-world position also belongs to a saved non-family visitor.
+Family activation preserves that participant for checkpoint restoration; the
+legacy visitor cleanup applies only without decoded saved positions. Explicit
+former-resident reconciliation still follows neighbourhood ownership.
+
 Room satisfaction has a separate cached logical map in
 `TS1EnvironmentGeometry` and `VMContext`. Query it by the Sim's position;
 rendering and routing room numbers are not interchangeable with this map.

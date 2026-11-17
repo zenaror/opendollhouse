@@ -177,6 +177,35 @@ static void classicContract() {
  auto retained=actor.Thread.get();VMTS1FamilyLoader loader(&vm);auto household=loader.LoadFamily(9,family,true);
  check(household.size()==1&&household[0]==&actor&&actor.Position()==FSO::LotView::Model::LotTilePos::OUT_OF_WORLD&&actor.Thread.get()==retained,"real family activation preserves existing resident OOW position and thread");
  check(family->Budget==1234&&vm.GetGlobalValue(VMTS1Neighbourhood::GLOBAL_BUDGET_MOD)==1234,"family activation keeps one budget without replaying action charges");
+ // A decoded off-world visitor is also a saved participant. Family selection
+ // must leave its identity and dormant continuation available to ODHI restore.
+ OBJD visitorDefinition;visitorDefinition.GUID=0x12345679;
+ FSO::Content::GameObject visitorObject;visitorObject.OBJ=&visitorDefinition;
+ visitorObject.GUID=visitorDefinition.GUID;visitorObject.Resource=&resource;
+ VMAvatar visitor(&visitorObject);Entities::VMMultitileGroup visitorGroup;
+ visitor.MultitileGroup=&visitorGroup;visitorGroup.AddObject(&visitor);
+ visitor.ObjectID=30;visitor.Position(FSO::LotView::Model::LotTilePos::OUT_OF_WORLD);
+ visitor.SetPersonData(Model::VMPersonDataVariable::PersonType,2);
+ visitor.SetPersonData((Model::VMPersonDataVariable)VMTS1Neighbourhood::PD_NEIGHBOR_ID,17);
+ visitor.TS1SchedulerState=0x80000;
+ visitor.Thread=std::make_unique<VMThread>(&context,&visitor,16);
+ auto dormant=std::make_shared<VMStackFrame>();dormant->Caller=&visitor;dormant->Callee=&visitor;
+ dormant->CodeOwner=&visitorObject;dormant->Routine=vm.Assemble(bhav);dormant->InstructionPointer=0;
+ dormant->Args={19};dormant->Locals={23,29};visitor.Thread->Stack.push_back(dormant);
+ vm.Entities.push_back(&visitor);vm.ObjectsById[30]=&visitor;context.SetToNextCache->NewObject(&visitor);
+ auto visitorThread=visitor.Thread.get();const auto activationTick=context.Clock->Ticks;const auto activationSeed=context.RandomSeed;
+ loader.LoadFamily(9,family,true);
+ check(vm.GetObjectById(30)==&visitor&&!visitor.Dead&&visitor.Position()==FSO::LotView::Model::LotTilePos::OUT_OF_WORLD&&
+       visitor.Thread.get()==visitorThread&&visitor.Thread->Stack.size()==1&&visitor.Thread->Stack.front()==dormant&&
+       dormant->InstructionPointer==0&&dormant->Args==std::vector<int16_t>{19}&&dormant->Locals==std::vector<int16_t>({23,29})&&
+       visitor.TS1SchedulerState==0x80000&&context.Clock->Ticks==activationTick&&context.RandomSeed==activationSeed,
+       "decoded non-family offworld visitor keeps identity, dormant frame and manager state through family activation");
+ // This isolated codec VM has no architecture for household arrival placement.
+ // Keep the resident placed while exercising only the undecoded visitor cleanup.
+ actor.Position(FSO::LotView::Model::LotTilePos(16,16,1));
+ loader.LoadFamily(9,family,false);
+ check(visitor.Dead&&vm.GetObjectById(30)==nullptr&&visitorGroup.Objects.empty(),
+       "undecoded offworld visitor still follows legacy cleanup fallback");
  content->Neighborhood=std::move(previous);
  vm.Entities.clear();vm.ObjectsById.clear();
 }

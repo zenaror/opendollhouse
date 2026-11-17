@@ -41,6 +41,8 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Bills no longer charge for Sims and objects retained outside the lot.
+  Their off-lot state also survives saving and reopening a house.
 - Loading original-game saves preserves inactive characters and scheduled
   waits instead of immediately running every retained character. Saving and
   reopening keeps the simulation counter and the updated waiting state.

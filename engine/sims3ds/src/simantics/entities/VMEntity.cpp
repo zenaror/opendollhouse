@@ -671,7 +671,11 @@ void VMEntity::RecurseSlotPositionChange(VMContext* context, bool noEntryPoint) 
 }
 
 void VMEntity::SetRoom(uint16_t room) {
-    SetValue(VMStackObjectVariable::Room, (int16_t)room);
+    // RoomInfo uses internal index0 for out-of-world membership. The original
+    // script field is signed -5 there; real outdoor room0 remains nonnegative.
+    const bool ts1 = Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1;
+    const bool offWorld = ts1 && Position() == LotTilePos::OUT_OF_WORLD;
+    SetValue(VMStackObjectVariable::Room, offWorld ? int16_t(-5) : static_cast<int16_t>(room));
 }
 
 std::vector<VMPieMenuInteraction> VMEntity::GetPieMenu(VM* vm, VMEntity* caller, bool includeHidden) {
