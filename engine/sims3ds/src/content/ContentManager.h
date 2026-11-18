@@ -146,8 +146,9 @@ public:
     int16_t SubIndex = 0;
     bool EpObject = false;
     int32_t FarIndex = -1;  // which archive in WorldObjectProvider::Archives (-1 = loose file)
-    // TS1(sims): FreeSO TS1ObjectProvider — OBJD.Global == 1 && ObjectType != GiftToken: a "global sim
-    // object" (controllers, phone plugins, help systems, plumb bobs) that every lot creates on load.
+    // DVD Sims.exe 0x442bdf classification: OBJD.Global != 0 and ObjectType
+    // is SimType (7) or GiftToken (12). This index marks global definitions;
+    // runtime bootstrap still owns creation and context behavior.
     bool GlobalSimObject = false;
     bool Person = false;    // OBJD.ObjectType == Person
 };

@@ -246,7 +246,9 @@ void VM::InternalTick() {
         } running(EntityTickActive);
         auto entCpy = Entities;
         for (auto obj : entCpy) {
-            Context->NextRandom(1);
+            // TSO advances its stream per entity. The original TS1 dispatcher
+            // performs no such draw, including for skipped/disabled entries.
+            if (!TS1) Context->NextRandom(1);
             // The DVD gates the whole virtual Tick, including person motive
             // work. Direct checks/Init/callbacks do not enter this dispatch.
             // Its conditional bit17 context has no native binding yet.

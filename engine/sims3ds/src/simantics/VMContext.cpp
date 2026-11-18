@@ -66,6 +66,7 @@ VMContext::VMContext(FSO::LotView::World* world, VMContext* oldContext, bool con
     RandomSeed = ((uint64_t)rd() << 32) ^ (uint64_t)rd(); //when resuming state, this should be set.
     if (RandomSeed == 0) RandomSeed = 0x2545F4914F6CDD1DULL;
     if (consumeDebugSeed && DebugSeed != 0) RandomSeed = DebugSeed++ * 2654435761ULL + 1; // FIX(sims) QA: repeatable host runs
+    TS1SimulationRandomSeed = RandomSeed;
     Clock->TicksPerMinute = 30; //1 minute per irl second
 
     // Primitive table (C# registers each primitive inline here; see README.md for the full opcode list).
@@ -87,7 +88,13 @@ uint64_t VMContext::DebugSeed = 0; // FIX(sims) QA
 
 uint64_t VMContext::NextRandom(uint64_t max) {
     if (max == 0) return 0;
-    if (VM && VM->TS1) return Common::TS1::RandomStep(RandomSeed) % max;
+    if (VM && VM->TS1) {
+        // The DVD substitutes owner+ac only for the manager's object sweep,
+        // then restores the shared slot before clock/daily/UI callbacks. Keep
+        // semantic fields stable so a nested save can capture both streams.
+        auto& state = VM->EntityTickRunning() ? TS1SimulationRandomSeed : RandomSeed;
+        return Common::TS1::RandomStep(state) % max;
+    }
     RandomSeed ^= RandomSeed >> 12;
     RandomSeed ^= RandomSeed << 25;
     RandomSeed ^= RandomSeed >> 27;

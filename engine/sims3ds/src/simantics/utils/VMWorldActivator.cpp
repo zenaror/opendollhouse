@@ -54,9 +54,6 @@ int16_t VMWorldActivator::MachineLevel = 2; // TS1(sims)
 bool VMWorldActivator::IsLateController(uint32_t guid) {
     return guid == 0x49398BB2u; // FIX(sims): NPC - Vacation - Controller (see LoadFromIff)
 }
-bool VMWorldActivator::IsCommunityOnlyController(uint32_t guid) {
-    return guid == 0xDDEBF1B8u || guid == 0xC2F1EBCEu || guid == 0xC1BA4467u || guid == 0x3F79F92Cu;
-}
 const std::unordered_set<uint16_t> VMWorldActivator::ValidWallStyles = { 2, 12, 14, 13 };
 
 VMWorldActivator::VMWorldActivator(FSO::SimAntics::VM* vm, FSO::LotView::World* world) {
@@ -148,8 +145,10 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
         VM->ApplyTS1FreeWillPreference(VM->FreeWillEnabled);
         // Residential classic saves carry the shared 32-bit RNG in GUID2.
         // Native continuation metadata, if present, restores its full state later.
-        if (Engine::Utils::VMTS1Neighbourhood::IsResidentialLot(simi->GlobalData.at(10)))
+        if (Engine::Utils::VMTS1Neighbourhood::IsResidentialLot(simi->GlobalData.at(10))) {
             VM->Context->RandomSeed = simi->SavedRandomState();
+            VM->Context->TS1SimulationRandomSeed = simi->SavedSimulationRandomState();
+        }
     }
     if (VM->TS1 && !legacyFinance) {
         Primitives::VMTS1Budget::DaysType days{};
@@ -425,10 +424,10 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     // TS1(sims): keep the saved object ids free for the saved objects (see VM::ReservedObjectIDs).
     if (objm->Decoded) for (auto& kv : objm->ObjectData) if (kv.first > 0) VM->ReservedObjectIDs.insert((int16_t)kv.first);
     auto content = FSO::Content::Content::Get();
-    // TS1(sims): FreeSO VMTS1Activator — every "global sim object" (OBJD.Global == 1, not a gift token) is
-    // created on every lot: NPC/visitor controllers, the expansion packs' downtown/vacation/studio/magic town
-    // controllers, phone plugins, help systems, plumb bobs. FreeSims' fixed list (phone line + 5 phone plugins) is
-    // used when the content has no TS1 index.
+    // DVD global-definition candidates have nonzero Global and type 7 or 12,
+    // including gift tokens. Content supplies that classification. Keep the
+    // old fixed fallback only for callers without a populated TS1 index; the
+    // indexed GUID order is deterministic, not a proven original vector order.
     std::unordered_set<uint32_t> controllers(ControllerObjects);
     if (!content->WorldObjects->ControllerObjects.empty())
         controllers = std::unordered_set<uint32_t>(content->WorldObjects->ControllerObjects.begin(), content->WorldObjects->ControllerObjects.end());
@@ -467,10 +466,9 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
                 continue; // exact saved controllers were prepared with the saved graph
             }
             if (savedControllerResources.count(guid)) continue; // saved under another part of its group
-            // In the absence of a saved instance, only bootstrap the global
-            // where the lot allows it. An earlier init may already have made it.
-            auto hood = FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::Provider();
-            if (IsCommunityOnlyController(guid) && hood && hood->GetZoning(VM->GetGlobalValue(10)) != 1) continue;
+            // The DVD's global bootstrap is not filtered by lot zoning.
+            // Authored Init/Main trees decide whether a controller acts here.
+            // An earlier Init may already have created this definition.
             const bool present = std::any_of(VM->Entities.begin(), VM->Entities.end(), [guid](VMEntity* entity) {
                 return !entity->Dead && !entity->GhostImage && entity->Object &&
                     (entity->Object->OBJ->GUID == guid || (entity->MasterDefinition && entity->MasterDefinition->GUID == guid));

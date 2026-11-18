@@ -224,6 +224,21 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
     lot.Input(flowConsumed ? passive : in, dtMs, _Time);
     entryMark("input");
     Speed = lot.Speed;
+    if (auto machine = s.VM(); machine && machine->TS1) {
+        // Original HUD observation: Live0, Build1, Buy2, Options3. The
+        // frontend enum uses Buy1/Build2, so its ordinal is not the VM mode.
+        int16_t originalMode = 0;
+        switch (lot.CurrentMode) {
+        case LotScreen::Mode::Live: originalMode = 0; break;
+        case LotScreen::Mode::Build: originalMode = 1; break;
+        case LotScreen::Mode::Buy: originalMode = 2; break;
+        case LotScreen::Mode::Options: originalMode = 3; break;
+        }
+        machine->SetGlobalValue(19, originalMode);
+        // Mode changes do not change the player's Pause preference. Public
+        // editors cannot enter Live and have no observed player pause control.
+        if (s.CanEnterLive()) machine->SetGlobalValue(17, Speed == 0 ? 1 : 0);
+    }
     PickMsLast = lot.PickMsLast;
     // lot.LeaveRequested / QuitRequested are answered by LotFlow next frame (the TS1 "Save?" dialogs)
 
@@ -451,7 +466,9 @@ void App::Frame(const AppInput& inRaw, double dtMs) {
             _Front->EnteredLot();
             ApplyPlaySettings(); // Free Will -> global 30 (front/AppFlow.cpp)
             _UpdateAccum = 0;
-            Speed = _Session->CanEnterLive() ? 1 : 0;
+            // The original preserves the saved Pause word independently of
+            // the mode used to save; its opened HUD always chooses Live/Build.
+            Speed = _Session->CanEnterLive() && _Session->VM()->GetGlobalValue(17) == 0 ? 1 : 0;
             _Mode = Mode::Live;
             // TS1(sims) hardware pass: the first frame draws the whole lot (sprites, walls, floors decoded on demand)
             FSO::Files::LoadProgress::Step("lot " + std::to_string(_LoadHouse) + ": first frame");

@@ -28,7 +28,6 @@ public:
     /// and NPCs the controllers spawn). FreeSO uses 2; a front-end may lower it for the 3DS.
     static int16_t MachineLevel;
     static bool IsLateController(uint32_t guid); // FIX(sims)
-    static bool IsCommunityOnlyController(uint32_t guid); // TS1(sims)
     static const std::unordered_set<uint16_t> ValidWallStyles;
 
     VMWorldActivator(FSO::SimAntics::VM* vm, FSO::LotView::World* world);

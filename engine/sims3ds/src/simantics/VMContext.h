@@ -48,6 +48,9 @@ public:
     std::array<std::unique_ptr<Engine::VMPrimitiveRegistration>, 256> Primitives;
     std::shared_ptr<Engine::VMAmbientSound> Ambience;
     uint64_t RandomSeed = 0;
+    // TS1 owner+ac: object dispatch has its own saved logical LCG state.
+    // RandomSeed remains the shared state used outside that dispatch.
+    uint64_t TS1SimulationRandomSeed = 0;
     int EnvironmentPeriod = -1;
     float OutdoorEnvironmentScore = 0;
     static uint64_t DebugSeed; // FIX(sims) QA: when non-zero, new VMs get repeatable seeds (host tools only)

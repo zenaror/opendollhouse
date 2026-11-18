@@ -6,6 +6,7 @@
 // FSO.Content — see ContentManager.h
 #include "files/SafeFile.h" // FIX(sims) SAVE
 #include "content/ContentManager.h"
+#include "content/TS1GlobalDefinition.h"
 #include "files/FilePool.h"
 #include "files/LoadProgress.h"
 #include "core/io.h"
@@ -274,7 +275,7 @@ int32_t WorldObjectProvider::AddStandaloneIff(const std::string& path, bool over
         ref.Group = (int16_t)obj->MasterID;
         ref.SubIndex = obj->SubIndex;
         ref.Person = obj->ObjectType == Chunks::OBJDType::Person;
-        ref.GlobalSimObject = obj->Global == 1 && obj->ObjectType != Chunks::OBJDType::GiftToken;
+        ref.GlobalSimObject = IsTS1GlobalDefinition(*obj);
         Cache.erase(obj->GUID);
         Entries[obj->GUID] = ref;
         if (ref.Person) PersonGUIDs.insert(obj->GUID);
@@ -367,8 +368,8 @@ void WorldObjectProvider::ScanArchives(bool applyPatches) {
                 ref.SubIndex = obj->SubIndex;
                 ref.EpObject = (fi != 0);
                 ref.FarIndex = (int32_t)fi;
-                // TS1(sims): FreeSO TS1ObjectProvider.Init
-                ref.GlobalSimObject = obj->Global == 1 && obj->ObjectType != Chunks::OBJDType::GiftToken;
+                // DVD Sims.exe 0x442bdf global-definition candidate rule.
+                ref.GlobalSimObject = IsTS1GlobalDefinition(*obj);
                 ref.Person = obj->ObjectType == Chunks::OBJDType::Person;
                 Entries[obj->GUID] = ref;
             }
@@ -398,11 +399,14 @@ bool WorldObjectProvider::LoadCache(const std::string& path) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
         if (!headerOk) {
-            //header: "STOC3 <archive count>" and the archive paths must match the ones we opened.
+            //header: "STOC4 <archive count>" and the archive paths must match the ones we opened.
             // TS1(sims): STOC2 adds a flags column (1 = global sim object, 2 = person); STOC1 caches are rebuilt.
-            // STOC3: archive paths relative to the install (the same cache works on the host and on the SD card,
-            // see src/tools/simcache.cpp).
-            if (line.rfind("STOC3 ", 0) != 0) return false;
+            // STOC3 encoded the previous global-definition predicate. STOC4
+            // stores archive paths relative to the install (the same cache works on
+            // the host and on the SD card, see src/tools/simcache.cpp) and is
+            // required so old candidate flags are discarded before any rows
+            // are loaded.
+            if (line.rfind("STOC4 ", 0) != 0) return false;
             size_t count = (size_t)atoi(line.c_str() + 6);
             if (count != Archives.size()) return false;
             for (size_t i = 0; i < count; i++) {
@@ -447,7 +451,7 @@ bool WorldObjectProvider::LoadCache(const std::string& path) {
 void WorldObjectProvider::SaveCache(const std::string& path) {
     FILE* f = FSO::Files::SafeFile::BeginWrite(path); // FIX(sims) SAVE: a cut objects.cache = missing objects
     if (!f) return;
-    fprintf(f, "STOC3 %u\n", (unsigned)Archives.size());
+    fprintf(f, "STOC4 %u\n", (unsigned)Archives.size());
     for (auto& a : Archives) fprintf(f, "%s\n", RelativeToInstall(a.Path).c_str());
     for (auto& kv : Entries) {
         auto& r = kv.second;
@@ -632,7 +636,7 @@ void WorldObjectProvider::AddObject(IffFile* iff, Chunks::OBJD* obj, int32_t far
     ref.SubIndex = obj->SubIndex;
     ref.FarIndex = farIndex;
     ref.Person = obj->ObjectType == Chunks::OBJDType::Person;
-    ref.GlobalSimObject = obj->Global == 1 && obj->ObjectType != Chunks::OBJDType::GiftToken;
+    ref.GlobalSimObject = IsTS1GlobalDefinition(*obj);
     Entries[obj->GUID] = ref;
     Cache.erase(obj->GUID);
     if (ref.Person) PersonGUIDs.insert(obj->GUID); else PersonGUIDs.erase(obj->GUID);

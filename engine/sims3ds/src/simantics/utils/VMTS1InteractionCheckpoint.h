@@ -12,11 +12,13 @@ class VM;
 namespace Engine { namespace Utils {
 class VMTS1InteractionCheckpoint {
 public:
-    static constexpr uint32_t CurrentVersion = 13;
+    static constexpr uint32_t CurrentVersion = 14;
     static void PresentDialogs(VM& vm);
     static void RestoreClassic(VM& vm, Files::Formats::IFF::IffFile& house);
     // Only a freshly synchronized, validated ObjM can carry authoritative
     // manager words. Direct execution overlays retain the v8 compatibility path.
+    // Explicit outputVersion10-13 is a lossy single-RNG compatibility projection;
+    // only version14+ retains independent object-dispatch continuity.
     static void Capture(VM& vm, Files::Formats::IFF::IffRawFile& house, bool departing,
                         bool schedulerWordsBound = false, uint32_t outputVersion = CurrentVersion);
     // Verify v11 SIMI binding before publishing globals or constructing a lot.

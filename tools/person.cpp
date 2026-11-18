@@ -1,4 +1,5 @@
 #include "odh/avatar_containment.hpp"
+#include "content/TS1GlobalDefinition.h"
 #include "odh/pose.hpp"
 #include "odh/slot_height.hpp"
 #include "odh/session_source_checkpoint.hpp"
@@ -1881,14 +1882,16 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         // Characters participate in explicit GUID/resource lookup, not automatic
         // global controllers or Build/Buy. Preserve the base catalog below.
         definition_index.emplace(odh_host::combine_definition_lookup(candidates,supplemental_candidates,canonical_source));
-        // Pinned FreeSO7e76 TS1ObjectProvider.GlobalSimObject: raw Global==1,
-        // excluding GiftToken12. Retain explicit provider order, never infer
+        // DVD Sims.exe 0x442bdf: nonzero Global on OBJD types 7 or 12. Retain
+        // explicit provider order, never infer
         // controllers from names, expansion ranges, or phone menu eligibility.
         if(session_context&&session_context->restore_archive.empty()){
             std::set<std::uint32_t> seen;
             for(const auto& candidate:candidates){
                 if(!candidate.definition.global_flag)throw odh::FormatError("integrated global-controller catalog requires complete OBJD.Global fields");
-                if(*candidate.definition.global_flag!=1||candidate.definition.object_type==12)continue;
+                if(!FSO::Content::IsTS1GlobalDefinition(
+                    static_cast<FSO::Files::Formats::IFF::Chunks::OBJDType>(candidate.definition.object_type),
+                    candidate.definition.global_flag))continue;
                 if(!seen.insert(candidate.definition.guid).second)continue;
                 if(!definition_index->unique(candidate.definition.guid))throw odh::FormatError("global-controller GUID has ambiguous resource identity");
                 if(global_controller_guids.size()>=256)throw odh::FormatError("global-controller catalog exceeds bounded256 profile");
@@ -18133,8 +18136,10 @@ struct PlacementCandidateProbe {
                 if((!pending.vm&&!catalog_startup)||!pending.source_still_matches||!pending.source_still_matches())
                     throw odh::FormatError("runtime object creation source is no longer current");
                 if(catalog_startup&&(!definition_index||definition_index->unique(pending.request.guid)!=pending.global_controller||
-                   pending.global_controller->definition.global_flag!=std::optional<std::uint16_t>{1}||
-                   pending.global_controller->definition.object_type==12||pending.global_controller->definition.object_type==2||
+                   !FSO::Content::IsTS1GlobalDefinition(
+                       static_cast<FSO::Files::Formats::IFF::Chunks::OBJDType>(pending.global_controller->definition.object_type),
+                       pending.global_controller->definition.global_flag)||
+                   pending.global_controller->definition.object_type==2||
                    pending.request.position()!=odh::CreateObjectPosition::out_of_world||pending.request.flags||pending.vm||pending.command_caller))
                     throw odh::FormatError("global-controller construction requires its exact catalog-owned OOW authority");
                 if(!definition_index)throw odh::FormatError("object definition index is unavailable");
@@ -18294,7 +18299,9 @@ struct PlacementCandidateProbe {
                 with_resource(object_resource,[&](const auto& view){
                     object_resources=odh::read_object_runtime_resources(view,*candidate,{},pending.selected_subpart);
                     object_resources->master_guid=pending.master_guid;
-                    if(catalog_startup&&(object_resources->definition.global_flag!=std::optional<std::uint16_t>{1}||object_resources->definition.object_type==12))
+                    if(catalog_startup&&!FSO::Content::IsTS1GlobalDefinition(
+                        static_cast<FSO::Files::Formats::IFF::Chunks::OBJDType>(object_resources->definition.object_type),
+                        object_resources->definition.global_flag))
                         throw odh::FormatError("global-controller resource classification changed before construction");
                     odh::iff_chunks(view,[&](const auto& chunk){
                         if(chunk.type=="OBJD"&&chunk.id==candidate->chunk_id){
@@ -20828,7 +20835,9 @@ struct PlacementCandidateProbe {
         global_controller_records.reserve(global_controller_guids.size());
         for(const auto guid:global_controller_guids){
             const auto* definition=definition_index->unique(guid);
-            if(!definition||definition->definition.global_flag!=std::optional<std::uint16_t>{1}||definition->definition.object_type==12)
+            if(!definition||!FSO::Content::IsTS1GlobalDefinition(
+                static_cast<FSO::Files::Formats::IFF::Chunks::OBJDType>(definition->definition.object_type),
+                definition->definition.global_flag))
                 throw odh::FormatError("global-controller catalog identity changed during bootstrap");
             GlobalControllerStartupRecord record;record.guid=guid;record.source=definition->source;record.asset=definition->asset;
             record.definition_id=definition->chunk_id;record.type=definition->definition.object_type;record.global=*definition->definition.global_flag;

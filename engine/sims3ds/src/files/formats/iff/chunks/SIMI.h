@@ -25,9 +25,13 @@ public:
     uint32_t SimulationTicks = 0;
     int16_t SchedulerCursor = 0;
     int32_t Unknown3 = 0;
-    int32_t GUID1 = 0;
+    int32_t GUID1 = 0; // Historical name: DVD owner+ac object-dispatch RNG.
+    uint32_t SavedSimulationRandomState() const { return static_cast<uint32_t>(GUID1); }
     int32_t GUID2 = 0; // Historical parser name: the DVD shared random state.
     uint32_t SavedRandomState() const { return static_cast<uint32_t>(GUID2); }
+    static std::size_t SimulationRandomStateOffset(uint32_t version) {
+        return 12 + SerializedGlobalCount(version) * 2 + 10;
+    }
     static std::size_t RandomStateOffset(uint32_t version) {
         return 12 + SerializedGlobalCount(version) * 2 + 14;
     }

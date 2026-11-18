@@ -1313,6 +1313,8 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool d
     // Publish no portion of a failed capture, including synchronized SIMI.
     IffRawFile house=destination;
     FSO::SimAntics::Utils::SyncTS1Budget(vm, house);
+    if (outputVersion >= 14 && !vm.TS1Budget.Initialized)
+        FSO::SimAntics::Utils::SyncTS1RandomState(vm, house);
     if (schedulerWordsBound) {
         auto rawObjects = house.Find("ObjM", 1);
         auto rawTypes = house.Find("objt", 0);
@@ -1406,6 +1408,12 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool d
     auto clock = *vm.Context->Clock;
     auto seed = vm.Context->RandomSeed;
     ClockState(header, clock, seed);
+    // Earlier snapshots had a single stream. Version14 preserves the separate
+    // owner dispatch state without changing any per-object execution record.
+    if (captureVersion >= 14) {
+        auto simulationSeed = vm.Context->TS1SimulationRandomSeed;
+        header.value(simulationSeed);
+    }
     header.value(vm.Ready); header.value(vm.AlternateTick); header.value(vm.TS1BuildBuyEnabled);
     header.vector(vm.GlobalState, 4096);
     header.string(vm.TS1TextInput, VM::TS1TextInputMaxBytes);
@@ -1528,6 +1536,14 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     }
     VMClock clock; uint64_t seed = 0;
     ClockState(fields, clock, seed);
+    // Historical native snapshots cannot recover an unwritten owner stream;
+    // their one saved state seeds both logical channels for migration.
+    uint64_t simulationSeed = seed;
+    if (version >= 14) fields.value(simulationSeed);
+    if (version >= 14 && finance)
+        Require(finance->SavedRandomState() == uint32_t(seed) &&
+                finance->SavedSimulationRandomState() == uint32_t(simulationSeed),
+                "native and classic random states differ");
     bool ready=false, alternate=false, buildBuy=false;
     fields.value(ready); fields.value(alternate); fields.value(buildBuy);
     std::vector<int16_t> globals;
@@ -1638,6 +1654,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     }
     *vm.Context->Clock = clock;
     vm.Context->RandomSeed = seed;
+    vm.Context->TS1SimulationRandomSeed = simulationSeed;
     vm.Ready=ready; vm.AlternateTick=alternate; vm.TS1BuildBuyEnabled=buildBuy;
     // Family activation reconciles ownership and budget from FAMI. Its data
     // wins when this call also serves the low-level activator without a family.

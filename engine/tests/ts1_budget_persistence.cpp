@@ -71,7 +71,7 @@ static void legacyCandidate() {
  need(vm.TS1Budget.Purse==100,"later legacy snapshot uses its own saved purse");
  VMTS1InteractionCheckpoint::Capture(vm,raw,false);
  st::Reader upgraded(raw.Find("SIMI",1)->Data);SIMI canonical;canonical.Read(nullptr,upgraded);
- need(raw.Find("ODHI",1)->Data[0]==13&&canonical.BudgetDays.size()==6&&!canonical.LegacyBudgetCandidate,"accepted legacy candidate rewrites authentic SIMI and bound checkpoint");
+ need(raw.Find("ODHI",1)->Data[0]==14&&canonical.BudgetDays.size()==6&&!canonical.LegacyBudgetCandidate,"accepted legacy candidate rewrites authentic SIMI and bound checkpoint");
  auto malformed=legacy;malformed.back()=1;IffRawFile invalid=raw;invalid.Set("SIMI",1,malformed);IffFile invalidHouse;invalidHouse.Read(invalid.Write());rejected([&]{invalidHouse.Get<SIMI>(1);},"nonzero marker-only tail accepted");
 }
 static void earlyUpgrade() {
@@ -97,15 +97,15 @@ static void sharedRandomState() {
    SIMI input;input.Version=version;input.GlobalData.resize(38,0);input.GlobalData[13]=100;
    input.Unknown3=100;input.GUID1=0x12345678;input.GUID2=7;input.BudgetDays.resize(6);
    st::Writer writer(st::Endian::Little);input.Write(nullptr,writer);
-   IffRawFile raw;raw.Set("SIMI",1,writer.ToArray());ctx.RandomSeed=seed;
+   IffRawFile raw;raw.Set("SIMI",1,writer.ToArray());ctx.RandomSeed=seed;ctx.TS1SimulationRandomSeed=seed^0xa5a5a5a5u;
    FSO::SimAntics::Utils::SyncTS1Budget(vm,raw);
    const auto& bytes=raw.Find("SIMI",1)->Data;st::Reader reader(bytes);SIMI saved;saved.Read(nullptr,reader);
    need(saved.SavedRandomState()==seed,"shared seed zero/sign bits retained, not entropy or GUID1");
-   need(saved.GUID1==input.GUID1,"adjacent original metadata preserved");
+   need(saved.SavedSimulationRandomState()==uint32_t(ctx.TS1SimulationRandomSeed),"distinct owner RNG retained independently of shared state");
    const auto at=SIMI::RandomStateOffset(saved.Version);
    uint32_t wire=uint32_t(bytes[at])|(uint32_t(bytes[at+1])<<8)|(uint32_t(bytes[at+2])<<16)|(uint32_t(bytes[at+3])<<24);
    need(wire==seed,"actual staged SIMI contains current shared state at source offset");
-   need(ctx.RandomSeed==seed,"residential save does not advance random state");
+   need(ctx.RandomSeed==seed && ctx.TS1SimulationRandomSeed==(seed^0xa5a5a5a5u),"residential save does not advance either random state");
   }
  vm.ApplyTS1FreeWillPreference(false);need(!vm.FreeWillEnabled&&vm.GetGlobalValue(30)==0,"source preference setter clears both states");
  vm.SetGlobalValue(30,42);need(!vm.FreeWillEnabled&&vm.GetGlobalValue(30)==42,"script word independent of preference byte");
@@ -118,30 +118,66 @@ int main(){try{
  OBJD def;def.GUID=0x12345678;FSO::Content::GameObject object;object.OBJ=&def;object.GUID=def.GUID;object.Resource=&resource;
  VMGameObject e(&object,nullptr);Entities::VMMultitileGroup group;e.MultitileGroup=&group;group.AddObject(&e);vm.AddEntity(&e);e.Thread=std::make_unique<VMThread>(&ctx,&e,16);
  IffRawFile raw;raw.Set("ObjM",1,{1,2,3});
+ ctx.RandomSeed=3784694001u;ctx.TS1SimulationRandomSeed=1918150980u;
  // Historic fixtures with no initialized owner and no SIMI still capture.
- VMTS1InteractionCheckpoint::Capture(vm,raw,false);need(raw.Find("ODHI",1)&&raw.Find("ODHI",1)->Data[0]==13,"uninitialized direct overlay uses v13 without finance");
+ VMTS1InteractionCheckpoint::Capture(vm,raw,false);need(raw.Find("ODHI",1)&&raw.Find("ODHI",1)->Data[0]==14,"uninitialized direct overlay uses v14 without finance");
+ // Nonfinancial direct snapshots still synchronize both authentic SIMI slots.
+ SIMI unbudgeted;unbudgeted.Version=0x49;unbudgeted.GlobalData.resize(38);unbudgeted.GlobalTail.resize(26);unbudgeted.BudgetDays.resize(6);
+ st::Writer unbudgetedBytes(st::Endian::Little);unbudgeted.Write(nullptr,unbudgetedBytes);raw.Set("SIMI",1,unbudgetedBytes.ToArray());
+ VMTS1InteractionCheckpoint::Capture(vm,raw,false);
+ st::Reader unbudgetedRead(raw.Find("SIMI",1)->Data);SIMI unbudgetedSaved;unbudgetedSaved.Read(nullptr,unbudgetedRead);
+ need(unbudgetedSaved.SavedRandomState()==3784694001u&&unbudgetedSaved.SavedSimulationRandomState()==1918150980u,"unbudgeted direct capture keeps both source RNG words");
+ raw.Remove("SIMI",1);
  VMTS1Budget::DaysType days{};days[0][3]=55;days[1][4]=-123;days[5][7]=777;VMTS1Budget::LoadState(&vm,0x12345678,days);
  auto untouched=raw.Write();rejected([&]{VMTS1InteractionCheckpoint::Capture(vm,raw,false);},"initialized capture without SIMI accepted");need(raw.Write()==untouched,"missing SIMI failure mutated IFF");
  SIMI original;original.Version=0x49;original.GlobalData.resize(38,0);original.GlobalTail.resize(26,0);original.Unknown3=17;original.SchedulerCursor=-8;original.GUID1=0x1234;original.UnknownTail={0xde,0xad,0xbe,0xef};original.BudgetDays.resize(6);
  st::Writer source(st::Endian::Little);original.Write(nullptr,source);raw.Set("SIMI",1,source.ToArray());
  auto invalid=raw;invalid.Set("FSOV",1,{1});untouched=invalid.Write();rejected([&]{VMTS1InteractionCheckpoint::Capture(vm,invalid,false);},"conflicting graph accepted");need(invalid.Write()==untouched,"later failure published partial synchronized SIMI");
  auto bad=raw;bad.Find("SIMI",1)->Data.resize(5);untouched=bad.Write();rejected([&]{VMTS1InteractionCheckpoint::Capture(vm,bad,false);},"truncated SIMI accepted");need(bad.Write()==untouched,"bad SIMI changed capture input");
- VMTS1InteractionCheckpoint::Capture(vm,raw,false);auto native=raw.Find("ODHI",1);need(native&&native->Data[0]==13,"financially bound direct capture is v13");
+ VMTS1InteractionCheckpoint::Capture(vm,raw,false);auto native=raw.Find("ODHI",1);need(native&&native->Data[0]==14,"financially bound direct capture is v14");
  auto rawSimi=raw.Find("SIMI",1);st::Reader sr(rawSimi->Data);SIMI saved;saved.Read(nullptr,sr);
- need(saved.Unknown3==0x12345678&&saved.BudgetDays[0].Values()==days[0]&&saved.BudgetDays[1].Values()==days[1]&&saved.BudgetDays[5].Values()==days[5]&&saved.SchedulerCursor==-8&&saved.GUID1==0x1234&&saved.UnknownTail==original.UnknownTail,"direct capture synchronized purse and six records without altering metadata");
+ need(saved.Unknown3==0x12345678&&saved.BudgetDays[0].Values()==days[0]&&saved.BudgetDays[1].Values()==days[1]&&saved.BudgetDays[5].Values()==days[5]&&saved.SchedulerCursor==-8&&saved.SavedSimulationRandomState()==1918150980u&&saved.SavedRandomState()==3784694001u&&saved.UnknownTail==original.UnknownTail,"direct capture synchronized purse and six records without altering metadata");
  auto entry=type(def.GUID);
  auto makeHouse=[&](const std::vector<uint8_t>& simiBytes){auto house=std::make_unique<IffFile>();auto simi=new SIMI();simi->ChunkID=1;simi->ChunkProcessed=true;st::Reader input(simiBytes);simi->Read(nullptr,input);house->AddChunk(simi);auto objm=new OBJM();objm->ChunkID=1;objm->ChunkProcessed=true;objm->Decoded=true;objm->Version=0x49;objm->SourceSignature=FSO::Files::Hash::CalculateHash(raw.Find("ObjM",1)->Data);auto instance=std::make_shared<OBJMInstance>();instance->OBJT=&entry;objm->ObjectData[e.ObjectID].Instance=instance;house->AddChunk(objm);auto odhi=new ODHI();odhi->ChunkID=1;odhi->ChunkProcessed=true;odhi->Data=native->Data;house->AddChunk(odhi);auto odmp=new ODMP();odmp->ChunkID=1;odmp->ChunkProcessed=true;odmp->Data=raw.Find("ODMP",1)->Data;house->AddChunk(odmp);return house;};
  auto house=makeHouse(rawSimi->Data);VMTS1Budget::LoadState(&vm,9,{});
  auto preflightThread=e.Thread.get();auto preflightBudget=vm.TS1Budget;int32_t unused=0;
+ ctx.RandomSeed=111;ctx.TS1SimulationRandomSeed=222;
  VMTS1InteractionCheckpoint::Restore(vm,*house,false,true,&unused);
- need(e.Thread.get()==preflightThread&&vm.TS1Budget.Purse==preflightBudget.Purse&&vm.TS1Budget.Days==preflightBudget.Days,"v11 full graph validation leaves execution and finance unpublished");
+ need(e.Thread.get()==preflightThread&&vm.TS1Budget.Purse==preflightBudget.Purse&&vm.TS1Budget.Days==preflightBudget.Days&&ctx.RandomSeed==111&&ctx.TS1SimulationRandomSeed==222,"full graph validation leaves execution, finance and both RNG states unpublished");
  auto malformedGraph=makeHouse(rawSimi->Data);malformedGraph->Get<ODMP>(1)->Data.back()^=1;
  rejected([&]{VMTS1InteractionCheckpoint::Restore(vm,*malformedGraph,false,true,&unused);},"v11 malformed graph supplement accepted");
- need(e.Thread.get()==preflightThread&&vm.TS1Budget.Purse==preflightBudget.Purse&&vm.TS1Budget.Days==preflightBudget.Days,"v11 graph rejection leaves execution and finance untouched");
+ need(e.Thread.get()==preflightThread&&vm.TS1Budget.Purse==preflightBudget.Purse&&vm.TS1Budget.Days==preflightBudget.Days&&ctx.RandomSeed==111&&ctx.TS1SimulationRandomSeed==222,"graph rejection leaves execution, finance and both RNG states untouched");
+ auto malformedOwner=makeHouse(rawSimi->Data);
+ // v14 non-departing, finance-bound header: owner u64 follows three one-byte
+ // flags, eight binding bytes, forty clock bytes and the shared u64.
+ malformedOwner->Get<ODHI>(1)->Data.at(67)^=1;
+ rejected([&]{VMTS1InteractionCheckpoint::Restore(vm,*malformedOwner);},"mismatched native/classic owner state accepted");
+ need(ctx.RandomSeed==111&&ctx.TS1SimulationRandomSeed==222&&e.Thread.get()==preflightThread,"bad owner header published state");
  VMTS1InteractionCheckpoint::Restore(vm,*house);
  need(VMTS1Budget::GetRawBudget(&vm)==0x12345678&&vm.TS1Budget.Days==days,"direct capture native restore uses synchronized SIMI finance");
+ need(ctx.RandomSeed==3784694001u&&ctx.TS1SimulationRandomSeed==1918150980u,"version14 restores distinct shared/owner states");
  auto tampered=rawSimi->Data;tampered.back()^=1;auto badHouse=makeHouse(tampered);auto before=vm.TS1Budget;auto oldThread=e.Thread.get();
  rejected([&]{VMTS1InteractionCheckpoint::Restore(vm,*badHouse);},"stale SIMI binding accepted");need(vm.TS1Budget.Purse==before.Purse&&vm.TS1Budget.Days==before.Days&&e.Thread.get()==oldThread,"bad SIMI binding published partial state");
+ // Older explicit output schemas retain their one full-width native seed.
+ // They cannot represent the independently evolving corrected owner channel.
+ for (uint32_t version : {11u,12u,13u}) {
+  const uint64_t historical=UINT64_C(0x12345678fedcba98);
+  auto legacy=raw;ctx.RandomSeed=historical;ctx.TS1SimulationRandomSeed=17;
+  VMTS1InteractionCheckpoint::Capture(vm,legacy,false,false,version);
+  auto oldHouse=makeHouse(legacy.Find("SIMI",1)->Data);
+  oldHouse->Get<ODHI>(1)->Data=legacy.Find("ODHI",1)->Data;
+  oldHouse->Get<ODMP>(1)->Data=legacy.Find("ODMP",1)->Data;
+  ctx.RandomSeed=31;ctx.TS1SimulationRandomSeed=47;
+  VMTS1InteractionCheckpoint::Restore(vm,*oldHouse);
+  need(ctx.RandomSeed==historical&&ctx.TS1SimulationRandomSeed==historical,"legacy high64 stream migrates into both channels without a draw");
+  auto modern=legacy;VMTS1InteractionCheckpoint::Capture(vm,modern,false);
+  auto migratedHouse=makeHouse(modern.Find("SIMI",1)->Data);
+  migratedHouse->Get<ODHI>(1)->Data=modern.Find("ODHI",1)->Data;
+  migratedHouse->Get<ODMP>(1)->Data=modern.Find("ODMP",1)->Data;
+  ctx.RandomSeed=0;ctx.TS1SimulationRandomSeed=1;
+  VMTS1InteractionCheckpoint::Restore(vm,*migratedHouse);
+  need(ctx.RandomSeed==historical&&ctx.TS1SimulationRandomSeed==historical,"immediate version14 recapture retains undrawn legacy high bits");
+ }
  legacyCandidate();
  earlyUpgrade();
  std::printf("PASS %d TS1 budget persistence checks\n",checks);return 0;

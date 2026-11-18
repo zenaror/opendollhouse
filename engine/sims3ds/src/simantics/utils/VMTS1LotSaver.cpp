@@ -1361,9 +1361,10 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             const auto randomAt = SIMI::RandomStateOffset(version);
             if (tickAt + 6 > d.size() || randomAt + 4 > d.size())
                 throw std::runtime_error("SIMI: truncated simulation counter or random state");
-            // globals the loader overrides for this engine (VMWorldActivator / FreeSO VMTS1ActivatorNew: 17 runtime code
-            // version, 20 game edition, 25 idle setting, 32, 33 machine level) keep the values the game saved
-            static const std::set<int> keepSaved = { 17, 20, 25, 32, 33 };
+            // Retain edition/machine metadata and the original idle setting.
+            // TS1 global 17 is the player's Pause preference, not the TSO
+            // runtime-code version, and must be written with the current globals.
+            static const std::set<int> keepSaved = { 20, 25, 32, 33 };
             for (int i = 0; i < items && i < (int)VM->GlobalState.size(); i++) {
                 if (keepSaved.count(i)) continue;
                 size_t at = 12 + (size_t)i * 2;
@@ -1377,6 +1378,9 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             for (size_t k = 0; k < 4; ++k) d[tickAt + k] = uint8_t(ticks >> (8 * k));
             const auto randomState = static_cast<uint32_t>(VM->Context->RandomSeed);
             for (size_t k = 0; k < 4; ++k) d[randomAt + k] = uint8_t(randomState >> (8 * k));
+            const auto simulationAt = SIMI::SimulationRandomStateOffset(version);
+            const auto simulationState = static_cast<uint32_t>(VM->Context->TS1SimulationRandomSeed);
+            for (size_t k = 0; k < 4; ++k) d[simulationAt + k] = uint8_t(simulationState >> (8 * k));
             // Value fields follow the DWORD counter, a short cursor and four ints.
             size_t lv = 12 + (size_t)items * 2 + 2 + 4 * 5;
             if (lv + 12 <= d.size() && (ArchitectureDelta != 0 || ObjectsDelta != 0 || SetArchitectureValue >= 0 || SetObjectsValue >= 0)) {

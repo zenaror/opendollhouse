@@ -41,6 +41,18 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- The simulation sees the selected Live, Buy, Build or Options mode instead of
+  the mode left in the house file. Opening a house also respects its saved Pause
+  state; switching panels keeps that preference.
+
+- Lot loading recognizes the original global controller types, including gift
+  tokens, and lets their scripts handle residential or public lots. Old catalog
+  caches rebuild automatically. Saved native snapshots retain their own objects.
+
+- Random choices during simulation use a saved sequence separate from setup
+  and menu checks. Disabled objects no longer advance it without a scripted
+  random choice. Existing native saves migrate to the separated states.
+
 - Classic saves load current and previous needs in the original order. Existing
   OpenDollhouse saves retain their values. New saves require an updated engine
   on each platform; older builds refuse them instead of swapping the values.

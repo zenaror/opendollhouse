@@ -9,6 +9,29 @@
 #include <stdexcept>
 
 namespace FSO { namespace SimAntics { namespace Utils {
+// A nonfinancial execution snapshot may still carry an authentic classic SIMI.
+// Keep both logical random states synchronized even without a family budget.
+inline void SyncTS1RandomState(VM& vm, Files::Formats::IFF::IffRawFile& house) {
+    if (!vm.TS1) return;
+    using Files::Formats::IFF::Chunks::SIMI;
+    Files::Formats::IFF::IffRawFile::Chunk* chunk = nullptr;
+    for (auto& item : house.Chunks) if (item.Type == "SIMI") {
+        if (chunk || item.ID != 1) throw std::runtime_error("TS1 random state: ambiguous SIMI");
+        chunk = &item;
+    }
+    if (!chunk) return; // Resource-free native snapshots have no classic owner.
+    SIMI original; st::Reader reader(chunk->Data, st::Endian::Little);
+    original.Read(nullptr, reader);
+    auto next = chunk->Data;
+    const auto shared = SIMI::RandomStateOffset(original.Version);
+    const auto owner = SIMI::SimulationRandomStateOffset(original.Version);
+    if (shared + 4 > next.size()) throw std::runtime_error("TS1 random state: truncated SIMI");
+    for (size_t k=0;k<4;++k) {
+        next[shared+k]=uint8_t(uint32_t(vm.Context->RandomSeed)>>(8*k));
+        next[owner+k]=uint8_t(uint32_t(vm.Context->TS1SimulationRandomSeed)>>(8*k));
+    }
+    chunk->Data = std::move(next);
+}
 // Synchronize financial bytes into a caller-owned staged IFF. No VM state is
 // changed. Authentic SIMI parsing precedes replacement and retains unknown tail.
 inline void SyncTS1Budget(VM& vm, Files::Formats::IFF::IffRawFile& house) {
@@ -53,6 +76,9 @@ inline void SyncTS1Budget(VM& vm, Files::Formats::IFF::IffRawFile& house) {
     const auto randomAt=SIMI::RandomStateOffset(original.Version);
     const auto randomState=static_cast<uint32_t>(vm.Context->RandomSeed);
     for(size_t k=0;k<4;++k)next[randomAt+k]=uint8_t(randomState>>(k*8));
+    const auto simulationAt=SIMI::SimulationRandomStateOffset(original.Version);
+    const auto simulationState=static_cast<uint32_t>(vm.Context->TS1SimulationRandomSeed);
+    for(size_t k=0;k<4;++k)next[simulationAt+k]=uint8_t(simulationState>>(k*8));
     for(size_t k=0;k<4;++k)next[tickAt+6+12+k]=0; // consumed owner+94 delta
     const bool upgrade=original.Version<0x34;
     if (upgrade) {
