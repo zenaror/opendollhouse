@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-// Source-derived synthetic clock/event contracts; no commercial assets or window.
+// Original clock contracts and explicit pre21 callback compatibility controls.
+// New model-wide/per-binding events have their separate source-derived fixture.
 #include "simantics/entities/VMAvatar.h"
 #include "simantics/engine/VMThread.h"
 #include "simantics/VM.h"
@@ -41,7 +42,7 @@ int main() {
   FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"animation-clock-contract",true);
   FSO::Files::Formats::IFF::Chunks::OBJD definition;
   FSO::Content::GameObject object;object.OBJ=&definition;object.Resource=&resource;
-  VMAvatar actor(&object);actor.Thread=std::make_unique<Engine::VMThread>(&context,&actor,4096);
+  VMAvatar actor(&object);actor.TS1AnimationController.OriginalLifecycle=false;actor.Thread=std::make_unique<Engine::VMThread>(&context,&actor,4096);
   context.Clock->Ticks=100;
   auto foreground=std::make_shared<VMAnimationState>(&asset,false);actor.StartTS1Animation(foreground);actor.Animations.push_back(foreground);
   auto carry=std::make_shared<VMAnimationState>(&asset,false);actor.StartTS1Animation(carry);actor.CarryAnimationState=carry;

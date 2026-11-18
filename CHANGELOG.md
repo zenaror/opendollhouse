@@ -7,6 +7,12 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Objects run their original loading routines when a lot opens, including
+  newly created expansion helpers. Helpers that do not belong on the current
+  lot can leave normally instead of repeatedly failing.
+- Animation events and held-object changes follow the original script rules
+  more closely. New saves preserve the associated animation state and require
+  updated builds when shared between platforms.
 - Interaction positions use the original oriented search and weighted destination
   selection, including the chosen chair's entry action. Walking paths also use
   the original weighted regions, corner refinement and final-facing rules.

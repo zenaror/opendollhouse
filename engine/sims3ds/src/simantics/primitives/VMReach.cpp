@@ -109,6 +109,8 @@ VMPrimitiveExitCode VMReach::Execute(VMStackFrame* context, VMPrimitiveOperand* 
     }
     auto avatar = dynamic_cast<VMAvatar*>(context->Caller); // C#: (VMAvatar)context.Caller
     if (avatar == nullptr) throw VMSimanticsException("Specified cast is not valid.", context);
+    const bool sharedEvents = context->VM()->TS1 && !avatar->TS1ExternalAnimationClock &&
+        avatar->TS1AnimationController.OriginalLifecycle;
 
     /** Are we starting the animation or progressing it? **/
     if (avatar->CurrentAnimationState() == nullptr || (avatar->CurrentAnimationState()->Anim != animation && !completedPickup))
@@ -117,6 +119,7 @@ VMPrimitiveExitCode VMReach::Execute(VMStackFrame* context, VMPrimitiveOperand* 
         /** Start it **/
 
         avatar->Animations.clear();
+        if (sharedEvents) avatar->TS1AnimationController.Events.clear();
         avatar->Animations.push_back(std::make_shared<Model::VMAnimationState>(animation, false));
 
         avatar->Avatar->LeftHandGesture = FSO::Vitaboy::SimHandGesture::Idle;
@@ -131,10 +134,13 @@ VMPrimitiveExitCode VMReach::Execute(VMStackFrame* context, VMPrimitiveOperand* 
             avatar->Animations.clear();
             return VMPrimitiveExitCode::GOTO_TRUE;
         }
-        else if (avatar->CurrentAnimationState()->EventQueue.size() > 0)
+        else if (sharedEvents ? !avatar->TS1AnimationController.Events.empty()
+                             : !avatar->CurrentAnimationState()->EventQueue.empty())
         {
 
-            if (avatar->CurrentAnimationState()->EventQueue[0] == 0)
+            const auto event = sharedEvents ? avatar->TS1AnimationController.Events.front()
+                : int32_t(avatar->CurrentAnimationState()->EventQueue.front());
+            if (event == 0)
             {
                 //do the grab/drop
                 if (operand->Mode == 0)
@@ -175,9 +181,15 @@ VMPrimitiveExitCode VMReach::Execute(VMStackFrame* context, VMPrimitiveOperand* 
             }
             // C# re-evaluates avatar.CurrentAnimationState here too (the grab/drop above may have touched the animation list)
             if (avatar->CurrentAnimationState() == nullptr) throw VMSimanticsException("Object reference not set to an instance of an object.", context);
-            auto& queue = avatar->CurrentAnimationState()->EventQueue;
-            if (queue.empty()) throw VMSimanticsException("Index was out of range.", context);
-            queue.erase(queue.begin());
+            if (sharedEvents) {
+                auto& queue = avatar->TS1AnimationController.Events;
+                if (queue.empty()) throw VMSimanticsException("Index was out of range.", context);
+                queue.erase(queue.begin());
+            } else {
+                auto& queue = avatar->CurrentAnimationState()->EventQueue;
+                if (queue.empty()) throw VMSimanticsException("Index was out of range.", context);
+                queue.erase(queue.begin());
+            }
             return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
         }
         else

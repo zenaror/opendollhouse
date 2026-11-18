@@ -18,6 +18,8 @@ namespace FSO { namespace SimAntics { namespace Primitives {
 class VMAnimateSim : public Engine::VMPrimitiveHandler {
 public:
     Engine::VMPrimitiveExitCode Execute(Engine::VMStackFrame* context, Engine::VMPrimitiveOperand* args) override;
+private:
+    Engine::VMPrimitiveExitCode ExecuteOriginal(Engine::VMStackFrame* context, Engine::VMPrimitiveOperand* args);
 };
 
 class VMAnimateSimOperand : public Engine::VMPrimitiveOperand {

@@ -105,6 +105,34 @@ uint64_t TS1StopProfileSignature(FSO::Vitaboy::Animation& animation,
 }}
 
 namespace {
+struct TS1AnimationChannelOrder {
+    std::array<int64_t,66> small{};
+    std::vector<int64_t> overflow;
+    int64_t* data = nullptr;
+    size_t count = 0;
+    explicit TS1AnimationChannelOrder(const VMAvatar& avatar) {
+        count=avatar.Animations.size()+2;
+        if (count>small.size()) {overflow.resize(count);data=overflow.data();}
+        else data=small.data();
+        for(size_t i=0;i<count;++i)data[i]=int64_t(i)-1;
+        if (!avatar.TS1AnimationController.OriginalLifecycle || avatar.TS1ExternalAnimationClock ||
+            !avatar.Thread || !avatar.Thread->Context->VM->TS1) return;
+        const auto priority=[&](int64_t channel) {
+            const auto state=channel==-1 ? avatar.TS1BackgroundAnimationState.get()
+                : channel==int64_t(avatar.Animations.size()) ? avatar.CarryAnimationState.get()
+                : avatar.Animations[size_t(channel)].get();
+            return state ? state->TS1CompositionPriority : INT32_MIN;
+        };
+        // Source stable ascending composition order. Ordinary three channels
+        // need no allocation; retain arbitrary valid persisted priorities.
+        for(size_t i=1;i<count;++i) {
+            const auto channel=data[i];size_t at=i;
+            while(at && priority(channel)<priority(data[at-1])) {data[at]=data[at-1];--at;}
+            data[at]=channel;
+        }
+    }
+};
+
 void SetTS1StopProfile(VMAvatar& avatar) {
     auto& model = avatar.TS1ModelMotion;
     if (!avatar.Avatar || !avatar.Avatar->BaseSkeleton) return;
@@ -261,7 +289,20 @@ void VMAvatar::DetachTS1MotionRequest(uint64_t token) {
 void VMAvatar::UpdateTS1ModelMotion() {
     using namespace Engine::Routing;
     auto& model = TS1ModelMotion;
-    if (!Thread || !Thread->Context || !Thread->Context->Clock || model.Kind == TS1MotionKind::None) return;
+    if (!Thread || !Thread->Context || !Thread->Context->Clock) return;
+    if (TS1AnimationController.OriginalLifecycle) {
+        const auto state=model.Kind==TS1MotionKind::None ? TS1AnimationController.ModelState : model.ModelState;
+        if ((state==2 || (state==1 && GetPersonData(VMPersonDataVariable::DecorationFlags)==0)) &&
+            CurrentAnimationState()) {
+            //58f0ef/58f132: posture states retire foreground and refresh the
+            //background without changing the script latch or motion request.
+            Animations.clear();TS1BackgroundPosture=-1;UpdateTS1BackgroundAnimation();
+            if(model.Kind!=TS1MotionKind::None) {
+                model.ForegroundAnimation.clear();model.ForegroundInterruptible=0;model.BlendActive=false;
+            }
+        }
+    }
+    if (model.Kind == TS1MotionKind::None) return;
     const auto tick = Thread->Context->Clock->Ticks;
     if (model.LastModelTick == tick) return;
     if (model.OwnerFrame < 0 || size_t(model.OwnerFrame) >= Thread->Stack.size()
@@ -270,10 +311,15 @@ void VMAvatar::UpdateTS1ModelMotion() {
     }
     model.LastModelTick = tick;
     UpdateTS1MotionRate(model.ModelState);
+    // Source190 state0 runs the script animation and common animator only.
+    // A child script can enter this state while its parent still owns a route;
+    // keep the request/path/cursor alive without advancing its kinematics.
+    if (TS1AnimationController.OriginalLifecycle && model.ModelState>=0 && model.ModelState<=2) return;
     if (auto clip = CurrentAnimationState()) {
         if (clip->Anim->Name != model.ForegroundAnimation) {
             model.ForegroundAnimation = clip->Anim->Name;
-            model.ForegroundInterruptible = 0;
+            model.ForegroundInterruptible = TS1AnimationController.OriginalLifecycle
+                ? clip->TS1ScriptInterruptible : 0;
             model.BlendActive = false;
         }
     } else { model.ForegroundAnimation.clear(); model.ForegroundInterruptible = 0; model.BlendActive = false; }
@@ -478,6 +524,11 @@ VMAvatar::VMAvatar(FSO::Content::GameObject* obj) : VMEntity(obj) {
 VMAvatar::~VMAvatar() {}
 
 void VMAvatar::SetAvatarType(STR* data) {
+    const auto invalidate=[](const std::shared_ptr<VMAnimationState>& state) {
+        if(state)state->TS1BindingSkeleton=nullptr;
+    };
+    for(const auto& state:Animations)invalidate(state);
+    invalidate(TS1BackgroundAnimationState);invalidate(CarryAnimationState);
     TS1StopProfileCache = Engine::Routing::TS1MotionRequest{};
     TS1StopProfileAnimationSource = nullptr; TS1StopProfileSkeletonSource = nullptr;
     if (data == nullptr) {
@@ -827,35 +878,49 @@ void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool
 }
 
 void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool allowSound, VMAnimationState* eventOwner) {
+    const bool original = Thread && Thread->Context && Thread->Context->VM->TS1 &&
+        !TS1ExternalAnimationClock && TS1AnimationController.OriginalLifecycle;
+    const auto apply = [&](const std::string* key, const std::string* value) {
+        const auto get = [&](const char* name) -> const std::string* {
+            return key ? (*key == name ? value : nullptr) : tp.Properties.Get(name);
+        };
     VMAvatar* avatar = this;
+    if (original && eventOwner && key && (*key == "interruptible" || *key == "interruptable"))
+        eventOwner->TS1ScriptInterruptible = int32_t(std::atoi(value->c_str()));
     if (eventOwner && eventOwner == CurrentAnimationState()
         && TS1ModelMotion.Kind != Engine::Routing::TS1MotionKind::None) {
-        auto interruptible = tp.Properties.Get("interruptible");
-        if (!interruptible) interruptible = tp.Properties.Get("interruptable");
+        auto interruptible = get("interruptible");
+        if (!interruptible) interruptible = get("interruptable");
         if (interruptible) TS1ModelMotion.ForegroundInterruptible = std::atoi(interruptible->c_str());
     }
-    auto evt = tp.Properties.Get("xevt");
+    auto evt = get("xevt");
     if (evt != nullptr && eventOwner != nullptr) {
-        auto eventValue = (int16_t)atoi(evt->c_str());
+        const int32_t originalValue = int32_t(atoi(evt->c_str()));
+        if (Thread && Thread->Context && Thread->Context->VM->TS1 &&
+            !TS1ExternalAnimationClock && TS1AnimationController.OriginalLifecycle) {
+            TS1AnimationController.Events.push_back(originalValue);
+        } else {
+        auto eventValue = int16_t(originalValue);
         eventOwner->EventQueue.push_back(eventValue);
         // TS1(sims): FreeSO — only events below 100 count towards the operand's expected event count. Events
         // >= 100 (101 = 'sound' cue) are extra; when the animation ends short of its count, Animate Sim queues the
         // missing ones (0, 1, ...). E.g. 'A2O-tvsmall-turnon' carries only xevt 101 and its tree switches the TV on
         // on the forced event 0: counting 101 meant small TVs never turned on and 'Watch TV' never ran.
         if (eventValue < 100) eventOwner->EventsRun++;
+        }
     }
-    auto rhevt = tp.Properties.Get("righthand");
+    auto rhevt = get("righthand");
     if (rhevt != nullptr) {
         auto eventValue = (int16_t)atoi(rhevt->c_str());
         avatar->Avatar->RightHandGesture = (FSO::Vitaboy::SimHandGesture)eventValue;
     }
-    auto lhevt = tp.Properties.Get("lefthand");
+    auto lhevt = get("lefthand");
     if (lhevt != nullptr) {
         auto eventValue = (int16_t)atoi(lhevt->c_str());
         avatar->Avatar->LeftHandGesture = (FSO::Vitaboy::SimHandGesture)eventValue;
     }
 
-    auto soundevt = tp.Properties.Get("sound");
+    auto soundevt = get("sound");
     auto owner = this;
     if (allowSound && UseWorld && soundevt != nullptr && FSO::HIT::HITVM::Get() != nullptr) {
         bool playing = false;
@@ -882,7 +947,7 @@ void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool
     // TS1: animation time properties mount/unmount authored accessories.
     // Both pinned FreeSO consumers retain the literal name even without a
     // world renderer; the existing appearance resolver owns .apr/case lookup.
-    auto dress = tp.Properties.Get("dress");
+    auto dress = get("dress");
     if (dress != nullptr) {
         avatar->BoundAppearances.insert(*dress);
         if (UseWorld && avatar->Avatar != nullptr) {
@@ -890,7 +955,7 @@ void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool
             if (apr != nullptr) avatar->Avatar->AddAccessory(apr);
         }
     }
-    auto undress = tp.Properties.Get("undress");
+    auto undress = get("undress");
     if (undress != nullptr) {
         avatar->BoundAppearances.erase(*undress);
         if (UseWorld && avatar->Avatar != nullptr) {
@@ -898,6 +963,14 @@ void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool
             if (apr != nullptr) avatar->Avatar->RemoveAccessory(apr);
         }
     }
+
+    };
+    if (original) {
+        //591301 consumes every authored key/value in order, including duplicate
+        //xevt/hand/accessory keys. No temporary property lists are allocated.
+        for (const auto& item : tp.Properties.Items)
+            for (const auto& pair : item.KeyPairs) apply(&pair.first,&pair.second);
+    } else apply(nullptr,nullptr);
 
 }
 
@@ -961,11 +1034,15 @@ void VMAvatar::Tick() {
 
     VMAvatar* avatar = this;
     if (Thread && Thread->Context->VM->TS1 && !TS1ExternalAnimationClock) {
+        UpdateTS1CarryAnimation();
         UpdateTS1BackgroundAnimation();
         UpdateTS1ModelMotion();
     }
     if (Thread && Thread->Context->VM->TS1 && !TS1ExternalAnimationClock) {
-        int modelState = CurrentAnimationState() && CurrentAnimationState()->TS1ScriptAnimation ? 0 : 3;
+        int modelState = TS1AnimationController.OriginalLifecycle
+            ? (TS1ModelMotion.Kind == Engine::Routing::TS1MotionKind::None
+                ? TS1AnimationController.ModelState : TS1ModelMotion.ModelState)
+            : (CurrentAnimationState() && CurrentAnimationState()->TS1ScriptAnimation ? 0 : 3);
         for (auto frame = Thread->Stack.rbegin(); TS1ModelMotion.Kind == Engine::Routing::TS1MotionKind::None
             && frame != Thread->Stack.rend(); ++frame) {
             if (auto route = dynamic_cast<Engine::VMRoutingFrame*>(frame->get())) {
@@ -983,7 +1060,7 @@ void VMAvatar::Tick() {
 
     UpdateHeadSeek();
 
-    if (avatar->CarryAnimationState != nullptr) {
+    if (avatar->CarryAnimationState != nullptr && !avatar->CarryAnimationState->TS1Clock) {
         auto& carry = avatar->CarryAnimationState;
         const float pose = carry->TS1Clock ? carry->TS1PoseFrame() : carry->CurrentFrame;
         if (carry->TS1Clock) FSO::Vitaboy::Animator::RenderFrameTS1(avatar->Avatar.get(), carry->Anim,
@@ -1055,6 +1132,7 @@ void VMAvatar::UpdateTS1BackgroundAnimation() {
     auto animation = content->AvatarAnimations->Get(WalkAnimations[code] + ".anim");
     if (!animation) return;
     auto state = std::make_shared<VMAnimationState>(animation, false);
+    state->TS1CompositionPriority = -10;
     state->Loop = true;
     StartTS1Animation(state);
     TS1BackgroundAnimationState = std::move(state);
@@ -1064,19 +1142,30 @@ void VMAvatar::AdvanceAnimations(bool allowSound) {
     //animation update for avatars
     VMAvatar* avatar = this;
     float totalWeight = 0.0f;
-    for (int64_t channel = -1; channel <= int64_t(Animations.size()); ++channel) {
+    const TS1AnimationChannelOrder order(*this);
+    for (size_t i=0;i<order.count;++i) {
+        const auto channel=order.data[i];
         const bool background = channel == -1;
         const bool carry = channel == int64_t(Animations.size());
         auto state = background ? TS1BackgroundAnimationState.get()
             : carry ? CarryAnimationState.get() : Animations[size_t(channel)].get();
         if (background && (!state || !state->TS1Clock)) continue;
-        if (carry && (!state || !state->TS1Clock)) break;
+        if (carry && (!state || !state->TS1Clock)) continue;
         if (carry || background) totalWeight = 1.f;
         else totalWeight += state->Weight;
         if (state->TS1Clock) {
-            if (!state->EndReached || state->Loop) {
-                const int32_t previousEventTime = state->TS1EventTime();
+            const bool original=Thread && Thread->Context && Thread->Context->VM->TS1 &&
+                !TS1ExternalAnimationClock && TS1AnimationController.OriginalLifecycle;
+            if (original && (!PrepareTS1AnimationBindings(*state) || state->Anim->NumFrames()==0)) {
+                //597c54 samples the clock but skips phase and event history
+                // when none of the resource's bones bind to this skeleton.
+                state->TS1Timestamp=TS1AnimationTimestamp();
+                continue;
+            }
+            if (original || !state->EndReached || state->Loop) {
+                const int32_t previousEventTime = original ? state->TS1BindingPreviousEventTime : state->TS1EventTime();
                 state->AdvanceTS1Clock(TS1AnimationTimestamp());
+                if (original && state->EndReached && !state->Loop) state->Speed=0;
                 if (!carry && channel == 0 && TS1ModelMotion.BlendActive
                     && TS1ModelMotion.ForegroundAnimation == state->Anim->Name)
                     state->Weight = Engine::Routing::TS1AdvanceStopBlend(TS1ModelMotion, TS1AnimationTimestamp());
@@ -1100,7 +1189,10 @@ void VMAvatar::AdvanceAnimations(bool allowSound) {
                             dispatch(size_t(cursor++));
                     }
                 };
-                if (state->Weight > 0.f && state->Anim->NumFrames() != 0 && !state->Anim->Motions.empty()) {
+                if (TS1AnimationController.OriginalLifecycle) {
+                    DispatchTS1AnimationEvents(state,previousEventTime,eventTime,allowSound);
+                    state->TS1BindingPreviousEventTime=eventTime;
+                } else if (state->Weight > 0.f && state->Anim->NumFrames() != 0 && !state->Anim->Motions.empty()) {
                     if (eventWrap) {
                         emit(0, true);
                         state->TS1EventCursor = state->PlayingBackwards ? int32_t(props.size()) - 1 : 0;
@@ -1228,7 +1320,18 @@ void VMAvatar::ApplyHeadSeek(float fraction) {
 void VMAvatar::FractionalAnim(float fraction) {
     auto avatar = this;
     float totalWeight = 0.0f;
-    for (int64_t channel=-1; channel<int64_t(Animations.size()); ++channel) {
+    const TS1AnimationChannelOrder order(*this);
+    for (size_t i=0;i<order.count;++i) {
+        const auto channel=order.data[i];
+        if (channel==int64_t(Animations.size())) {
+            const auto& carry=CarryAnimationState;
+            if (!carry) continue;
+            const float pose=carry->TS1Clock ? carry->TS1PoseFrame() : carry->CurrentFrame;
+            if(carry->TS1Clock)FSO::Vitaboy::Animator::RenderFrameTS1(Avatar.get(),carry->Anim,
+                int(pose),std::fmod(pose,1.f),1.f,carry->Loop);
+            else FSO::Vitaboy::Animator::RenderFrame(Avatar.get(),carry->Anim,int(pose),0.f,1.f);
+            continue;
+        }
         const auto& state=channel==-1 ? TS1BackgroundAnimationState : Animations[size_t(channel)];
         if (!state) continue;
         totalWeight += state->Weight;
@@ -1253,14 +1356,6 @@ void VMAvatar::FractionalAnim(float fraction) {
             FSO::Vitaboy::Animator::RenderFrame(avatar->Avatar.get(), state->Anim, (int)visualFrame, std::fmod(visualFrame, 1.0f), state->Weight / totalWeight);
         }
     }
-    if (avatar->CarryAnimationState != nullptr) {
-        const auto& carry = avatar->CarryAnimationState;
-        const float pose = carry->TS1Clock ? carry->TS1PoseFrame() : carry->CurrentFrame;
-        if (carry->TS1Clock) FSO::Vitaboy::Animator::RenderFrameTS1(avatar->Avatar.get(), carry->Anim,
-            int(pose), std::fmod(pose,1.f), 1.f, carry->Loop);
-        else FSO::Vitaboy::Animator::RenderFrame(avatar->Avatar.get(), carry->Anim, int(carry->CurrentFrame), 0.f, 1.f);
-    }
-
     ApplyHeadSeek(fraction); // after all ordinary/carry channels, before absolute matrices
 
     //TODO: if this gets changed to run at variable framerate need to "remember" visual position
@@ -1474,7 +1569,9 @@ bool VMAvatar::PlaceInSlot(VMEntity* obj, int32_t slot, bool cleanOld, VMContext
     if (!obj->GhostImage) {
         Contained[(size_t)slot] = obj;
 
-        if (slot == 0) {
+        const bool originalCarry = TS1AnimationController.OriginalLifecycle && !TS1ExternalAnimationClock && Thread && Thread->Context
+            && Thread->Context->VM && Thread->Context->VM->TS1;
+        if (slot == 0 && !originalCarry) {
             CarryAnimationState = std::make_shared<VMAnimationState>(FSO::Content::Content::Get()->AvatarAnimations->Get("a2o-rarm-carry-loop.anim"), false);
             StartTS1Animation(CarryAnimationState);
             if (CarryAnimationState->TS1Clock) CarryAnimationState->Loop = true;
@@ -1512,7 +1609,11 @@ void VMAvatar::ClearSlot(int32_t slot) {
     if (Thread && Thread->Context) Thread->Context->InvalidateRoofObject(child);
     child->Container = nullptr;
     child->ContainerSlot = -1;
-    if (slot == 0) CarryAnimationState = nullptr; // independent effect slots do not own the hand pose
+    const bool originalCarry = TS1AnimationController.OriginalLifecycle && !TS1ExternalAnimationClock && Thread && Thread->Context
+        && Thread->Context->VM && Thread->Context->VM->TS1;
+    // Original carry selection is deferred to the model prepass. In particular,
+    // custom kind6 and its cached transition state cannot be inferred here.
+    if (slot == 0 && !originalCarry) CarryAnimationState = nullptr;
 
     if (UseWorld && child->WorldUI) {
         child->WorldUI->Container = nullptr;

@@ -46,9 +46,22 @@ VMPrimitiveExitCode VMAnimateSim::Execute(VMStackFrame* context, VMPrimitiveOper
 
     Animation* animation = nullptr;
 
-    // TS1(sims): FreeSO — the animation id can come from a parameter.
-    uint16_t id = operand->IDFromParam() ? (uint16_t)context->Args.at(operand->AnimationID) : operand->AnimationID;
     const bool originalClock = context->VM()->TS1 && !avatar->TS1ExternalAnimationClock;
+    if (originalClock && !avatar->TS1AnimationController.OriginalLifecycle &&
+        avatar->Animations.empty() && !avatar->CarryAnimationState &&
+        !avatar->TS1BackgroundAnimationState &&
+        avatar->TS1AnimationController.Events.empty()) {
+        // Old saves have no consumed-event/admission history. Retain their
+        // adapter until every channel is absent, including default background.
+        // Retaining an advanced legacy background would replay its properties
+        // with fresh per-binding cursors. Never infer consumed history
+        // from a running clip pointer or its produced-event counter.
+        avatar->TS1AnimationController = VMTS1AnimationControllerState{};
+    }
+    if (originalClock && avatar->TS1AnimationController.OriginalLifecycle)
+        return ExecuteOriginal(context,args);
+    // Legacy save/external-controller compatibility path.
+    uint16_t id = operand->IDFromParam() ? (uint16_t)context->Args.at(operand->AnimationID) : operand->AnimationID;
     // The isolated CAS controller still supplies its own duration-based clock.
     float ts1Speed = context->VM()->TS1 && !originalClock ? 30 / 25.0f : 1.0f;
     auto speedFor = [&](std::shared_ptr<VMAnimationState>& st, bool foreground = true) {

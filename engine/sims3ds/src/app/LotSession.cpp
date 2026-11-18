@@ -408,6 +408,8 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
     // All saved objects and native interaction frames are available now. A
     // legacy foreign neighbour OID can be repaired without restarting actions.
     Engine::Utils::VMTS1Neighbourhood::RepairForeignObjectSocialReferences(_VM.get());
+    try { VMWorldActivator::RunTS1LoadCallbacks(_VM.get()); }
+    catch (const std::exception& e) { error = std::string("Object load failed: ") + e.what(); return false; }
     FSO::Files::LoadProgress::Step(lotTag + "view");
     // FreeSims UILotControl: the goto ghost used for "Go Here" pie menus on empty floor
     auto gotoGroup = _Ctx->CreateObjectInstance(GOTO_GUID, LotTilePos::OUT_OF_WORLD, Direction::NORTH, true, false);

@@ -36,6 +36,10 @@ public:
     Blueprint* LoadFromXML(FSO::LotView::Model::XmlHouseData& model);
     Blueprint* LoadFromIff(FSO::Files::Formats::IFF::IffFile* iff, bool deferInteractionRestore = false);
 
+    /// DVD post-load pass over the live manager chain. Call after the complete
+    /// saved execution graph is restored, before ordinary simulation dispatch.
+    static void RunTS1LoadCallbacks(FSO::SimAntics::VM* vm);
+
     std::vector<FloorTile> DecodeFloors(const std::vector<uint8_t>& data);
     std::vector<FloorTile> DecodeAdvFloors(const std::vector<uint8_t>& data);
     /// data == nullptr -> returns false (C# null)

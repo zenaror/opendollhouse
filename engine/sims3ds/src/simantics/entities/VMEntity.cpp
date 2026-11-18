@@ -511,7 +511,7 @@ bool VMEntity::ExecuteEntryPoint(int32_t entry, VMContext* context, bool runImme
             frame->Routine = routine;
             frame->StackObject = stackOBJ;
             frame->Args = args;
-            if (entry==5 && argsIn==nullptr && context->VM->TS1) {
+            if ((entry==2 || entry==5) && argsIn==nullptr && context->VM->TS1) {
                 // DVD422d79 forwards a null argument pointer. The interpreter
                 // (4749b7) then copies the declared arguments from its own
                 // temporary bank; the other object's ID is only StackObject.
@@ -521,7 +521,10 @@ bool VMEntity::ExecuteEntryPoint(int32_t entry, VMContext* context, bool runImme
                 std::copy_n(Thread->TempRegisters.begin(),routine->Arguments,frame->Args.begin());
             }
 
-            if (runImmediately) {
+            if (runImmediately && entry==2 && context->VM->TS1 && !GhostImage) {
+                if (!Thread) throw std::runtime_error("Original Load requires its existing object machine");
+                result=Thread->RunTS1Load(std::move(frame));
+            } else if (runImmediately) {
                 auto checkResult = VMThread::EvaluateCheck(context, this, frame);
                 result = (checkResult == Engine::VMPrimitiveExitCode::RETURN_TRUE);
             } else {

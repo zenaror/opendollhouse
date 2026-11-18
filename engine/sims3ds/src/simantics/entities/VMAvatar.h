@@ -15,6 +15,7 @@ namespace FSO { namespace SimAntics { namespace Engine { namespace Utils { class
 #include "simantics/model/VMPersonDataVariable.h"
 #include "simantics/model/VMMotiveChange.h"
 #include "simantics/model/VMAnimationState.h"
+#include "simantics/model/VMTS1AnimationControllerState.h"
 #include "simantics/engine/Routing/VMTS1MotionRequest.h"
 #include "simantics/model/TSOPlatform/VMTSOAvatarState.h"
 #include "simantics/model/VMTS1Appearance.h"
@@ -76,6 +77,7 @@ public:
     // A background loop must never block a scripted turn or its completion.
     std::shared_ptr<Model::VMAnimationState> TS1BackgroundAnimationState;
     int16_t TS1BackgroundPosture = -1;
+    Model::VMTS1AnimationControllerState TS1AnimationController;
     bool TS1RawAnimationClock = false;
     bool TS1HurryableAnimation = false;
     // The isolated CAS preview owns a separate renderer clock/controller.
@@ -175,6 +177,10 @@ public:
     /// World Tick calls this same block; isolated UI previews can reuse it.
     void AdvanceAnimations(bool allowSound = true);
     void UpdateTS1BackgroundAnimation();
+    void UpdateTS1CarryAnimation();
+    void DispatchTS1AnimationEvents(Model::VMAnimationState* state,
+        int32_t previousTime, int32_t eventTime, bool allowSound);
+    bool PrepareTS1AnimationBindings(Model::VMAnimationState& state);
     void HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool allowSound, Model::VMAnimationState* eventOwner);
     void UserLeaveLot();
     void FractionalAnim(float fraction);

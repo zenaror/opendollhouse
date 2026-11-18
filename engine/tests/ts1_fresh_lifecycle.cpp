@@ -8,6 +8,7 @@
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/engine/VMThread.h"
 #include "simantics/engine/VMPrimitiveRegistration.h"
+#include "simantics/utils/VMWorldActivator.h"
 #include "simantics/primitives/VMSleep.h"
 #include "simantics/primitives/VMRemoveObjectInstance.h"
 #include "files/formats/iff/IffFile.h"
@@ -385,6 +386,111 @@ static void nestedInitializerOverridesOwnerMode() {
         "nested global mode was not restored or its queued child survived the ordinary drain");
 }
 
+static void sameMachineLoad() {
+    Fixture f;f.define(0xf0200090);auto entity=f.create(0xf0200090)->BaseObject();auto& thread=*entity->Thread;
+    auto main=thread.Stack.front();thread.TicksThisFrame=31;thread.TempRegisters[3]=9;thread.TempXL[1]=123456;
+    auto action=std::make_shared<VMQueuedAction>();action->UID=77;action->Callee=entity;thread.Queue={action};thread.ActiveQueueBlock=0;
+    const auto beforeInit=f.InitCount,beforeMain=f.MainCount;
+    entity->EntryPoints[2].ActionFunction=0;
+    need(!entity->ExecuteEntryPoint(2,&f.Context,true)&&f.InitCount==beforeInit,"missing Load replayed an entry tree");
+    entity->EntryPoints[2].ActionFunction=4100;
+    need(!entity->ExecuteEntryPoint(2,&f.Context,true)&&thread.Stack.front()==main,
+         "unresolved Load routine disturbed prepared Main");
+    entity->EntryPoints[2].ActionFunction=4096;
+    int depth=0;
+    f.Init=[&](VMStackFrame* frame){
+        need(frame->Thread==&thread&&!thread.IsCheck&&thread.TS1ImmediateCallRunning()&&!thread.TS1InitializerRunning(),"Load used a check/fresh machine instead of its immediate context");
+        need(frame->Args.size()==4&&frame->Args[3]==thread.TempRegisters[3],"Load null arguments did not copy the existing temporary bank");
+        need(thread.Stack.front()==main&&main->InstructionPointer==0&&thread.ActiveAction()==action&&thread.Queue.size()==1,"Load replaced prepared Main or its active queue");
+        need(!f.Machine.CanCaptureTS1RemovalState(),"capture admitted an incomplete synchronous callback");
+        thread.TempRegisters[3]+=1;thread.TempXL[1]+=2;
+        if(depth++==0){need(entity->ExecuteEntryPoint(2,&f.Context,true),"nested same-machine Load returned false");need(thread.Stack.size()==3&&thread.TS1ImmediateCallRunning(),"nested Load did not restore outer sentinel");}
+        return VMPrimitiveExitCode::GOTO_TRUE;
+    };
+    need(entity->ExecuteEntryPoint(2,&f.Context,true),"normal Load true result lost");
+    need(thread.Stack.size()==1&&thread.Stack.front()==main&&thread.TicksThisFrame==31&&thread.Queue.size()==1&&thread.ActiveAction()==action,"Load failed to restore Main/bookkeeping/queue");
+    need(thread.TempRegisters[3]==11&&thread.TempXL[1]==123460&&f.MainCount==beforeMain&&!thread.TS1SynchronousCallRunning(),"Load lost shared temporaries or ticked Main");
+    bool rejected=false;auto frame=std::make_shared<VMStackFrame>();try{thread.RunTS1Initializer(frame);}catch(const std::runtime_error&){rejected=true;}
+    need(rejected,"generic Load weakened fresh Init queue guard");
+    f.Init=[](VMStackFrame* frame)->VMPrimitiveExitCode{frame->Thread->TempRegisters[3]=44;throw std::runtime_error("authored Load failure");};
+    rejected=false;try{entity->ExecuteEntryPoint(2,&f.Context,true);}catch(const std::runtime_error& e){rejected=std::string(e.what())=="authored Load failure";}
+    need(rejected&&thread.Stack.size()==1&&thread.Stack.front()==main&&thread.TempRegisters[3]==44&&thread.ActiveAction()==action&&!thread.TS1SynchronousCallRunning(),"throwing Load lost prepared state or swallowed authored writes");
+    f.Init=[](VMStackFrame*){return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;};
+    rejected=false;try{entity->ExecuteEntryPoint(2,&f.Context,true);}catch(const std::runtime_error& e){rejected=std::string(e.what()).find("attempted to suspend")!=std::string::npos;}
+    need(rejected&&thread.Stack.size()==1&&thread.Stack.front()==main&&thread.TicksThisFrame==31&&thread.ActiveAction()==action&&!thread.TS1SynchronousCallRunning(),"suspending Load crossed ordinary tick boundary or leaked sentinel");
+    f.Init=[](VMStackFrame*){return VMPrimitiveExitCode::GOTO_FALSE;};need(!entity->ExecuteEntryPoint(2,&f.Context,true),"Load false result became true");
+    VMRoutine sleep;sleep.Instructions.resize(1);sleep.Instructions[0].Opcode=0;
+    sleep.Instructions[0].TruePointer=254;sleep.Instructions[0].FalsePointer=255;
+    sleep.Instructions[0].Operand=std::make_unique<Primitives::VMSleepOperand>();
+    auto waiting=std::make_shared<VMStackFrame>();waiting->Caller=entity;waiting->Callee=entity;
+    waiting->CodeOwner=entity->Object;waiting->Routine=&sleep;waiting->Args={3,0,0,0};
+    rejected=false;try{thread.RunTS1Load(waiting);}catch(const std::runtime_error& e){rejected=std::string(e.what()).find("attempted to suspend")!=std::string::npos;}
+    need(rejected&&waiting->Args[0]==2&&thread.Stack.size()==1&&thread.Stack.front()==main&&
+         thread.ActiveAction()==action&&f.Context.Clock->Ticks==232560,
+         "Load ticked through a real Sleep boundary or damaged live Main/action state");
+}
+
+static void loadArgumentBank() {
+    Fixture f;f.define(0xf0200092);auto entity=f.create(0xf0200092)->BaseObject();auto& thread=*entity->Thread;
+    entity->EntryPoints[2].ActionFunction=4096;auto main=thread.Stack.front();auto* routine=f.Machine.Assemble(f.Iff.Get<BHAV>(4096));
+    routine->Arguments=6;thread.TempRegisters[0]=70;thread.TempRegisters[3]=73;thread.TempRegisters[5]=75;
+    std::vector<int16_t> expected(thread.TempRegisters.begin(),thread.TempRegisters.begin()+6);
+    f.Init=[&](VMStackFrame* frame){need(frame->Args==expected,"declared Load arguments beyond four were truncated or replaced");return VMPrimitiveExitCode::GOTO_TRUE;};
+    need(entity->ExecuteEntryPoint(2,&f.Context,true),"six-argument Load failed");
+    const std::vector<int16_t> explicitArgs={90,91,92,93,94,95};expected=explicitArgs;
+    need(entity->ExecuteEntryPoint(2,&f.Context,true,nullptr,&explicitArgs),"explicit Load argument bank was replaced by temporaries");
+    routine->Arguments=21;bool rejected=false;auto before=f.InitCount;
+    try{entity->ExecuteEntryPoint(2,&f.Context,true);}catch(const std::runtime_error& e){rejected=std::string(e.what()).find("argument bank")!=std::string::npos;}
+    need(rejected&&f.InitCount==before&&thread.Stack.size()==1&&thread.Stack.front()==main&&thread.TempRegisters[3]==73&&!thread.TS1SynchronousCallRunning(),"oversized Load argument declaration changed Main or executed a partial callback");
+}
+
+static void loadRemovalAndLiveQueueMutation() {
+    Fixture f;f.define(0xf0200091);auto entity=f.create(0xf0200091)->BaseObject();auto& thread=*entity->Thread;
+    entity->EntryPoints[2].ActionFunction=4096;auto main=thread.Stack.front();
+    auto existing=std::make_shared<VMQueuedAction>();existing->UID=17;thread.Queue={existing};
+    auto appended=std::make_shared<VMQueuedAction>();appended->UID=18;
+    f.Init=[&](VMStackFrame* frame){
+        frame->Thread->Queue.push_back(appended);Primitives::VMRemoveObjectInstance remove;Primitives::VMRemoveObjectInstanceOperand operand;
+        operand.Target=0;operand.Flags=0;auto result=remove.Execute(frame,&operand);
+        need(result==VMPrimitiveExitCode::GOTO_TRUE&&!entity->Dead&&f.Machine.HasTS1PendingRemovals(),"Load self-removal suspended or deleted inline");
+        return result;
+    };
+    need(entity->ExecuteEntryPoint(2,&f.Context,true),"Load self-removal did not complete its sentinel");
+    need(!entity->Dead&&thread.Stack.size()==1&&thread.Stack.front()==main&&thread.Queue==std::vector<std::shared_ptr<VMQueuedAction>>({existing,appended}),"Load rolled back authored queue mutation or lost Main");
+    need(f.Machine.GetTS1PendingRemovalIDs()==std::vector<int16_t>({entity->ObjectID})&&!thread.TS1SynchronousCallRunning(),"Load removal request was lost after immediate return");
+}
+
+static void restoredLoadPhaseOrder() {
+    Fixture f;f.Machine.TS1ObjectManagerOrderKnown=true;
+    for(uint32_t i=0;i<5;++i)f.define(0xf02000a0+i,uint16_t(100+i));
+    auto first=f.create(0xf02000a0)->BaseObject();auto second=f.create(0xf02000a1)->BaseObject();
+    auto person=f.create(0xf02000a2)->BaseObject();auto missing=f.create(0xf02000a3)->BaseObject();
+    person->Object->OBJ->ObjectType=OBJDType::Person;
+    for(auto* entity:{first,second,person})entity->EntryPoints[2].ActionFunction=4096;
+    missing->EntryPoints[2].ActionFunction=0;
+    std::vector<std::pair<VMEntity*,std::shared_ptr<VMStackFrame>>> mains;
+    for(auto* entity:{first,second,person,missing}){
+        mains.emplace_back(entity,entity->Thread->Stack.front());auto action=std::make_shared<VMQueuedAction>();
+        action->UID=uint16_t(entity->ObjectID);action->Callee=entity;entity->Thread->Queue={action};entity->Thread->ActiveQueueBlock=0;
+    }
+    need(f.Machine.TS1ObjectManagerOrder==std::vector<VMEntity*>({missing,person,second,first}),"Load fixture birth order was sorted by object ID");
+    std::vector<int16_t> order;VMEntity* child=nullptr;
+    f.Init=[&](VMStackFrame* frame){
+        if(frame->Thread->TS1InitializerRunning())return VMPrimitiveExitCode::GOTO_TRUE;
+        order.push_back(frame->Caller->ObjectID);
+        if(frame->Caller==second){child=f.create(0xf02000a4)->BaseObject();child->EntryPoints[2].ActionFunction=4096;}
+        if(frame->Caller==first){Primitives::VMRemoveObjectInstance remove;Primitives::VMRemoveObjectInstanceOperand operand;operand.Target=0;operand.Flags=0;return remove.Execute(frame,&operand);}
+        return VMPrimitiveExitCode::GOTO_TRUE;
+    };
+    VMWorldActivator::RunTS1LoadCallbacks(&f.Machine);
+    need(order==std::vector<int16_t>({second->ObjectID,first->ObjectID}),"Load phase missed birth order, skipped person/missing entry incorrectly, or revisited a created head");
+    need(child&&f.Machine.TS1ObjectManagerOrder.front()==child&&!first->Dead&&f.Machine.GetTS1PendingRemovalIDs()==std::vector<int16_t>({first->ObjectID}),"Load phase drained removal or lost newly created manager head");
+    for(auto& saved:mains)need(saved.first->Thread->Stack.size()==1&&saved.first->Thread->Stack.front()==saved.second&&saved.first->Thread->ActiveQueueBlock==0&&saved.first->Thread->Queue.size()==1,"restored Load phase replaced prepared Main/action state");
+    need(f.Context.Clock->Ticks==232560,"Load phase advanced simulation time");
+    f.Machine.Ready=false;f.Machine.Update();
+    need(first->Dead&&!f.Machine.HasTS1PendingRemovals()&&f.Context.Clock->Ticks==232561,"Load removal did not wait for the first ordinary sweep");
+}
+
 static void legacyAndRestoreBoundaries() {
     Fixture f(false);f.define(0xf0200030);
     f.Init=[](VMStackFrame* frame) {need(frame->Thread->IsCheck,"TS1 initializer mode leaked into TSO");return VMPrimitiveExitCode::GOTO_TRUE;};
@@ -405,7 +511,7 @@ int main(){try{
     VM::UseWorld(false);
     for(auto run:{singleAndNestedCreation,groupPhases,blockingInitRestoresMain,creationInOwnerDispatch,
                  groupMutationAndSelfDeletion,realNestedSubroutines,realRemovalDuringInit,
-                 realRemovalDuringInitialMain,nestedInitializerOverridesOwnerMode,legacyAndRestoreBoundaries}){
+                 realRemovalDuringInitialMain,nestedInitializerOverridesOwnerMode,sameMachineLoad,loadArgumentBank,loadRemovalAndLiveQueueMutation,restoredLoadPhaseOrder,legacyAndRestoreBoundaries}){
         run();need(VM::ReleaseAssembled(),"fixture leaked its VM into routine cache cleanup");
     }
     std::printf("PASS %d TS1 fresh-object lifecycle checks\n",checks);return 0;

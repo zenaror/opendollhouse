@@ -88,6 +88,8 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/engine/Routing/VMTS1RouteWorld.cpp
   sims3ds/src/simantics/engine/translator/VMTranslator.cpp
   sims3ds/src/simantics/entities/VMAvatar.cpp
+  sims3ds/src/simantics/entities/VMAvatarCarry.cpp
+  sims3ds/src/simantics/entities/VMAvatarAnimationEvents.cpp
   sims3ds/src/simantics/entities/VMAvatarMotiveDecay.cpp
   sims3ds/src/simantics/entities/VMEntity.cpp
   sims3ds/src/simantics/entities/VMGameObject.cpp
@@ -103,6 +105,7 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/model/VMTS1Appearance.cpp
   sims3ds/src/simantics/model/VMTuningCache.cpp
   sims3ds/src/simantics/primitives/VMAnimateSim.cpp
+  sims3ds/src/simantics/primitives/VMAnimateSimTS1.cpp
   sims3ds/src/simantics/primitives/VMBreakPoint.cpp
   sims3ds/src/simantics/primitives/VMChangeSuitOrAccessory.cpp
   sims3ds/src/simantics/primitives/VMCreateObjectInstance.cpp
@@ -586,6 +589,25 @@ if(BUILD_TESTING)
   add_executable(odh-ts1-animation-channels tests/ts1_animation_channels.cpp)
   target_link_libraries(odh-ts1-animation-channels PRIVATE odh_engine)
   add_test(NAME ts1-animation-channels COMMAND odh-ts1-animation-channels)
+  add_executable(odh-ts1-script-animation-contract tests/ts1_script_animation_contract.cpp)
+  target_link_libraries(odh-ts1-script-animation-contract PRIVATE odh_engine)
+  add_test(NAME ts1-script-animation-contract COMMAND odh-ts1-script-animation-contract)
+  add_executable(odh-ts1-carry-lifecycle tests/ts1_carry_lifecycle.cpp)
+  target_link_libraries(odh-ts1-carry-lifecycle PRIVATE odh_engine)
+  add_test(NAME ts1-carry-lifecycle COMMAND odh-ts1-carry-lifecycle)
+  add_executable(odh-ts1-animation-binding-events tests/ts1_animation_binding_events.cpp)
+  target_link_libraries(odh-ts1-animation-binding-events PRIVATE odh_engine)
+  add_test(NAME ts1-animation-binding-events COMMAND odh-ts1-animation-binding-events)
+  add_executable(odh-ts1-animation-controller-checkpoint-contract tests/ts1_animation_controller_checkpoint_contract.cpp)
+  target_link_libraries(odh-ts1-animation-controller-checkpoint-contract PRIVATE odh_engine)
+  add_test(NAME ts1-animation-controller-checkpoint-contract COMMAND odh-ts1-animation-controller-checkpoint-contract)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    foreach(contract odh-ts1-script-animation-contract odh-ts1-carry-lifecycle
+        odh-ts1-animation-binding-events odh-ts1-animation-controller-checkpoint-contract)
+      target_compile_options(${contract} PRIVATE -g0)
+      target_link_options(${contract} PRIVATE -Wl,--strip-debug)
+    endforeach()
+  endif()
   add_executable(odh-ts1-background-checkpoint-contract tests/ts1_background_checkpoint_contract.cpp)
   target_link_libraries(odh-ts1-background-checkpoint-contract PRIVATE odh_engine)
   add_test(NAME ts1-background-checkpoint-contract COMMAND odh-ts1-background-checkpoint-contract)

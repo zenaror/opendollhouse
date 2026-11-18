@@ -421,7 +421,7 @@ bool VM::TS1ScriptImmediateMode() const {
     // The DVD's immediate wrapper temporarily clears the execution-mode byte,
     // including calls nested inside an ordinary object's dispatch.
     return std::any_of(Entities.begin(),Entities.end(),[](const VMEntity* entity) {
-        return entity && entity->Thread && entity->Thread->TS1InitializerRunning();
+        return entity && entity->Thread && entity->Thread->TS1ImmediateCallRunning();
     });
 }
 

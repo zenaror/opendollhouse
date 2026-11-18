@@ -61,6 +61,30 @@ VMWorldActivator::VMWorldActivator(FSO::SimAntics::VM* vm, FSO::LotView::World* 
     World = world;
 }
 
+void VMWorldActivator::RunTS1LoadCallbacks(FSO::SimAntics::VM* vm) {
+    if (!vm || !vm->TS1 || FSO::SimAntics::Utils::VMLotDemolitionScope::Active(vm)) return;
+    vm->ValidateTS1ObjectManagerOrder();
+    if (!vm->TS1ObjectManagerOrderKnown)
+        throw std::runtime_error("Original object load requires a known manager order");
+    // DVD43fcd4 follows each object's live successor AFTER its callback.
+    // A callback-created head is not visited again as part of this pass.
+    auto* current = vm->TS1ObjectManagerOrder.empty() ? nullptr : vm->TS1ObjectManagerOrder.front();
+    while (current) {
+        if (current->Object && current->Object->OBJ &&
+            current->Object->OBJ->ObjectType != OBJDType::Person)
+            current->ExecuteEntryPoint(2, vm->Context, true);
+        const auto& order = vm->TS1ObjectManagerOrder;
+        const auto found = std::find(order.begin(), order.end(), current);
+        if (found == order.end())
+            throw std::runtime_error("Object load removed its registration before deferred cleanup");
+        const auto next = found + 1;
+        current = next == order.end() ? nullptr : *next;
+    }
+    // Load scripts may queue ordinary removals. The original keeps those
+    // objects alive through the paused loaded screen, until the first sweep.
+    vm->ValidateTS1ObjectManagerOrder();
+}
+
 static void InstallBlueprint(FSO::SimAntics::VM* vm, int32_t size, VMWorldActivator::Blueprint*& out) {
     vm->Context->OwnedBlueprint.reset(new VMWorldActivator::Blueprint(size, size));
     out = vm->Context->OwnedBlueprint.get();
@@ -747,6 +771,8 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
         Engine::Utils::VMTS1InteractionCheckpoint::Restore(*VM, *iff);
         VM->ApplyTS1FreeWillPreference(VM->FreeWillEnabled);
     }
+    if (!deferInteractionRestore && objm->Decoded && !getenv("WA_NO_RESTORE"))
+        RunTS1LoadCallbacks(VM);
     return BlueprintPtr;
 }
 

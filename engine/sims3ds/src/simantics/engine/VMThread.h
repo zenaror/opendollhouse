@@ -136,8 +136,13 @@ public:
     /// DVD fresh-object Init runs on its existing machine, preserving Main and
     /// sharing temporaries. It cannot suspend across simulation updates.
     bool RunTS1Initializer(std::shared_ptr<VMStackFrame> frame);
+    /// Original474b22: same-machine immediate call above a sentinel. Existing
+    /// action/temporary state stays live; prepared execution frames are restored.
+    bool RunTS1SynchronousCall(std::shared_ptr<VMStackFrame> frame);
+    bool RunTS1Load(std::shared_ptr<VMStackFrame> frame);
+    bool TS1ImmediateCallRunning() const { return TS1SynchronousActive; }
     bool TS1InitializerRunning() const { return TS1InitializerActive; }
-    bool TS1SynchronousCallRunning() const { return TS1InitializerActive || TS1FreshTickActive; }
+    bool TS1SynchronousCallRunning() const { return TS1SynchronousActive || TS1FreshTickActive; }
     void RunTS1FreshTick();
 
     VMThread(VMContext* context, VMEntity* entity, int32_t stackSize);
@@ -182,8 +187,9 @@ public:
     void ResetInteractionState();
 private:
     bool TS1InitializerActive = false;
+    bool TS1SynchronousActive = false;
     bool TS1FreshTickActive = false;
-    std::shared_ptr<VMStackFrame> TS1InitializerBoundary;
+    std::shared_ptr<VMStackFrame> TS1SynchronousBoundary;
     VMEntity* Entity;
     bool ContinueExecution = false;
     friend class FSO::SimAntics::Engine::Utils::InteractionCheckpointCodec;

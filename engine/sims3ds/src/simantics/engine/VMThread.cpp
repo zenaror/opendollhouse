@@ -104,6 +104,21 @@ bool VMThread::RunTS1Initializer(std::shared_ptr<VMStackFrame> frame) {
     if (!Context || !Context->VM || !Context->VM->TS1 || IsCheck ||
         !Queue.empty() || !TS1ObjectUses.empty())
         throw std::runtime_error("TS1 initializer requires a fresh object machine");
+    struct InitializerScope {
+        bool& Flag;bool Previous;
+        explicit InitializerScope(bool& flag):Flag(flag),Previous(flag){Flag=true;}
+        ~InitializerScope(){Flag=Previous;}
+    } scope(TS1InitializerActive);
+    return RunTS1SynchronousCall(std::move(frame));
+}
+
+bool VMThread::RunTS1Load(std::shared_ptr<VMStackFrame> frame) {
+    return RunTS1SynchronousCall(std::move(frame));
+}
+
+bool VMThread::RunTS1SynchronousCall(std::shared_ptr<VMStackFrame> frame) {
+    if (!Context || !Context->VM || !Context->VM->TS1 || IsCheck)
+        throw std::runtime_error("TS1 synchronous call requires an original object machine");
     // The DVD's sentinel protects the prepared Main stack, while the same
     // machine owns Init's temporaries. Keep that boundary on every exit.
     struct Restore {
@@ -116,27 +131,27 @@ bool VMThread::RunTS1Initializer(std::shared_ptr<VMStackFrame> frame) {
         std::shared_ptr<VMStackFrame> Boundary;
         explicit Restore(VMThread& thread) : Thread(thread), Stack(thread.Stack),
             Count(thread.TicksThisFrame), Continue(thread.ContinueExecution),
-            Initializing(thread.TS1InitializerActive), Result(thread.LastStackExitCode),
-            Break(thread.ThreadBreak), Boundary(thread.TS1InitializerBoundary) {}
+            Initializing(thread.TS1SynchronousActive), Result(thread.LastStackExitCode),
+            Break(thread.ThreadBreak), Boundary(thread.TS1SynchronousBoundary) {}
         ~Restore() {
             Thread.DetachTS1StackMotion(Stack.size());
             Thread.Stack=std::move(Stack);Thread.TicksThisFrame=Count;
-            Thread.ContinueExecution=Continue;Thread.TS1InitializerActive=Initializing;
+            Thread.ContinueExecution=Continue;Thread.TS1SynchronousActive=Initializing;
             Thread.LastStackExitCode=Result;Thread.ThreadBreak=Break;
-            Thread.TS1InitializerBoundary=std::move(Boundary);
+            Thread.TS1SynchronousBoundary=std::move(Boundary);
         }
     } restore(*this);
-    TS1InitializerActive=true;TicksThisFrame=0;ThreadBreak=VMThreadBreakMode::Active;
+    TS1SynchronousActive=true;TicksThisFrame=0;ThreadBreak=VMThreadBreakMode::Active;
     ContinueExecution=true;LastStackExitCode=VMPrimitiveExitCode::RETURN_FALSE;
-    TS1InitializerBoundary=std::make_shared<VMStackFrame>();
-    Stack.push_back(TS1InitializerBoundary);
+    TS1SynchronousBoundary=std::make_shared<VMStackFrame>();
+    Stack.push_back(TS1SynchronousBoundary);
     if (!frame || !frame->Routine || !Push(std::move(frame))) return false;
     while (Stack.size()>restore.Stack.size() && !Entity->Dead) {
         if (TicksThisFrame++ > MAX_LOOP_COUNT)
-            throw std::runtime_error("TS1 initializer entered an instruction loop");
+            throw std::runtime_error(TS1InitializerActive ? "TS1 initializer entered an instruction loop" : "TS1 synchronous call entered an instruction loop");
         NextInstruction();
         if (Stack.size()>restore.Stack.size() && !ContinueExecution)
-            throw std::runtime_error("TS1 initializer attempted to suspend");
+            throw std::runtime_error(TS1InitializerActive ? "TS1 initializer attempted to suspend" : "TS1 synchronous call attempted to suspend");
     }
     return LastStackExitCode==VMPrimitiveExitCode::RETURN_TRUE;
 }
@@ -826,10 +841,10 @@ void VMThread::ExecuteInstruction(VMStackFrame* frame) {
 }
 
 void VMThread::HandleResult(VMStackFrame* frame, VMInstruction* instruction, VMPrimitiveExitCode result) {
-    if (TS1InitializerActive && (result==VMPrimitiveExitCode::CONTINUE_NEXT_TICK ||
+    if (TS1SynchronousActive && (result==VMPrimitiveExitCode::CONTINUE_NEXT_TICK ||
         result==VMPrimitiveExitCode::GOTO_TRUE_NEXT_TICK ||
         result==VMPrimitiveExitCode::GOTO_FALSE_NEXT_TICK || result==VMPrimitiveExitCode::INTERRUPT))
-        throw std::runtime_error("TS1 initializer attempted to suspend");
+        throw std::runtime_error(TS1InitializerActive ? "TS1 initializer attempted to suspend" : "TS1 synchronous call attempted to suspend");
     switch (result) {
         // Don't advance the instruction pointer, this primitive isnt finished yet
         case VMPrimitiveExitCode::CONTINUE_NEXT_TICK:
@@ -936,8 +951,8 @@ void VMThread::Breakpoint(VMStackFrame* frame) {
 void VMThread::Pop(VMPrimitiveExitCode result) {
     // Missing/invalid subroutines are interpreter faults in the DVD's
     // immediate runner, not an authored false result from Init.
-    if (TS1InitializerActive && result==VMPrimitiveExitCode::ERROR)
-        throw std::runtime_error("TS1 initializer interpreter error");
+    if (TS1SynchronousActive && result==VMPrimitiveExitCode::ERROR)
+        throw std::runtime_error(TS1InitializerActive ? "TS1 initializer interpreter error" : "TS1 synchronous call interpreter error");
     if (Context->VM->OnTraceFrameReturn) {
         auto frame = Stack.back();
         Context->VM->OnTraceFrameReturn(frame.get(), static_cast<int>(result));
@@ -950,7 +965,7 @@ void VMThread::Pop(VMPrimitiveExitCode result) {
 
     // The immediate call returns to its sentinel, never branches the prepared
     // Main frame or treats Init as a completed user interaction.
-    if (TS1InitializerActive && !Stack.empty() && Stack.back()==TS1InitializerBoundary) {
+    if (TS1SynchronousActive && !Stack.empty() && Stack.back()==TS1SynchronousBoundary) {
         DetachTS1FrameMotion(Stack.back().get());
         Stack.pop_back();
         ContinueExecution=false;

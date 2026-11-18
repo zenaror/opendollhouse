@@ -12,6 +12,7 @@
 #include <limits>
 #include "vitaboy/Animation.h"
 #include "simantics/utils/TimePropertyListItemSorter.h"
+namespace FSO { namespace Vitaboy { class Skeleton; class Bone; }}
 namespace FSO { namespace SimAntics { namespace Model {
 class VMAnimationState {
 public:
@@ -28,9 +29,22 @@ public:
     // native checkpoints retain their frame-driven policy until replacement.
     bool TS1Clock = false;
     bool TS1ScriptAnimation = false;
+    int32_t TS1ScriptInterruptible = 0; // original instance+68; callbacks use signed atoi
     float TS1Phase = 0;
     int32_t TS1Timestamp = 0;
     int32_t TS1EventCursor = 0;
+    // Original instance+14 and+58 are separate: normal script clips have
+    // priority1 but do not claim/mask the bones they bind.
+    int32_t TS1CompositionPriority = 1;
+    bool TS1ClaimsBonePriority = false;
+    std::vector<int32_t> TS1BindingEventCursors; // resource Motion index; initial0 even backwards
+    int32_t TS1BindingPreviousEventTime = 0; // source instance+34, not phase-before-update
+    // Derived binding cache: never serialized, rebuilt against the live skeleton.
+    const FSO::Vitaboy::Skeleton* TS1BindingSkeleton = nullptr;
+    const FSO::Vitaboy::Animation* TS1BindingAnimation = nullptr;
+    std::vector<FSO::Vitaboy::Bone*> TS1BindingBones;
+    size_t TS1ResolvedBindings = 0;
+
     std::vector<FSO::Vitaboy::TimePropertyListItem> TimePropertyLists;
 
     // Convert only at consumers. A legitimate clock-policy change can leave
@@ -57,6 +71,10 @@ public:
     void StartTS1Clock(int32_t timestamp, float rate) {
         TS1Clock = true;
         TS1Timestamp = timestamp;
+        TS1BindingPreviousEventTime = 0;
+        TS1BindingSkeleton = nullptr;
+        TS1BindingAnimation = nullptr;
+        TS1BindingEventCursors.assign(Anim ? Anim->Motions.size() : 0,0);
         TS1Phase = PlayingBackwards ? 1.f : 0.f;
         TS1EventCursor = PlayingBackwards ? int32_t(TimePropertyLists.size()) - 1 : 0;
         Speed = rate;
@@ -94,6 +112,7 @@ public:
     }
 
     VMAnimationState(FSO::Vitaboy::Animation* animation, bool backwards) : Anim(animation) {
+        TS1BindingEventCursors.assign(Anim->Motions.size(),0);
         if (backwards) {
             PlayingBackwards = true;
             CurrentFrame = (float)Anim->NumFrames();

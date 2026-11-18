@@ -177,11 +177,42 @@ uint32_t AnimationSignature(const Vitaboy::Animation& anim, const VMAnimationSta
             }
         }
     }
+    if (version >= 21) {
+        // Source cursors address authored motion/group/item positions. A flat
+        // time-sorted table alone cannot bind them to their original bones.
+        auto property=[&](const Vitaboy::PropertyList& list) {
+            bytes.WriteUInt32(uint32_t(list.Items.size()));
+            for (const auto& item:list.Items) {
+                bytes.WriteUInt32(uint32_t(item.KeyPairs.size()));
+                for (const auto& pair:item.KeyPairs) {
+                    bytes.WriteVariableLengthPascalString(pair.first);
+                    bytes.WriteVariableLengthPascalString(pair.second);
+                }
+            }
+        };
+        bytes.WriteUInt32(uint32_t(anim.Motions.size()));
+        for (const auto& motion:anim.Motions) {
+            bytes.WriteVariableLengthPascalString(motion.BoneName);
+            bytes.WriteUInt32(motion.FrameCount);bytes.WriteFloat(motion.Duration);
+            bytes.WriteByte(motion.HasTranslation?1:0);bytes.WriteByte(motion.HasRotation?1:0);
+            bytes.WriteUInt32(motion.FirstTranslationIndex);bytes.WriteUInt32(motion.FirstRotationIndex);
+            bytes.WriteUInt32(uint32_t(motion.Properties.size()));
+            for (const auto& list:motion.Properties) property(list);
+            bytes.WriteUInt32(uint32_t(motion.TimeProperties.size()));
+            for (const auto& group:motion.TimeProperties) {
+                bytes.WriteUInt32(uint32_t(group.Items.size()));
+                for (const auto& item:group.Items) {
+                    bytes.WriteUInt32(item.ID);property(item.Properties);
+                }
+            }
+        }
+    }
     return Files::Hash::CalculateHash(bytes.ToArray());
 }
 
 struct AvatarRecord {
     Routing::TS1MotionRequest modelMotion;
+    Model::VMTS1AnimationControllerState animationController;
     std::vector<std::shared_ptr<VMAnimationState>> animations;
     std::shared_ptr<VMAnimationState> carry;
     std::shared_ptr<VMAnimationState> background;
@@ -666,6 +697,8 @@ public:
                 candidate.avatar->CarryAnimationState = std::move(candidate.carry);
                 candidate.avatar->TS1BackgroundAnimationState.reset();
                 candidate.avatar->TS1BackgroundPosture = -1;
+                candidate.avatar->TS1AnimationController=Model::VMTS1AnimationControllerState{};
+                candidate.avatar->TS1AnimationController.OriginalLifecycle=false;
                 candidate.avatar->MotiveData = candidate.precision.current;
                 candidate.avatar->OldMotiveData = candidate.precision.old;
                 candidate.avatar->TS1MotiveChanges = std::move(candidate.precision.changes);
@@ -743,6 +776,38 @@ public:
                 state.TS1Phase = 0;
                 state.TS1Timestamp = 0;
                 state.TS1EventCursor = 0;
+            }
+        }
+        if (version >= 21) {
+            io.value(state.TS1ScriptInterruptible);
+            // Source binding cursors are per authored motion, independent of
+            // the legacy time-sorted clip property/event projection.
+            io.value(state.TS1CompositionPriority);io.value(state.TS1ClaimsBonePriority);
+            io.value(state.TS1BindingPreviousEventTime);
+            io.vector(state.TS1BindingEventCursors,65535);
+            const size_t motions=state.Anim ? state.Anim->Motions.size() : 0;
+            Require(state.TS1BindingEventCursors.size()==motions,
+                    "animation binding cursor/resource count mismatch");
+            for (size_t i=0;i<motions;++i) {
+                size_t count=0;
+                for (const auto& properties:state.Anim->Motions[i].TimeProperties) count+=properties.Items.size();
+                Require(count<=size_t(INT32_MAX) && state.TS1BindingEventCursors[i]>=-1 &&
+                        int64_t(state.TS1BindingEventCursors[i])<=int64_t(count),
+                        "invalid animation binding event cursor");
+            }
+        } else {
+            Require(!io.out || !state.TS1ScriptInterruptible,
+                    "script-interruptible animation requires checkpoint version21");
+            Require(!io.out || (!state.TS1ClaimsBonePriority && state.TS1BindingPreviousEventTime==0 &&
+                    std::all_of(state.TS1BindingEventCursors.begin(),state.TS1BindingEventCursors.end(),
+                                [](int32_t cursor){return cursor==0;})),
+                    "animation binding history requires checkpoint version21");
+            if (io.in) {
+                state.TS1ScriptInterruptible=0;state.TS1ClaimsBonePriority=false;
+                state.TS1BindingPreviousEventTime=0;state.TS1CompositionPriority=1;
+                // Derived storage matches a new instance. Legacy policy keeps
+                // these zero cursors unused; this does not recover history.
+                state.TS1BindingEventCursors.assign(state.Anim ? state.Anim->Motions.size() : 0,0);
             }
         }
     }
@@ -1209,8 +1274,9 @@ public:
                     "outfit identity changed");
         }
     }
-    void modelMotion(Routing::TS1MotionRequest& m) {
+    void modelMotion(Routing::TS1MotionRequest& m, bool allowScriptState = false) {
         Require(!m.ModelUpdating, "model update is in progress");
+        allowScriptState=allowScriptState && version>=21;
         if (version < 18) {
             Require(!io.out || (m.Kind == Routing::TS1MotionKind::None && !m.Token),
                     "owned model motion requires checkpoint version18");
@@ -1265,7 +1331,8 @@ public:
                     m.OwnerCaller > 0 && m.OwnerCallee > 0 && m.OwnerCodeGUID && m.OwnerRoutine &&
                     n >= 3 && m.PathCursor >= -1 && m.PathCursor <= int32_t(n)-2,
                     "invalid owned model motion record");
-            Require(m.ModelState == 3 || m.ModelState == 4 || m.ModelState == 9 ||
+            const bool scriptState=allowScriptState && m.ModelState>=0 && m.ModelState<=2;
+            Require(scriptState || m.ModelState == 3 || m.ModelState == 4 || m.ModelState == 9 ||
                     (m.Kind == Routing::TS1MotionKind::Route && m.ModelState == 10),
                     "invalid owned model state");
             Require(m.Status == 0 ? m.Stopped == 1 && m.PathCursor == -1 :
@@ -1273,7 +1340,7 @@ public:
                     "model stopped state disagrees with its cursor");
             Require((m.Status != 1 && m.Status != -1) || m.Outcome <= 1,
                     "pending model has a terminal outcome");
-            Require(m.Status != 2 || (m.Outcome == 2 && m.ModelState == 3),
+            Require(m.Status != 2 || (m.Outcome == 2 && (m.ModelState == 3 || scriptState)),
                     "ready model has an inconsistent outcome or state");
             Require(m.Status != 3 || m.Outcome == 3,
                     "failed model has no failure outcome");
@@ -1341,6 +1408,52 @@ public:
                     "source model state requires checkpoint version15");
         }
     }
+    static void validateAnimationController(const Model::VMTS1AnimationControllerState& state) {
+        Require((state.ScriptActive==0 || state.ScriptActive==1) && state.EventsRun>=0 &&
+                state.ModelState>=0 && state.ModelState<=3 &&
+                (state.CarrySuppressed==0 || state.CarrySuppressed==1) &&
+                state.CarryKind>=0 && state.CarryKind<=6 &&
+                state.CarryCachedIndex>=-1 && state.CarryCachedIndex<=0,
+                "invalid animation controller state");
+    }
+    void animationController(AvatarRecord& a) {
+        auto& state=a.animationController;
+        if (version < 21) {
+            if (io.out) {
+                // Old readers retain the legacy adapter. Only a pristine
+                // quiescent source actor may project its policy bit: runtime
+                // promotion at that same boundary reconstructs default state.
+                const bool defaults=state.ScriptActive==0 && state.EventsRun==0 && state.ModelState==3 &&
+                    state.Events.empty() && state.CarrySuppressed==0 && state.CarryKind==0 && state.CarryCachedIndex==-1;
+                const bool quiescent=a.animations.empty() && !a.carry && !a.background;
+                Require(defaults && (!state.OriginalLifecycle || quiescent),
+                        "animation controller requires checkpoint version21");
+            } else {
+                // Legacy clip EventsRun counts produced callbacks, not the
+                // source model's consumed events or script admission history.
+                state=Model::VMTS1AnimationControllerState{};
+                state.OriginalLifecycle=false;
+            }
+            return;
+        }
+        io.value(state.OriginalLifecycle);io.value(state.ScriptActive);io.value(state.EventsRun);
+        io.value(state.ModelState);io.vector(state.Events,65535);
+        io.value(state.CarrySuppressed);io.value(state.CarryKind);io.value(state.CarryCachedIndex);
+        validateAnimationController(state);
+    }
+    void validateAnimationModelCoupling(const AvatarRecord& a) {
+        const auto& motion=a.modelMotion;
+        if (motion.Kind==Routing::TS1MotionKind::None || motion.ModelState<0 || motion.ModelState>2) return;
+        const auto& controller=a.animationController;
+        Require(version>=21 && controller.OriginalLifecycle && controller.ModelState==motion.ModelState,
+                "owned model script state disagrees with animation controller");
+        // This is source model history, not a derivation from current PD0:
+        // authored posture writes need not run the model-state reset mapper.
+    }
+    static void publishAnimationController(VMAvatar& live, AvatarRecord& a) noexcept {
+        live.TS1AnimationController=std::move(a.animationController);
+    }
+
     void background(AvatarRecord& a) {
         if (version < 20) {
             Require(!io.out || (!a.background && a.backgroundPosture == -1),
@@ -1372,6 +1485,7 @@ public:
             a.motionPositionKnown = live.TS1MotionPositionKnown;
             a.motionRate = live.TS1MotionRate; a.motionRateTick = live.TS1MotionRateTick;
             a.modelMotion = live.TS1ModelMotion;
+            a.animationController = live.TS1AnimationController;
             a.person = live.PersonData;
             a.hasFootprint = bool(live.Footprint);
             if (a.hasFootprint) {
@@ -1413,7 +1527,7 @@ public:
         for (auto& layer : a.animations) { animation(layer); Require(bool(layer), "empty animation layer"); }
         animation(a.carry);
         avatarTiming(a);
-        modelMotion(a.modelMotion);
+        modelMotion(a.modelMotion,version>=21);
         validateModelProfile(a.modelMotion, live);
         if (io.out) {
             const auto frames = version >= 16 ? BuildTS1RouteSavePlan(*live.Thread, vm.TS1, version >= 18).NativeFrames : live.Thread->Stack;
@@ -1449,6 +1563,18 @@ public:
             if (a.hasFootprint) { io.value(a.minX); io.value(a.minY); io.value(a.maxX); io.value(a.maxY); }
         }
         background(a);
+        animationController(a);
+        validateAnimationModelCoupling(a);
+        if (version<21) {
+            auto role=[&](const std::shared_ptr<VMAnimationState>& animation,int32_t priority) {
+                if (!animation) return;
+                if (io.in) animation->TS1CompositionPriority=priority;
+                else Require(animation->TS1CompositionPriority==priority,
+                             "animation composition priority requires checkpoint version21");
+            };
+            for (const auto& animation:a.animations) role(animation,1);
+            role(a.carry,10);role(a.background,-10);
+        }
         Require(a.leftHand >= 0 && a.leftHand <= 3 && a.rightHand >= 0 && a.rightHand <= 3, "invalid hand gesture");
     }
     void record(Record& r) {
@@ -1650,7 +1776,11 @@ public:
         // each object's separate native occupancy Footprint.
         for (auto& entry : records) {
             auto& r=entry.second;
-            if (r.avatar) publishBackground(*static_cast<VMAvatar*>(r.entity),*r.avatar);
+            if (r.avatar) {
+                auto* live=static_cast<VMAvatar*>(r.entity);
+                publishBackground(*live,*r.avatar);
+                publishAnimationController(*live,*r.avatar);
+            }
             r.entity->TS1NumericFootprintKnown=r.numericFootprintKnown;
             r.entity->TS1NumericFootprint=r.numericFootprint;
         }
