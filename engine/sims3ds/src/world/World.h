@@ -54,6 +54,7 @@ public:
 
     int8_t Stories() const { return Blueprint ? Blueprint->Stories : (int8_t)1; }
     FSO::LotView::Model::Blueprint* GetBlueprint() { return Blueprint; }
+    const FSO::LotView::Model::Blueprint* GetBlueprint() const { return Blueprint; }
 
     virtual void InitBlueprint(FSO::LotView::Model::Blueprint* blueprint);
 

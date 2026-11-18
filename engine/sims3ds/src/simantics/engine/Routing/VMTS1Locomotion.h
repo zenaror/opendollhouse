@@ -50,7 +50,8 @@ struct TS1LookaheadSample {
 // Source 0058e4e4..0058eb35 projects onto the current path segment, then
 // samples one position unit farther along it until outside half the radius.
 // Exhausting the segment advances the cursor instead of forcing a stop at
-// every corner. Float stores and integer truncation precede the distance test.
+// every corner. The source interpolates weighted endpoints and adds 0.5
+// before truncation (0058e687/0058e6a3), including on descending segments.
 inline TS1LookaheadSample TS1SegmentLookahead(float x, float y, int startX, int startY,
     int endX, int endY, float radius) {
     TS1LookaheadSample result;
@@ -64,8 +65,9 @@ inline TS1LookaheadSample TS1SegmentLookahead(float x, float y, int startX, int 
     const float increment = 1.0f / length;
     const float threshold = radius * 0.5f * radius * 0.5f;
     while (projection < 1) {
-        const int sampleX = int(startX + projection * dx);
-        const int sampleY = int(startY + projection * dy);
+        const float remaining = 1.0f - projection;
+        const int sampleX = int(float(startX) * remaining + float(endX) * projection + 0.5f);
+        const int sampleY = int(float(startY) * remaining + float(endY) * projection + 0.5f);
         const float px = sampleX - x, py = sampleY - y;
         if (threshold <= px * px + py * py) {
             result.Found = true; result.X = sampleX; result.Y = sampleY; return result;

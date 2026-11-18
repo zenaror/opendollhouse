@@ -184,6 +184,8 @@ struct AvatarRecord {
     Routing::TS1MotionRequest modelMotion;
     std::vector<std::shared_ptr<VMAnimationState>> animations;
     std::shared_ptr<VMAnimationState> carry;
+    std::shared_ptr<VMAnimationState> background;
+    int16_t backgroundPosture = -1;
     bool rawAnimationClock = false, hurryableAnimation = false, motionPositionKnown = false;
     float motionX = 0, motionY = 0, motionRate = 1;
     int16_t motionPublishedX = 0, motionPublishedY = 0;
@@ -662,6 +664,8 @@ public:
             if (candidate.avatar) {
                 candidate.avatar->Animations = std::move(candidate.animations);
                 candidate.avatar->CarryAnimationState = std::move(candidate.carry);
+                candidate.avatar->TS1BackgroundAnimationState.reset();
+                candidate.avatar->TS1BackgroundPosture = -1;
                 candidate.avatar->MotiveData = candidate.precision.current;
                 candidate.avatar->OldMotiveData = candidate.precision.old;
                 candidate.avatar->TS1MotiveChanges = std::move(candidate.precision.changes);
@@ -744,7 +748,13 @@ public:
     }
     void animation(std::shared_ptr<VMAnimationState>& state) {
         bool present = bool(state); io.value(present);
-        if (!present) return;
+        if (!present) {
+            // Readers may stage from an existing shared state. An explicit
+            // absence replaces that staged reference; it must not inherit the
+            // old foreground/carry/background merely because it was nonnull.
+            if (io.in) state.reset();
+            return;
+        }
         auto anim = state ? state->Anim : nullptr;
         std::string name = anim ? anim->Name : "";
         io.string(name);
@@ -1331,10 +1341,29 @@ public:
                     "source model state requires checkpoint version15");
         }
     }
+    void background(AvatarRecord& a) {
+        if (version < 20) {
+            Require(!io.out || (!a.background && a.backgroundPosture == -1),
+                    "background animation requires checkpoint version20");
+            if (io.in) { a.background.reset(); a.backgroundPosture = -1; }
+            return;
+        }
+        animation(a.background);
+        //590434 caches the literal signed posture before checking0/1/2.
+        // A stale or unsupported posture is valid history, not corrupt data.
+        io.value(a.backgroundPosture);
+    }
+    static void publishBackground(VMAvatar& live, AvatarRecord& a) noexcept {
+        live.TS1BackgroundAnimationState = std::move(a.background);
+        live.TS1BackgroundPosture = a.backgroundPosture;
+    }
+
     void avatar(AvatarRecord& a, VMAvatar& live) {
         Require(live.Avatar && live.MotiveDecay, "avatar has no animation or motive service");
         if (io.out) {
             a.animations = live.Animations; a.carry = live.CarryAnimationState;
+            a.background = live.TS1BackgroundAnimationState;
+            a.backgroundPosture = live.TS1BackgroundPosture;
             a.rawAnimationClock = live.TS1RawAnimationClock;
             a.hurryableAnimation = live.TS1HurryableAnimation;
             a.motionX = live.TS1MotionX; a.motionY = live.TS1MotionY;
@@ -1419,6 +1448,7 @@ public:
             io.value(a.hasFootprint);
             if (a.hasFootprint) { io.value(a.minX); io.value(a.minY); io.value(a.maxX); io.value(a.maxY); }
         }
+        background(a);
         Require(a.leftHand >= 0 && a.leftHand <= 3 && a.rightHand >= 0 && a.rightHand <= 3, "invalid hand gesture");
     }
     void record(Record& r) {
@@ -1620,6 +1650,7 @@ public:
         // each object's separate native occupancy Footprint.
         for (auto& entry : records) {
             auto& r=entry.second;
+            if (r.avatar) publishBackground(*static_cast<VMAvatar*>(r.entity),*r.avatar);
             r.entity->TS1NumericFootprintKnown=r.numericFootprintKnown;
             r.entity->TS1NumericFootprint=r.numericFootprint;
         }

@@ -72,6 +72,10 @@ public:
     std::vector<std::shared_ptr<Model::VMAnimationState>> Animations;
     Model::VMAnimationState* CurrentAnimationState() const { return (Animations.size() == 0) ? nullptr : Animations[0].get(); }
     std::shared_ptr<Model::VMAnimationState> CarryAnimationState;
+    // Original model+14 is independent of the foreground at model+0c.
+    // A background loop must never block a scripted turn or its completion.
+    std::shared_ptr<Model::VMAnimationState> TS1BackgroundAnimationState;
+    int16_t TS1BackgroundPosture = -1;
     bool TS1RawAnimationClock = false;
     bool TS1HurryableAnimation = false;
     // The isolated CAS preview owns a separate renderer clock/controller.
@@ -170,6 +174,7 @@ public:
     /// Advance authored animation channels/events without a household tick.
     /// World Tick calls this same block; isolated UI previews can reuse it.
     void AdvanceAnimations(bool allowSound = true);
+    void UpdateTS1BackgroundAnimation();
     void HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool allowSound, Model::VMAnimationState* eventOwner);
     void UserLeaveLot();
     void FractionalAnim(float fraction);

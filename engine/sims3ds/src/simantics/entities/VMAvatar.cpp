@@ -960,8 +960,10 @@ void VMAvatar::Tick() {
     }
 
     VMAvatar* avatar = this;
-    if (Thread && Thread->Context->VM->TS1 && !TS1ExternalAnimationClock)
+    if (Thread && Thread->Context->VM->TS1 && !TS1ExternalAnimationClock) {
+        UpdateTS1BackgroundAnimation();
         UpdateTS1ModelMotion();
+    }
     if (Thread && Thread->Context->VM->TS1 && !TS1ExternalAnimationClock) {
         int modelState = CurrentAnimationState() && CurrentAnimationState()->TS1ScriptAnimation ? 0 : 3;
         for (auto frame = Thread->Stack.rbegin(); TS1ModelMotion.Kind == Engine::Routing::TS1MotionKind::None
@@ -1038,15 +1040,38 @@ void VMAvatar::StartTS1Animation(const std::shared_ptr<VMAnimationState>& state,
         state->StartTS1Clock(TS1AnimationTimestamp(), rate);
 }
 
+void VMAvatar::UpdateTS1BackgroundAnimation() {
+    // DVD590434 runs before the model state machine. Its posture loop is
+    // independent of scripted foreground and must not hold up a motion request.
+    const auto posture = GetPersonData(VMPersonDataVariable::Posture);
+    if (TS1BackgroundPosture != posture) TS1BackgroundAnimationState.reset();
+    if (!Object || !Object->OBJ || (Object->OBJ->TS1ModelFlags & 4) ||
+        (TS1BackgroundAnimationState && GetPersonData(VMPersonDataVariable::Gender) <= 1)) return;
+    TS1BackgroundPosture = posture;
+    const int code = posture == 0 ? 3 : posture == 1 ? 1 : posture == 2 ? 2 : -1;
+    auto content = FSO::Content::Content::Get();
+    if (code < 0 || size_t(code) >= WalkAnimations.size() || WalkAnimations[code].empty() ||
+        !content || !content->AvatarAnimations) return;
+    auto animation = content->AvatarAnimations->Get(WalkAnimations[code] + ".anim");
+    if (!animation) return;
+    auto state = std::make_shared<VMAnimationState>(animation, false);
+    state->Loop = true;
+    StartTS1Animation(state);
+    TS1BackgroundAnimationState = std::move(state);
+}
+
 void VMAvatar::AdvanceAnimations(bool allowSound) {
     //animation update for avatars
     VMAvatar* avatar = this;
     float totalWeight = 0.0f;
-    for (size_t channel = 0; channel <= Animations.size(); ++channel) {
-        const bool carry = channel == Animations.size();
-        auto state = carry ? CarryAnimationState.get() : Animations[channel].get();
+    for (int64_t channel = -1; channel <= int64_t(Animations.size()); ++channel) {
+        const bool background = channel == -1;
+        const bool carry = channel == int64_t(Animations.size());
+        auto state = background ? TS1BackgroundAnimationState.get()
+            : carry ? CarryAnimationState.get() : Animations[size_t(channel)].get();
+        if (background && (!state || !state->TS1Clock)) continue;
         if (carry && (!state || !state->TS1Clock)) break;
-        if (carry) totalWeight = 1.f;
+        if (carry || background) totalWeight = 1.f;
         else totalWeight += state->Weight;
         if (state->TS1Clock) {
             if (!state->EndReached || state->Loop) {
@@ -1089,7 +1114,7 @@ void VMAvatar::AdvanceAnimations(bool allowSound) {
             const float poseFrame = state->TS1PoseFrame();
             FSO::Vitaboy::Animator::RenderFrameTS1(avatar->Avatar.get(), state->Anim,
                 int(poseFrame), std::fmod(poseFrame, 1.f),
-                carry ? 1.f : state->Weight, state->Loop);
+                carry || background ? 1.f : state->Weight, state->Loop);
             continue;
         }
         if (!state->EndReached && state->Weight != 0) {
@@ -1203,7 +1228,9 @@ void VMAvatar::ApplyHeadSeek(float fraction) {
 void VMAvatar::FractionalAnim(float fraction) {
     auto avatar = this;
     float totalWeight = 0.0f;
-    for (auto& state : Animations) {
+    for (int64_t channel=-1; channel<int64_t(Animations.size()); ++channel) {
+        const auto& state=channel==-1 ? TS1BackgroundAnimationState : Animations[size_t(channel)];
+        if (!state) continue;
         totalWeight += state->Weight;
         if (!state->EndReached) {
             float visualFrame = state->CurrentFrame;

@@ -173,6 +173,13 @@ void OBJD::Read(IffFile* iff, st::Reader& stream)
     io.ByteOrder(st::Endian::Little);
     {
         this->Version = io.ReadUInt32();
+        const auto afterVersion = io.Position();
+        TS1ModelFlags = 0;
+        if (io.Length() > 0xcc) {
+            io.Seek(st::SeekOrigin::Begin, 0xcc);
+            TS1ModelFlags = io.ReadByte();
+            io.Seek(st::SeekOrigin::Begin, afterVersion);
+        }
 
         /**136 (80 fields)
             138a (95 fields) - Used for The Sims 1 base game objects?
@@ -329,7 +336,8 @@ bool OBJD::Write(IffFile* iff, st::Writer& stream)
         }
         for (size_t i = VERSION_142_Fields_Length; i < 105; i++)
         {
-            io.WriteUInt16(0);
+            io.WriteUInt16(i == 100 ? uint16_t(TS1ModelFlags) |
+                (RawData.size() > i ? RawData[i] & 0xff00 : 0) : 0);
         }
     }
     return true;

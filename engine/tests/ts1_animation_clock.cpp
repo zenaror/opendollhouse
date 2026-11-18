@@ -45,12 +45,16 @@ int main() {
   context.Clock->Ticks=100;
   auto foreground=std::make_shared<VMAnimationState>(&asset,false);actor.StartTS1Animation(foreground);actor.Animations.push_back(foreground);
   auto carry=std::make_shared<VMAnimationState>(&asset,false);actor.StartTS1Animation(carry);actor.CarryAnimationState=carry;
+  auto background=std::make_shared<VMAnimationState>(&asset,false);actor.StartTS1Animation(background);actor.TS1BackgroundAnimationState=background;
   actor.AdvanceAnimations(false);
   check(foreground->EventQueue==std::vector<int16_t>{0}&&carry->EventQueue==std::vector<int16_t>{0},"headless phase-zero events target their own foreground and carry channels");
+  check(background->TS1Phase==0&&actor.CurrentAnimationState()==foreground.get(),"background clock starts without replacing foreground");
   actor.AdvanceAnimations(false);
   check(foreground->EventQueue.size()==1&&carry->EventQueue.size()==1,"repeated model clock does not duplicate events");
   context.Clock->Ticks=102;actor.AdvanceAnimations(false);
   check(foreground->EventQueue==std::vector<int16_t>({0,1})&&carry->EventQueue==std::vector<int16_t>({0,1}),"event boundary uses asset milliseconds independently of posing");
+  check(near(background->TS1Phase,.1f),"background clock advances alongside foreground and carry");
+  actor.TS1BackgroundAnimationState.reset();
   check(foreground->TimePropertyLists.size()==3&&foreground->TS1EventCursor==2,"source property table remains intact and cursor records consumption");
   actor.TS1RawAnimationClock=true;context.Clock->Ticks=103;
   auto raw=std::make_shared<VMAnimationState>(&asset,false);actor.StartTS1Animation(raw);actor.Animations={raw};actor.CarryAnimationState.reset();

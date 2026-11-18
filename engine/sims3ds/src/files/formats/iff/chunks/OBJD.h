@@ -43,6 +43,9 @@ public:
     IFF_CHUNK_TYPE("OBJD")
 
     uint32_t Version = 0;
+    // Original model exclusion flags at payload+cc. Some version138 chunks
+    // have this extension beyond the older public field table.
+    uint8_t TS1ModelFlags = 0;
 
     static const char* const VERSION_142_Fields[];
     static const size_t VERSION_142_Fields_Length;

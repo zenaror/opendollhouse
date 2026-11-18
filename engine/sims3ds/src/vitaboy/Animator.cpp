@@ -6,6 +6,7 @@
 // FSO.Vitaboy.Animator (SimsVille/Vitaboy/Animator.cs)
 #include "vitaboy/Animator.h"
 #include "vitaboy/SimAvatar.h"
+#include "vitaboy/TS1Quaternion.h"
 #include "odh/pose.hpp"
 #include <algorithm>
 
@@ -120,12 +121,22 @@ AnimationStatus RenderFrameProfile(Avatar* avatar, Animation* animation, int32_t
                         // The original skips quaternion interpolation when the first key
                         // contributes <=1%, retaining that key. This differs from
                         // ordinary sampling near integer-frame boundaries.
-                        quat = originalQuaternionKeys && 1.0f - fraction <= 0.01f
-                            ? quat1 : Quaternion::Slerp(quat1, quat2, fraction);
+                        if (originalQuaternionKeys) {
+                            quat = quat1;
+                            const float firstWeight = TS1QuaternionRound(1.0f - fraction);
+                            if (firstWeight > 0.01f && (quat1.X != quat2.X || quat1.Y != quat2.Y
+                                || quat1.Z != quat2.Z || quat1.W != quat2.W))
+                                TS1BlendQuaternion(quat1, quat2, firstWeight, quat);
+                        } else quat = Quaternion::Slerp(quat1, quat2, fraction);
                     } else {
                         quat = R[i1];
                     }
-                    if (weight == 1) bone->Rotation = quat;
+                    if (originalQuaternionKeys) {
+                        if (weight >= 1.0f) bone->Rotation = quat;
+                        else if (quat.X != bone->Rotation.X || quat.Y != bone->Rotation.Y
+                            || quat.Z != bone->Rotation.Z || quat.W != bone->Rotation.W)
+                            TS1BlendQuaternion(quat, bone->Rotation, weight, bone->Rotation);
+                    } else if (weight == 1) bone->Rotation = quat;
                     else bone->Rotation = Quaternion::Slerp(bone->Rotation, quat, weight);
                 }
             }

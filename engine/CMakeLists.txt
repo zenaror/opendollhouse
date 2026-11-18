@@ -273,6 +273,7 @@ add_library(odh_engine STATIC ${ODH_ENGINE_SOURCES})
 # Original simulation arithmetic has individual binary32 rounding steps. Keep
 # these consumers independent of platform FMA or relaxed floating-point flags.
 set(ODH_ORIGINAL_ARITHMETIC_SOURCES
+  sims3ds/src/vitaboy/Animator.cpp
   sims3ds/src/common/TS1/TS1Curve.cpp
   sims3ds/src/simantics/primitives/VMFindBestAction.cpp
   sims3ds/src/simantics/engine/TS1SlotGeometry.cpp
@@ -284,6 +285,9 @@ set(ODH_ORIGINAL_ARITHMETIC_SOURCES
   sims3ds/src/simantics/primitives/VMLookTowards.cpp
   tests/original_autonomy_contract.cpp
   tests/ts1_slot_geometry_contract.cpp
+  tests/ts1_quaternion_blend.cpp
+  tests/ts1_quaternion_render.cpp
+  tests/ts1_locomotion_contract.cpp
   tests/ts1_original_route_graph_contract.cpp
   tests/ts1_motion_request_contract.cpp
   tests/ts1_authored_slot_consumer_contract.cpp)
@@ -579,6 +583,18 @@ if(BUILD_TESTING)
   add_executable(odh-ts1-animation-clock tests/ts1_animation_clock.cpp)
   target_link_libraries(odh-ts1-animation-clock PRIVATE odh_engine)
   add_test(NAME ts1-animation-clock COMMAND odh-ts1-animation-clock)
+  add_executable(odh-ts1-animation-channels tests/ts1_animation_channels.cpp)
+  target_link_libraries(odh-ts1-animation-channels PRIVATE odh_engine)
+  add_test(NAME ts1-animation-channels COMMAND odh-ts1-animation-channels)
+  add_executable(odh-ts1-background-checkpoint-contract tests/ts1_background_checkpoint_contract.cpp)
+  target_link_libraries(odh-ts1-background-checkpoint-contract PRIVATE odh_engine)
+  add_test(NAME ts1-background-checkpoint-contract COMMAND odh-ts1-background-checkpoint-contract)
+  add_executable(odh-ts1-quaternion-blend tests/ts1_quaternion_blend.cpp)
+  target_link_libraries(odh-ts1-quaternion-blend PRIVATE odh_engine)
+  add_test(NAME ts1-quaternion-blend COMMAND odh-ts1-quaternion-blend)
+  add_executable(odh-ts1-quaternion-render tests/ts1_quaternion_render.cpp)
+  target_link_libraries(odh-ts1-quaternion-render PRIVATE odh_engine)
+  add_test(NAME ts1-quaternion-render COMMAND odh-ts1-quaternion-render)
   add_executable(odh-ts1-route-continuation tests/ts1_route_continuation.cpp)
   target_link_libraries(odh-ts1-route-continuation PRIVATE odh_engine)
   add_test(NAME ts1-route-continuation COMMAND odh-ts1-route-continuation)

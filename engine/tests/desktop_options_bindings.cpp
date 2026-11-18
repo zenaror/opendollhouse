@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include "world/model/Blueprint.h"
 #include "world/components/AvatarComponent.h"
+#include "world/components/TerrainComponent.h"
 #include "vitaboy/SimAvatar.h"
 // Data-free fixture access only: no product debug API or alternate renderer.
 #define private public
@@ -113,7 +114,7 @@ int main(){try{
         !graphicsSnapshot.capabilities[size_t(Id::interface_effects)]&&
         !graphicsSnapshot.capabilities[size_t(Id::terrain_detail)]&&
         !graphicsSnapshot.capabilities[size_t(Id::character_detail)],
-        "existing shadow/object-light renderers offered; missing quality services remain unavailable");
+        "shadow/object-light offered; unbound terrain and missing character consumer remain unavailable");
     world.State.OriginalRoofLighting=true;
     const auto roofSnapshot=CaptureDesktopOptions(graphics,false,{},&world);
     need(roofSnapshot.capabilities[size_t(Id::character_detail)],"source-bound roof exposes original material detail command");
@@ -148,6 +149,64 @@ int main(){try{
     // This geometry-free fixture skips that pass, so establish its camera state.
     const auto offset=world.State.WorldSpace.GetScreenOffset();
     world.State._2D->SetScroll(st::Vector2(-offset.X,-offset.Y));
+    // The recovered terrain renderer already owns source density/pool0..2.
+    // Exercise the actual options -> SafeFile -> App callback -> renderer path,
+    // including a first paused frame before the terrain has drawn anything.
+    using Terrain=FSO::LotView::Components::TerrainComponent;
+    using TerrainType=FSO::LotView::Components::TerrainType;
+    // The geometry-free avatar fixture had no floor/pool admission layers.
+    // Source blades require an explicit ordinary no-floor, non-pool tile;
+    // absent layers intentionally suppress blades at every quality level.
+    std::vector<std::vector<FSO::LotView::Model::FloorTile>> terrainFloors(
+        2,std::vector<FSO::LotView::Model::FloorTile>(32*32));
+    blueprint.Floors=&terrainFloors;
+    blueprint.TerrainPoolBlocked.assign(32*32,0);
+    blueprint.Terrain=std::make_unique<Terrain>(st::Rectangle(0,0,32,32));
+    auto& terrain=*blueprint.Terrain;
+    terrain.SetGrassState(std::vector<uint8_t>(32*32,0),32);
+    terrain.SetHeights(std::vector<float>(32*32,0),32);
+    const std::vector<uint8_t> sourceHeights(32*32*4,0),sourceGrass(32*32,127);
+    terrain.SetOriginalSource(sourceHeights,sourceGrass,32);
+    auto terrainOptions=CaptureDesktopOptions(graphics,false,{},&world);
+    need(terrainOptions.capabilities[size_t(Id::terrain_detail)],"source-bound terrain detail is editable before first draw");
+    need(!terrainOptions.capabilities[size_t(Id::interface_effects)]&&
+         !terrainOptions.capabilities[size_t(Id::auto_snapshot)]&&
+         !terrainOptions.capabilities[size_t(Id::live_pip)]&&
+         !terrainOptions.capabilities[size_t(Id::export_html)],"terrain wiring exposed unsupported services");
+    terrain.LightType=TerrainType::SAND;
+    need(!CaptureDesktopOptions(graphics,false,{},&world).capabilities[size_t(Id::terrain_detail)],"non-GRASS fallback falsely offered original source detail");
+    terrain.LightType=TerrainType::GRASS;
+    terrain.SetOriginalSource({},sourceGrass,32);
+    need(!CaptureDesktopOptions(graphics,false,{},&world).capabilities[size_t(Id::terrain_detail)],"missing authored source falsely offered detail");
+    terrain.SetOriginalSource(sourceHeights,sourceGrass,32);
+    graphics.HandheldGraphics=true;
+    need(!CaptureDesktopOptions(graphics,false,{},&world).capabilities[size_t(Id::terrain_detail)],"portable low preset exposed desktop quality editing");
+    graphics.HandheldGraphics=false;
+    terrainOptions=CaptureDesktopOptions(graphics,false,{},&world);
+    const auto storedTerrainDetail=graphics.TerrainDetail;
+    need(!ApplyDesktopOption(graphics,{Id::terrain_detail,-1},terrainOptions.capabilities)&&
+         !ApplyDesktopOption(graphics,{Id::terrain_detail,3},terrainOptions.capabilities)&&
+         graphics.TerrainDetail==storedTerrainDetail,"invalid terrain quality changed preference");
+    terrain.RegenTerrain(world.State,&blueprint);world.State.TerrainPeriod=0;
+    std::array<std::vector<uint32_t>,3> terrainPixels;
+    const int levels[]={0,1,2,0,2};
+    for(int detail:levels){
+        need(ApplyDesktopOption(graphics,{Id::terrain_detail,detail},terrainOptions.capabilities),"original terrain detail command did not apply");
+        app._Front->SaveSettings();
+        need(world.State.TerrainDetail==detail,"settings-change callback did not reach real terrain state");
+        front::FrontSettings reopenedDetail;reopenedDetail.Load((dir/"sims_options.txt").string());
+        need(reopenedDetail.TerrainDetail==detail,"terrain detail did not survive preference reopen");
+        FSO::LotView::Framebuffer target(320,240);target.Clear(FSO::LotView::Framebuffer::Pack(255,255,255,255));
+        terrain.DrawInto(world.State,target);
+        need(terrain.LastStats.Pixels>0,"terrain fixture did not expose any actual raster pixels");
+        if(terrainPixels[size_t(detail)].empty())terrainPixels[size_t(detail)]=target.Color;
+        else need(target.Color==terrainPixels[size_t(detail)],"terrain on-off-on did not restore exact source raster");
+    }
+    need(terrainPixels[0]!=terrainPixels[1]&&terrainPixels[1]!=terrainPixels[2]&&terrainPixels[0]!=terrainPixels[2],
+         "three authored terrain settings did not produce distinct actual pixels");
+    graphics.TerrainDetail=storedTerrainDetail;app._Front->SaveSettings();
+    need(world.State.TerrainDetail==storedTerrainDetail,"terrain control did not restore fixture preference");
+    // Continue existing avatar/light controls with the same World/blueprint.
     FSO::LotView::Framebuffer pixels(320,240);pixels.Clear(FSO::LotView::Framebuffer::Pack(255,255,255,255));
     const auto blank=pixels.Color;const auto initialDepth=pixels.Depth;
     world.DrawAvatarComponents(pixels);

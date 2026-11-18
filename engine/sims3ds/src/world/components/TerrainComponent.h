@@ -55,6 +55,9 @@ public:
     void SetOriginalSource(const std::vector<uint8_t>& heightQuads,
                            const std::vector<uint8_t>& grassBytes,int32_t storageWidth);
     bool SetOriginalHeightSource(const std::vector<uint8_t>& heightQuads);
+    // O(1) source binding check for the original terrain-detail settings consumer.
+    // Does not build shades, draw, or depend on a first rendered frame.
+    bool HasOriginalDetailSource(int32_t liveWidth) const;
     std::array<int,4> OriginalTerrainShadeCorners(int worldX,int worldY) const;
     // Shared original roof/terrain input. Includes authored corners outside the
     // cropped live lot and current preview edits; no archive reads are needed.

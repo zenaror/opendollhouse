@@ -46,9 +46,10 @@ public:
     }
 
     //Mode 0: Play and Wait
-    //Mode 1: ??
-    //Mode 2: Stop standard carry, play and wait
-    //Mode 3: ??
+    //Mode 1: Start/reset looping background; return immediately.
+    //Mode 2: Start/reset looping custom carry; return immediately.
+    //Mode 3: Play and wait, clearing carry on new foreground admission.
+    //A zero ID resets the selected channel; modes0/3 both reset foreground.
     uint8_t Mode() const { return (uint8_t)((Flags & 1) | ((Flags >> 3) & 2)); }
     // TS1(sims): FreeSO operand flags.
     bool Hurryable() const { return (Flags & 64) == 64; }

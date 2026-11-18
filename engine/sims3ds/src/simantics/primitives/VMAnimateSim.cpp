@@ -51,17 +51,28 @@ VMPrimitiveExitCode VMAnimateSim::Execute(VMStackFrame* context, VMPrimitiveOper
     const bool originalClock = context->VM()->TS1 && !avatar->TS1ExternalAnimationClock;
     // The isolated CAS controller still supplies its own duration-based clock.
     float ts1Speed = context->VM()->TS1 && !originalClock ? 30 / 25.0f : 1.0f;
-    auto speedFor = [&](std::shared_ptr<VMAnimationState>& st) {
+    auto speedFor = [&](std::shared_ptr<VMAnimationState>& st, bool foreground = true) {
         st->Speed = ts1Speed;
         if (originalClock) {
             st->TS1ScriptAnimation = true;
             avatar->TS1RawAnimationClock = operand->RawTS1Clock();
-            avatar->TS1HurryableAnimation = operand->Hurryable();
-            avatar->StartTS1Animation(st, operand->Hurryable() ? avatar->TS1MotionRate : 1.f);
+            if (foreground) avatar->TS1HurryableAnimation = operand->Hurryable();
+            avatar->StartTS1Animation(st, foreground && operand->Hurryable() ? avatar->TS1MotionRate : 1.f);
         } else if (avatar->GetValue(VMStackObjectVariable::WalkStyle) == 1 && operand->Hurryable()) st->Speed *= 2;
     };
 
     if (id == 0) { //reset
+        if (originalClock) {
+            // DVD 58950f: each model channel has its own reset. Mode3 zero
+            // follows mode0; it is not the custom-carry reset (mode2).
+            if (operand->Mode() == 1) avatar->TS1BackgroundAnimationState.reset();
+            else if (operand->Mode() == 2) avatar->CarryAnimationState.reset();
+            else {
+                avatar->Animations.clear();
+                avatar->SetPersonData(static_cast<VMPersonDataVariable>(19), 0);
+            }
+            return VMPrimitiveExitCode::GOTO_TRUE;
+        }
         if (context->VM()->TS1 && operand->Mode() == 3) { avatar->CarryAnimationState = nullptr; return VMPrimitiveExitCode::GOTO_TRUE; } // FreeSO
         if (avatar->GetPersonData(VMPersonDataVariable::HeadSeekState) == 1) avatar->SetPersonData(VMPersonDataVariable::HeadSeekState, 4); // FreeSO
         avatar->Animations.clear();
@@ -97,19 +108,20 @@ VMPrimitiveExitCode VMAnimateSim::Execute(VMStackFrame* context, VMPrimitiveOper
     }
 
     if (operand->Mode() == 1 && context->VM()->TS1) { // TS1(sims): FreeSO mode 1 — start a looping animation, don't wait
-        avatar->Animations.clear();
+        if (!originalClock) avatar->Animations.clear();
         auto state = NewAnimState(animation, operand->PlayBackwards(), context);
-        speedFor(state);
+        speedFor(state, false);
         state->Loop = true;
-        avatar->Animations.push_back(state);
-        if (avatar->Avatar != nullptr) {
+        if (originalClock) avatar->TS1BackgroundAnimationState = state;
+        else avatar->Animations.push_back(state);
+        if (!originalClock && avatar->Avatar != nullptr) {
             avatar->Avatar->LeftHandGesture = SimHandGesture::Idle;
             avatar->Avatar->RightHandGesture = SimHandGesture::Idle;
         }
         return VMPrimitiveExitCode::GOTO_TRUE;
     }
 
-    if (operand->Mode() == 3) //stop standard carry, then play and wait
+    if (operand->Mode() == 3 && !originalClock) // legacy controller
         avatar->CarryAnimationState = nullptr;
 
     if (operand->Mode() == 0 || operand->Mode() == 3) //Play and Wait
@@ -118,6 +130,7 @@ VMPrimitiveExitCode VMAnimateSim::Execute(VMStackFrame* context, VMPrimitiveOper
         if (avatar->CurrentAnimationState() == nullptr || avatar->CurrentAnimationState()->Anim != animation)
         {
             /** Start it **/
+            if (originalClock && operand->Mode() == 3) avatar->CarryAnimationState.reset();
             avatar->Animations.clear();
             auto astate = NewAnimState(animation, operand->PlayBackwards(), context);
             speedFor(astate);
@@ -166,7 +179,7 @@ VMPrimitiveExitCode VMAnimateSim::Execute(VMStackFrame* context, VMPrimitiveOper
     }
     else if (operand->Mode() == 2) //set custom carry animation
     {
-        avatar->CarryAnimationState = NewAnimState(animation, false, context);
+        avatar->CarryAnimationState = NewAnimState(animation, originalClock && operand->PlayBackwards(), context);
         if (originalClock) {
             avatar->TS1RawAnimationClock = operand->RawTS1Clock();
             avatar->StartTS1Animation(avatar->CarryAnimationState);

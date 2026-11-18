@@ -105,6 +105,16 @@ void TerrainComponent::SetOriginalSource(const std::vector<uint8_t>& heightQuads
     if(Blueprint) Blueprint->SignalFloorChange();
 }
 
+bool TerrainComponent::HasOriginalDetailSource(int32_t liveWidth) const {
+    if (LightType!=TerrainType::GRASS || DarkType!=TerrainType::GRASS ||
+        HeightWidth<=0 || liveWidth<HeightWidth || liveWidth>64 || GrassWidth!=HeightWidth ||
+        OriginalStorageWidth<liveWidth || OriginalStorageWidth>64) return false;
+    const auto liveCells=size_t(HeightWidth)*HeightWidth;
+    const auto sourceCells=size_t(OriginalStorageWidth)*OriginalStorageWidth;
+    return GrassState.size()==liveCells && Heights.size()==liveCells &&
+        OriginalSourceHeights.size()==sourceCells*4 && OriginalSourceGrass.size()==sourceCells;
+}
+
 bool TerrainComponent::SetOriginalHeightSource(const std::vector<uint8_t>& heightQuads) {
     if (OriginalStorageWidth != 64 || heightQuads.size() != 64u * 64u * 4u) return false;
     OriginalSourceHeights = heightQuads;

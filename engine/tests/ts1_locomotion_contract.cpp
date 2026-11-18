@@ -110,7 +110,10 @@ int main() { try {
         "source projection advances before the corner and seeks half-radius into the next segment");
     const auto reverseSegment = TS1SegmentLookahead(3,0,10,0,0,0,4);
     check(reverseSegment.Found && reverseSegment.X==1 && reverseSegment.Y==0,
-        "source projection samples the descending segment with integer truncation");
+        "source projection rounds samples on a descending segment");
+    const auto originalFirstStep=TS1SegmentLookahead(361,486,361,486,369,471,10.852746963500977f);
+    check(originalFirstStep.Found && originalFirstStep.X==364 && originalFirstStep.Y==481,
+        "DVD first walking proposal uses rounded lookahead (364,481), not truncated (363,480)");
     const auto constrainedCorner=TS1ConstrainToSegment(387,451,385,449,397,445);
     check(constrainedCorner.X==386 && constrainedCorner.Y==449,
         "source integer proposal projects to the selected physical path segment");
