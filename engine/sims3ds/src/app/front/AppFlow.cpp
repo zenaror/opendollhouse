@@ -124,8 +124,8 @@ void App::UnloadLot() {
     Log += "released " + std::to_string(n) + " object files of the lot (" + std::to_string(c->WorldObjects->LoadedFileCount()) + " kept)\n";
 }
 
-/// The PC Free Will checkbox is the boolean preference in the pinned Alex
-/// reference. The legacy numeric console setting remains readable for consoles.
+/// The DVD applies the Free Will preference separately from unrelated settings.
+/// Portable hosts retain their existing numeric autonomy setting.
 void App::ApplyPlaySettings() {
     if (!_Session || !_Front) return;
     auto& st = _Front->Settings();
@@ -169,11 +169,10 @@ void App::ApplyPlaySettings() {
     }
     const bool freeWill = st.FreeWill && (_Front->IsDesktop() || st.AutonomyLevel > 0);
     if (auto vm = _Session->VM()) {
-        vm->FreeWillEnabled = freeWill;
-        // Keep the script dispatcher open so visitors/pets reach FindBestAction;
-        // that consumer applies the household-only gate after queued orders.
-        vm->SetGlobalValue(30, 1);
-        Log += std::string("free will: household ") + (freeWill ? "on" : "off") + "; visitors/pets enabled\n";
+        if (vm->FreeWillEnabled != freeWill) {
+            _Session->ApplyFreeWillPreference(freeWill);
+            Log += std::string("free will: ") + (freeWill ? "on\n" : "off\n");
+        }
     }
     if (OnPlaySettings) OnPlaySettings(freeWill, st.AutonomyLevel);
 }

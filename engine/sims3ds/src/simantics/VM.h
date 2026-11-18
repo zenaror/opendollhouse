@@ -86,9 +86,13 @@ public:
     std::unique_ptr<Model::DynamicTuning> Tuning;
     std::unique_ptr<Model::VMTuningCache> TuningCache;
 
-    // Alex FreeSO a3c6c5a: Free Will gates household human choices only.
-    // This is a per-session preference; player settings reapply it after loading.
+    // The DVD keeps a preference byte separate from script global 30.
+    // Explicit preference application synchronizes both; unrelated settings do not.
     bool FreeWillEnabled = true;
+    void ApplyTS1FreeWillPreference(bool enabled) {
+        FreeWillEnabled = enabled;
+        if (TS1 && GlobalState.size() > 30) SetGlobalValue(30, enabled ? 1 : 0);
+    }
 
     bool TS1 = true;   // sims: this port runs The Sims 1 content only (FreeSims defaulted to false)
 

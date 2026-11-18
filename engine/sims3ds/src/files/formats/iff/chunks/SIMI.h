@@ -26,7 +26,11 @@ public:
     int16_t SchedulerCursor = 0;
     int32_t Unknown3 = 0;
     int32_t GUID1 = 0;
-    int32_t GUID2 = 0;
+    int32_t GUID2 = 0; // Historical parser name: the DVD shared random state.
+    uint32_t SavedRandomState() const { return static_cast<uint32_t>(GUID2); }
+    static std::size_t RandomStateOffset(uint32_t version) {
+        return 12 + SerializedGlobalCount(version) * 2 + 14;
+    }
     int32_t Unknown4 = 0;
     int32_t LotValue = 0;
     int32_t ObjectsValue = 0;

@@ -88,6 +88,8 @@ public:
     bool LoadForDemolition(int houseNumber, std::string& error);
     bool OpenHouse(int houseNumber, bool travel, std::string& error);
     void SetHalfResolutionLot(bool enabled) { _HalfResolutionLot = enabled; }
+    // Supply the host preference before loading any authored object routines.
+    void ApplyFreeWillPreference(bool enabled);
     int SceneScale() const;
     st::Vector2 ScenePoint(int x, int y) const { return st::Vector2(float(x) / SceneScale(), float(y) / SceneScale()); }
     int DisplayZoom() const;
@@ -178,6 +180,7 @@ private:
     std::unique_ptr<FSO::SimAntics::VM> _VM;
     std::unique_ptr<FSO::Files::Formats::IFF::IffFile> _House;
     FSO::LotView::Framebuffer Frame;
+    bool _FreeWillPreference = true;
     bool _HalfResolutionLot = false;
     bool _RoofView = false;
     int _DisplayWidth = 0, _DisplayHeight = 0;

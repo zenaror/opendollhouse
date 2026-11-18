@@ -143,6 +143,14 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     InstallBlueprint(VM, size, BlueprintPtr);
     FlipRoad = (hous->CameraDir & 1) > 0;
     VM->GlobalState = simi->GlobalData;
+    if (VM->TS1) {
+        // DVD SIMI read overrides saved global 30 before object routines run.
+        VM->ApplyTS1FreeWillPreference(VM->FreeWillEnabled);
+        // Residential classic saves carry the shared 32-bit RNG in GUID2.
+        // Native continuation metadata, if present, restores its full state later.
+        if (Engine::Utils::VMTS1Neighbourhood::IsResidentialLot(simi->GlobalData.at(10)))
+            VM->Context->RandomSeed = simi->SavedRandomState();
+    }
     if (VM->TS1 && !legacyFinance) {
         Primitives::VMTS1Budget::DaysType days{};
         for (size_t i=0;i<days.size() && i<simi->BudgetDays.size();++i)
@@ -704,7 +712,10 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     arch->SignalRedraw();
     if (VM->Context->World != nullptr) VM->Context->World->InitBlueprint(BlueprintPtr);
     arch->Tick();
-    if (hasCheckpoint && !deferInteractionRestore) Engine::Utils::VMTS1InteractionCheckpoint::Restore(*VM, *iff);
+    if (hasCheckpoint && !deferInteractionRestore) {
+        Engine::Utils::VMTS1InteractionCheckpoint::Restore(*VM, *iff);
+        VM->ApplyTS1FreeWillPreference(VM->FreeWillEnabled);
+    }
     return BlueprintPtr;
 }
 

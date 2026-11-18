@@ -41,6 +41,11 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Original residential saves restore their saved random state, and saving keeps
+  that state up to date. Non-residential reseeding remains under comparison.
+- Free Will reaches the simulation when loading or toggling the option. Changing
+  unrelated settings preserves the script state used by the original game.
+
 - Scripted object removal waits until the current simulation round finishes,
   allowing eating to finish before its food is removed. Removing a used object
   preserves unrelated pending actions instead of clearing the whole queue.

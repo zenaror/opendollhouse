@@ -73,6 +73,11 @@ static const uint32_t GOTO_GUID = 0x000007C4; // UILotControl.GOTO_GUID
 
 LotSession::LotSession() {}
 
+void LotSession::ApplyFreeWillPreference(bool enabled) {
+    _FreeWillPreference = enabled;
+    if (_VM) _VM->ApplyTS1FreeWillPreference(enabled);
+}
+
 LotSession::~LotSession() {
     // the VM's entities reference the context, world components and the house's chunks
     _VM.reset();
@@ -154,6 +159,7 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
     _Ctx.reset(new VMContext(_World.get()));
     _Headlines.reset(new UIHeadlineRendererProvider()); // FreeSims UIHeadlineRendererProvider (balloons)
     _VM.reset(new FSO::SimAntics::VM(_Ctx.get(), _Headlines.get()));
+    _VM->FreeWillEnabled = _FreeWillPreference;
     FSO::SimAntics::Utils::VMLotDemolitionScope preparation(_PreparingDemolition ? _VM.get() : nullptr);
     _VM->Init();
     _VM->OnDialog = [this](Model::VMDialogInfo& info) {
@@ -312,8 +318,11 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
         departureCheckpoint = Engine::Utils::VMTS1InteractionCheckpoint::IsDeparture(*_House);
         // The source snapshot predates the return trip. Reconnect it before
         // Arrive consumes incoming time, motives, inventory and family state.
-        if (departureCheckpoint) Engine::Utils::VMTS1InteractionCheckpoint::Restore(*_VM, *_House,
-            travel && hood && hood->GameState.ResumeVisit);
+        if (departureCheckpoint) {
+            Engine::Utils::VMTS1InteractionCheckpoint::Restore(*_VM, *_House,
+                travel && hood && hood->GameState.ResumeVisit);
+            _VM->ApplyTS1FreeWillPreference(_FreeWillPreference);
+        }
     } catch (const std::exception& e) { error = e.what(); return false; }
     if (travel && hood && hood->GameState.ResumeVisit) {
         // Object init trees run again when loading TS1 data. Their temporary
@@ -382,7 +391,10 @@ bool LotSession::ActivateOpenedHouse(int viewW, int viewH, int scrollBuffer, std
     const bool hasCheckpoint = _House->HasChunkType<FSO::Files::Formats::IFF::Chunks::ODHI>();
     bool classicRestored = false;
     if (hasCheckpoint && !departureCheckpoint) {
-        try { Engine::Utils::VMTS1InteractionCheckpoint::Restore(*_VM, *_House); }
+        try {
+            Engine::Utils::VMTS1InteractionCheckpoint::Restore(*_VM, *_House);
+            _VM->ApplyTS1FreeWillPreference(_FreeWillPreference);
+        }
         catch (const std::exception& e) { error = e.what(); return false; }
     }
     if (!hasCheckpoint) {

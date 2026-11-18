@@ -1358,7 +1358,9 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             if (version < 0x12) throw std::runtime_error("SIMI: unsupported pre-0x12 layout");
             const auto items = SIMI::SerializedGlobalCount(version);
             const auto tickAt = 12 + items * 2;
-            if (tickAt + 6 > d.size()) throw std::runtime_error("SIMI: truncated simulation counter");
+            const auto randomAt = SIMI::RandomStateOffset(version);
+            if (tickAt + 6 > d.size() || randomAt + 4 > d.size())
+                throw std::runtime_error("SIMI: truncated simulation counter or random state");
             // globals the loader overrides for this engine (VMWorldActivator / FreeSO VMTS1ActivatorNew: 17 runtime code
             // version, 20 game edition, 25 idle setting, 32, 33 machine level) keep the values the game saved
             static const std::set<int> keepSaved = { 17, 20, 25, 32, 33 };
@@ -1369,10 +1371,12 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                 int16_t v = VM->GlobalState[(size_t)i];
                 d[at] = (uint8_t)v; d[at + 1] = (uint8_t)((uint16_t)v >> 8);
             }
-            // Emit only the DWORD counter; the following signed cursor and
-            // unrelated original metadata remain byte-for-byte untouched.
+            // Keep the signed scheduler cursor and unrelated metadata intact.
+            // The DVD also serializes the current shared RNG into legacy GUID2.
             const auto ticks = static_cast<uint32_t>(VM->Context->Clock->Ticks);
             for (size_t k = 0; k < 4; ++k) d[tickAt + k] = uint8_t(ticks >> (8 * k));
+            const auto randomState = static_cast<uint32_t>(VM->Context->RandomSeed);
+            for (size_t k = 0; k < 4; ++k) d[randomAt + k] = uint8_t(randomState >> (8 * k));
             // Value fields follow the DWORD counter, a short cursor and four ints.
             size_t lv = 12 + (size_t)items * 2 + 2 + 4 * 5;
             if (lv + 12 <= d.size() && (ArchitectureDelta != 0 || ObjectsDelta != 0 || SetArchitectureValue >= 0 || SetObjectsValue >= 0)) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 #include "simantics/VM.h"
+#include "simantics/VMContext.h"
 #include "files/formats/iff/IffRawFile.h"
 #include "files/formats/iff/IffFile.h"
 #include "files/Hash.h"
@@ -48,6 +49,10 @@ inline void SyncTS1Budget(VM& vm, Files::Formats::IFF::IffRawFile& house) {
     auto put16=[&](size_t at,int16_t n){const auto bits=uint16_t(n);next[at]=uint8_t(bits);next[at+1]=uint8_t(bits>>8);};
     put16(12+13*2,vm.GlobalState[13]);put16(12+14*2,vm.GlobalState[14]);
     const auto bits=uint32_t(purse);for(size_t k=0;k<4;++k)next[tickAt+6+k]=uint8_t(bits>>(k*8));
+    // Every staged continuation save also carries the DVD shared RNG slot.
+    const auto randomAt=SIMI::RandomStateOffset(original.Version);
+    const auto randomState=static_cast<uint32_t>(vm.Context->RandomSeed);
+    for(size_t k=0;k<4;++k)next[randomAt+k]=uint8_t(randomState>>(k*8));
     for(size_t k=0;k<4;++k)next[tickAt+6+12+k]=0; // consumed owner+94 delta
     const bool upgrade=original.Version<0x34;
     if (upgrade) {

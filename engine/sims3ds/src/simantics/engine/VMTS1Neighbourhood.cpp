@@ -336,6 +336,14 @@ namespace FSO { namespace SimAntics { namespace Engine { namespace Utils {
 
 using FSO::Files::Formats::IFF::Chunks::FAMI;
 
+bool VMTS1Neighbourhood::IsResidentialLot(int16_t house) {
+    if (house == 0) return true;
+    auto provider = Provider();
+    if (!provider) return false;
+    const auto found = provider->ZoningDictionary.find(house);
+    return found != provider->ZoningDictionary.end() && found->second == 0;
+}
+
 FAMI* VMTS1Neighbourhood::CurrentFamily(FSO::SimAntics::VM* vm)
 {
     auto prov = Provider();

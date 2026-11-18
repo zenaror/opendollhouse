@@ -28,6 +28,8 @@ namespace Utils {
 
 class VMTS1Neighbourhood {
 public:
+    // DVD residential lookup: zero is residential; unknown nonzero lots are not.
+    static bool IsResidentialLot(int16_t house);
     // Person data indices used by the neighbourhood (Behavior.iff STR# 200).
     static constexpr int32_t PD_NEIGHBOR_ID = 31;
     static constexpr int32_t PD_JOB_TYPE = 56;

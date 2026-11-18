@@ -41,7 +41,7 @@ static void FreeWill(App& app,bool enabled){
     if(app.Front()->Settings().FreeWill!=enabled)ClickControl(app,"gopt_freewill");
     Require(app.Front()->Settings().FreeWill==enabled,"checkbox did not change preference");
     Require(app.Session()->VM()->FreeWillEnabled==enabled,"preference did not reach the loaded VM");
-    Require(app.Session()->VM()->GetGlobalValue(30)==1,"visitor/pet script dispatcher disabled");
+    Require(app.Session()->VM()->GetGlobalValue(30)==int(enabled),"Free Will preference did not reach script global 30");
     app.Lot()->SetMode(LotScreen::Mode::Live);app.Frame(AppInput(),0);
 }
 static void OpenHouse(App& app,int house){int x=0,y=0;for(int i=0;i<240&&!app.ScriptHousePos(house,x,y);++i)app.Frame(AppInput(),16);Require(app.ScriptHousePos(house,x,y),"house unavailable");Click(app,x,y);for(int i=0;i<240&&!app.Session();++i)app.Frame(AppInput(),16);Require(app.Session()&&app.CurrentMode()==App::Mode::Live,"house did not open");}

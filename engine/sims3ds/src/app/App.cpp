@@ -412,6 +412,8 @@ void App::Frame(const AppInput& inRaw, double dtMs) {
             auto s = std::move(_Front->PurchasedSession);
             const bool purchased = s && s->HouseNumber == _LoadHouse && !_LoadTravel;
             if (!purchased) s = std::make_unique<LotSession>();
+            s->ApplyFreeWillPreference(_Front->Settings().FreeWill &&
+                (_Front->IsDesktop() || _Front->Settings().AutonomyLevel > 0));
             s->SetHalfResolutionLot(_Cfg.HalfResolutionLot);
             std::string err;
             double tl = Now();

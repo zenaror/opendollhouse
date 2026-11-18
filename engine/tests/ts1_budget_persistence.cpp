@@ -87,7 +87,32 @@ static void earlyUpgrade() {
   if(version<0x25) need(saved.LotValue==4500 && saved.ObjectsValue==0 && saved.ArchitectureValue==0,"early metadata defaults survive upgrade");
  }
 }
+static void sharedRandomState() {
+ VMContext ctx(nullptr);VM vm(&ctx,nullptr);vm.GlobalState.resize(64,0);
+ VMTS1Budget::LoadState(&vm,100,{});
+ need(SIMI::RandomStateOffset(0x49)==154,"DVD v73 shared RNG offset");
+ need(SIMI::RandomStateOffset(0x12)==90,"early32global shared RNG offset");
+ for(uint32_t version:{0x12u,0x26u,0x34u,0x41u,0x49u})
+  for(uint32_t seed:{0u,0x2bb505f3u,0xe195d8f1u,0x80000000u,0xffffffffu}) {
+   SIMI input;input.Version=version;input.GlobalData.resize(38,0);input.GlobalData[13]=100;
+   input.Unknown3=100;input.GUID1=0x12345678;input.GUID2=7;input.BudgetDays.resize(6);
+   st::Writer writer(st::Endian::Little);input.Write(nullptr,writer);
+   IffRawFile raw;raw.Set("SIMI",1,writer.ToArray());ctx.RandomSeed=seed;
+   FSO::SimAntics::Utils::SyncTS1Budget(vm,raw);
+   const auto& bytes=raw.Find("SIMI",1)->Data;st::Reader reader(bytes);SIMI saved;saved.Read(nullptr,reader);
+   need(saved.SavedRandomState()==seed,"shared seed zero/sign bits retained, not entropy or GUID1");
+   need(saved.GUID1==input.GUID1,"adjacent original metadata preserved");
+   const auto at=SIMI::RandomStateOffset(saved.Version);
+   uint32_t wire=uint32_t(bytes[at])|(uint32_t(bytes[at+1])<<8)|(uint32_t(bytes[at+2])<<16)|(uint32_t(bytes[at+3])<<24);
+   need(wire==seed,"actual staged SIMI contains current shared state at source offset");
+   need(ctx.RandomSeed==seed,"residential save does not advance random state");
+  }
+ vm.ApplyTS1FreeWillPreference(false);need(!vm.FreeWillEnabled&&vm.GetGlobalValue(30)==0,"source preference setter clears both states");
+ vm.SetGlobalValue(30,42);need(!vm.FreeWillEnabled&&vm.GetGlobalValue(30)==42,"script word independent of preference byte");
+ vm.ApplyTS1FreeWillPreference(true);need(vm.FreeWillEnabled&&vm.GetGlobalValue(30)==1,"source preference setter sets both states");
+}
 int main(){try{
+ sharedRandomState();
  VM::UseWorld(false);VMContext ctx(nullptr);VM vm(&ctx,nullptr);vm.GlobalState.resize(64,0);
  IffFile resources;FSO::Content::GameObjectResource resource(&resources,nullptr,nullptr,"finance-capture",true);
  OBJD def;def.GUID=0x12345678;FSO::Content::GameObject object;object.OBJ=&def;object.GUID=def.GUID;object.Resource=&resource;
