@@ -267,6 +267,17 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                         f = ads.find((2 << 16) | motiveI); if (f != ads.end()) personality = f->second;
                     }
 
+                    // DVD 0045869b..004586ba adjusts the advertisement after
+                    // the check tree: another room replaces only Room's delta
+                    // with the 16-bit negation of its (possibly changed) minimum.
+                    // Keep the personality selector and all other motives.
+                    if (motiveI == int(VMMotive::Room) &&
+                        caller->GetValue(VMStackObjectVariable::Room) !=
+                            obj->GetValue(VMStackObjectVariable::Room)) {
+                        const int negated = -int(min);
+                        max = negated == 32768 ? int16_t(-32768) : int16_t(negated);
+                    }
+
                     if (min == 0 && max == 0) continue;
                     auto myMotive = caller->GetMotiveDataFloat((VMMotive)motiveI);
 

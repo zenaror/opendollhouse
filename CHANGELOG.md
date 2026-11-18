@@ -41,6 +41,10 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Autonomous action scoring now applies the original room-dependent adjustment
+  after an action's checks. Objects in another room no longer advertise the
+  same room benefit as nearby objects.
+
 - Newly created objects run their setup in the original order, including
   grouped objects and objects created by another object's script.
 - Saving a paused game preserves objects waiting to be removed. Reopening keeps

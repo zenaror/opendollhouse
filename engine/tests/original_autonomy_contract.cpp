@@ -16,6 +16,7 @@
 #include "simantics/primitives/VMExpression.h"
 #include "files/formats/iff/chunks/TTAs.h"
 #include <array>
+#include <cmath>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -96,6 +97,31 @@ struct Fixture {
     }
     VMPrimitiveExitCode Choose(uint64_t seed=1234){actor->Thread->Queue.clear();order.clear();context.RandomSeed=seed;return VMFindBestAction().Execute(&frame,nullptr);}
 };
+// Inspect the score produced by the actual chooser, including candidates that
+// fail its positive-score admission. Restore the process-wide observer on exit.
+static void RequireChooserScore(Fixture& fixture,float expected){
+    struct ObserverLifetime {
+        decltype(VMFindBestAction::DebugCandidate) previous=VMFindBestAction::DebugCandidate;
+        ~ObserverLifetime(){VMFindBestAction::DebugCandidate=previous;}
+    } observer;
+    int seen=0;float actual=0;
+    VMFindBestAction::DebugCandidate=[&](VMEntity* actor,VMEntity* target,const std::string&,bool allowed,float score){
+        Require(actor==fixture.actor.get()&&target==fixture.target.get(),"score observation belongs to the fixture actors");
+        Require(allowed,"the authored eligibility check passed before scoring");
+        ++seen;actual=score;
+    };
+    const auto result=fixture.Choose();
+    Require(seen==1,"the real chooser scored the single eligible TTAB row");
+    Require(std::fabs(actual-expected)<0.00001f,"chooser score matches the literal DVD advertisement result");
+    Require(result==(expected>0?VMPrimitiveExitCode::GOTO_TRUE:VMPrimitiveExitCode::GOTO_FALSE),
+        "the real chooser admits positive gains and excludes zero or negative gains");
+}
+static BHAVInstruction AssignCheckValue(Scopes::VMVariableScope scope,int index,int value,int next){
+    BHAVInstruction instruction;instruction.Opcode=2;instruction.TruePointer=next;instruction.FalsePointer=255;
+    VMExpressionOperand operand;operand.Operator=VMExpressionOperator::Assign;
+    operand.LhsOwner=scope;operand.LhsData=index;operand.RhsOwner=Scopes::VMVariableScope::Literal;operand.RhsData=value;
+    operand.Write(instruction.Operand.data());return instruction;
+}
 int main(){try{
     VM::UseWorld(false);
     Scenario("check-order-and-lockout",[]{
@@ -221,6 +247,86 @@ int main(){try{
         f.actor->SetPersonData(VMPersonDataVariable::Gender,species);
         f.table.Interactions[0]->Flags=TTABFlags::AllowVisitors|(species<4?TTABFlags::TS1AllowDogs:TTABFlags::TS1AllowCats);
         Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE,"dog and cat species retain self rows independently of person type");
+    });
+    struct RoomAdvertisementCase {int minimum,delta,selector;float sameRoom,differentRoom;};
+    // Literal source results with nine identity curves, not a copy of the
+    // implementation: cross-room delta becomes -minimum, selector stays intact.
+    const RoomAdvertisementCase roomCases[]={
+        {9000,9000,0,2.0f,0.0f},
+        {9000,9000,1,1.5f,0.5f},
+        {-9000,18000,0,1.0f,0.0f},
+        {-9000,18000,1,0.0f,-0.5f},
+        {0,9000,0,1.0f,0.0f},
+        // DVD NEG CX wraps the minimum signed word; it does not saturate or
+        // produce a positive32768 advertisement outside the word range.
+        {-32768,0,0,-3.640888889f,-7.281777778f}
+    };
+    for(bool sameRoom: {false,true})Scenario("room-only-ad together="+std::to_string(sameRoom),[=]{
+        Fixture f;f.Add(0,50,0);
+        f.table.Interactions[0]->MotiveEntries[13].EffectRangeMinimum=9000;
+        f.table.Interactions[0]->MotiveEntries[13].EffectRangeMaximum=9000;
+        for(auto motive: VMFindBestAction::WeightMotives)f.actor->SetMotiveDataFloat(motive,0);
+        f.actor->SetValue(VMStackObjectVariable::Room,3);f.target->SetValue(VMStackObjectVariable::Room,sameRoom?3:4);
+        RequireChooserScore(f,sameRoom?2.0f:0.0f);
+    });
+    for(const auto& ad:roomCases)for(const auto& rooms: {
+        std::array<int,2>{3,3},std::array<int,2>{3,4},
+        std::array<int,2>{-5,-5},std::array<int,2>{-5,0}})Scenario(
+        "postcheck-room-ad min="+std::to_string(ad.minimum)+" delta="+std::to_string(ad.delta)+
+        " selector="+std::to_string(ad.selector)+" rooms="+std::to_string(rooms[0])+","+std::to_string(rooms[1]),[=]{
+        Fixture f;f.Add(0,50,9000); // Unrelated Hunger gain remains exactly1.
+        auto& entry=*f.table.Interactions[0];
+        entry.MotiveEntries[13].EffectRangeMinimum=ad.minimum;
+        entry.MotiveEntries[13].EffectRangeMaximum=ad.delta;
+        entry.MotiveEntries[13].PersonalityModifier=ad.selector;
+        f.actor->SetPersonData(VMPersonDataVariable::NicePersonality,500);
+        for(auto motive: VMFindBestAction::WeightMotives)f.actor->SetMotiveDataFloat(motive,0);
+        f.actor->SetValue(VMStackObjectVariable::Room,rooms[0]);
+        f.target->SetValue(VMStackObjectVariable::Room,rooms[1]);
+        RequireChooserScore(f,1.0f+(rooms[0]==rooms[1]?ad.sameRoom:ad.differentRoom));
+        Require(entry.MotiveEntries[13].EffectRangeMinimum==ad.minimum&&
+                entry.MotiveEntries[13].EffectRangeMaximum==ad.delta&&
+                entry.MotiveEntries[13].PersonalityModifier==ad.selector&&
+                entry.MotiveEntries[7].EffectRangeMinimum==9000,
+            "postcheck scoring leaves shared TTAB advertisements and unrelated motives unchanged");
+    });
+    for(bool initiallyTogether: {false,true})for(bool moveCaller: {false,true})Scenario(
+        "check-edits-room-and-ad together="+std::to_string(initiallyTogether)+" move-caller="+std::to_string(moveCaller),[=]{
+        Fixture f;f.Add(0,50,9000);
+        auto& entry=*f.table.Interactions[0];
+        entry.MotiveEntries[13].EffectRangeMinimum=1000;
+        entry.MotiveEntries[13].EffectRangeMaximum=2000;
+        f.actor->SetPersonData(VMPersonDataVariable::NicePersonality,500);
+        for(auto motive: VMFindBestAction::WeightMotives)f.actor->SetMotiveDataFloat(motive,0);
+        f.actor->SetValue(VMStackObjectVariable::Room,initiallyTogether?3:2);
+        f.target->SetValue(VMStackObjectVariable::Room,3);
+        using Scope=Scopes::VMVariableScope;
+        auto check=f.iff.Get<BHAV>(4200);check->Instructions={
+            AssignCheckValue(Scope::TreeAdMin,13,9000,1),
+            AssignCheckValue(Scope::TreeAdRange,13,18000,2),
+            AssignCheckValue(Scope::TreeAdPersonalityVar,13,1,3),
+            AssignCheckValue(moveCaller?Scope::MyObject:Scope::StackObject,int(VMStackObjectVariable::Room),
+                moveCaller?(initiallyTogether?2:3):2,254)
+        };
+        RequireChooserScore(f,initiallyTogether?1.5f:3.0f);
+        Require((f.actor->GetValue(VMStackObjectVariable::Room)==f.target->GetValue(VMStackObjectVariable::Room))==!initiallyTogether,
+            "the real authored check changes the rooms before the scoring comparison");
+        Require(entry.MotiveEntries[13].EffectRangeMinimum==1000&&entry.MotiveEntries[13].EffectRangeMaximum==2000&&
+                entry.MotiveEntries[13].PersonalityModifier==0,
+            "check-generated advertisements remain temporary rather than changing the resource");
+    });
+    Scenario("cross-room-advertisement-changes-choice",[]{
+        Fixture f;f.Add(0,50,9000);f.Add(1,50,13500);
+        f.table.Interactions[0]->MotiveEntries[13].EffectRangeMinimum=9000;
+        f.table.Interactions[0]->MotiveEntries[13].EffectRangeMaximum=9000;
+        for(auto motive: VMFindBestAction::WeightMotives)f.actor->SetMotiveDataFloat(motive,0);
+        auto global=FSO::Content::Content::Get()->WorldObjectGlobals.get();global->Autonomy.RandomSelectionCount=1;
+        f.actor->SetValue(VMStackObjectVariable::Room,3);f.target->SetValue(VMStackObjectVariable::Room,3);
+        Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE&&f.actor->GetValue(VMStackObjectVariable::TreeTableEntry)==0,
+            "same-room candidate with Room and Hunger gains outranks the Hunger-only row");
+        f.target->SetValue(VMStackObjectVariable::Room,4);
+        Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE&&f.actor->GetValue(VMStackObjectVariable::TreeTableEntry)==1,
+            "cross-room Room adjustment makes the unchanged Hunger-only row win");
     });
     std::cout<<"original autonomy contract: "<<checks<<" checks, "<<failures<<" failed scenarios\n";return failures?1:0;
 }catch(const std::exception& e){std::cerr<<"original autonomy contract: "<<e.what()<<'\n';return 1;}}
