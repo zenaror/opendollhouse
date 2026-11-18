@@ -71,6 +71,12 @@ public:
 
     std::vector<std::shared_ptr<VMStackFrame>> Stack;
 
+    // Original count-only restored records, distinct from native route frames.
+    // Unknown is the compatibility policy for pre-16 native checkpoints.
+    bool TS1RouteDefaultsKnown = false;
+    uint32_t TS1RouteDefaultsCount = 0;
+    bool TryResumeTS1Route(VMStackFrame* frame, VMPrimitiveExitCode& result);
+
     struct TS1ObjectUse { VMEntity* Target = nullptr; int32_t StackDepth = 0; uint8_t Flag = 0; };
     // Ordered original person use records; independent of the UI queue.
     std::vector<TS1ObjectUse> TS1ObjectUses;

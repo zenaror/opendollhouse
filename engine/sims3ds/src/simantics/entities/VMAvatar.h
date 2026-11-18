@@ -75,6 +75,9 @@ public:
     // The isolated CAS preview owns a separate renderer clock/controller.
     bool TS1ExternalAnimationClock = false;
     float TS1MotionX = 0, TS1MotionY = 0;
+    // The original publishes a path-constrained integer position while the
+    // model retains its unconstrained floating-point proposal.
+    int16_t TS1MotionPublishedX = 0, TS1MotionPublishedY = 0;
     int8_t TS1MotionLevel = 0;
     bool TS1MotionPositionKnown = false;
     float TS1MotionRate = 1.f;

@@ -50,12 +50,14 @@ static SLOTItem makeSlot(int location,int facing=-1,int flags=0) {
 // GetAvatarPlace consumer. Keep its real footprint and placement result.
 class ObservedAvatar final : public VMAvatar {
 public:
-    struct Observation { VMEntity::DirectionT DirectionArgument; float Radians; int Extension; };
+    struct Observation { VMEntity::DirectionT DirectionArgument; float Radians; int Extension; std::array<int,4> Bounds; };
     std::vector<Observation> Placement;
     explicit ObservedAvatar(FSO::Content::GameObject* object) : VMAvatar(object) {}
     std::unique_ptr<Routing::VMObstacle> GetObstacle(const LotTilePos& p,VMEntity::DirectionT d) override {
-        Placement.push_back({d,RadianDirection(),GetPersonData(VMPersonDataVariable::FootprintExtension)});
-        return VMAvatar::GetObstacle(p,d);
+        auto result=VMAvatar::GetObstacle(p,d);
+        Placement.push_back({d,RadianDirection(),GetPersonData(VMPersonDataVariable::FootprintExtension),
+            {result->x1,result->y1,result->x2,result->y2}});
+        return result;
     }
 };
 
@@ -232,10 +234,95 @@ static void realConsumerContracts() {
     check(f.Context.RandomSeed==capFinalSeed,"real cap consumes exactly8 shared source draws");
 }
 
+static void scoringFootprintScopeContracts() {
+    Fixture f;
+    f.Actor->Thread=std::make_unique<VMThread>(&f.Context,f.Actor.get(),16);
+    f.Actor->SetPersonData(VMPersonDataVariable::FootprintExtension,0x20);
+    f.Actor->Footprint=f.Actor->GetObstacle(f.Actor->Position(),f.Actor->Direction());
+    const auto* occupied=f.Actor->Footprint.get();
+    const std::array<int,4> bounds={occupied->x1,occupied->y1,occupied->x2,occupied->y2};
+    const auto position=f.Actor->Position();const float radians=f.Actor->RadianDirection();
+    auto preserved=[&](const std::string& label) {
+        check(f.Actor->Position()==position&&f.Actor->RadianDirection()==radians,label+" does not move or turn the actual actor");
+        const auto* current=f.Actor->Footprint.get();
+        check(current==occupied&&std::array<int,4>{current->x1,current->y1,current->x2,current->y2}==bounds,
+            label+" leaves the occupied footprint cache unchanged");
+    };
+    SLOTItem authored;authored.Type=3;authored.Rsflags=SLOTFlags(255);
+    authored.MinProximity=authored.MaxProximity=authored.OptimalProximity=16;
+    authored.Standing=1;authored.Sitting=0;authored.Ground=0;authored.Height=5;
+    authored.Facing=SLOTFacing::FaceTowardsObject;authored.SnapTargetSlot=-1;
+    f.Actor->Placement.clear();const auto goals=f.find(authored);
+    check(!goals.empty()&&!f.Actor->Placement.empty(),"authored SLOT reaches actual candidate placement checks");
+    for(const auto& observation:f.Actor->Placement)
+        check(observation.Extension==8,"authored candidate validation applies captured requested PD72");
+    check(f.Actor->GetPersonData(VMPersonDataVariable::FootprintExtension)==0,
+        "authored scoring clears PD73 instead of restoring its nonzero entry value");
+    check(f.Actor->GetPersonData(VMPersonDataVariable::RouteFootprintMask)==8,
+        "authored scoring preserves requested PD72");
+    preserved("authored scoring");
+
+    auto relative=makeSlot(0);f.Actor->SetPersonData(VMPersonDataVariable::FootprintExtension,0x40);
+    f.Actor->Placement.clear();const auto generated=f.find(relative);
+    check(!generated.empty(),"generated relative SLOT still validates candidates");
+    for(const auto& observation:f.Actor->Placement)
+        check(observation.Extension==8,"generated relative checks share requested-footprint scope");
+    check(f.Actor->GetPersonData(VMPersonDataVariable::FootprintExtension)==0,
+        "generated relative scoring also clears a nonzero prior PD73");
+    preserved("relative scoring");
+
+    f.Actor->SetPersonData(VMPersonDataVariable::FootprintExtension,0x40);
+    f.Context.EnvironmentMaps[0][4*8+4]=0x00020002u;
+    check(f.find(relative).empty()&&f.Actor->GetPersonData(VMPersonDataVariable::FootprintExtension)==0,
+        "relative early room rejection leaves no temporary applied footprint");
+    preserved("rejected scoring");
+
+    f.Context.EnvironmentMaps[0][4*8+4]=0x00010001u;
+    for(const auto& facing:std::array<std::array<int,3>,3>{{{{0,6,14}},{{2,14,6}},{{1,6,6}}}}) {
+        authored.Facing=SLOTFacing(facing[0]);f.Actor->Placement.clear();
+        check(!f.find(authored).empty(),"direction-sensitive authored candidates remain valid");
+        for(const auto& observation:f.Actor->Placement) {
+            check(observation.DirectionArgument==Direction(1u<<facing[0]),"authored candidate acceptance passes its selected heading");
+            check(observation.Bounds[2]-observation.Bounds[0]==facing[1]&&
+                observation.Bounds[3]-observation.Bounds[1]==facing[2],
+                "actual candidate footprint rotates extension8 for north/east and omits it on diagonals");
+        }
+        preserved("direction-sensitive authored scoring");
+    }
+    const float freeRadians=float(M_PI/2)+.03125f;f.Actor->RadianDirection(freeRadians);
+    authored.Facing=SLOTFacing::FaceAnywhere;f.Actor->Placement.clear();f.find(authored);
+    check(!f.Actor->Placement.empty(),"FaceAnywhere candidate admission remains reachable");
+    for(const auto& observation:f.Actor->Placement)
+        check(observation.DirectionArgument==Direction::EAST&&observation.Radians==freeRadians,
+            "FaceAnywhere validates using the untouched original actor heading");
+    check(f.Actor->RadianDirection()==freeRadians,"FaceAnywhere preserves exact original radians on exit");
+    f.Actor->RadianDirection(radians);
+
+    f.Target->Direction(Direction::EAST);authored.Rsflags=SLOTFlags(255|512);authored.Facing=SLOTFacing(2);
+    f.Actor->Placement.clear();f.find(authored);
+    for(const auto& observation:f.Actor->Placement)
+        check(observation.DirectionArgument==Direction::EAST,"absolute authored facing uses zero rotation base");
+    authored.Rsflags=SLOTFlags(0);authored.Facing=SLOTFacing::FaceAnywhere;f.Actor->Placement.clear();
+    check(!f.find(authored).empty(),"low-mask-zero authored point still validates");
+    for(const auto& observation:f.Actor->Placement)
+        check(observation.DirectionArgument==Direction::WEST,"low-mask-zero admission retains the source opposite-target heading exception");
+    f.Target->Direction(Direction::NORTH);authored.Rsflags=SLOTFlags(255);authored.Facing=SLOTFacing::FaceTowardsObject;
+
+    f.Machine.TS1=false;f.Actor->SetPersonData(VMPersonDataVariable::FootprintExtension,0x20);
+    f.Actor->Placement.clear();f.find(authored);
+    check(!f.Actor->Placement.empty(),"TSO authored placement remains reachable");
+    for(const auto& observation:f.Actor->Placement)
+        check(observation.Extension==0x20&&observation.DirectionArgument==Direction::NORTH,
+            "TSO scoring keeps its preexisting applied footprint and north acceptance");
+    check(f.Actor->GetPersonData(VMPersonDataVariable::FootprintExtension)==0x20,
+        "TSO scoring does not inherit TS1 temporary-field cleanup");
+    preserved("TSO scoring");
+}
+
 int main() {
     try {
         VM::UseWorld(false);
-        literalCandidateContracts();randomContracts();realConsumerContracts();
+        literalCandidateContracts();randomContracts();realConsumerContracts();scoringFootprintScopeContracts();
         std::cout<<"PASS TS1 relative-position synthetic contracts: "<<checks<<" checks\n";
         return 0;
     } catch (const std::exception& e) {

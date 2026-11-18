@@ -406,7 +406,12 @@ void VMEntity::RestartAfterRestore(VMContext* context) {
 void VMEntity::Reset(VMContext* context) {
     if (this->Thread == nullptr) return;
     if (context->VM->TS1) TS1SetSchedulerDelay(-1);
-    if (context->VM->TS1) Thread->DiscardTS1ObjectUses();
+    if (context->VM->TS1) {
+        Thread->DiscardTS1ObjectUses();
+        // Reset destroys the old interpreter/route vector and starts fresh.
+        Thread->TS1RouteDefaultsCount = 0;
+        Thread->TS1RouteDefaultsKnown = true;
+    }
     this->Thread->Stack.clear();
     this->Thread->Queue.clear();
     Thread->QueueDirty = true;

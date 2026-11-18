@@ -24,6 +24,9 @@ VMPrimitiveExitCode VMGotoRoutingSlot::Execute(VMStackFrame* context, VMPrimitiv
 
     if (context->Thread->IsCheck) return VMPrimitiveExitCode::GOTO_FALSE;
 
+    VMPrimitiveExitCode resumed;
+    if (context->Thread->TryResumeTS1Route(context, resumed)) return resumed;
+
     auto slot = VMMemory::GetSlot(context, operand->Type, operand->Data);
     if (slot == nullptr) return VMPrimitiveExitCode::GOTO_FALSE;
     auto obj = context->StackObject;

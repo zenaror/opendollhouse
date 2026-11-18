@@ -68,10 +68,45 @@ static void sourceAnimationPersistenceContract() {
  restored.PlayingBackwards=true;restored.TS1EventCursor=3;rejects([&]{write(restored,15);},"reverse cursor cannot index beyond last property");
  AvatarRecord model;model.rawAnimationClock=true;model.hurryableAnimation=true;model.motionPositionKnown=true;
  model.motionX=361.25f;model.motionY=485.75f;model.motionLevel=1;model.motionRate=1.35f;model.motionRateTick=232561;
+ model.motionPublishedX=361;model.motionPublishedY=486;
  st::Writer modelBytes(st::Endian::Little);Archive modelOutput(modelBytes);InteractionCheckpointCodec encoder(vm,modelOutput,15);encoder.avatarTiming(model);
  auto modelPayload=modelBytes.ToArray();st::Reader modelInput(modelPayload);Archive modelArchive(modelInput);InteractionCheckpointCodec decoder(vm,modelArchive,15);AvatarRecord modelRestored;decoder.avatarTiming(modelRestored);
  check(modelRestored.rawAnimationClock&&modelRestored.hurryableAnimation&&modelRestored.motionPositionKnown&&modelRestored.motionX==361.25f&&modelRestored.motionY==485.75f&&modelRestored.motionRate==1.35f&&modelRestored.motionRateTick==232561,"model clock policy and fractional movement survive the checkpoint");
+ st::Writer currentBytes(st::Endian::Little);Archive currentOutput(currentBytes);InteractionCheckpointCodec currentEncoder(vm,currentOutput,16);currentEncoder.avatarTiming(model);
+ auto currentPayload=currentBytes.ToArray();st::Reader currentInput(currentPayload);Archive currentArchive(currentInput);InteractionCheckpointCodec currentDecoder(vm,currentArchive,16);AvatarRecord currentRestored;currentDecoder.avatarTiming(currentRestored);
+ check(currentRestored.motionX==361.25f&&currentRestored.motionY==485.75f&&currentRestored.motionPublishedX==361&&currentRestored.motionPublishedY==486,"model fractions and separately constrained published coordinates survive version16");
  rejects([&]{st::Writer data(st::Endian::Little);Archive archive(data);InteractionCheckpointCodec old(vm,archive,14);old.avatarTiming(model);},"legacy model projection cannot silently drop source movement state");
+}
+
+static void sourceRouteCodecContract() {
+ VMContext context(nullptr);VM vm(&context,nullptr);vm.TS1=true;
+ IffFile iff;FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"route-count-codec",true);
+ auto tree=new BHAV();tree->ChunkID=4096;tree->ChunkProcessed=true;
+ for(int i=0;i<3;++i){BHAVInstruction op;op.Opcode=27;op.TruePointer=1;op.FalsePointer=2;tree->Instructions.push_back(op);}iff.AddChunk(tree);
+ OBJD definition;definition.GUID=0xeecc1020;
+ FSO::Content::GameObject object;object.OBJ=&definition;object.GUID=definition.GUID;object.Resource=&resource;
+ VMGameObject actor(&object,nullptr);actor.ObjectID=77;vm.ObjectsById[77]=&actor;
+ auto content=FSO::Content::Content::Get();content->WorldObjects->Cache[definition.GUID]=std::make_unique<FSO::Content::GameObject>(object);
+ VMThread thread(&context,&actor,16);auto parent=std::make_shared<VMStackFrame>();parent->Thread=&thread;parent->Routine=vm.Assemble(tree);parent->CodeOwner=&object;
+ parent->Caller=parent->Callee=&actor;parent->Args.assign(4,0);thread.Stack.push_back(parent);
+ auto route=thread.PushNewRoutingFrame(parent.get(),false);route->State=VMRoutingFrameState::WALKING;
+ auto write=[&](uint32_t version){st::Writer bytes(st::Endian::Little);Archive archive(bytes);InteractionCheckpointCodec codec(vm,archive,version);codec.thread(thread);return bytes.ToArray();};
+ auto read=[&](const std::vector<uint8_t>& bytes,VMThread& restored,uint32_t version){st::Reader input(bytes);Archive archive(input);InteractionCheckpointCodec codec(vm,archive,version);codec.thread(restored);check(!input.has_more(),"route thread consumes complete checkpoint record");};
+ auto bytes=write(16);VMThread restored(&context,&actor,16);read(bytes,restored,16);
+ check(thread.Stack.size()==2&&parent->PrimitiveState==0&&thread.TS1RouteDefaultsCount==0,"route projection leaves live descriptor and parent state unchanged");
+ check(restored.Stack.size()==1&&!restored.Stack.front()->IsRoutingFrame()&&restored.Stack.front()->PrimitiveState==1&&restored.TS1RouteDefaultsKnown&&restored.TS1RouteDefaultsCount==1,"new checkpoint reloads the original count-only leaf continuation");
+ restored.NextInstruction();
+ check(restored.Stack.size()==1&&restored.Stack.front()->InstructionPointer==0&&restored.Stack.front()->PrimitiveState==0&&restored.TS1RouteDefaultsCount==0&&!restored.ContinueExecution,"real interpreter pops one restored default and yields at unchanged PC");
+ // A pre-v16 graph is a compatibility continuation, independent of any stale
+ // count in its classic companion. Keep its saved timing policies unchanged.
+ route->TS1SourceModelRouting=false;route->State=VMRoutingFrameState::INITIAL;
+ thread.TS1RouteDefaultsCount=1;rejects([&]{write(15);},"legacy checkpoint cannot silently discard default route records");thread.TS1RouteDefaultsCount=0;
+ auto oldBytes=write(15);VMThread old(&context,&actor,16);read(oldBytes,old,15);
+ check(old.Stack.size()==2&&old.Stack.back()->IsRoutingFrame()&&!old.TS1RouteDefaultsKnown&&old.TS1RouteDefaultsCount==0,"old native graph preserves its descriptor without inferring classic defaults");
+ route->HeldResult=int8_t(VMPrimitiveExitCode::RETURN_FALSE);route->State=VMRoutingFrameState::FAILED;
+ auto failedBytes=write(16);VMThread failed(&context,&actor,16);read(failedBytes,failed,16);
+ check(failed.Stack.size()==2&&failed.Stack.back()->IsRoutingFrame()&&failed.TS1RouteDefaultsCount==0,"failed native route remains a real return rather than a classic placeholder");
+ content->WorldObjects->Cache.erase(definition.GUID);
 }
 
 static OBJTEntry classicType(uint32_t guid,uint16_t type) {
@@ -601,6 +636,7 @@ int main(){try{
  check(thread.Queue.size()==1&&thread.Queue[0]==pending&&thread.TempRegisters[2]==73&&thread.ActiveQueueBlock==-1,"failed route leaves pending work and thread registers intact");
  portalPreviewContract();
  sourceAnimationPersistenceContract();
+ sourceRouteCodecContract();
  classicContract();
  dialogContract();
  footprintConsumerContract();

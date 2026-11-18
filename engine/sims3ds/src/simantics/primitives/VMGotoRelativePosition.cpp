@@ -30,6 +30,9 @@ VMPrimitiveExitCode VMGotoRelativePosition::Execute(VMStackFrame* context, VMPri
 
     if (context->Thread->IsCheck) return VMPrimitiveExitCode::GOTO_FALSE;
 
+    VMPrimitiveExitCode resumed;
+    if (context->Thread->TryResumeTS1Route(context, resumed)) return resumed;
+
     const auto direction = static_cast<int32_t>(operand->Direction);
     if (direction < -2 || direction > 7) return VMPrimitiveExitCode::GOTO_FALSE;
 

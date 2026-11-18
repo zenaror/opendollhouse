@@ -22,6 +22,7 @@
 #include "simantics/entities/VMGameObject.h"
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/engine/VMThread.h"
+#include "simantics/engine/TS1RouteContinuation.h"
 #include "simantics/engine/VMStackFrame.h"
 #include "simantics/engine/VMQueuedAction.h"
 #include "simantics/engine/VMTS1Neighbourhood.h"
@@ -788,8 +789,10 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         // ---- stack (inverse of FreeSO ConvertThread): BHAV frames only; routing frames have no TS1 record (the
         // routing primitive below them reruns, FreeSO "SpecialResult.Retry").
         inst.Stack.clear();
+        const auto routePlan = e->Thread ? FSO::SimAntics::Engine::BuildTS1RouteSavePlan(*e->Thread, VM->TS1)
+                                        : FSO::SimAntics::Engine::TS1RouteSavePlan{};
         std::vector<FSO::SimAntics::Engine::VMStackFrame*> frames;
-        if (e->Thread) for (auto& f : e->Thread->Stack) if (f && !f->IsRoutingFrame() && f->Routine) frames.push_back(f.get());
+        if (e->Thread) frames = routePlan.ClassicFrames;
         for (auto f : frames) {
             OBJMStackFrame sf;
             sf.StackObjectID = f->StackObjectID();
@@ -801,7 +804,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             for (size_t k = 0; k < np && k < f->Args.size(); k++) sf.Parameters[k] = f->Args[k];
             sf.Locals.assign(nl, 0);
             for (size_t k = 0; k < nl && k < f->Locals.size(); k++) sf.Locals[k] = f->Locals[k];
-            sf.PrimitiveState = f->PrimitiveState;
+            sf.PrimitiveState = routePlan.PrimitiveState(f);
             // FreeSO: CodeOwnerGUID = objt.Entries[frame.CodeOwnerObjType - 1].GUID
             const OBJD* owner = (f->CodeOwner && f->CodeOwner->OBJ) ? f->CodeOwner->OBJ : objd;
             sf.CodeOwnerObjType = (int16_t)typeOf(owner->GUID, owner);
@@ -924,6 +927,8 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                 p.AnimEventCount = 0; p.Engaged = 0; p.RoutingState = OBJMRoutingState::None; p.RoutingFrameCount = 0;
                 p.LastInteraction = OBJMInteraction();
             }
+            p.RoutingFrameCount = int32_t(routePlan.ClassicRecordCount);
+            if (routePlan.LeafProjected) p.RoutingState = OBJMRoutingState::Stopped;
             for (int i = 0; i < 16; i++) {
                 p.MotiveData[i] = ava->GetMotiveDataFloat(VMMotive(i));
                 p.MotiveDataOld[i] = ava->GetOldMotiveDataFloat(VMMotive(i));
@@ -973,7 +978,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             if (e->Thread) for (const auto& use : e->Thread->TS1ObjectUses) {
                 if ((use.Target && use.Target->Dead) || use.StackDepth<=0 || size_t(use.StackDepth)>e->Thread->Stack.size())
                     throw std::runtime_error("TS1 save: invalid live object use");
-                const int32_t classicDepth=e->Thread->TS1ClassicUseDepth(use.StackDepth);
+                const int32_t classicDepth=routePlan.ClassicDepth(use.StackDepth);
                 if (classicDepth<=previousUseDepth) throw std::runtime_error("TS1 save: object use depths are not increasing");
                 previousUseDepth=classicDepth;
                 OBJMObjectUse u;u.TargetID=use.Target ? use.Target->ObjectID : 0;u.StackLength=classicDepth;u.Unknown2=use.Flag;

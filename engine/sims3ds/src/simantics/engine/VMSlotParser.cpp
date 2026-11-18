@@ -48,7 +48,31 @@ VMSlotParser::VMSlotParser(SLOTItem* slot) {
     if (DesiredProximity == 0) { DesiredProximity = MinProximity; }
 }
 
+namespace {
+// DVD 4824b8 scopes the route's requested extension over all candidate
+// acceptance, then clears PD73 and restores heading without republishing the
+// occupied footprint. Both authored and generated TS1 slots use that wrapper.
+struct TS1FacingGuard {
+    VMEntity* Actor;
+    VMAvatar* Avatar;
+    float Radians;
+    TS1FacingGuard(VMEntity* actor, bool enabled)
+        : Actor(enabled ? actor : nullptr), Avatar(dynamic_cast<VMAvatar*>(Actor)),
+          Radians(Actor ? Actor->RadianDirection() : 0.f) {
+        if (Avatar) {
+            const auto requested = Avatar->GetPersonData(VMPersonDataVariable::RouteFootprintMask);
+            Avatar->SetPersonData(VMPersonDataVariable::FootprintExtension, requested);
+        }
+    }
+    ~TS1FacingGuard() {
+        if (Avatar) Avatar->SetPersonData(VMPersonDataVariable::FootprintExtension, 0);
+        if (Actor) Actor->RadianDirection(Radians);
+    }
+};
+}
+
 std::vector<VMFindLocationResult> VMSlotParser::FindAvaliableLocations(VMEntity* obj, VMContext* context, VMEntity* caller) {
+    TS1FacingGuard restore(caller, context && context->VM && context->VM->TS1);
     if (Slot->RoutingPolicy == SLOTRoutingPolicy::TS1RelativePosition)
         return FindTS1RelativeLocations(obj, context, caller);
     /**
@@ -194,7 +218,30 @@ void VMSlotParser::VerifyAndAddLocation(VMEntity* obj, Vector2 pos, Vector2 cent
     VMEntity* chair = nullptr;
     bool avatarInWay = false; // TS1(sims): FreeSO
     if (Slot->SnapTargetSlot < 0) {
-        auto solid = caller->PositionValid(tpos, FSO::LotView::Model::Direction::NORTH, context, true);
+        auto acceptanceDirection = FSO::LotView::Model::Direction::NORTH;
+        if (context->VM->TS1) {
+            // DVD 483fc1 sets the actor heading before 481593 validates its
+            // anisotropic footprint. Final route facing is a separate result.
+            const unsigned targetBits = unsigned(obj->Direction());
+            int targetHeading = 0;
+            if (targetBits && !(targetBits & (targetBits - 1))) {
+                unsigned bits = targetBits;
+                while ((bits >>= 1) != 0) ++targetHeading;
+            }
+            const int base = (Flags & SLOTFlags::Absolute) > 0 ? 0 : targetHeading;
+            int heading = -1;
+            if ((int(Flags) & 255) == 0) heading = (base + 4) & 7;
+            else if (int(Slot->Facing) >= 0) heading = (base + int(Slot->Facing)) & 7;
+            else if (Slot->Facing != SLOTFacing::FaceAnywhere) {
+                heading = (int(std::nearbyint(GetDirectionTo(center, pos) / (M_PI / 4))) + 8) & 7;
+                if (Slot->Facing == SLOTFacing::FaceTowardsObject) heading = (heading + 4) & 7;
+            }
+            // FaceAnywhere keeps the actor's saved heading in the ordinary
+            // region branch; it does not manufacture a north-facing pose.
+            if (heading >= 0) caller->Direction(FSO::LotView::Model::Direction(1u << heading));
+            acceptanceDirection = caller->Direction();
+        }
+        auto solid = caller->PositionValid(tpos, acceptanceDirection, context, true);
         if (solid.Status != VMPlacementError::Success) {
             if (solid.Object != nullptr && dynamic_cast<VMGameObject*>(solid.Object) != nullptr) {
                 if (Slot->Sitting > 0 && solid.Object->EntryPoints[26].ActionFunction != 0) {
@@ -285,19 +332,6 @@ uint8_t TS1WallDirections(VMContext* context, const LotTilePos& point, unsigned 
     return TS1RotateMask(mask,heading);
 }
 
-struct TS1FacingGuard {
-    VMEntity* Actor;
-    VMAvatar* Avatar;
-    float Radians;
-    explicit TS1FacingGuard(VMEntity* actor) : Actor(actor), Avatar(dynamic_cast<VMAvatar*>(actor)), Radians(actor->RadianDirection()) {
-        if (Avatar) Avatar->SetPersonData(VMPersonDataVariable::FootprintExtension,
-            Avatar->GetPersonData(VMPersonDataVariable::RouteFootprintMask));
-    }
-    ~TS1FacingGuard() {
-        if (Avatar) Avatar->SetPersonData(VMPersonDataVariable::FootprintExtension,0);
-        Actor->RadianDirection(Radians);
-    }
-};
 }
 
 std::vector<VMFindLocationResult> VMSlotParser::FindTS1RelativeLocations(
@@ -322,9 +356,9 @@ std::vector<VMFindLocationResult> VMSlotParser::FindTS1RelativeLocations(
     const auto walls=TS1WallDirections(context,target,unsigned(targetHeading),pending);
     const auto candidates=TS1RelativeCandidates(*Slot,st::Point(target.x,target.y),unsigned(targetHeading),walls,
         st::Point(caller->Position().x,caller->Position().y));
-    TS1FacingGuard restore(caller);
+    const float originalRadians = caller->RadianDirection();
     for (const auto& candidate:candidates) {
-        caller->RadianDirection(restore.Radians);
+        caller->RadianDirection(originalRadians);
         int acceptance=-1;
         if (!candidate.Region) acceptance=(targetHeading+4)&7;
         else if (int(Slot->Facing)==-2) acceptance=(candidate.Heading+4)&7;

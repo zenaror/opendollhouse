@@ -470,6 +470,14 @@ bool VMRoutingFrame::UsesTS1SourceLocomotion() const {
     return VM()->TS1 && TS1SourceLocomotion;
 }
 
+bool VMRoutingFrame::UsesTS1SourceTurning() const {
+    return UsesTS1SourceLocomotion() && TS1SourceModelRouting;
+}
+
+bool VMRoutingFrame::UsesTS1SourceLookahead() const {
+    return UsesTS1SourceLocomotion() && TS1SourceModelRouting;
+}
+
 int VMRoutingFrame::TS1MotionModelState() {
     switch (State) {
         case VMRoutingFrameState::BEGIN_TURN:
@@ -654,7 +662,22 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
             return VMPrimitiveExitCode::CONTINUE;
         case VMRoutingFrameState::BEGIN_TURN:
         case VMRoutingFrameState::END_TURN:
-            if (avatar->CurrentAnimationState() == nullptr || avatar->CurrentAnimationState()->EndReached) {
+            if (UsesTS1SourceTurning() && avatar->CurrentAnimationState() &&
+                avatar->CurrentAnimationState()->TS1Clock) {
+                auto clip = avatar->CurrentAnimationState();
+                // The original FSM reads the previous animation phase before
+                // the common clock advancement. Root rotation is in the clip;
+                // only the residual changes the model's world heading.
+                if (clip->TS1Phase < 1.0f) {
+                    avatar->RadianDirection(static_cast<float>(WalkDirection +
+                        clip->TS1Phase * TurnTweak));
+                    clip->Speed = avatar->TS1MotionRate;
+                    return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+                }
+            }
+            if (avatar->CurrentAnimationState() == nullptr || avatar->CurrentAnimationState()->EndReached ||
+                (UsesTS1SourceTurning() && avatar->CurrentAnimationState()->TS1Clock &&
+                    avatar->CurrentAnimationState()->TS1Phase >= 1.0f)) {
                 if (State == VMRoutingFrameState::BEGIN_TURN) {
                     State = VMRoutingFrameState::WALKING;
                     WalkDirection = TargetDirection;
@@ -714,11 +737,11 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
             }
             //normal sims can move 0.05 units in a frame.
 
-            if (TurnFrames > 0) {
+            if (!UsesTS1SourceLookahead() && TurnFrames > 0) {
                 avatar->RadianDirection((float)(TargetDirection + DirectionUtils::Difference(TargetDirection, WalkDirection) * (TurnFrames / 10.0)));
                 TurnFrames--;
             }
-            else avatar->RadianDirection((float)TargetDirection);
+            else if (!UsesTS1SourceLookahead()) avatar->RadianDirection((float)TargetDirection);
 
             auto diff = CurrentWaypoint - PreviousPosition;
             if (MoveTotalFrames != 0) {
@@ -730,25 +753,55 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
             float motionX = 0, motionY = 0;
             if (UsesTS1SourceLocomotion()) {
                 const auto position = Caller->Position();
-                if (!avatar->TS1MotionPositionKnown || avatar->TS1MotionLevel != position.Level ||
-                    static_cast<int>(avatar->TS1MotionX) != position.x ||
-                    static_cast<int>(avatar->TS1MotionY) != position.y) {
+                const bool externalPlacement = avatar->TS1MotionPositionKnown && (UsesTS1SourceLookahead()
+                    ? (avatar->TS1MotionPublishedX != position.x || avatar->TS1MotionPublishedY != position.y)
+                    : (static_cast<int>(avatar->TS1MotionX) != position.x ||
+                        static_cast<int>(avatar->TS1MotionY) != position.y));
+                if (!avatar->TS1MotionPositionKnown || avatar->TS1MotionLevel != position.Level || externalPlacement) {
                     // A placement/teleport outside this route invalidates the
                     // fractional position. Never carry fractions to a new tile.
                     avatar->TS1MotionX = position.x;
                     avatar->TS1MotionY = position.y;
                     avatar->TS1MotionLevel = position.Level;
+                    avatar->TS1MotionPublishedX = position.x;
+                    avatar->TS1MotionPublishedY = position.y;
                     avatar->TS1MotionPositionKnown = true;
                 }
                 motionX = avatar->TS1MotionX;
                 motionY = avatar->TS1MotionY;
-                const float dx = CurrentWaypoint.x - motionX;
-                const float dy = CurrentWaypoint.y - motionY;
-                const float remaining = std::sqrt(dx * dx + dy * dy);
                 const auto animation = avatar->Animations.front();
+                auto aim = Point(CurrentWaypoint.x, CurrentWaypoint.y);
+                if (UsesTS1SourceLookahead()) {
+                    // Source model initializer 00588351 / virtual120=00588f0b
+                    // derives this radius from the chosen walk/run Distance.
+                    const float radius = animation->Anim->Distance * 0.5f * (16.0f / 3.0f);
+                    aim = TS1Lookahead(motionX, motionY, radius);
+                }
+                const float dx = aim.X - motionX;
+                const float dy = aim.Y - motionY;
+                const float remaining = std::sqrt(dx * dx + dy * dy);
+                if (UsesTS1SourceLookahead() && remaining > 1e-6f) {
+                    const float desired = std::atan2(dx, -dy);
+                    const float difference = Routing::TS1SelectTurn(
+                        static_cast<float>(DirectionUtils::Difference(avatar->RadianDirection(), desired) / (M_PI / 4.0)),
+                        avatar->TS1MotionRate, avatar->GetPersonData(VMPersonDataVariable::Gender)).Difference;
+                    const bool pet = avatar->GetPersonData(VMPersonDataVariable::Gender) > 1;
+                    const float factor = avatar->TS1MotionRate < 1.0f ? avatar->TS1MotionRate : 1.0f;
+                    const float turnThreshold = pet ? 0.8f : 2.0f / factor;
+                    if (difference >= turnThreshold || difference <= -turnThreshold) {
+                        TargetDirection = desired;
+                        if (Turn(difference * (M_PI / 4.0))) {
+                            State = VMRoutingFrameState::BEGIN_TURN;
+                            return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+                        }
+                    }
+                    const float limit = (pet ? 0.057f : 0.2f) / factor;
+                    const float headingStep = std::max(-limit, std::min(limit, difference));
+                    avatar->RadianDirection(avatar->RadianDirection() + headingStep * static_cast<float>(M_PI / 4.0));
+                }
                 const float step = Routing::TS1MotionStep(animation->Anim->Distance,
                     animation->Anim->Duration, animation->Speed);
-                if (remaining <= step) {
+                if ((!UsesTS1SourceLookahead() || WalkTo->empty()) && remaining <= step) {
                     motionX = CurrentWaypoint.x;
                     motionY = CurrentWaypoint.y;
                     MoveFrames = MoveTotalFrames;
@@ -756,8 +809,28 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     motionX += step * dx / remaining;
                     motionY += step * dy / remaining;
                 }
-                nextPosition = LotTilePos(static_cast<int16_t>(motionX),
-                    static_cast<int16_t>(motionY), position.Level);
+                // Finite metadata can still produce a step larger than the
+                // coordinate type. Reject the proposal before any float-to-
+                // integer conversion or placement; keep the last safe state.
+                if (!std::isfinite(motionX) || !std::isfinite(motionY) ||
+                    motionX < -32768.0f || motionX >= 32768.0f ||
+                    motionY < -32768.0f || motionY >= 32768.0f)
+                    return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+                if (UsesTS1SourceLookahead()) {
+                    // Source model tuple is Y/X; the native adapter is X/Y.
+                    // Both rounding and segment projection are axis symmetric.
+                    const auto constrained = Routing::TS1ConstrainToSegment(
+                        int(double(motionX) + 0.5), int(double(motionY) + 0.5),
+                        PreviousPosition.x, PreviousPosition.y, CurrentWaypoint.x, CurrentWaypoint.y);
+                    if (constrained.X < -32768 || constrained.X > 32767 ||
+                        constrained.Y < -32768 || constrained.Y > 32767)
+                        return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+                    nextPosition = LotTilePos(static_cast<int16_t>(constrained.X),
+                        static_cast<int16_t>(constrained.Y), position.Level);
+                } else {
+                    nextPosition = LotTilePos(static_cast<int16_t>(motionX),
+                        static_cast<int16_t>(motionY), position.Level);
+                }
             }
             auto storedDir = avatar->RadianDirection();
             auto result = Caller->SetPosition(nextPosition, VM()->TS1 ? Caller->Direction() : FSO::LotView::Model::Direction::NORTH, VM()->Context);
@@ -873,6 +946,8 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     (motionY - avatar->TS1MotionY) / 16.0f, 0);
                 avatar->TS1MotionX = motionX;
                 avatar->TS1MotionY = motionY;
+                avatar->TS1MotionPublishedX = Caller->Position().x;
+                avatar->TS1MotionPublishedY = Caller->Position().y;
                 Caller->VisualPosition(st::Vector3(motionX / 16.0f, motionY / 16.0f,
                     (Caller->Position().Level - 1) * 2.95f));
             } else {
@@ -958,6 +1033,26 @@ void VMRoutingFrame::BeginWalk() { //faces the avatar towards the initial walk d
     bool hardStart = CanPortalTurn();
     Velocity = (hardStart) ? 0 : 8;
 
+    if (UsesTS1SourceLookahead()) {
+        // Beginning a path is not the source's final in-place orientation
+        // state. Ordinary walking can steer through a small mismatch; only
+        // a sharp heading difference enters the standing turn FSM.
+        auto avatar = static_cast<VMAvatar*>(Caller);
+        const bool pet = avatar->GetPersonData(VMPersonDataVariable::Gender) > 1;
+        const float factor = avatar->TS1MotionRate < 1.0f ? avatar->TS1MotionRate : 1.0f;
+        const float threshold = pet ? 0.8f : 2.0f / factor;
+        const float difference = Routing::TS1SelectTurn(
+            static_cast<float>(directionDiff / (M_PI / 4.0)), avatar->TS1MotionRate,
+            avatar->GetPersonData(VMPersonDataVariable::Gender)).Difference;
+        if (hardStart && (difference >= threshold || difference <= -threshold) && Turn(directionDiff)) {
+            State = VMRoutingFrameState::BEGIN_TURN;
+        } else {
+            State = VMRoutingFrameState::WALKING;
+            StartWalkAnimation();
+        }
+        return;
+    }
+
     if (hardStart && Turn(directionDiff)) {
         State = VMRoutingFrameState::BEGIN_TURN;
     } else {
@@ -1007,6 +1102,17 @@ bool VMRoutingFrame::Turn(double directionDiff) {
     int off = (directionDiff > 0) ? 0 : 1;
     auto absDiff = std::abs(directionDiff);
     auto& anims = (InPool()) ? obj->SwimAnimations : obj->WalkAnimations;
+
+    if (UsesTS1SourceTurning()) {
+        const auto turn = Routing::TS1SelectTurn(static_cast<float>(directionDiff / (M_PI / 4.0)),
+            obj->TS1MotionRate, obj->GetPersonData(VMPersonDataVariable::Gender));
+        if (!turn.Animate) return false;
+        WalkDirection = obj->RadianDirection();
+        TurnTweak = turn.Residual * static_cast<float>(M_PI / 4.0);
+        obj->Animations.clear();
+        PlayAnim(anims[turn.ClipCode], obj);
+        return true;
+    }
 
     std::string animName;
     if (absDiff >= M_PI - 0.01) //full 180 turn
@@ -1085,16 +1191,30 @@ VMAnimationState* VMRoutingFrame::PlayAnim(const std::string& name, VMAvatar* av
     return state.get();
 }
 
+Point VMRoutingFrame::TS1Lookahead(float x, float y, float radius) {
+    // The last point remains the goal in the current native path adapter.
+    // Original near-end anchor sampling/retiming is a separate source contract.
+    while (!WalkTo->empty()) {
+        const auto sample = Routing::TS1SegmentLookahead(x, y,
+            PreviousPosition.x, PreviousPosition.y, CurrentWaypoint.x, CurrentWaypoint.y, radius);
+        if (sample.Found) return Point(sample.X, sample.Y);
+        if (!AdvanceWaypoint()) break;
+    }
+    return Point(CurrentWaypoint.x, CurrentWaypoint.y);
+}
+
 bool VMRoutingFrame::AdvanceWaypoint() {
     if (WalkTo->size() == 0) return false;
 
+    const auto previousWaypoint = CurrentWaypoint;
     auto point = WalkTo->front();
     WalkTo->pop_front();
     if (WalkTo->size() > 0) {
         CurrentWaypoint = LotTilePos((int16_t)point.X, (int16_t)point.Y, Caller->Position().Level);
     }
     else CurrentWaypoint = CurRoute->Position; //go directly to position at last
-    PreviousPosition = Caller->Position();
+    PreviousPosition = UsesTS1SourceLookahead() && previousWaypoint != LotTilePos::OUT_OF_WORLD
+        ? previousWaypoint : Caller->Position();
     MoveFrames = 0;
 
     MoveTotalFrames = ((LotTilePos::Distance(CurrentWaypoint, Caller->Position()) * 20) / 2);

@@ -25,6 +25,7 @@
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/engine/VMThread.h"
 #include "simantics/engine/VMRoutingFrame.h"
+#include "simantics/engine/TS1RouteContinuation.h"
 #include "simantics/engine/VMTS1RelativePosition.h"
 #include "simantics/engine/VMActionCallback.h"
 #include "simantics/engine/VMTS1MotiveDecay.h"
@@ -148,6 +149,7 @@ struct AvatarRecord {
     std::shared_ptr<VMAnimationState> carry;
     bool rawAnimationClock = false, hurryableAnimation = false, motionPositionKnown = false;
     float motionX = 0, motionY = 0, motionRate = 1;
+    int16_t motionPublishedX = 0, motionPublishedY = 0;
     int8_t motionLevel = 0;
     int64_t motionRateTick = -1;
     std::array<int16_t,101> person{};
@@ -242,6 +244,9 @@ public:
     // bound to those exact ObjM bytes; restore this existing companion field
     // without adding bytes to the native graph or breaking older readers.
     void preparePrimitiveStates(std::map<int16_t, Record>& records, const OBJM& classic, const OBJT* types) {
+        // New snapshots carry the actual/projected execution state directly.
+        // A classic compatibility companion may intentionally differ.
+        if (version >= 16) return;
         std::map<int16_t, uint32_t> owners;
         if (types) for (const auto& type : types->Entries) owners[type.TypeID] = type.GUID;
         for (auto& entry : records) {
@@ -452,6 +457,11 @@ public:
                     candidate.avatar = dynamic_cast<VMAvatar*>(live);
                     Require(candidate.avatar, "classic person is not an avatar");
                     const auto& person = inst.PersonData;
+                    Require(person.RoutingFrameCount >= 0 &&
+                            uint32_t(person.RoutingFrameCount) <= TS1RouteDefaultsLimit,
+                            "invalid classic route record count");
+                    thread.TS1RouteDefaultsKnown = true;
+                    thread.TS1RouteDefaultsCount = candidate.reset ? 0 : uint32_t(person.RoutingFrameCount);
                     auto action = [&](const OBJMInteraction& source) {
                         Require(source.IsValid() && source.UID >= 0 && source.UID <= 65535 &&
                                 source.Priority >= -32768 && source.Priority <= 32767,
@@ -813,6 +823,11 @@ public:
         else Require(!vm.TS1 || !r.TS1SourceLocomotion || r.State == VMRoutingFrameState::INITIAL ||
                      r.State == VMRoutingFrameState::FAILED,
                      "source locomotion requires checkpoint version15");
+        if (version >= 16) io.value(r.TS1SourceModelRouting);
+        else if (io.in) r.TS1SourceModelRouting = false;
+        else Require(!vm.TS1 || !r.TS1SourceModelRouting ||
+                     r.State == VMRoutingFrameState::INITIAL || r.State == VMRoutingFrameState::FAILED,
+                     "source path and turn state requires checkpoint version16");
         // Older snapshots cannot establish a route-owned request from live PD72.
         if (version >= 10) { io.value(r.TS1PendingFootprint); io.value(r.TS1PendingFootprintKnown); }
         else if (io.in) { r.TS1PendingFootprint = 0; r.TS1PendingFootprintKnown = false; }
@@ -897,6 +912,24 @@ public:
     void thread(VMThread& t) {
         Require(!t.IsCheck && (version >= 8 || !t.BlockingState) && !t.EODConnection && t.ThreadBreak == VMThreadBreakMode::Active,
                 "unrepresented check, debugger, async or EOD state");
+        // The plan is shared with the classic writer. Saving an eligible
+        // leaf route records the original count-only continuation, without
+        // altering the live route or its owning instruction.
+        const auto projection = io.out && version >= 16
+            ? BuildTS1RouteSavePlan(t, vm.TS1) : TS1RouteSavePlan{};
+        Require(!io.out || version >= 16 || t.TS1RouteDefaultsCount == 0,
+                "classic default route records require checkpoint version16");
+        bool defaultsKnown = io.out ? projection.DefaultsKnown : false;
+        uint32_t defaultsCount = io.out ? projection.DefaultsCount : 0;
+        if (version >= 16) {
+            io.value(defaultsKnown); io.value(defaultsCount);
+            Require(defaultsCount <= TS1RouteDefaultsLimit && (defaultsKnown || defaultsCount == 0),
+                    "invalid route default provenance");
+        }
+        if (io.in) {
+            t.TS1RouteDefaultsKnown = defaultsKnown;
+            t.TS1RouteDefaultsCount = defaultsCount;
+        }
         io.value(t.ActiveQueueBlock); io.value(t.QueueDirty);
         io.scalars(t.TempRegisters); io.scalars(t.TempXL);
         io.value(t.LastStackExitCode); io.value(t.Interrupt); io.value(t.ActionUID); io.value(t.DialogCooldown);
@@ -923,11 +956,13 @@ public:
             }
             Require(uids.insert(item->UID).second, "duplicate action UID");
         }
-        n = io.count(t.Stack.size(), 1024);
+        auto savedFrames = io.out && version >= 16 ? projection.NativeFrames : t.Stack;
+        n = io.count(savedFrames.size(), 1024);
         if (io.in) t.Stack.resize(n);
+        auto& frames = io.in ? t.Stack : savedFrames;
         int boundaries = 0;
         VMRoutingFrame* parent = nullptr;
-        for (auto& f : t.Stack) {
+        for (auto& f : frames) {
             bool routing = f && f->IsRoutingFrame();
             io.value(routing);
             if (io.in) {
@@ -950,6 +985,11 @@ public:
             reference(stackObject, "frame stack object"); io.value(rawID);
             if (io.in) { f->StackObject = stackObject; f->StackObjectRawID = rawID; }
             io.value(f->InstructionPointer);
+            if (version >= 16) {
+                int32_t primitiveState = io.out ? projection.PrimitiveState(f.get()) : 0;
+                io.value(primitiveState);
+                if (io.in) f->PrimitiveState = primitiveState;
+            }
             io.value(f->SpecialResult); io.value(f->ActionTree);
             io.vector(f->Args, 4096); io.vector(f->Locals, 4096);
             Require(f->Caller && f->Callee && f->InstructionPointer < f->Routine->Instructions.size() &&
@@ -996,13 +1036,15 @@ public:
             if (io.in) t.TS1ObjectUses.resize(uses);
             int32_t previous=0;
             for (auto& use : t.TS1ObjectUses) {
-                reference(use.Target,"object use target");io.value(use.StackDepth);io.value(use.Flag);
-                Require(use.StackDepth>0 && size_t(use.StackDepth)<=t.Stack.size() && use.StackDepth>previous,
+                int32_t depth = io.out && version >= 16 ? projection.NativeDepth(use.StackDepth) : use.StackDepth;
+                reference(use.Target,"object use target");io.value(depth);io.value(use.Flag);
+                if (io.in) use.StackDepth = depth;
+                Require(depth>0 && size_t(depth)<=frames.size() && depth>previous,
                         "invalid object use depth");
-                const auto& ownerFrame=t.Stack[size_t(use.StackDepth-1)];
+                const auto& ownerFrame=frames[size_t(depth-1)];
                 Require(ownerFrame && !ownerFrame->IsRoutingFrame() && ownerFrame->Routine,
                         "object use ends on a non-authored frame");
-                previous=use.StackDepth;
+                previous=depth;
             }
             reference(t.TS1FlaggedUseTarget,"flagged object use target");
             auto& last=t.TS1LastInteraction;
@@ -1044,6 +1086,7 @@ public:
             io.value(a.rawAnimationClock); io.value(a.hurryableAnimation);
             io.value(a.motionPositionKnown); io.value(a.motionX); io.value(a.motionY);
             io.value(a.motionLevel); io.value(a.motionRate); io.value(a.motionRateTick);
+            if (version >= 16) { io.value(a.motionPublishedX); io.value(a.motionPublishedY); }
             Require(a.motionRate > 0, "invalid locomotion rate");
             Require(!a.motionPositionKnown || (a.motionLevel > 0 &&
                     a.motionX >= -32768.f && a.motionX < 32768.f &&
@@ -1061,6 +1104,7 @@ public:
             a.rawAnimationClock = live.TS1RawAnimationClock;
             a.hurryableAnimation = live.TS1HurryableAnimation;
             a.motionX = live.TS1MotionX; a.motionY = live.TS1MotionY;
+            a.motionPublishedX = live.TS1MotionPublishedX; a.motionPublishedY = live.TS1MotionPublishedY;
             a.motionLevel = live.TS1MotionLevel;
             a.motionPositionKnown = live.TS1MotionPositionKnown;
             a.motionRate = live.TS1MotionRate; a.motionRateTick = live.TS1MotionRateTick;
@@ -1281,6 +1325,8 @@ public:
                 live->TS1RawAnimationClock = a.rawAnimationClock;
                 live->TS1HurryableAnimation = a.hurryableAnimation;
                 live->TS1MotionX = a.motionX; live->TS1MotionY = a.motionY;
+                live->TS1MotionPublishedX = version >= 16 ? a.motionPublishedX : live->Position().x;
+                live->TS1MotionPublishedY = version >= 16 ? a.motionPublishedY : live->Position().y;
                 live->TS1MotionLevel = a.motionLevel;
                 live->TS1MotionPositionKnown = a.motionPositionKnown;
                 live->TS1MotionRate = a.motionRate; live->TS1MotionRateTick = a.motionRateTick;

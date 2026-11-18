@@ -41,6 +41,16 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- New walking paths use the original corner sampling, position constraints and
+  separate steering and stationary-turn rules. Some pathfinding and final-step
+  differences remain under comparison.
+- Ordinary walking saves rebuild their path when resumed, following the original
+  continuation rule while preserving queued actions and progress. More complex
+  routes retain their native continuation until their original behavior is
+  established. Older native saves keep their recorded motion policy on load.
+- Destination checks use the requested footprint and candidate direction, then
+  restore the Sim's heading and clear the temporary footprint extension.
+
 - New character animations and walks use the original duration-based clock and
   movement metadata. Animation events keep their owning character layer. Existing
   native saves retain their previous animation and route timing until replaced;

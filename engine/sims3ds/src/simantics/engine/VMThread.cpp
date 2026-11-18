@@ -36,6 +36,25 @@ using namespace FSO::SimAntics::Model::TSOPlatform;
 int32_t VMThread::MAX_USER_ACTIONS = 20;
 const int32_t VMThread::MAX_LOOP_COUNT = 500000;
 
+bool VMThread::TryResumeTS1Route(VMStackFrame* frame, VMPrimitiveExitCode& result) {
+    if (!Context || !Context->VM->TS1 || IsCheck || !TS1RouteDefaultsKnown ||
+        !frame || frame->Thread != this || frame->IsRoutingFrame() ||
+        Stack.empty() || Stack.back().get() != frame || !frame->Routine ||
+        frame->InstructionPointer >= frame->Routine->Instructions.size() || frame->PrimitiveState == 0)
+        return false;
+    const auto opcode = frame->GetCurrentInstruction().Opcode;
+    if (opcode != 27 && opcode != 45) return false;
+    // Defaults are below every live native descriptor. An ancestor's native
+    // descriptor cannot be consumed as this instruction's classic placeholder.
+    for (const auto& child : Stack) if (child->IsRoutingFrame()) return false;
+    if (TS1RouteDefaultsCount != 0) {
+        --TS1RouteDefaultsCount;
+        frame->PrimitiveState = 0;
+        result = VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    } else result = VMPrimitiveExitCode::GOTO_FALSE; // normal branch clears state
+    return true;
+}
+
 VMPrimitiveExitCode VMThread::EvaluateCheck(VMContext* context, VMEntity* entity, std::shared_ptr<VMStackFrame> initFrame) {
     return EvaluateCheck(context, entity, initFrame, nullptr, nullptr);
 }
@@ -131,6 +150,7 @@ bool VMThread::RunInMyStack(BHAV* bhav, FSO::Content::GameObject* CodeOwner, con
 VMThread::VMThread(VMContext* context, VMEntity* entity, int32_t stackSize) {
     this->Context = context;
     this->Entity = entity;
+    TS1RouteDefaultsKnown = context && context->VM && context->VM->TS1;
     TempRegisters.fill(0);
     TempXL.fill(0);
     this->Stack.reserve((size_t)std::max<int32_t>(0, stackSize));
@@ -426,6 +446,8 @@ void VMThread::TS1ObjectUseTargetRemoved(VMEntity* target) {
     if (Context->VM->TS1) Entity->TS1SetSchedulerDelay(-1);
     DiscardTS1ObjectUses();
     Stack.clear();
+    TS1RouteDefaultsCount = 0;
+    TS1RouteDefaultsKnown = Context->VM->TS1;
     Queue=std::move(retainedPending);
     QueueDirty=true;
     ActiveQueueBlock=-1;
@@ -766,6 +788,10 @@ void VMThread::HandleResult(VMStackFrame* frame, VMInstruction* instruction, VMP
         case VMPrimitiveExitCode::INTERRUPT:
             if (Context->VM->TS1 && !IsCheck) DiscardTS1ObjectUses();
             Stack.clear();
+            if (Context->VM->TS1 && !IsCheck) {
+                TS1RouteDefaultsCount = 0;
+                TS1RouteDefaultsKnown = true;
+            }
             QueueDirty = true;
             if (Queue.size() > 0) Queue.erase(Queue.begin());
             LastStackExitCode = result;

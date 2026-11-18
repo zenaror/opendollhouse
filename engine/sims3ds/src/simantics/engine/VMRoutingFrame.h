@@ -79,7 +79,12 @@ public:
     // Restored pre-15 routes retain their previous integer movement contract.
     // Fresh routes use authored TS1 animation distance and model-clock state.
     bool TS1SourceLocomotion = true;
+    // Pre-16 routes store TurnTweak as a per-tick adjustment. New source
+    // turns store a complete residual, sampled by authored clip phase.
+    bool TS1SourceModelRouting = true;
     bool UsesTS1SourceLocomotion() const;
+    bool UsesTS1SourceTurning() const;
+    bool UsesTS1SourceLookahead() const;
     int TS1MotionModelState();
 
     VMRoutingFrame() {}
@@ -162,5 +167,6 @@ private:
     void StartWalkAnimation();
     Model::VMAnimationState* PlayAnim(const std::string& name, VMAvatar* avatar);
     bool AdvanceWaypoint();
+    st::Point TS1Lookahead(float x, float y, float radius);
 };
 }}}
