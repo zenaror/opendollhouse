@@ -6,6 +6,7 @@
 // Translated from FreeSims SimsVille/SimsAntics/primitives/VMFindBestAction.cs
 #include "simantics/primitives/VMFindBestAction.h"
 #include "simantics/primitives/VMTS1AutonomyPolicy.h"
+#include "common/TS1/TS1AutonomyFloat.h"
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
@@ -118,6 +119,7 @@ int VMFindBestAction::MotiveToWeight(int motive) {
 }
 
 VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
+    using FSO::Common::TS1::AutonomyFloat::Round;
     auto callerAvatar = dynamic_cast<VMAvatar*>(context->Caller);
     if (callerAvatar == nullptr) throw VMSimanticsException("Find Best Action: caller is not an avatar (invalid cast).", context);
     // DVD opcode3 selects an interaction; pending player commands are handled
@@ -144,11 +146,6 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
 
     // === HAPPY CALCULATION ===
 
-    // The selected DVD scorer averages these nine curves equally.
-    float weights[9] = { 1, 1, 1, 1, 1, 1, 1, 1, 1 };
-    float totalWeight = 0;
-    for (int i = 0; i < 9; i++) totalWeight += weights[i];
-    for (int i = 0; i < 9; i++) weights[i] /= totalWeight;
     const auto& tuning = global->Autonomy;
     const double minScore = visitor ? tuning.VisitorMinimum : tuning.FamilyMinimum;
     // DVD 004074bc tests the current lot's registered zoning for residential.
@@ -164,12 +161,16 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
         }
     }
 
-    float happyParts[9];
-    float baseHappy = 0;
+    // DVD421481 accumulates in this order, rounds each addition, then divides
+    // once. Preweighting or replacing only changed terms changes the result.
+    float baselineSum = 0;
+    float baselineInputs[9], baselineValues[9];
     for (int i = 0; i < 9; i++) {
-        happyParts[i] = interactionCurve[i].GetPoint(caller->GetMotiveDataFloat(WeightMotives[i])) * weights[i];
-        baseHappy += happyParts[i];
+        baselineInputs[i] = caller->GetMotiveDataFloat(WeightMotives[i]);
+        baselineValues[i] = interactionCurve[i].GetPointForAutonomy(baselineInputs[i]);
+        baselineSum = Round(baselineSum + baselineValues[i]);
     }
+    const float baseHappy = Round(baselineSum / 9.0f);
 
     std::vector<VMPieMenuInteraction> validActions;
     for (auto iobj : ents) {
@@ -246,9 +247,9 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
             if (pie.size() == 0 && DebugCandidate) DebugCandidate(caller, obj, (ttas != nullptr) ? ttas->GetString((int32_t)id) : std::string("?"), false, 0);
             if (pie.size() > 0) {
                 auto& first = pie[0];
-                // calculate score for this tree.
-                // start with the base happy value, and modify it for each motive changed.
-                float score = baseHappy;
+                // DVD4214d4 evaluates every projected curve, including motives
+                // with no advertisement, with the same binary32 operation order.
+                float projectedSum = 0;
                 for (int weightInd = 0; weightInd < 9; ++weightInd) {
                     const auto motiveI = int(WeightMotives[weightInd]);
                     int16_t min = 0, max = 0, personality = 0;
@@ -278,37 +279,40 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                         max = negated == 32768 ? int16_t(-32768) : int16_t(negated);
                     }
 
-                    if (min == 0 && max == 0) continue;
                     auto myMotive = caller->GetMotiveDataFloat((VMMotive)motiveI);
-
-                    // Only changed contributions need replacing in the average.
-                    score -= happyParts[weightInd];
-
-                    float personalityMul = 1;
+                    float advertised;
                     if (personality > 0 && personality < 23) {
-                        personalityMul = caller->GetPersonData(VaryByTypes[personality]);
-                        personalityMul /= 1000.0f;
-                        if (personality < 13) {
-                            if ((personality & 1) == 0) {
-                                personalityMul = 1 - personalityMul;
-                            }
-                        }
+                        int weight = caller->GetPersonData(VaryByTypes[personality]);
+                        if (personality < 13 && (personality & 1) == 0)
+                            weight = 1000 - weight;
+                        const float product = Round(float(max) * float(weight));
+                        const float delta = Round(product * 0.001f);
+                        advertised = Round(delta + float(min));
+                    } else {
+                        advertised = float(int(min) + int(max));
                     }
-
-                    // then add the new contribution for this motive.
-                    score += interactionCurve[weightInd].GetPoint(myMotive + (min + max * personalityMul) / 1000.0f) * weights[weightInd];
+                    const float argument = Round(myMotive + Round(advertised * 0.001f));
+                    // Scripts can change motives during a check. Reuse only an
+                    // identical argument's curve value, while still adding all
+                    // nine terms in the source order. No per-row allocations.
+                    const float value = FSO::Common::TS1::AutonomyFloat::Bits(argument) ==
+                        FSO::Common::TS1::AutonomyFloat::Bits(baselineInputs[weightInd])
+                        ? baselineValues[weightInd]
+                        : interactionCurve[weightInd].GetPointForAutonomy(argument);
+                    projectedSum = Round(projectedSum + value);
                 }
-
-                // score relative to base
-                score -= baseHappy;
-                // modify score using attenuation
+                const float projectedHappy = Round(projectedSum / 9.0f);
                 float atten = (entry->AttenuationCode == 0 || entry->AttenuationCode >= 5) ?
                     entry->AttenuationValue : attenTable[entry->AttenuationCode];
-
-                score = score / (1 + atten * distance);
+                // DVD45e280..45e2bb stores the reciprocal before multiplying
+                // the gain. The observed chooser uses24-bit nearest rounding;
+                // no global host FPU change or ABI-dependent long double.
+                const float reciprocal = Round(1.0f / Round(1.0f + Round(atten * distance)));
+                const float score = Round(Round(projectedHappy - baseHappy) * reciprocal);
                 if (DebugCandidate) DebugCandidate(caller, obj, first.Name, true, score);
-
-                if (score >= minScore) {
+                // The DVD excludes a zero projected mean before considering
+                // its gain, even when a negative baseline would make it positive.
+                if (projectedHappy != 0 && score >= minScore) {
                     for (auto& item : pie) {
                         item.Score = score;
                         item.Callee = obj;

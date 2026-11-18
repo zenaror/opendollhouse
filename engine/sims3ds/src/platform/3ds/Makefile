@@ -136,3 +136,6 @@ $(OUTPUT).3dsx : $(OUTPUT).elf $(OUTPUT).smdh
 $(OUTPUT).elf  : $(OFILES)
 -include $(DEPENDS)
 endif
+
+# Preserve the original autonomy arithmetic without changing rendering flags.
+VMFindBestAction.o TS1Curve.o: CXXFLAGS += -fno-fast-math -ffp-contract=off

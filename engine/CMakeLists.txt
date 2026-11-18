@@ -265,6 +265,19 @@ set(ODH_ENGINE_SOURCES
 add_subdirectory(original-ui)
 find_package(ZLIB REQUIRED)
 add_library(odh_engine STATIC ${ODH_ENGINE_SOURCES})
+# Original autonomy arithmetic has individual binary32 rounding steps. Keep
+# these consumers independent of platform FMA or relaxed floating-point flags.
+set(ODH_AUTONOMY_ARITHMETIC_SOURCES
+  sims3ds/src/common/TS1/TS1Curve.cpp
+  sims3ds/src/simantics/primitives/VMFindBestAction.cpp
+  tests/original_autonomy_contract.cpp)
+if(MSVC)
+  set_property(SOURCE ${ODH_AUTONOMY_ARITHMETIC_SOURCES} APPEND PROPERTY
+    COMPILE_OPTIONS /fp:strict)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set_property(SOURCE ${ODH_AUTONOMY_ARITHMETIC_SOURCES} APPEND PROPERTY
+    COMPILE_OPTIONS -fno-fast-math -ffp-contract=off)
+endif()
 target_include_directories(odh_engine PUBLIC "${ODH_ENGINE_SOURCE_ROOT}")
 # Reuse portable presentation services without an old VM dependency.
 target_sources(odh_engine PRIVATE sims3ds/src/app/ui/OriginalPCUI.cpp

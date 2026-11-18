@@ -17,6 +17,7 @@
 #include "files/formats/iff/chunks/TTAs.h"
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -99,7 +100,7 @@ struct Fixture {
 };
 // Inspect the score produced by the actual chooser, including candidates that
 // fail its positive-score admission. Restore the process-wide observer on exit.
-static void RequireChooserScore(Fixture& fixture,float expected){
+static std::pair<VMPrimitiveExitCode,float> ObserveChooserScore(Fixture& fixture){
     struct ObserverLifetime {
         decltype(VMFindBestAction::DebugCandidate) previous=VMFindBestAction::DebugCandidate;
         ~ObserverLifetime(){VMFindBestAction::DebugCandidate=previous;}
@@ -112,6 +113,11 @@ static void RequireChooserScore(Fixture& fixture,float expected){
     };
     const auto result=fixture.Choose();
     Require(seen==1,"the real chooser scored the single eligible TTAB row");
+    return {result,actual};
+}
+static void RequireChooserScore(Fixture& fixture,float expected){
+    const auto observation=ObserveChooserScore(fixture);
+    const auto result=observation.first;const float actual=observation.second;
     Require(std::fabs(actual-expected)<0.00001f,"chooser score matches the literal DVD advertisement result");
     Require(result==(expected>0?VMPrimitiveExitCode::GOTO_TRUE:VMPrimitiveExitCode::GOTO_FALSE),
         "the real chooser admits positive gains and excludes zero or negative gains");
@@ -247,6 +253,118 @@ int main(){try{
         f.actor->SetPersonData(VMPersonDataVariable::Gender,species);
         f.table.Interactions[0]->Flags=TTABFlags::AllowVisitors|(species<4?TTABFlags::TS1AllowDogs:TTABFlags::TS1AllowCats);
         Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE,"dog and cat species retain self rows independently of person type");
+    });
+    // Literal outputs from the unchanged DVD4167d4/421481/4214d4 machine
+    // functions, executed with the observed chooser control word0x007f. These
+    // synthetic inputs require no game installation. They are not calculated
+    // by a duplicate scoring model inside this test.
+    struct NumericCase {
+        const char* name;bool retail;std::array<float,9> motives;
+        std::vector<std::array<int16_t,4>> ads;int personality;
+        float attenuation,distance,threshold;uint32_t scoreBits;bool admitted;
+        int mutateMotive;int mutateValue;
+    };
+    const NumericCase numericCases[]={
+        {"room_gain_18_identity",false,
+            {0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{13,0,9000,9000}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x3ffffff9u,true,-1,0},
+        {"room_gain_cancelled_identity",false,
+            {0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{13,0,9000,-9000}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x00000000u,false,-1,0},
+        {"room_personality_preserved_identity",false,
+            {0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{13,1,9000,-9000}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x3effffe4u,true,-1,0},
+        {"zero_projected_mean_positive_gain",false,
+            {-0x1.2000000000000p+3f,-0x1.2000000000000p+3f,-0x1.2000000000000p+3f,-0x1.2000000000000p+3f,-0x1.2000000000000p+3f,-0x1.2000000000000p+3f,-0x1.2000000000000p+3f,-0x1.2000000000000p+3f,-0x1.2000000000000p+3f},
+            {{3,0,9000,0},{5,0,9000,0},{6,0,9000,0},{7,0,9000,0},{8,0,9000,0},{9,0,9000,0},{13,0,9000,0},{14,0,9000,0},{15,0,9000,0}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x41100000u,false,-1,0},
+        {"room_negative_wrap_identity",false,
+            {0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{13,0,-32768,-32768}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0xc0e90454u,false,-1,0},
+        {"identity_upper_cap",false,
+            {0x0.0p+0f,0x0.0p+0f,0x1.6800000000000p+6f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{7,0,32767,32767}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x3f8e38e0u,true,-1,0},
+        {"identity_lower_cap",false,
+            {0x0.0p+0f,0x0.0p+0f,-0x1.6800000000000p+6f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{7,0,-32768,-32768}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0xbf8e38e0u,false,-1,0},
+        {"signed_projection_fraction_identity",false,
+            {0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{7,1,-100,-100}},1,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0xbc3638e4u,false,-1,0},
+        {"inverse_personality_fraction_identity",false,
+            {0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{7,2,-100,-100}},1,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0xbcb5f555u,false,-1,0},
+        {"attenuated_identity",false,
+            {0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {{7,1,9000,13000}},500,
+            0x1.99999a0000000p-4f,0x1.4000000000000p+1f,0x1.ad7f2a0000000p-24f,0x3fb05b06u,true,-1,0},
+        {"retail_fractional_mixed",true,
+            {-0x1.5000000000000p+2f,0x1.2200000000000p+4f,-0x1.4800000000000p+4f,-0x1.5800000000000p+3f,0x1.0000000000000p-2f,-0x1.0400000000000p+6f,-0x1.e800000000000p+4f,-0x1.4800000000000p+3f,0x1.5800000000000p+3f},
+            {{7,1,4000,27000},{13,0,9000,-9000},{15,7,0,13000}},500,
+            0x1.99999a0000000p-4f,0x1.4000000000000p+1f,0x1.ad7f2a0000000p-24f,0x3e91a29au,true,-1,0},
+        {"check_mutates_hunger_after_baseline",false,
+            {0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f,0x0.0p+0f},
+            {},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x3f800000u,true,7,9},
+        {"retail_all_unchanged",true,
+            {-0x1.5000000000000p+2f,0x1.2200000000000p+4f,-0x1.4800000000000p+4f,-0x1.5800000000000p+3f,0x1.0000000000000p-2f,-0x1.0400000000000p+6f,-0x1.e800000000000p+4f,-0x1.4800000000000p+3f,0x1.5800000000000p+3f},
+            {},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x00000000u,false,-1,0},
+        {"retail_exact_knots",true,
+            {-0x1.2000000000000p+6f,-0x1.4000000000000p+6f,-0x1.9000000000000p+4f,-0x1.1800000000000p+5f,-0x1.4000000000000p+4f,-0x1.9000000000000p+5f,-0x1.9000000000000p+5f,-0x1.9000000000000p+4f,0x0.0p+0f},
+            {{5,0,0,100},{7,0,0,100},{15,0,0,100}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x3b424000u,true,-1,0},
+        {"retail_small_gain",true,
+            {-0x1.5000000000000p+2f,0x1.2200000000000p+4f,-0x1.4800000000000p+4f,-0x1.5800000000000p+3f,0x1.0000000000000p-2f,-0x1.0400000000000p+6f,-0x1.e800000000000p+4f,-0x1.4800000000000p+3f,0x1.5800000000000p+3f},
+            {{15,0,1,0}},500,
+            0x0.0p+0f,0x1.0000000000000p+0f,0x1.ad7f2a0000000p-24f,0x37600000u,true,-1,0},
+        {"retail_threshold_seed",true,
+            {-0x1.5000000000000p+2f,0x1.2200000000000p+4f,-0x1.4800000000000p+4f,-0x1.5800000000000p+3f,0x1.0000000000000p-2f,-0x1.0400000000000p+6f,-0x1.e800000000000p+4f,-0x1.4800000000000p+3f,0x1.5800000000000p+3f},
+            {{7,1,4000,27000}},500,
+            0x1.99999a0000000p-4f,0x1.4000000000000p+1f,0x1.ad7f2a0000000p-24f,0x3e546267u,true,-1,0},
+        {"retail_threshold_at_stored_score",true,
+            {-0x1.5000000000000p+2f,0x1.2200000000000p+4f,-0x1.4800000000000p+4f,-0x1.5800000000000p+3f,0x1.0000000000000p-2f,-0x1.0400000000000p+6f,-0x1.e800000000000p+4f,-0x1.4800000000000p+3f,0x1.5800000000000p+3f},
+            {{7,1,4000,27000}},500,
+            0x1.99999a0000000p-4f,0x1.4000000000000p+1f,0x1.a8c4ce0000000p-3f,0x3e546267u,true,-1,0},
+    };
+    const char* retailCurves[]={
+        "(-100;-100) (-72;90) (100;90)",
+        "(-100;-100) (-80;-30) (10;10) (-45;0)",
+        "(-100;-100) (50;50) (-25;40)",
+        "(-100;-100) (25;25) (-35;15)",
+        "(-100;-100) (50;50) (-20;40)",
+        "(-100;-100) (-50;-80)",
+        "(-100;-100) (0;0) (-50;-10)",
+        "(-100;-100) (50;50) (-25;40)",
+        "(-100;-100) (75;75) (0;65)"
+    };
+    for(const auto& sample:numericCases)Scenario(std::string("DVD-binary32-")+sample.name,[&]{
+        Fixture f;f.Add(0,50,0);
+        auto global=FSO::Content::Content::Get()->WorldObjectGlobals.get();
+        if(sample.retail){global->InteractionScore.clear();for(auto str:retailCurves)global->InteractionScore.emplace_back(str);}
+        global->Autonomy.FamilyMinimum=sample.threshold;
+        for(int i=1;i<23;++i)f.actor->SetPersonData(VMFindBestAction::VaryByTypes[i],sample.personality);
+        for(int i=0;i<9;++i)f.actor->SetMotiveDataFloat(VMFindBestAction::WeightMotives[i],sample.motives[i]);
+        auto& entry=*f.table.Interactions[0];entry.AttenuationCode=0;entry.AttenuationValue=sample.attenuation;
+        for(const auto& ad:sample.ads){auto& item=entry.MotiveEntries[ad[0]];
+            item.PersonalityModifier=ad[1];item.EffectRangeMinimum=ad[2];item.EffectRangeMaximum=ad[3];}
+        f.target->Position(FSO::LotView::Model::LotTilePos(64+int(sample.distance*16),64,1));
+        if(sample.mutateMotive>=0){
+            auto check=f.iff.Get<BHAV>(4200);check->Instructions={
+                AssignCheckValue(Scopes::VMVariableScope::MyMotives,sample.mutateMotive,sample.mutateValue,254)};
+        }
+        const auto observed=ObserveChooserScore(f);uint32_t bits;
+        std::memcpy(&bits,&observed.second,sizeof(bits));
+        Require(bits==sample.scoreBits,"actual chooser score equals the literal DVD binary32 output bits");
+        Require(observed.first==(sample.admitted?VMPrimitiveExitCode::GOTO_TRUE:VMPrimitiveExitCode::GOTO_FALSE),
+            "actual chooser admission matches the literal DVD result, including zero projected mean");
     });
     struct RoomAdvertisementCase {int minimum,delta,selector;float sameRoom,differentRoom;};
     // Literal source results with nine identity curves, not a copy of the

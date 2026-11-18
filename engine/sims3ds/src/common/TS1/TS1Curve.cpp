@@ -5,6 +5,7 @@
  */
 // TS1(sims): translated from FreeSO tso.common/TS1/TS1Curve.cs
 #include "common/TS1/TS1Curve.h"
+#include "common/TS1/TS1AutonomyFloat.h"
 #include <algorithm>
 #include <cstdlib>
 
@@ -33,6 +34,39 @@ TS1Curve::TS1Curve(const std::string& inputIn) {
         Points.push_back(pt);
     }
     std::stable_sort(Points.begin(), Points.end(), [](const Point& a, const Point& b) { return a.X < b.X; });
+    BuildAutonomyCache();
+}
+
+void TS1Curve::BuildAutonomyCache() {
+    using AutonomyFloat::Round;
+    AutonomyReciprocalWidths.clear();
+    if (Points.size() < 2) return;
+    AutonomyReciprocalWidths.reserve(Points.size() - 1);
+    for (size_t i = 0; i + 1 < Points.size(); ++i) {
+        const float width = Round(float(Points[i + 1].X) - float(Points[i].X));
+        AutonomyReciprocalWidths.push_back(Round(1.0f / width));
+    }
+}
+
+float TS1Curve::GetPointForAutonomy(float input) const {
+    using AutonomyFloat::Round;
+    if (Points.empty()) return 0;
+    int i = int(Points.size()) - 1;
+    // DVD4167f7..41680e chooses the point strictly before input. At an
+    // exact knot the left segment's rounded interpolation is still evaluated.
+    while (i >= 0 && !(input > float(Points[i].X))) --i;
+    if (i < 0) return float(Points.front().Y);
+    if (i == int(Points.size()) - 1) return float(Points[i].Y);
+    const auto& left = Points[i];
+    const auto& right = Points[i + 1];
+    const float inverse = AutonomyReciprocalWidths.size() == Points.size() - 1
+        ? AutonomyReciprocalWidths[i]
+        : Round(1.0f / Round(float(right.X) - float(left.X)));
+    const float difference = Round(input - float(left.X));
+    const float fraction = Round(difference * inverse);
+    const float rise = Round(float(right.Y) - float(left.Y));
+    const float scaled = Round(rise * fraction);
+    return Round(scaled + float(left.Y));
 }
 
 float TS1Curve::GetPoint(float input) const {

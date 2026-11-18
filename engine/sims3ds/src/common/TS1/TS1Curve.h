@@ -25,12 +25,20 @@ public:
     explicit TS1Curve(const std::string& input);
 
     float GetPoint(float input) const;
+    // DVD autonomy uses cached inverse widths and a distinct interpolation
+    // order. Keep other curve consumers on their existing GetPoint contract.
+    float GetPointForAutonomy(float input) const;
+    // Rebuild after explicitly editing Points, just as BuildCache is needed
+    // after editing a curve used through its integer lookup cache.
+    void BuildAutonomyCache();
     int32_t GetPointFixed(int32_t input) const;
 
     // CACHED ACCESS
     void BuildCache(int32_t min, int32_t max);
     float GetCachedPoint(int32_t point) const;
     int32_t GetCachedPointFixed(int32_t point) const;
+private:
+    std::vector<float> AutonomyReciprocalWidths;
 };
 
 }}}

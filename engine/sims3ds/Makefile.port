@@ -58,3 +58,6 @@ build-port/src/tools/simcache.o: CXXFLAGS += -I../../tools -I../../include
 build-port/simcache: $(OBJ) $(APP_OBJ) build-port/src/tools/simcache.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lz
 -include build-port/src/tools/simcache.d
+
+# Preserve the original autonomy arithmetic without changing rendering flags.
+build-port/src/simantics/primitives/VMFindBestAction.o build-port/src/common/TS1/TS1Curve.o: CXXFLAGS += -fno-fast-math -ffp-contract=off

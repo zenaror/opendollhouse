@@ -26,9 +26,10 @@ Notable changes for players and contributors, following
 - Studio Town uses separate music for its map and public lot editor. Entering
   an editor no longer restarts the opening music, and switching between its
   Buy and Build modes keeps the current song playing.
-- Autonomous action scoring follows the original minimum and personality
-  calculation. Actions whose checks supply their effects can now be considered;
-  other differences in autonomous behavior remain under review.
+- Autonomous action priorities use the original need calculations and order of
+  operations, including small gains near the decision threshold. Checks that
+  change an action's effects remain supported; other differences in autonomous
+  behavior remain under review.
 - Entering a residential house from the map fades out the map music instead
   of restarting the opening music. The fade timing is still being compared.
 - Autonomous choices use the original lottery among the best eligible actions,
