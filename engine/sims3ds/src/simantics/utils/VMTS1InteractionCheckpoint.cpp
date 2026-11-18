@@ -278,12 +278,18 @@ public:
     }
 
 
-    static MotivePersistence::State classicMotives(const OBJMPerson& person, int64_t lastTick) {
+    static MotivePersistence::State classicMotives(const OBJMPerson& person, int64_t lastTick,
+                                                  bool legacyNativeOrder = false) {
         MotivePersistence::State state;
         for (size_t i = 0; i < 16; ++i) {
-            MotivePersistence::ValidateCurrent(person.MotiveData[i]);
-            MotivePersistence::ValidateFloat(person.MotiveDataOld[i]);
-            state.current[i] = person.MotiveData[i]; state.old[i] = person.MotiveDataOld[i];
+            // Historical ODMP1 writers emitted old/current in the opposite
+            // order. Only their fully validated, bound marker grants this
+            // interpretation; ordinary classic files use the DVD order.
+            const auto current = legacyNativeOrder ? person.MotiveDataOld[i] : person.MotiveData[i];
+            const auto old = legacyNativeOrder ? person.MotiveData[i] : person.MotiveDataOld[i];
+            MotivePersistence::ValidateCurrent(current);
+            MotivePersistence::ValidateFloat(old);
+            state.current[i] = current; state.old[i] = old;
         }
         Require(person.MotiveDeltas.size() <= 32767, "too many classic motive changes");
         for (const auto& delta : person.MotiveDeltas) {
@@ -331,7 +337,7 @@ public:
                     instance.PersonData.PersonData[neighbourIndex] == neighbour,
                     "motive marker actor identity changed");
             Require(phase >= 0 && phase <= savedTick, "invalid motive marker phase");
-            saved.precision = classicMotives(instance.PersonData, phase);
+            saved.precision = classicMotives(instance.PersonData, phase, marker.schema == 1);
         }
     }
 
@@ -1409,7 +1415,7 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool d
     const auto objmHash = Files::Hash::CalculateHash(objm->Data);
     const auto native = data.ToArray();
     st::Writer marker(st::Endian::Little); Archive metadata(marker);
-    uint32_t schema = 1, classicHash = objmHash, nativeHash = Files::Hash::CalculateHash(native);
+    uint32_t schema = 2, classicHash = objmHash, nativeHash = Files::Hash::CalculateHash(native);
     uint32_t nativeBytes = uint32_t(native.size());
     metadata.value(schema); metadata.value(classicHash); metadata.value(nativeHash); metadata.value(nativeBytes);
     uint32_t avatars = 0;

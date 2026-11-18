@@ -41,6 +41,10 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Classic saves load current and previous needs in the original order. Existing
+  OpenDollhouse saves retain their values. New saves require an updated engine
+  on each platform; older builds refuse them instead of swapping the values.
+
 - Original residential saves restore their saved random state, and saving keeps
   that state up to date. Non-residential reseeding remains under comparison.
 - Free Will reaches the simulation when loading or toggling the option. Changing

@@ -26,6 +26,7 @@ struct State {
 struct ActorPhase { uint32_t guid; int16_t neighbour; int64_t lastTick; };
 struct Marker {
     bool matching = false;
+    uint32_t schema = 0; // Set only after the signature-bound body is validated.
     std::map<int16_t,ActorPhase> actors;
 };
 inline Marker ReadMarker(const std::vector<uint8_t>& bytes, uint32_t classicHash,
@@ -38,7 +39,7 @@ inline Marker ReadMarker(const std::vector<uint8_t>& bytes, uint32_t classicHash
     // A legacy saver can retain the unknown marker after changing either bound
     // payload. Its old schema/body/phase has no authority over that new save.
     if (classic != classicHash || native != nativeHash || extent != nativeBytes) return result;
-    if (schema != 1) throw std::runtime_error("Interaction checkpoint: unsupported matching motive marker schema");
+    if (schema != 1 && schema != 2) throw std::runtime_error("Interaction checkpoint: unsupported matching motive marker schema");
     const auto count = input.u32();
     if (count > 32767 || bytes.size() != 20 + size_t(count) * 16)
         throw std::runtime_error("Interaction checkpoint: invalid motive marker extent");
@@ -49,6 +50,7 @@ inline Marker ReadMarker(const std::vector<uint8_t>& bytes, uint32_t classicHash
             !result.actors.emplace(id, ActorPhase{guid,neighbour,int64_t(phase)}).second)
             throw std::runtime_error("Interaction checkpoint: invalid motive marker identity or phase");
     }
+    result.schema = schema;
     result.matching = true;
     return result;
 }

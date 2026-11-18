@@ -159,8 +159,8 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     }
     if (VM->GlobalState.size() < 38) VM->GlobalState.resize(38, 0); // FIX(sims): 38 TS1 globals (FreeSO)
     VM->GlobalState[20] = 255;
-    VM->GlobalState[25] = 4;
-    VM->GlobalState[17] = 4;
+    // Keep the saved TS1 Paused (17) and Debug flags (25) words. The
+    // inherited TSO constants are not original TS1 restore semantics.
     // FIX(sims): TS1 house files store their own house number in global 10 "Current House" (House21.iff: 21);
     // the expansion pack lots' BHAVs read it (zoning: "Is Lot a Community Lot?", lot descriptions, transit). FreeSims
     // forced 1; FreeSO's VMTS1Activator sets the house number it was given.

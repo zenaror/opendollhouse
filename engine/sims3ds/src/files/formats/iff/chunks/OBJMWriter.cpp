@@ -83,8 +83,8 @@ void WriteOBJMPerson(const OBJMPerson& p, uint32_t version, IffFieldEncodeWriter
 
     iop.WriteInt32((int32_t)p.RoutingState);
     for (int i = 0; i < 9; i++) iop.WriteFloat(p.FirstFloats[i]);
-    for (int i = 0; i < 16; i++) iop.WriteFloat(p.MotiveDataOld[i]);
     for (int i = 0; i < 16; i++) iop.WriteFloat(p.MotiveData[i]);
+    for (int i = 0; i < 16; i++) iop.WriteFloat(p.MotiveDataOld[i]);
 
     size_t dataCount = version > 0x45 ? 0x100 : 0x50;
     for (size_t i = 0; i < dataCount; i++) iop.WriteInt16(i < p.PersonData.size() ? p.PersonData[i] : (int16_t)0);

@@ -83,7 +83,7 @@ static void PrecisionMarker() {
         return ReadMarker(data,0x44332211,0x88776655,64,60);
     };
     auto marker = read(bytes);
-    Require(marker.matching && marker.actors.size() == 1 && marker.actors.at(2).lastTick == 59 &&
+    Require(marker.matching && marker.schema == 1 && marker.actors.size() == 1 && marker.actors.at(2).lastTick == 59 &&
             marker.actors.at(2).guid == 0x12345678 && marker.actors.at(2).neighbour == 7,
             "literal precision marker did not retain identity and phase");
     Require(!ReadMarker(bytes,1,0x88776655,64,60).matching, "changed ObjM binding was not stale");
@@ -101,6 +101,9 @@ static void PrecisionMarker() {
     Rejects([&] { read(extra); }, "trailing marker byte accepted");
     auto schema = bytes;
     schema[0] = 2;
+    Require(read(schema).matching && read(schema).schema == 2,
+            "DVD-order precision marker was not recognized");
+    schema[0] = 3;
     Rejects([&] { read(schema); }, "unsupported matching schema accepted");
     Require(!ReadMarker(schema,1,0x88776655,64,60).matching,
             "stale marker incorrectly selected its schema");

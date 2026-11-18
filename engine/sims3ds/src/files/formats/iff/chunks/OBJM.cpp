@@ -92,8 +92,9 @@ void OBJMPerson::Read(uint32_t version, IffFieldEncode& iop) {
 
     RoutingState = (OBJMRoutingState)iop.ReadInt32();
     for (int i = 0; i < 9; i++) FirstFloats[i] = iop.ReadFloat();
-    for (int i = 0; i < 16; i++) MotiveDataOld[i] = iop.ReadFloat();
+    // DVD person serializer writes the current bank before its prior snapshot.
     for (int i = 0; i < 16; i++) MotiveData[i] = iop.ReadFloat();
+    for (int i = 0; i < 16; i++) MotiveDataOld[i] = iop.ReadFloat();
 
     // Unsure of the exact point this field gets larger.
     // Unleashed prebuilds are 0x45 and have 0x50 fields.
