@@ -8,6 +8,7 @@
 #include "simantics/entities/VMEntity.h"
 #include "simantics/entities/VMGameObject.h"
 #include "simantics/VMContext.h"
+#include "simantics/VM.h"
 #include "simantics/VMArchitecture.h"
 #include <cmath>
 #include <algorithm>
@@ -227,6 +228,18 @@ void VMMultitileGroup::Delete(VMContext* context) {
 }
 
 void VMMultitileGroup::Init(VMContext* context) {
+    if (context->VM->TS1 && std::all_of(Objects.begin(),Objects.end(),[](VMEntity* object) {
+        return !object->GhostImage && dynamic_cast<VMGameObject*>(object)!=nullptr;
+    })) {
+        // Init/Main can remove a part or transfer an already initialized new
+        // object into this group. Never retain iterators across authored code
+        // or initialize that newly transferred object for a second time.
+        const auto parts=Objects;
+        for (auto object:parts) object->PrepareTS1Fresh(context);
+        for (auto object:parts)
+            if (!object->Dead && object->MultitileGroup==this) object->CompleteTS1Fresh(context);
+        return;
+    }
     for (size_t i = 0; i < Objects.size(); i++) {
         Objects[i]->Init(context);
     }

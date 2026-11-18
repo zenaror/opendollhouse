@@ -6,8 +6,10 @@
 // FSO.SimAntics.Engine.Primitives.VMRemoveObjectInstance (primitives/VMRemoveObjectInstance.cs)
 #include "simantics/primitives/VMRemoveObjectInstance.h"
 #include <algorithm>
+#include <stdexcept>
 #include "core/io.h"
 #include "simantics/engine/VMStackFrame.h"
+#include "simantics/engine/VMThread.h"
 #include "simantics/entities/VMEntity.h"
 #include "simantics/VM.h"
 #include "simantics/VMContext.h"
@@ -21,11 +23,22 @@ VMPrimitiveExitCode VMRemoveObjectInstance::Execute(VMStackFrame* context, VMPri
     VMEntity* obj;
     if (operand->Target == 0) obj = context->Caller;
     else obj = context->StackObject;
+    const bool ts1=context->VM()->TS1;
+    const bool immediate=ts1 && context->VM()->TS1ScriptImmediateMode();
+    if (ts1) {
+        // DVD 451baa accepts selectors0..2; selector2 leaves target ID zero.
+        if (operand->Target<0 || operand->Target>2)
+            throw std::runtime_error("Remove Object Instance: target out of range");
+        if (operand->Target==2) obj=nullptr;
+        if (!obj) return VMPrimitiveExitCode::GOTO_FALSE;
+    }
 
     // FIX(sims): FreeSO always deletes the whole multitile group (`obj?.Delete(true, ...)`). FreeSims passed the
     // CleanupAll flag, so a vehicle removing itself without it left its other tiles behind: every Old Town / community
     // visitor trolley (24 tiles) piled up out of world (15 trolleys = 360 orphan objects after 8 game hours).
-    if (obj != nullptr && !context->VM()->QueueTS1Removal(obj))
+    // Source442db0 submits every script request before451c51 checks the
+    // global interpreter mode. Direct rollback/UI Delete is a separate API.
+    if (obj != nullptr && !context->VM()->QueueTS1Removal(obj,ts1))
         obj->Delete(true, context->VM()->Context);
 
     //if (obj == context.StackObject) context.StackObject = null;
@@ -33,7 +46,12 @@ VMPrimitiveExitCode VMRemoveObjectInstance::Execute(VMStackFrame* context, VMPri
     // FIX(sims): FreeSO "yield if we are going to delete" — an object that removes itself stops running this
     // tick (the expansion pack controllers remove themselves on lots they do not belong to and then idle forever;
     // without the yield their next sleep never yields and the thread hits the infinite loop guard).
-    return (obj != nullptr && obj == context->Caller) ? VMPrimitiveExitCode::GOTO_TRUE_NEXT_TICK : VMPrimitiveExitCode::GOTO_TRUE;
+    // Source451c48..6c suspends self-removal only in ordinary execution and
+    // when flag0 is clear. Immediate474b22 clears that execution-mode byte;
+    // its removal request follows TRUE without suspending or deleting inline.
+    const bool yieldSelf=obj && obj==context->Caller &&
+        (!ts1 || (!immediate && !operand->ReturnImmediately()));
+    return yieldSelf ? VMPrimitiveExitCode::GOTO_TRUE_NEXT_TICK : VMPrimitiveExitCode::GOTO_TRUE;
 }
 
 void VMRemoveObjectInstanceOperand::Read(const uint8_t* bytes)

@@ -263,6 +263,10 @@ public:
     std::vector<FSO::Files::Formats::IFF::Chunks::OBJfFunctionEntry> GenerateFunctionTable(Chunks_OBJD* obj);
 
     virtual void Init(VMContext* context);
+    /// Fresh TS1 non-person creation has two phases, shared by single objects
+    /// and groups. Saved-instance loading deliberately does not enter them.
+    void PrepareTS1Fresh(VMContext* context);
+    void CompleteTS1Fresh(VMContext* context);
     virtual void PrepareForRestore(VMContext* context);
     virtual void FinishRestore(VMContext* context);
     void StartMainAfterRestore(VMContext* context);

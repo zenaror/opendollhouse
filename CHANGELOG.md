@@ -41,6 +41,11 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Newly created objects run their setup in the original order, including
+  grouped objects and objects created by another object's script.
+- Saving a paused game preserves objects waiting to be removed. Reopening keeps
+  their state and finishes removal when play resumes. New saves require the
+  updated engine on every device sharing them.
 - New walking paths use the original corner sampling, position constraints and
   separate steering and stationary-turn rules. Some pathfinding and final-step
   differences remain under comparison.

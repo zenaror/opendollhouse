@@ -167,8 +167,30 @@ public:
     void RemoveEntity(VMEntity* entity);
     // Script removal during ordinary TS1 dispatch is committed after the
     // completed sweep and clock step. Internal rollback/UI deletion stays immediate.
-    bool QueueTS1Removal(VMEntity* entity);
+    // Script requests also queue outside ordinary dispatch: the DVD request
+    // helper enqueues before testing its interpreter execution mode.
+    bool QueueTS1Removal(VMEntity* entity, bool scriptRequest = false);
     bool HasTS1PendingRemovals() const { return !TS1PendingRemovals.empty() || TS1DrainingRemovals; }
+    // A completed script request may remain queued while the game is paused.
+    // Snapshotting must neither execute it nor interrupt its dispatch/drain.
+    bool CanCaptureTS1RemovalState() const;
+    bool TS1ScriptImmediateMode() const;
+    // Includes temporary check machines, which are not Entity::Thread.
+    class TS1InterpreterScope {
+        VM& Owner;
+        bool Tracked;
+    public:
+        explicit TS1InterpreterScope(VM& owner):Owner(owner),Tracked(owner.TS1) {
+            if (Tracked) ++Owner.TS1InterpreterCalls;
+        }
+        ~TS1InterpreterScope() noexcept { if (Tracked) --Owner.TS1InterpreterCalls; }
+        TS1InterpreterScope(const TS1InterpreterScope&) = delete;
+        TS1InterpreterScope& operator=(const TS1InterpreterScope&) = delete;
+    };
+    std::vector<int16_t> GetTS1PendingRemovalIDs() const;
+    std::deque<VMTS1RemovalRequest> PrepareTS1PendingRemovalRestore(const std::vector<int16_t>& ids) const;
+    // Only commit a validated queue prepared against this VM's live objects.
+    void CommitTS1PendingRemovalRestore(std::deque<VMTS1RemovalRequest>& prepared) noexcept;
     static void DeleteFromObjList(std::vector<VMEntity*>& list, VMEntity* entity);
 
     /// Gets a global value set for this Virtual Machine.
@@ -208,6 +230,7 @@ private:
     friend class Engine::Utils::VMTS1InteractionCheckpoint;
     bool AlternateTick = false;
     bool EntityTickActive = false; // transient execution context; never saved
+    uint32_t TS1InterpreterCalls = 0; // transient; snapshots require zero
     std::deque<VMTS1RemovalRequest> TS1PendingRemovals;
     bool TS1DrainingRemovals = false;
     VMEntity* TS1RemovingNow = nullptr;

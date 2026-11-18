@@ -301,14 +301,72 @@ void VM::AddToObjList(std::vector<VMEntity*>& list, VMEntity* entity) {
 }
 
 /// Removes an entity from this Virtual Machine.
-bool VM::QueueTS1Removal(VMEntity* entity) {
-    if (!TS1 || !entity || entity->GhostImage || (!EntityTickActive && !TS1DrainingRemovals)) return false;
+bool VM::QueueTS1Removal(VMEntity* entity, bool scriptRequest) {
+    if (!TS1 || !entity || entity->GhostImage ||
+        (!EntityTickActive && !TS1DrainingRemovals && !scriptRequest)) return false;
     if (entity->Dead || entity == TS1RemovingNow) return true;
     if (GetObjectById(entity->ObjectID) != entity) return false;
     for (const auto& pending : TS1PendingRemovals)
         if (pending.ID == entity->ObjectID && pending.Identity == entity) return true;
     TS1PendingRemovals.push_back({entity->ObjectID,entity});
     return true;
+}
+
+bool VM::CanCaptureTS1RemovalState() const {
+    if (EntityTickActive || TS1DrainingRemovals || TS1InterpreterCalls!=0) return false;
+    return std::none_of(Entities.begin(),Entities.end(),[](const VMEntity* entity) {
+        return entity && entity->Thread && entity->Thread->TS1SynchronousCallRunning();
+    });
+}
+
+bool VM::TS1ScriptImmediateMode() const {
+    if (!EntityTickActive) return true;
+    // The DVD's immediate wrapper temporarily clears the execution-mode byte,
+    // including calls nested inside an ordinary object's dispatch.
+    return std::any_of(Entities.begin(),Entities.end(),[](const VMEntity* entity) {
+        return entity && entity->Thread && entity->Thread->TS1InitializerRunning();
+    });
+}
+
+std::vector<int16_t> VM::GetTS1PendingRemovalIDs() const {
+    if (!CanCaptureTS1RemovalState())
+        throw std::runtime_error("Object-removal dispatch is incomplete");
+    std::vector<int16_t> ids;
+    ids.reserve(TS1PendingRemovals.size());
+    std::unordered_set<int16_t> seen;
+    for (const auto& request:TS1PendingRemovals) {
+        const auto found=ObjectsById.find(request.ID);
+        if (!TS1 || request.ID<=0 || !request.Identity || found==ObjectsById.end() ||
+            found->second!=request.Identity || request.Identity->ObjectID!=request.ID ||
+            request.Identity->Dead || request.Identity->GhostImage || !request.Identity->Object ||
+            !request.Identity->Object->OBJ || !request.Identity->Thread ||
+            std::find(Entities.begin(),Entities.end(),request.Identity)==Entities.end() ||
+            !seen.insert(request.ID).second)
+            throw std::runtime_error("Invalid pending object-removal identity");
+        ids.push_back(request.ID);
+    }
+    return ids;
+}
+
+std::deque<VMTS1RemovalRequest> VM::PrepareTS1PendingRemovalRestore(const std::vector<int16_t>& ids) const {
+    if (!CanCaptureTS1RemovalState())
+        throw std::runtime_error("Object-removal dispatch is incomplete");
+    std::deque<VMTS1RemovalRequest> prepared;
+    std::unordered_set<int16_t> seen;
+    for (const auto id:ids) {
+        const auto found=ObjectsById.find(id);
+        const auto entity=found==ObjectsById.end()?nullptr:found->second;
+        if (!TS1 || id<=0 || !entity || entity->ObjectID!=id || entity->Dead || entity->GhostImage ||
+            !entity->Object || !entity->Object->OBJ || !entity->Thread ||
+            std::find(Entities.begin(),Entities.end(),entity)==Entities.end() || !seen.insert(id).second)
+            throw std::runtime_error("Invalid restored object-removal identity");
+        prepared.push_back({id,entity});
+    }
+    return prepared;
+}
+
+void VM::CommitTS1PendingRemovalRestore(std::deque<VMTS1RemovalRequest>& prepared) noexcept {
+    TS1PendingRemovals.swap(prepared);
 }
 
 void VM::DrainTS1Removals() {

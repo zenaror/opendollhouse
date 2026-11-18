@@ -236,7 +236,7 @@ void RenderPictures(LotSession& s,const std::string&,VMTS1LotSaver& saver) {
 }
 
 bool SaveLot(LotSession& session, std::string& error, std::string& log, bool departing) {
-    if (session.VM() && session.VM()->HasTS1PendingRemovals()) {
+    if (session.VM() && !session.VM()->CanCaptureTS1RemovalState()) {
         error = "Cannot save until the current object-removal dispatch has finished";
         return false;
     }

@@ -129,6 +129,12 @@ public:
     static VMPrimitiveExitCode EvaluateCheck(VMContext* context, VMEntity* entity, std::shared_ptr<VMStackFrame> initFrame, std::shared_ptr<VMQueuedAction> action, std::vector<VMPieMenuInteraction>* actionStrings);
 
     bool RunInMyStack(FSO::Files::Formats::IFF::Chunks::BHAV* bhav, FSO::Content::GameObject* CodeOwner, const int16_t passVars[4], VMEntity* stackObj);
+    /// DVD fresh-object Init runs on its existing machine, preserving Main and
+    /// sharing temporaries. It cannot suspend across simulation updates.
+    bool RunTS1Initializer(std::shared_ptr<VMStackFrame> frame);
+    bool TS1InitializerRunning() const { return TS1InitializerActive; }
+    bool TS1SynchronousCallRunning() const { return TS1InitializerActive || TS1FreshTickActive; }
+    void RunTS1FreshTick();
 
     VMThread(VMContext* context, VMEntity* entity, int32_t stackSize);
 
@@ -171,6 +177,9 @@ public:
     /// Shared end-of-interaction cleanup for an abandoned classic continuation.
     void ResetInteractionState();
 private:
+    bool TS1InitializerActive = false;
+    bool TS1FreshTickActive = false;
+    std::shared_ptr<VMStackFrame> TS1InitializerBoundary;
     VMEntity* Entity;
     bool ContinueExecution = false;
     friend class FSO::SimAntics::Engine::Utils::InteractionCheckpointCodec;

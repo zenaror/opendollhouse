@@ -120,6 +120,11 @@ void VMGameObject::FinishRestore(VMContext* context) {
 }
 
 void VMGameObject::Init(VMContext* context) {
+    if (context->VM->TS1 && !GhostImage) {
+        PrepareTS1Fresh(context);
+        CompleteTS1Fresh(context);
+        return;
+    }
     PrepareForRestore(context);
     ExecuteEntryPoint(0, context, true);
     StartMainAfterRestore(context);

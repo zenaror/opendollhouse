@@ -209,9 +209,25 @@ void captureDuringDispatch() {
         IffRawFile house;
         house.Set("ObjM", 1, {1, 2, 3});
         need(!f.Machine.TS1Budget.Initialized, "capture fixture unexpectedly initialized finance");
-        Utils::VMTS1InteractionCheckpoint::Capture(f.Machine, house, false);
+        bool refused=false;
+        try { Utils::VMTS1InteractionCheckpoint::Capture(f.Machine, house, false); }
+        catch (const std::runtime_error& error) {
+            refused=std::string(error.what()).find("dispatch")!=std::string::npos;
+        }
+        need(refused&&!house.Find("ODHI",1)&&!house.Find("SIMI",1),
+             "inflight capture published a partial continuation");
+        need(f.Machine.EntityTickRunning()&&f.Context.RandomSeed==Shared&&
+             f.Context.TS1SimulationRandomSeed==OwnerNext,
+             "refused capture changed the dispatcher or RNG streams");
+        captured=true;
+    };
+    f.sweep();
+    need(captured&&!f.Machine.EntityTickRunning(),"capture refusal leaked dispatch scope");
+    IffRawFile house;
+    house.Set("ObjM",1,{1,2,3});
+    Utils::VMTS1InteractionCheckpoint::Capture(f.Machine,house,false);
         const auto snapshot = house.Find("ODHI", 1);
-        need(snapshot && snapshot->Data.size() >= 67, "in-dispatch Capture omitted the ODHI14 header");
+        need(snapshot && snapshot->Data.size() >= 67, "completed-dispatch Capture omitted the RNG header");
         const auto& bytes = snapshot->Data;
         need(bytes[0] == Utils::VMTS1InteractionCheckpoint::CurrentVersion && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == 0,
              "capture test requires the current wire contract with independent RNG");
@@ -225,15 +241,12 @@ void captureDuringDispatch() {
             for (unsigned i = 0; i < 8; ++i) value |= uint64_t(bytes[offset + i]) << (8 * i);
             return value;
         };
-        need(word(51) == Shared, "in-dispatch Capture stored owner progress in the shared slot");
-        need(word(59) == OwnerNext, "in-dispatch Capture lost or swapped owner progress");
-        need(f.Machine.EntityTickRunning(), "Capture ended the surrounding dispatcher scope");
+        need(word(51) == Shared, "completed-dispatch Capture stored owner progress in the shared slot");
+        need(word(59) == OwnerNext, "completed-dispatch Capture lost or swapped owner progress");
+        need(!f.Machine.EntityTickRunning(), "Capture entered a dispatcher scope");
         need(f.Context.RandomSeed == Shared && f.Context.TS1SimulationRandomSeed == OwnerNext,
              "Capture consumed or relabelled live RNG states");
         need(!house.Find("SIMI", 1), "resource-free capture synthesized a SIMI dependency");
-        captured = true;
-    };
-    f.sweep();
     need(captured && !f.Machine.EntityTickRunning(), "capture probe did not complete the real Tick boundary");
     need(f.Context.RandomSeed == Shared && f.Context.TS1SimulationRandomSeed == OwnerNext,
          "completed capture tick acquired an extra random draw");

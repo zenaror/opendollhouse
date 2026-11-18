@@ -64,6 +64,7 @@ VMPrimitiveExitCode VMThread::EvaluateCheck(VMContext* context, VMEntity* entity
 }
 
 VMPrimitiveExitCode VMThread::EvaluateCheck(VMContext* context, VMEntity* entity, std::shared_ptr<VMStackFrame> initFrame, std::shared_ptr<VMQueuedAction> action, std::vector<VMPieMenuInteraction>* actionStrings) {
+    VM::TS1InterpreterScope running(*context->VM);
     // Both pinned references clone temporaries when Scheduler.RunningNow is
     // false. In particular, opening a pie menu must not overwrite live action
     // registers. Keep the existing in-tick writeback for simulation checks.
@@ -99,7 +100,58 @@ VMPrimitiveExitCode VMThread::EvaluateCheck(VMContext* context, VMEntity* entity
     return (temp.DialogCooldown > 0) ? VMPrimitiveExitCode::RETURN_FALSE : temp.LastStackExitCode;
 }
 
+bool VMThread::RunTS1Initializer(std::shared_ptr<VMStackFrame> frame) {
+    if (!Context || !Context->VM || !Context->VM->TS1 || IsCheck ||
+        !Queue.empty() || !TS1ObjectUses.empty())
+        throw std::runtime_error("TS1 initializer requires a fresh object machine");
+    // The DVD's sentinel protects the prepared Main stack, while the same
+    // machine owns Init's temporaries. Keep that boundary on every exit.
+    struct Restore {
+        VMThread& Thread;
+        std::vector<std::shared_ptr<VMStackFrame>> Stack;
+        int32_t Count;
+        bool Continue, Initializing;
+        VMPrimitiveExitCode Result;
+        VMThreadBreakMode Break;
+        std::shared_ptr<VMStackFrame> Boundary;
+        explicit Restore(VMThread& thread) : Thread(thread), Stack(thread.Stack),
+            Count(thread.TicksThisFrame), Continue(thread.ContinueExecution),
+            Initializing(thread.TS1InitializerActive), Result(thread.LastStackExitCode),
+            Break(thread.ThreadBreak), Boundary(thread.TS1InitializerBoundary) {}
+        ~Restore() {
+            Thread.Stack=std::move(Stack);Thread.TicksThisFrame=Count;
+            Thread.ContinueExecution=Continue;Thread.TS1InitializerActive=Initializing;
+            Thread.LastStackExitCode=Result;Thread.ThreadBreak=Break;
+            Thread.TS1InitializerBoundary=std::move(Boundary);
+        }
+    } restore(*this);
+    TS1InitializerActive=true;TicksThisFrame=0;ThreadBreak=VMThreadBreakMode::Active;
+    ContinueExecution=true;LastStackExitCode=VMPrimitiveExitCode::RETURN_FALSE;
+    TS1InitializerBoundary=std::make_shared<VMStackFrame>();
+    Stack.push_back(TS1InitializerBoundary);
+    if (!frame || !frame->Routine || !Push(std::move(frame))) return false;
+    while (Stack.size()>restore.Stack.size() && !Entity->Dead) {
+        if (TicksThisFrame++ > MAX_LOOP_COUNT)
+            throw std::runtime_error("TS1 initializer entered an instruction loop");
+        NextInstruction();
+        if (Stack.size()>restore.Stack.size() && !ContinueExecution)
+            throw std::runtime_error("TS1 initializer attempted to suspend");
+    }
+    return LastStackExitCode==VMPrimitiveExitCode::RETURN_TRUE;
+}
+
+void VMThread::RunTS1FreshTick() {
+    struct Scope {
+        bool& Active;
+        bool Previous;
+        explicit Scope(bool& active):Active(active),Previous(active){Active=true;}
+        ~Scope(){Active=Previous;}
+    } scope(TS1FreshTickActive);
+    Entity->Tick();
+}
+
 bool VMThread::RunInMyStack(BHAV* bhav, FSO::Content::GameObject* CodeOwner, const int16_t passVars[4], VMEntity* stackObj) {
+    VM::TS1InterpreterScope running(*Context->VM);
     //a little bit hacky. We may not need to do as serious a context switch as this.
     auto OldStack = Stack;
     auto OldQueue = Queue;
@@ -502,6 +554,7 @@ void VMThread::Tick() {
 }
 
 void VMThread::Tick(int32_t instructionBudget, bool resetOnError) {
+    VM::TS1InterpreterScope running(*Context->VM);
     instructionBudget = std::max<int32_t>(1, std::min(instructionBudget, MAX_LOOP_COUNT));
 #ifdef IDE_COMPAT
     if (ThreadBreak == VMThreadBreakMode::Pause) return;
@@ -636,6 +689,7 @@ void VMThread::EvaluateQueuePriorities() {
 }
 
 void VMThread::NextInstruction() {
+    VM::TS1InterpreterScope running(*Context->VM);
     /** Next instruction **/
     if (Stack.empty()) return;
     auto currentFrame = Stack.back(); //hold a reference: the frame may pop itself
@@ -751,6 +805,10 @@ void VMThread::ExecuteInstruction(VMStackFrame* frame) {
 }
 
 void VMThread::HandleResult(VMStackFrame* frame, VMInstruction* instruction, VMPrimitiveExitCode result) {
+    if (TS1InitializerActive && (result==VMPrimitiveExitCode::CONTINUE_NEXT_TICK ||
+        result==VMPrimitiveExitCode::GOTO_TRUE_NEXT_TICK ||
+        result==VMPrimitiveExitCode::GOTO_FALSE_NEXT_TICK || result==VMPrimitiveExitCode::INTERRUPT))
+        throw std::runtime_error("TS1 initializer attempted to suspend");
     switch (result) {
         // Don't advance the instruction pointer, this primitive isnt finished yet
         case VMPrimitiveExitCode::CONTINUE_NEXT_TICK:
@@ -854,6 +912,10 @@ void VMThread::Breakpoint(VMStackFrame* frame) {
 // interaction; the frame that pushed it continues next tick at the same instruction (C#: CONTINUE_NEXT_TICK, or
 // CONTINUE for run immediately). FreeSims detected a "context switch" and always removed Queue[0].
 void VMThread::Pop(VMPrimitiveExitCode result) {
+    // Missing/invalid subroutines are interpreter faults in the DVD's
+    // immediate runner, not an authored false result from Init.
+    if (TS1InitializerActive && result==VMPrimitiveExitCode::ERROR)
+        throw std::runtime_error("TS1 initializer interpreter error");
     if (Context->VM->OnTraceFrameReturn) {
         auto frame = Stack.back();
         Context->VM->OnTraceFrameReturn(frame.get(), static_cast<int>(result));
@@ -862,6 +924,14 @@ void VMThread::Pop(VMPrimitiveExitCode result) {
     Stack.pop_back();
     RetireTS1ObjectUse();
     LastStackExitCode = result;
+
+    // The immediate call returns to its sentinel, never branches the prepared
+    // Main frame or treats Init as a completed user interaction.
+    if (TS1InitializerActive && !Stack.empty() && Stack.back()==TS1InitializerBoundary) {
+        Stack.pop_back();
+        ContinueExecution=false;
+        return;
+    }
 
     if (discardResult == VMSpecialResult::Interaction) //interaction switching back to main (it cannot be the other way...)
     {

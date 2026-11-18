@@ -98,7 +98,15 @@ static void failedDrainBlocksPublication(){
  need(stopped&&sweeps==1&&f.Context.Clock->Ticks==tick,"failed drain resumed another ordinary sweep");
 }
 static void preservedImmediatePaths(){
- {Fixture f;auto frame=f.frame(f.A.get());f.request(frame.get());need(f.A->Dead&&!f.Machine.HasTS1PendingRemovals(),"outside-dispatch removal lost immediate semantics");}
+ {Fixture f;auto frame=f.frame(f.A.get());need(f.request(frame.get())==VMPrimitiveExitCode::GOTO_TRUE,
+   "outside-sweep script removal did not follow TRUE");
+  need(!f.A->Dead&&f.Machine.GetObjectById(f.A->ObjectID)==f.A.get()&&f.Machine.HasTS1PendingRemovals()&&
+   f.Machine.CanCaptureTS1RemovalState(),"outside-sweep script request deleted inline or left active execution");
+  const auto id=f.A->ObjectID;f.Machine.InternalTick();
+  need(f.A->Dead&&!f.Machine.GetObjectById(id)&&!f.Machine.HasTS1PendingRemovals(),
+   "outside-sweep script removal did not drain at the next ordinary boundary");}
+ {Fixture f;need(!f.Machine.QueueTS1Removal(f.A.get())&&!f.A->Dead&&!f.Machine.HasTS1PendingRemovals(),
+   "direct non-script queue request acquired implicit script execution mode");}
  {Fixture f;f.Actor->Body=[&]{f.A->Delete(true,&f.Context);need(f.A->Dead&&!f.Machine.HasTS1PendingRemovals(),"internal rollback delete was deferred");};f.Machine.InternalTick();}
  {Fixture f;f.Machine.TS1=false;auto frame=f.frame(f.A.get());f.Actor->Body=[&]{f.request(frame.get());need(f.A->Dead&&!f.Machine.HasTS1PendingRemovals(),"non-TS1 delete was deferred");};f.Machine.InternalTick();}
 }

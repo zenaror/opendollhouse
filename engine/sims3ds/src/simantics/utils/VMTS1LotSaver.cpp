@@ -421,7 +421,7 @@ bool VMTS1LotSaver::SaveHouse(const std::string& sourcePath, const std::string& 
 
 bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_t>& out) {
     Error.clear();
-    if (VM && VM->HasTS1PendingRemovals()) {
+    if (VM && !VM->CanCaptureTS1RemovalState()) {
         Error = "Cannot save until the current object-removal dispatch has finished";
         return false;
     }

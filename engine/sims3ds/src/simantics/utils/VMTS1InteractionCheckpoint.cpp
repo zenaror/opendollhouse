@@ -1425,7 +1425,10 @@ void VerifyDeparture(VM& vm, const TS1Departure& departure, VMThread* thread) {
 
 void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool departing,
                                        bool schedulerWordsBound, uint32_t outputVersion) {
-    Require(!vm.HasTS1PendingRemovals(), "object-removal dispatch is incomplete");
+    Require(vm.CanCaptureTS1RemovalState(), "object-removal dispatch is incomplete");
+    const auto pendingRemovals = vm.GetTS1PendingRemovalIDs();
+    Require(outputVersion >= 17 || pendingRemovals.empty(),
+            "pending object removals require checkpoint version17");
     // Publish no portion of a failed capture, including synchronized SIMI.
     IffRawFile house=destination;
     FSO::SimAntics::Utils::SyncTS1Budget(vm, house);
@@ -1535,6 +1538,18 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool d
     header.string(vm.TS1TextInput, VM::TS1TextInputMaxBytes);
     data.WriteUInt32(done.size());
     data.WriteBytes(body.ToArray());
+    if (captureVersion >= 17) {
+        // Native continuation extension: the DVD preserves pending identities
+        // across a paused save/reopen, but its disk queue encoding is unproven.
+        // Keep the classic graph intact and bind this ordered native FIFO to it.
+        header.count(pendingRemovals.size(), 32767);
+        InteractionCheckpointCodec pendingCodec(vm, header, captureVersion);
+        for (const auto id : pendingRemovals) {
+            Require(done.count(id), "pending removal is absent from the saved graph");
+            auto entity = vm.GetObjectById(id);
+            pendingCodec.reference(entity, "pending removal");
+        }
+    }
     Require(data.size() <= ODHI::MaxBytes, "snapshot exceeds limit");
     const auto objmHash = Files::Hash::CalculateHash(objm->Data);
     const auto native = data.ToArray();
@@ -1627,6 +1642,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     Require(!previewUnpublishedPortals || validateOnly, "portal preview requires validation-only mode");
     auto chunks = house.List<ODHI>();
     if (chunks.empty()) return;
+    Require(vm.CanCaptureTS1RemovalState(), "object-removal dispatch is incomplete");
     Require(chunks.size() == 1 && chunks.front()->ChunkID == 1, "ambiguous ODHI");
     auto objm = house.Get<OBJM>(1);
     st::Reader input(chunks.front()->Data);
@@ -1687,6 +1703,23 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
         const auto id = r.entity->ObjectID;
         Require(records.emplace(id, std::move(r)).second, "duplicate participant");
     }
+    std::vector<int16_t> pendingRemovals;
+    if (version >= 17) {
+        const auto pendingCount = fields.count(0, 32767);
+        std::set<int16_t> unique;
+        pendingRemovals.reserve(pendingCount);
+        for (uint32_t i = 0; i < pendingCount; ++i) {
+            VMEntity* entity = nullptr;
+            codec.reference(entity, "pending removal");
+            Require(entity && records.count(entity->ObjectID),
+                    "pending removal is absent from the saved graph");
+            Require(unique.insert(entity->ObjectID).second, "duplicate pending removal");
+            pendingRemovals.push_back(entity->ObjectID);
+        }
+    }
+    // Historical captures could not contain pending removals. Empty is their
+    // migration default, never a queue inferred from templates or loaded Init.
+    auto preparedRemovals = vm.PrepareTS1PendingRemovalRestore(pendingRemovals);
     Require(!input.has_more(), "trailing execution state");
     if (version >= 7) {
         // v7 is a complete native graph, not a partial execution overlay.
@@ -1792,6 +1825,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
         Primitives::VMTS1Budget::LoadState(&vm,purse,vm.TS1Budget.Days);
     }
     vm.TS1TextInput=std::move(textInput);
+    vm.CommitTS1PendingRemovalRestore(preparedRemovals);
     // Reopening the source of a saved visit must finish its accepted transfer.
     // Loading a previous home snapshot on arrival must never rearm that trip.
     if (departing && resumeDispatch) vm.Departure = std::move(departure);
