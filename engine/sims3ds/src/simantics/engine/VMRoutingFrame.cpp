@@ -12,6 +12,9 @@
 #include "simantics/engine/VMSimanticsException.h"
 #include "simantics/engine/Routing/VMRectRouter.h"
 #include "simantics/engine/Routing/VMTS1Locomotion.h"
+#include "simantics/engine/Routing/VMTS1RoutePath.h"
+#include "simantics/engine/Routing/VMTS1RouteWorld.h"
+#include "app/ui/CheatState.h"
 #include "simantics/engine/TS1SlotGeometry.h"
 #include "simantics/entities/VMEntity.h"
 #include "simantics/entities/VMAvatar.h"
@@ -58,6 +61,7 @@ bool VMRoutingFrame::InPool() {
 
 void VMRoutingFrame::Init() {
     if (VM()->TS1) {
+        TS1OriginalGraphRouting = VM()->TS1ObjectManagerOrderKnown;
         TS1PendingFootprint = static_cast<VMAvatar*>(Caller)->GetPersonData(VMPersonDataVariable::RouteFootprintMask);
         TS1PendingFootprintKnown = true;
     }
@@ -296,7 +300,82 @@ VMRouteFailCode VMRoutingFrame::AttemptRoute(std::shared_ptr<VMFindLocationResul
     return (DoRoomRoute(route.get())) ? VMRouteFailCode::Success : VMRouteFailCode::NoRoomRoute;
 }
 
+bool VMRoutingFrame::AttemptTS1OriginalWalk() {
+    using namespace Routing;
+    const auto position=Caller->Position();
+    const auto room=VM()->Context->GetEnvironmentRoomAt(position);
+    if (!Slot || !CurRoute || room<=0 || size_t(room)>=VM()->Context->EnvironmentRooms.size() ||
+        !TS1MaximumScoreKnown) return false;
+    const auto& roomRecord=VM()->Context->EnvironmentRooms[room];
+    auto* avatar=static_cast<VMAvatar*>(Caller);
+    const bool exceptional=(avatar->GetPersonData(VMPersonDataVariable::IsGhost)&1) ||
+        (avatar->GetPersonData(static_cast<VMPersonDataVariable>(84))&1);
+    TS1RouteSceneInput scene;
+    scene.RoomRouteFlag72=roomRecord.Outside;
+    if (!exceptional) scene=TS1CollectRouteRoomScene(*Caller,true,simapp::CheatState::Get().MoveObjects);
+    const bool ordinaryStyle=Caller->GetValue(VMStackObjectVariable::WalkStyle)==0;
+    scene.OptionalPhaseRequested=ordinaryStyle || !scene.RoomRouteFlag72;
+    std::vector<TS1RouteRect> weightsA,weightsB;
+    if (!exceptional) {
+        weightsA=TS1CollectRouteObjectObstacles(*Caller);
+        auto built=BuildTS1RouteScene(scene);
+        if (built.Status!=TS1RouteSceneStatus::Ready) return false;
+        weightsB=std::move(built.Rectangles);
+    }
+    std::vector<VMFindLocationResult> candidates{*CurRoute};
+    if (Choices) candidates.insert(candidates.end(),Choices->begin(),Choices->end());
+    std::vector<TS1RouteGraphGoal> goals;
+    for (size_t i=0;i<candidates.size();++i) {
+        const auto& goal=candidates[i];
+        if (goal.Score<=0) continue;
+        const int32_t x=goal.Position.x,y=goal.Position.y;
+        goals.push_back({{x,y,x+1,y+1,TS1SlotGoalPenalty(TS1MaximumScore,int32_t(goal.Score))},uint32_t(i)});
+    }
+    if (goals.empty()) return false;
+    const auto halfTiles=roomRecord.Environment.HalfTiles;
+    const auto tileCount=halfTiles/2;
+    const float density=halfTiles ? float(TS1RouteRoomObjectCount(*Caller))/float(halfTiles)
+        : std::numeric_limits<float>::infinity();
+    TS1RouteGraphOptions options;
+    options.DefaultWeight=ordinaryStyle && scene.RoomRouteFlag72 ? 3 : 0;
+    options.MaxSize=64;
+    options.LimitSize=exceptional || (double(density)<=0.2 && tileCount>99);
+    if (options.LimitSize) options.MaxSize=128;
+    const int64_t budget=std::min<int64_t>(1000,int64_t(tileCount)*goals.size()+50);
+    VMTS1RouteGraph graph;
+    const st::Point start(position.x,position.y);
+    const auto run=[&](TS1RouteGraphOptions config) {
+        if (!graph.Begin(start,goals,weightsA,weightsB,config)) return false;
+        while ((graph.State.Stage==TS1RouteGraphStage::Searching || graph.State.Stage==TS1RouteGraphStage::Refining) &&
+               int64_t(graph.State.SearchSteps+graph.State.RefineSteps)<=budget) graph.Step();
+        return !graph.State.Points.empty() && (graph.State.Stage==TS1RouteGraphStage::Done ||
+                                              graph.State.Stage==TS1RouteGraphStage::Refining);
+    };
+    // DVD first checks an unrestricted graph on large sparse rooms. A failed
+    // first pass is terminal; a successful one is rebuilt with limited growth.
+    if (tileCount>=257 && options.LimitSize) {
+        auto unlimited=options;unlimited.LimitSize=false;
+        if (!run(unlimited)) return false;
+    }
+    if (!run(options)) return false;
+    const auto selected=graph.SelectedOriginalIndex();
+    if (selected>=candidates.size()) return false;
+    CurRoute=std::make_shared<VMFindLocationResult>(candidates[selected]);
+    if (!Choices) Choices=std::make_unique<std::vector<VMFindLocationResult>>();
+    Choices->clear();
+    for (size_t i=0;i<candidates.size();++i) if (i!=selected) Choices->push_back(candidates[i]);
+    CurrentWaypoint=LotTilePos::OUT_OF_WORLD;
+    if (start==st::Point(CurRoute->Position.x,CurRoute->Position.y)) {
+        State=VMRoutingFrameState::TURN_ONLY;return true;
+    }
+    WalkTo=std::make_shared<std::list<st::Point>>(graph.State.Points.begin(),graph.State.Points.end());
+    if (!WalkTo->empty() && WalkTo->front()==start) WalkTo->pop_front();
+    if (WalkTo->empty()) return false;
+    AdvanceWaypoint();return true;
+}
+
 bool VMRoutingFrame::AttemptWalk() {
+    if (VM()->TS1 && TS1OriginalGraphRouting && Slot) return AttemptTS1OriginalWalk();
     //find shortest path to destination tile. Simple A* pathfind.
     //portals are used to traverse floors, so we do not care about the floor each point is on.
     //when evaluating possible adjacent tiles we use the Caller's current floor.
@@ -552,8 +631,30 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
             path.back() = {goal.x, goal.y};
             // The orientation point is not traversed. The planner still owns
             // segment geometry; the request owns its immutable input copy.
-            const double heading = CurRoute && !CurRoute->FaceAnywhere ? CurRoute->RadianDirection : Caller->RadianDirection();
-            path.push_back({int32_t(goal.x + std::sin(heading) * 16), int32_t(goal.y - std::cos(heading) * 16)});
+            if (TS1OriginalGraphRouting && Slot && Target && CurRoute) {
+                const auto heading=[](VMEntity* entity) {
+                    const auto flags=unsigned(entity->Direction());
+                    for (unsigned i=0;i<8;++i) if (flags==(1u<<i)) return i;
+                    return 0u;
+                };
+                Routing::TS1RouteFacing facing;
+                facing.Facing=int32_t(Slot->Facing);facing.Flags=uint32_t(Slot->Rsflags);
+                facing.Target={Target->Position().x,Target->Position().y};
+                facing.TargetHeading=heading(Target);facing.CallerHeading=heading(Caller);
+                if (!Routing::TS1AppendRouteFacing(path,facing)) {
+                    HardFail(VMRouteFailCode::NoPath,nullptr);
+                    return VMPrimitiveExitCode::CONTINUE;
+                }
+                const auto& physical=path[path.size()-2];const auto& orientation=path.back();
+                CurRoute->RadianDirection=std::atan2(float(int64_t(orientation.X)-physical.X),
+                    -float(int64_t(orientation.Y)-physical.Y));
+                // FaceAnywhere is resolved only after the selected physical
+                // path supplies its last approach segment (DVD45c4fa).
+                CurRoute->FaceAnywhere=false;
+            } else {
+                const double heading = CurRoute && !CurRoute->FaceAnywhere ? CurRoute->RadianDirection : Caller->RadianDirection();
+                path.push_back({int32_t(goal.x + std::sin(heading) * 16), int32_t(goal.y - std::cos(heading) * 16)});
+            }
             if (!avatar->StartTS1MotionRequest(this, Routing::TS1MotionKind::Route, path))
                 return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
             avatar->TS1ModelMotion.ModelState = TS1MotionModelState();
@@ -686,6 +787,10 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
                 VMSlotParser parser(Slot);
 
                 Choices.reset(new std::vector<VMFindLocationResult>(parser.FindAvaliableLocations(Target, VM()->Context, avatar)));
+                if (VM()->TS1) {
+                    TS1MaximumScore=parser.TS1MaximumScore;
+                    TS1MaximumScoreKnown=true;
+                }
                 if (Choices->size() == 0) {
                     HardFail(parser.FailCode, parser.Blocker);
                     return VMPrimitiveExitCode::CONTINUE;

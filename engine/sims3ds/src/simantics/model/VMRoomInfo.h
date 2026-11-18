@@ -52,6 +52,9 @@ struct VMEnvironmentRoom {
     // The next comparison evaluates these with the CURRENT Overhead flag.
     float SpatialLightFactor = 0;
     int SpatialPeople = 0, SpatialLamps = 0;
+    // DVD room+40 is collected with the ordered tile/object visits, before
+    // light/type filters. Route density reads this cached count unchanged.
+    int32_t SpatialObjects = 0;
     bool SpatialPool = false;
     float Score = 0, LightFactor = 0;
     bool Outside = false;

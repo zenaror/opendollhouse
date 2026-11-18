@@ -84,6 +84,11 @@ public:
     bool TS1SourceModelRouting = true;
     // Older native snapshots retain their pre-request movement policy.
     bool TS1SharedModelRouting = true;
+    // Native19 admits original graph/tangent rules only for newly planned
+    // routes. Older checkpoints retain their serialized adapter policy.
+    bool TS1OriginalGraphRouting = true;
+    int32_t TS1MaximumScore = -1;
+    bool TS1MaximumScoreKnown = false;
     bool UsesTS1SourceLocomotion() const;
     bool UsesTS1SourceTurning() const;
     bool UsesTS1SourceLookahead() const;
@@ -159,6 +164,7 @@ private:
     Model::Routing::VMRouteFailCode AttemptRoute(std::shared_ptr<VMFindLocationResult> route);
     /// Pathfinds to the destination position from the current. The room pathfind should get us to the same room before we do this.
     bool AttemptWalk();
+    bool AttemptTS1OriginalWalk();
     double GetDist(const FSO::LotView::Model::LotTilePos& pos1, const FSO::LotView::Model::LotTilePos& pos2);
     bool PushEntryPoint(int32_t entryPoint, VMEntity* ent);
     bool CanShooAvatar(VMAvatar* avatar);

@@ -40,6 +40,11 @@ struct VMTS1RemovalRequest {
     VMEntity* Identity;
 };
 
+struct VMTS1ObjectIdentity {
+    int16_t ID;
+    uint32_t GUID;
+};
+
 class VMSandboxRestoreState {
 public:
     std::vector<VMEntity*> Entities;
@@ -47,6 +52,9 @@ public:
     int16_t ObjectId = 1;
     std::unique_ptr<Model::VMSetToNextCache> SetToNext;
     std::deque<VMTS1RemovalRequest> PendingRemovals;
+    bool TS1ObjectManagerOrderKnown = false;
+    std::vector<VMEntity*> TS1ObjectManagerOrder;
+    std::vector<VMTS1ObjectIdentity> TS1RemovedObjectIdentities;
 };
 
 // TS1 source purse and six ordered daily records: current, then five older.
@@ -81,6 +89,14 @@ public:
 
     std::vector<Model::VMInventoryItem> MyInventory;
     std::vector<VMEntity*> Entities;
+    // The DVD manager's birth/load list is separate from sorted dispatch.
+    // Unknown synthetic/legacy graphs must not infer this order from IDs.
+    bool TS1ObjectManagerOrderKnown = false;
+    std::vector<VMEntity*> TS1ObjectManagerOrder;
+    void ValidateTS1ObjectManagerOrder() const;
+    bool EstablishTS1ObjectManagerOrderFromClassic(
+        const FSO::Files::Formats::IFF::Chunks::OBJM& objects);
+    bool HasTS1ObjectIdentity(int16_t id, uint32_t guid) const;
     std::unordered_set<VMEntity*> SoundEntities;
 
     std::unique_ptr<Model::DynamicTuning> Tuning;
@@ -236,6 +252,9 @@ private:
     VMEntity* TS1RemovingNow = nullptr;
     void DrainTS1Removals();
     std::vector<std::unique_ptr<VMEntity>> EntityStore;
+    // Actual registered removals, not ownership/cache entries. This local
+    // history distinguishes deletion from unavailable historical content.
+    std::vector<VMTS1ObjectIdentity> TS1RemovedObjectIdentities;
     std::vector<std::unique_ptr<Entities::VMMultitileGroup>> GroupStore;
     static std::unordered_map<FSO::Files::Formats::IFF::Chunks::BHAV*, std::unique_ptr<VMRoutine>>& _Assembled();
     static std::vector<VM*>& LiveVMs();

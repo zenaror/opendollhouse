@@ -376,20 +376,12 @@ bool TS1ChairBounds(VMContext* context, const LotTilePos& position) {
 const st::Point TS1Neighbor[8]={{0,-16},{16,-16},{16,0},{16,16},
                               {0,16},{-16,16},{-16,0},{-16,-16}};
 
-// DVD452129 uses integer 2:1 sectors, not nearest-angle octants.
-int TS1HeadingBetween(st::Point from,st::Point to) {
-    const int64_t x=int64_t(to.X)-from.X,y=int64_t(to.Y)-from.Y;
-    const int64_t ax=std::abs(x),ay=std::abs(y);
-    int heading=ax*2<ay?4:int(ax<=ay*2)+2;
-    if (x<0) { if (heading==2) heading=6;else if (heading==3) heading=5; }
-    if (y<0) { if (heading==3) heading=1;else if (heading==4) heading=0;else if (heading==5) heading=7; }
-    return heading;
-}
 }
 
 std::vector<VMFindLocationResult> VMSlotParser::FindTS1Locations(
         VMEntity* obj, VMContext* context, VMEntity* caller) {
     Results.clear();Blocker=nullptr;FailCode=VMRouteFailCode::NoValidGoals;
+    TS1MaximumScore=-1;
     if (!Slot || Slot->Type!=3 || !obj || !caller || !context || !context->VM ||
         !context->Architecture() || context->IsOutOfBounds(obj->Position()) ||
         context->IsOutOfBounds(caller->Position())) return Results;
@@ -533,7 +525,7 @@ std::vector<VMFindLocationResult> VMSlotParser::FindTS1Locations(
             if (!ScoreTS1SlotProbe(*Slot,input,score)) continue;
             int direction=cell.Heading;
             if (cell.PointOnly && ((cell.Position.X^center.X)&~15)==0 && ((cell.Position.Y^center.Y)&~15)==0) direction=-1;
-            else if (cell.PointOnly) direction=TS1HeadingBetween(center,cell.Position);
+            else if (cell.PointOnly) direction=TS1SlotHeadingBetween(center,cell.Position);
             const int status=admit(cell.Position,direction);
             sawObject |= status==1;sawPerson |= status==5;
             sawWall |= status==2 || status==3;sawAltitude |= status==4;
@@ -542,6 +534,7 @@ std::vector<VMFindLocationResult> VMSlotParser::FindTS1Locations(
             VMFindLocationResult result;
             result.Position=LotTilePos(int16_t(cell.Position.X),int16_t(cell.Position.Y),level);
             result.Score=score;result.Chair=chair;result.RouteEntryFlags=SLOTFlags(entry);
+            TS1MaximumScore=std::max(TS1MaximumScore,score);
             result.FaceAnywhere=int(Slot->Facing)==-3;
             // 45c4fa final-facing uses the actual target, independently of
             // the Absolute/group-center settings used by candidate admission.
@@ -550,7 +543,7 @@ std::vector<VMFindLocationResult> VMSlotParser::FindTS1Locations(
             if (int(Slot->Facing)>=0) finalHeading=(targetHeading+int(Slot->Facing))&7;
             else if (int(Slot->Facing)!=-3) {
                 finalHeading=cell.PointOnly && cell.Position==finalTarget ? targetHeading :
-                    TS1HeadingBetween(cell.Position,finalTarget);
+                    TS1SlotHeadingBetween(cell.Position,finalTarget);
                 if (int(Slot->Facing)==-1) finalHeading=(finalHeading+4)&7;
             }
             result.RadianDirection=float(finalHeading*(M_PI/4));

@@ -25,6 +25,7 @@
 #include "content/ContentManager.h"
 #undef private
 #include "../sims3ds/src/simantics/utils/VMTS1InteractionCheckpoint.cpp"
+#include "simantics/engine/Routing/VMTS1RouteScene.h"
 #include <iostream>
 using namespace FSO::SimAntics;
 using namespace FSO::SimAntics::Engine;
@@ -212,5 +213,168 @@ void FrameTokenContracts(){
  Check(legacy->Stack.size()==1&&!legacy->Stack[0]->TS1MotionToken,"legacy frame inferred a motion token");
  f.Machine.Entities.clear();
 }
+void ManagerOrderContracts(){
+ OwnershipFixture f;f.Machine.AddEntity(f.Actor.get());f.Machine.AddEntity(f.Target.get());
+ const std::set<int16_t> domain{f.Actor->ObjectID,f.Target->ObjectID};
+ auto write=[&](bool known,std::vector<VMEntity*> order){
+  st::Writer bytes(st::Endian::Little);Archive fields(bytes);InteractionCheckpointCodec codec(f.Machine,fields,19);
+  codec.objectManagerOrder(known,order,domain);return bytes.ToArray();
+ };
+ auto read=[&](const std::vector<uint8_t>& bytes,bool& known,std::vector<VMEntity*>& order){
+  st::Reader input(bytes);Archive fields(input);InteractionCheckpointCodec codec(f.Machine,fields,19);
+  codec.objectManagerOrder(known,order,domain);Check(!input.has_more(),"manager order has trailing bytes");
+ };
+ const std::vector<VMEntity*> original{f.Target.get(),f.Actor.get()};
+ auto bytes=write(true,original);bool known=false;std::vector<VMEntity*> restored;
+ read(bytes,known,restored);Check(known&&restored==original,"manager order changed to sorted dispatch order");
+ Check(write(known,restored)==bytes,"manager order is not byte stable");
+ auto unknown=write(false,{});read(unknown,known,restored);
+ Check(!known&&restored.empty(),"unknown manager provenance was inferred");
+ Reject([&]{write(false,original);},"unknown manager order retained entries");
+ Reject([&]{write(true,{f.Actor.get()});},"manager order omitted an included object");
+ Reject([&]{write(true,{f.Actor.get(),f.Actor.get()});},"manager order duplicated an object");
+ auto damaged=bytes;damaged[0]=2;
+ Reject([&]{read(damaged,known,restored);},"manager order admitted malformed provenance");
+ damaged=bytes;damaged.resize(damaged.size()-1);
+ Reject([&]{read(damaged,known,restored);},"manager order admitted truncated identity");
+ f.Target->Dead=true;Reject([&]{write(true,original);},"manager order admitted dead identity");f.Target->Dead=false;
+ f.Target->GhostImage=true;Reject([&]{write(true,original);},"manager order admitted ghost identity");f.Target->GhostImage=false;
+ // Reading an ID with a changed definition must fail, before live publication.
+ damaged=bytes;damaged[7]^=1;
+ Reject([&]{read(damaged,known,restored);},"manager order admitted changed GUID");
+ f.Machine.Entities.clear();
 }
-int main(){try{VM::UseWorld(false);VMContext context(nullptr);VM vm(&context,nullptr);CodecContracts(vm);OwnershipContracts();StopProfileContracts();FrameTokenContracts();std::cout<<"PASS native TS1 motion checkpoint: "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
+void OriginalRoutePolicyContracts(){
+ OwnershipFixture f;VMRoutingFrame route;
+ route.TS1MaximumScoreKnown=true;route.TS1MaximumScore=1200;
+ auto write=[&](uint32_t version){st::Writer bytes(st::Endian::Little);Archive fields(bytes);InteractionCheckpointCodec codec(f.Machine,fields,version);codec.route(route,nullptr);return bytes.ToArray();};
+ auto read=[&](const std::vector<uint8_t>& bytes,uint32_t version){auto restored=std::make_unique<VMRoutingFrame>();st::Reader input(bytes);Archive fields(input);InteractionCheckpointCodec codec(f.Machine,fields,version);codec.route(*restored,nullptr);Check(!input.has_more(),"route policy has trailing bytes");return restored;};
+ auto restored=read(write(19),19);
+ Check(restored->TS1OriginalGraphRouting&&restored->TS1MaximumScoreKnown&&restored->TS1MaximumScore==1200,"original policy lost pre-cap maximum");
+ Reject([&]{write(18);},"old layout silently dropped original graph maximum");
+ route.TS1MaximumScore=-2;Reject([&]{write(19);},"original maximum fell below source initial value");
+ route.TS1MaximumScoreKnown=false;route.TS1MaximumScore=0;Reject([&]{write(19);},"unknown maximum retained a score");
+ route.TS1MaximumScore=-1;restored=read(write(18),18);
+ Check(!restored->TS1OriginalGraphRouting&&!restored->TS1MaximumScoreKnown&&restored->TS1MaximumScore==-1,"old route inferred original planning provenance");
+}
+void RoomCountContracts(){
+ VMContext context(nullptr);context.EnvironmentRooms.resize(2);
+ context.EnvironmentRooms[1].CanonicalID=17;context.EnvironmentRooms[1].Story=1;
+ context.EnvironmentRooms[1].SpatialTileOrder={3,4,3};context.EnvironmentRooms[1].SpatialObjects=42;
+ context.EnvironmentMaps={{0x00010001,0x00010001}};
+ auto write=[&](std::vector<int32_t> counts){st::Writer bytes(st::Endian::Little);Archive fields(bytes);RouteRoomCounts(fields,context,counts);return bytes.ToArray();};
+ auto read=[&](const std::vector<uint8_t>& bytes){st::Reader input(bytes);Archive fields(input);std::vector<int32_t> result;RouteRoomCounts(fields,context,result);Check(!input.has_more(),"room count has trailing bytes");return result;};
+ const auto bytes=write({0,42});Check(read(bytes)==std::vector<int32_t>({0,42}),"cached room count was recomputed on load");
+ Reject([&]{write({42});},"room count omitted a room");Reject([&]{write({0,-1});},"negative room count was admitted");
+ auto malformed=bytes;malformed.back()=255;Reject([&]{read(malformed);},"reader admitted negative room count");
+ context.EnvironmentMaps[0][0]^=65536;Reject([&]{read(bytes);},"room geometry changed without count invalidation");context.EnvironmentMaps[0][0]^=65536;
+ context.EnvironmentRooms[1].SpatialTileOrder.pop_back();Reject([&]{read(bytes);},"tile visit multiplicity changed without count invalidation");
+ Check(context.EnvironmentRooms[1].SpatialObjects==42,"failed room staging changed the live count");
+}
+void NumericBoundsContracts(){
+ OwnershipFixture f;
+ auto write=[&](Record record,uint32_t version=19){st::Writer bytes(st::Endian::Little);Archive fields(bytes);InteractionCheckpointCodec codec(f.Machine,fields,version);codec.numericFootprint(record);return bytes.ToArray();};
+ auto read=[&](const std::vector<uint8_t>& bytes){Record record;st::Reader input(bytes);Archive fields(input);InteractionCheckpointCodec codec(f.Machine,fields,19);codec.numericFootprint(record);Check(!input.has_more(),"numeric bounds have trailing bytes");return record;};
+ Record record;record.numericFootprintKnown=true;record.numericFootprint={-5,17,-9,17};
+ const auto bytes=write(std::move(record));const auto restored=read(bytes);
+ Check(restored.numericFootprintKnown&&restored.numericFootprint==std::array<int32_t,4>{-5,17,-9,17},"contained numeric bounds lost or normalized");
+ Record copy;copy.numericFootprintKnown=restored.numericFootprintKnown;copy.numericFootprint=restored.numericFootprint;
+ Check(write(std::move(copy))==bytes,"numeric bounds did not survive byte-stable reopen");
+ for(uint32_t version:{2u,10u,17u,18u}){Record old;old.numericFootprintKnown=true;old.numericFootprint={1,2,3,4};Check(write(std::move(old),version).empty(),"old native layout acquired numeric bounds");}
+ Record unknown;unknown.numericFootprint={1,0,0,0};Reject([&]{write(std::move(unknown));},"unknown numeric bounds retained data");
+ auto damaged=bytes;damaged[0]=0;Reject([&]{read(damaged);},"reader admitted stale bounds with unknown provenance");
+ auto cut=bytes;cut.pop_back();Reject([&]{read(cut);},"truncated numeric bounds were admitted");
+ st::Writer ignored;Archive archive(ignored);InteractionCheckpointCodec codec(f.Machine,archive,19);
+ for(VMEntity* entity:{static_cast<VMEntity*>(f.Actor.get()),static_cast<VMEntity*>(f.Target.get())}){
+  entity->Footprint=std::make_unique<FSO::SimAntics::Model::Routing::VMObstacle>(0,0,16,16);
+  entity->TS1NumericFootprintKnown=true;entity->TS1NumericFootprint={-11,19,-17,19};
+  Record captured;codec.captureNumericFootprint(captured,*entity);
+  Check(captured.numericFootprintKnown&&captured.numericFootprint==entity->TS1NumericFootprint,"capture substituted physical footprint for retained numeric state");
+  entity->Container=f.Target.get();entity->Position(FSO::LotView::Model::LotTilePos::OUT_OF_WORLD);
+  codec.captureNumericFootprint(captured,*entity);
+  Check(captured.numericFootprint==std::array<int32_t,4>{-11,19,-17,19},"contained/out-of-world capture recomputed numeric state");
+  entity->Container=nullptr;entity->TS1NumericFootprintKnown=false;entity->TS1NumericFootprint={};
+  codec.captureNumericFootprint(captured,*entity);
+  Check(!captured.numericFootprintKnown&&captured.numericFootprint==std::array<int32_t,4>{},"physical occupancy invented numeric provenance");
+ }
+ // The old layouts migrate all entity kinds from the already loaded original
+ // rectangle, never from current position, occupancy, width or person flags.
+ st::Writer typeBytes(st::Endian::Little);typeBytes.WriteUInt32(f.Def.GUID);for(int i=0;i<6;++i)typeBytes.WriteUInt16(0);typeBytes.WriteByte(0);typeBytes.WriteByte(0);
+ auto typeData=typeBytes.ToArray();st::Reader typeInput(typeData);OBJTEntry type(typeInput,2);OBJM classic;std::map<int16_t,Record> migration;
+ for(VMEntity* entity:{static_cast<VMEntity*>(f.Actor.get()),static_cast<VMEntity*>(f.Target.get())}){
+  auto& r=migration[entity->ObjectID];r.entity=entity;
+  auto& saved=classic.ObjectData[entity->ObjectID];saved.Instance=std::make_shared<OBJMInstance>();saved.Instance->OBJT=&type;
+  saved.Instance->Footprint.MinX=77;saved.Instance->Footprint.MinY=-23;saved.Instance->Footprint.MaxX=11;saved.Instance->Footprint.MaxY=-23;
+ }
+ InteractionCheckpointCodec legacy(f.Machine,archive,18);legacy.prepareNumericFootprints(migration,classic);
+ for(auto& item:migration)Check(item.second.numericFootprintKnown&&item.second.numericFootprint==std::array<int32_t,4>{77,-23,11,-23},"legacy generic rectangle migration lost literal bounds");
+ type.GUID++;Reject([&]{legacy.prepareNumericFootprints(migration,classic);},"legacy numeric migration admitted changed identity");
+}
+
+// Container commit intentionally republishes a peer's numeric rectangle. This
+// models a real restore callback and proves publication must be a final pass,
+// rather than an assignment inside the per-record appearance/placement loop.
+struct NumericCommitObject : VMGameObject {
+ std::array<VMEntity*,1> Children{};VMEntity* Peer=nullptr;int Commits=0;
+ explicit NumericCommitObject(FSO::Content::GameObject* def):VMGameObject(def,nullptr){}
+ int32_t TotalSlots() override{return 1;}
+ VMEntity* GetSlot(int32_t slot) override{return slot==0?Children[0]:nullptr;}
+ void ClearSlot(int32_t slot) override{if(slot==0&&Children[0]){Children[0]->Container=nullptr;Children[0]->ContainerSlot=-1;Children[0]=nullptr;}}
+ bool PlaceInSlot(VMEntity* child,int32_t slot,bool,VMContext*) override{
+  if(slot!=0||Children[0])return false;Children[0]=child;child->Container=this;child->ContainerSlot=0;child->Position(Position());return true;
+ }
+ void PositionChange(VMContext*,bool) override{
+  ++Commits;TS1NumericFootprintKnown=true;TS1NumericFootprint={900,901,902,903};
+  if(Peer){Peer->TS1NumericFootprintKnown=true;Peer->TS1NumericFootprint={800,801,802,803};}
+ }
+};
+void NumericPublishContracts(){
+ VMContext context(nullptr);VM vm(&context,nullptr);IffFile iff;
+ FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"numeric publish",true);OBJD def;def.GUID=0xf0490511;
+ FSO::Content::GameObject object;object.OBJ=&def;object.GUID=def.GUID;object.Resource=&resource;
+ context.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&context));context.Architecture()->Rooms[0].Map.assign(64,0);context.RoomInfo.resize(1);context.RebuildEnvironmentGeometry();
+ NumericCommitObject parent(&object),child(&object),absent(&object);
+ for(auto* e:{&parent,&child,&absent}){vm.AddEntity(e);e->Thread=std::make_unique<VMThread>(&context,e,16);}
+ parent.Position(FSO::LotView::Model::LotTilePos(40,56,1));child.Position(parent.Position());absent.Position(FSO::LotView::Model::LotTilePos::OUT_OF_WORLD);
+ parent.Children[0]=&child;child.Container=&parent;child.ContainerSlot=0;child.Peer=&parent;
+ parent.TS1NumericFootprintKnown=child.TS1NumericFootprintKnown=absent.TS1NumericFootprintKnown=true;
+ parent.TS1NumericFootprint={1,2,3,4};child.TS1NumericFootprint={5,6,7,8};absent.TS1NumericFootprint={9,10,11,12};
+ // Exercise the production common record consumer, not only its scalar helper:
+ // ordinary, contained and OOW game objects all carry the new numeric tail.
+ parent.Footprint=std::make_unique<FSO::SimAntics::Model::Routing::VMObstacle>(200,200,216,216);
+ auto encode=[&](uint32_t version){st::Writer bytes(st::Endian::Little);Archive out(bytes);InteractionCheckpointCodec writer(vm,out,version);
+  for(auto* e:{&parent,&child,&absent}){Record r;r.entity=e;writer.record(r);}return bytes.ToArray();};
+ const auto encoded=encode(19),oldEncoded=encode(18);
+ Check(encoded.size()==oldEncoded.size()+3*17,"generic numeric tail is missing or changed an older record layout");
+ st::Reader input(encoded);Archive in(input);InteractionCheckpointCodec reader(vm,in,19);
+ for(auto* e:{&parent,&child,&absent}){Record r;reader.record(r);
+  Check(r.entity==e&&!r.avatar&&r.numericFootprintKnown&&r.numericFootprint==e->TS1NumericFootprint,"production generic record omitted or recomputed numeric bounds");}
+ Check(!input.has_more()&&parent.TS1NumericFootprint==std::array<int32_t,4>{1,2,3,4}&&child.Commits==0,"record decoding published live numeric/placement state");
+ auto stage=[&](){std::map<int16_t,Record> records;for(auto* e:{&parent,&child,&absent}){
+  auto& r=records[e->ObjectID];r.entity=e;r.preparedThread=std::make_unique<VMThread>(&context,e,16);
+  r.position=e->Position();r.container=e->Container;r.slot=e->Container?e->ContainerSlot:-1;r.slots={e->GetSlot(0)};
+  r.objectData=e->ObjectData;r.attributes=e->AttributeData();r.numericFootprintKnown=true;
+  r.numericFootprint=e==&parent?std::array<int32_t,4>{-5,17,-9,17}:e==&child?std::array<int32_t,4>{31,32,0,-1}:std::array<int32_t,4>{INT32_MIN,0,INT32_MAX,0};
+ }return records;};
+ st::Writer unused;Archive fields(unused);InteractionCheckpointCodec codec(vm,fields,19);OBJM classic;
+ auto invalid=stage();invalid.at(absent.ObjectID).numericFootprintKnown=false;
+ const auto liveThread=parent.Thread.get();Reject([&]{codec.publish(invalid,classic);},"late malformed generic numeric state was published");
+ Check(parent.Thread.get()==liveThread&&parent.Children[0]==&child&&child.Container==&parent&&child.Commits==0&&parent.TS1NumericFootprint==std::array<int32_t,4>{1,2,3,4},"failed generic preflight mutated live placement/thread/cache");
+ auto prepared=stage();codec.publish(prepared,classic,true);
+ Check(parent.Thread.get()==liveThread&&child.Commits==0&&parent.TS1NumericFootprint==std::array<int32_t,4>{1,2,3,4},"validate-only restore published generic state");
+ codec.publish(prepared,classic);
+ Check(child.Commits==1&&child.Container==&parent&&parent.Children[0]==&child,"actual container restore was not exercised");
+ Check(parent.TS1NumericFootprint==std::array<int32_t,4>{-5,17,-9,17}&&child.TS1NumericFootprint==std::array<int32_t,4>{31,32,0,-1},"later container callback overwrote already restored numeric state");
+ Check(absent.TS1NumericFootprintKnown&&absent.TS1NumericFootprint==std::array<int32_t,4>{INT32_MIN,0,INT32_MAX,0},"out-of-world generic literal rectangle was normalized");
+ FSO::SimAntics::Engine::Routing::TS1RouteObjectObstacleInput obstacle;
+ const auto& b=absent.TS1NumericFootprint;
+ obstacle.Bounds={b[0],b[1],b[2],b[3],0};obstacle.CallerBounds={100,100,110,110,0};
+ const auto inflated=FSO::SimAntics::Engine::Routing::BuildTS1RouteObjectObstacle(obstacle);
+ Check(inflated&&inflated->X1==INT32_MAX-2&&inflated->Y1==-3&&
+       inflated->X2==INT32_MIN+2&&inflated->Y2==3,
+       "published endpoint numeric state overflowed or normalized in route obstacle construction");
+ vm.Entities.clear();vm.ObjectsById.clear();child.Container=nullptr;parent.Children[0]=nullptr;
+}
+
+}
+int main(){try{VM::UseWorld(false);VMContext context(nullptr);VM vm(&context,nullptr);CodecContracts(vm);OwnershipContracts();StopProfileContracts();FrameTokenContracts();ManagerOrderContracts();OriginalRoutePolicyContracts();RoomCountContracts();NumericBoundsContracts();NumericPublishContracts();std::cout<<"PASS native TS1 motion checkpoint: "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}

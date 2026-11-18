@@ -263,6 +263,7 @@ static bool HasArchitectureCell(const LotTilePos& position, VMArchitecture* arch
 }
 
 void VMGameObject::PrePositionChange(VMContext* context) {
+    RememberTS1Footprint();
     Footprint.reset();
     if (GhostImage && UseWorld) {
         if (WorldUI && WorldUI->Container != nullptr) {
@@ -338,8 +339,10 @@ void VMGameObject::PositionChangeInternal(VMContext* context, bool noEntryPoint,
     }
 
     context->RegisterObjectPos(this);
-    if (Container != nullptr) return;
-    if (Position() == LotTilePos::OUT_OF_WORLD) return;
+    if (Container != nullptr || Position() == LotTilePos::OUT_OF_WORLD) {
+        if (context->VM && context->VM->TS1) RefreshTS1Footprint();
+        return;
+    }
 
     auto arch = context->Architecture();
     if (!HasArchitectureCell(Position(), arch)) {

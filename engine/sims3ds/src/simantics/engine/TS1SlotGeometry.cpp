@@ -144,6 +144,15 @@ int32_t TS1SlotGoalPenalty(int32_t maximumScore, int32_t score) {
     return Word((uint32_t(maximumScore) - uint32_t(score)) << 4);
 }
 
+int TS1SlotHeadingBetween(st::Point from, st::Point to) {
+    const int64_t x=int64_t(to.X)-from.X,y=int64_t(to.Y)-from.Y;
+    const int64_t ax=std::abs(x),ay=std::abs(y);
+    int heading=ax*2<ay?4:int(ax<=ay*2)+2;
+    if (x<0) { if (heading==2) heading=6;else if (heading==3) heading=5; }
+    if (y<0) { if (heading==3) heading=1;else if (heading==4) heading=0;else if (heading==5) heading=7; }
+    return heading;
+}
+
 bool ScoreTS1SlotProbe(const SLOTItem& slot, const TS1SlotScoreInput& input,
                        int32_t& output) {
     if (input.PointOnly) { output=100;return true; }

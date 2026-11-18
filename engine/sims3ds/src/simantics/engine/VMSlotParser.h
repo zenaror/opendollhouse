@@ -31,6 +31,8 @@ class VMSlotParser {
 public:
     static constexpr double ANGLE_ERROR = -0.1f;
     std::vector<VMFindLocationResult> Results;
+    // Original route+54 records the maximum before random candidate reduction.
+    int32_t TS1MaximumScore = -1;
     Model::Routing::VMRouteFailCode FailCode = Model::Routing::VMRouteFailCode::NoValidGoals;
     VMEntity* Blocker = nullptr;
     // Original route+7c: this blocker may be ignored during destination admission.

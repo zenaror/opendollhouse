@@ -93,6 +93,13 @@ VMEntity* VM::GetObjectByPersist(uint32_t id) {
 
 /// Initializes this Virtual Machine.
 void VM::Init() {
+    // Init on a new, empty machine is an authoritative empty lifecycle.
+    // Merely constructing a synthetic VM or adding an object is not.
+    if (TS1 && Entities.empty() && ObjectsById.empty()) {
+        TS1ObjectManagerOrder.clear();
+        TS1ObjectManagerOrderKnown = true;
+        TS1RemovedObjectIdentities.clear();
+    }
     Context->Globals = FSO::Content::Content::Get()->WorldObjectGlobals->Get("global", false);
     PlatformState = std::make_shared<TSOPlatform::VMTSOLotState>();
     PlatformState->ActivateValidator(this);
@@ -281,6 +288,9 @@ void VM::AddEntity(VMEntity* entity) {
     }
     ObjectsById[entity->ObjectID] = entity;
     AddToObjList(this->Entities, entity);
+    if (TS1 && TS1ObjectManagerOrderKnown && !entity->GhostImage && !entity->Dead &&
+        entity->Object && entity->Object->OBJ)
+        TS1ObjectManagerOrder.insert(TS1ObjectManagerOrder.begin(), entity);
     if (!entity->GhostImage) Context->SetToNextCache->NewObject(entity);
     ObjectId = NextObjID();
 }
@@ -298,6 +308,93 @@ void VM::AddToObjList(std::vector<VMEntity*>& list, VMEntity* entity) {
     }
     int index = (list[min]->ObjectID > id) ? min : ((list[max]->ObjectID > id) ? max : max + 1);
     list.insert(list.begin() + index, entity);
+}
+
+void VM::ValidateTS1ObjectManagerOrder() const {
+    if (!TS1ObjectManagerOrderKnown) {
+        if (!TS1ObjectManagerOrder.empty())
+            throw std::runtime_error("TS1 manager: unknown order retains entries");
+        return;
+    }
+    std::unordered_set<const VMEntity*> domain;
+    for (auto* entity : Entities)
+        if (entity && !entity->Dead && !entity->GhostImage && entity->Object && entity->Object->OBJ)
+            if (!domain.insert(entity).second)
+                throw std::runtime_error("TS1 manager: duplicate live instance");
+    if (domain.size() != TS1ObjectManagerOrder.size())
+        throw std::runtime_error("TS1 manager: incomplete ordered instance domain");
+    for (auto* entity : TS1ObjectManagerOrder) {
+        if (!entity || !domain.erase(entity) || entity->ObjectID <= 0 ||
+            !entity->Object->OBJ->GUID)
+            throw std::runtime_error("TS1 manager: invalid ordered instance");
+        const auto found = ObjectsById.find(entity->ObjectID);
+        if (found == ObjectsById.end() || found->second != entity)
+            throw std::runtime_error("TS1 manager: ordered identity was replaced");
+    }
+}
+
+bool VM::HasTS1ObjectIdentity(int16_t id, uint32_t guid) const {
+    const auto matches = [=](const VMEntity* entity) {
+        return entity && !entity->GhostImage && !entity->Dead && entity->ObjectID == id && entity->Object && entity->Object->OBJ &&
+            entity->Object->OBJ->GUID == guid;
+    };
+    // Owned ghosts and sandbox temporaries are not deletion evidence. Only
+    // the exact genuine registration removed through RemoveEntity qualifies.
+    return std::any_of(Entities.begin(), Entities.end(), matches) ||
+        std::any_of(TS1RemovedObjectIdentities.begin(), TS1RemovedObjectIdentities.end(),
+            [=](const auto& identity) { return identity.ID == id && identity.GUID == guid; });
+}
+
+bool VM::EstablishTS1ObjectManagerOrderFromClassic(
+    const FSO::Files::Formats::IFF::Chunks::OBJM& objects) {
+    if (!TS1) return false;
+    if (!objects.Decoded) {
+        TS1ObjectManagerOrderKnown = false;
+        TS1ObjectManagerOrder.clear();
+        return false;
+    }
+    if (objects.RecordOrder.size() != objects.ObjectData.size())
+        throw std::runtime_error("TS1 manager: incomplete classic record order");
+    std::unordered_set<int32_t> saved;
+    std::vector<VMEntity*> suffix;
+    bool complete = true;
+    for (const auto id : objects.RecordOrder) {
+        const auto record = objects.ObjectData.find(id);
+        if (id <= 0 || id > 32767 || !saved.insert(id).second || record == objects.ObjectData.end())
+            throw std::runtime_error("TS1 manager: invalid classic ordered identity");
+        auto* entity = GetObjectById(int16_t(id));
+        const auto expectedGUID = record->second.Instance && record->second.Instance->OBJT
+            ? record->second.Instance->OBJT->GUID : record->second.GUID;
+        if (!entity || entity->Dead || entity->GhostImage || !entity->Object || !entity->Object->OBJ ||
+            entity->Object->OBJ->GUID != expectedGUID) {
+            complete = false; continue;
+        }
+        suffix.push_back(entity);
+    }
+    std::vector<VMEntity*> prepared;
+    if (TS1ObjectManagerOrderKnown) {
+        ValidateTS1ObjectManagerOrder();
+        // Saved construction order is an adapter detail; only genuine births
+        // retain prepend order ahead of the disk-ordered saved suffix.
+        for (auto* entity : TS1ObjectManagerOrder)
+            if (!saved.count(entity->ObjectID)) prepared.push_back(entity);
+    } else {
+        // Disk order is sufficient only when every live instance is saved.
+        // There is no authoritative birth ordering for unknown extra objects.
+        for (auto* entity : Entities)
+            if (entity && !entity->Dead && !entity->GhostImage && entity->Object && entity->Object->OBJ &&
+                !saved.count(entity->ObjectID)) complete = false;
+    }
+    if (!complete) {
+        TS1ObjectManagerOrderKnown = false;
+        TS1ObjectManagerOrder.clear();
+        return false;
+    }
+    prepared.insert(prepared.end(), suffix.begin(), suffix.end());
+    TS1ObjectManagerOrder.swap(prepared);
+    TS1ObjectManagerOrderKnown = true;
+    ValidateTS1ObjectManagerOrder();
+    return true;
 }
 
 /// Removes an entity from this Virtual Machine.
@@ -392,6 +489,16 @@ void VM::DrainTS1Removals() {
 }
 
 void VM::RemoveEntity(VMEntity* entity) {
+    const auto registered = entity ? ObjectsById.find(entity->ObjectID) : ObjectsById.end();
+    if (TS1 && entity && !entity->GhostImage && entity->Object && entity->Object->OBJ &&
+        registered != ObjectsById.end() && registered->second == entity) {
+        const VMTS1ObjectIdentity identity{entity->ObjectID, entity->Object->OBJ->GUID};
+        if (std::none_of(TS1RemovedObjectIdentities.begin(), TS1RemovedObjectIdentities.end(),
+            [&](const auto& previous) { return previous.ID == identity.ID && previous.GUID == identity.GUID; }))
+            TS1RemovedObjectIdentities.push_back(identity);
+    }
+    TS1ObjectManagerOrder.erase(std::remove(TS1ObjectManagerOrder.begin(),
+        TS1ObjectManagerOrder.end(), entity), TS1ObjectManagerOrder.end());
     Context->RemoveSpatialEntity(entity);
     if (TS1) for (auto other : Entities)
         if (other && other!=entity && other->Thread) other->Thread->TS1ObjectUseTargetRemoved(entity);
@@ -492,12 +599,18 @@ std::unique_ptr<VMSandboxRestoreState> VM::Sandbox() {
     state->ObjectsById = ObjectsById;
     state->SetToNext = std::move(Context->SetToNextCache);
     state->PendingRemovals = std::move(TS1PendingRemovals);
+    state->TS1ObjectManagerOrderKnown = TS1ObjectManagerOrderKnown;
+    state->TS1ObjectManagerOrder = std::move(TS1ObjectManagerOrder);
+    state->TS1RemovedObjectIdentities = std::move(TS1RemovedObjectIdentities);
     TS1PendingRemovals.clear();
 
     Context->SetToNextCache.reset(new VMSetToNextCache(Context));
     Entities.clear();
     ObjectsById.clear();
     ObjectId = 1;
+    TS1ObjectManagerOrder.clear();
+    TS1ObjectManagerOrderKnown = TS1;
+    TS1RemovedObjectIdentities.clear();
 
     return state;
 }
@@ -508,6 +621,9 @@ void VM::SandboxRestore(std::unique_ptr<VMSandboxRestoreState> state) {
     ObjectId = state->ObjectId;
     Context->SetToNextCache = std::move(state->SetToNext);
     TS1PendingRemovals = std::move(state->PendingRemovals);
+    TS1ObjectManagerOrder = std::move(state->TS1ObjectManagerOrder);
+    TS1ObjectManagerOrderKnown = state->TS1ObjectManagerOrderKnown;
+    TS1RemovedObjectIdentities = std::move(state->TS1RemovedObjectIdentities);
 }
 
 void VM::BreakpointHit(VMEntity* entity) {

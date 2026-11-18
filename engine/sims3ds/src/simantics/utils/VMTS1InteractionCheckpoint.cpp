@@ -6,6 +6,7 @@
 #include "files/formats/iff/chunks/ODMP.h"
 #include "simantics/utils/VMTS1MotivePersistence.h"
 #include "simantics/utils/VMTS1SchedulerState.h"
+#include "simantics/utils/VMTS1SpatialCheckpoint.h"
 #include "simantics/utils/VMTS1BudgetPersistence.h"
 #include "simantics/primitives/VMTS1Budget.h"
 #include "files/formats/iff/chunks/SIMI.h"
@@ -106,6 +107,41 @@ public:
     }
 };
 
+uint32_t RouteRoomSignature(const VMContext& context) {
+    st::Writer data(st::Endian::Little);
+    data.WriteUInt32(uint32_t(context.EnvironmentMaps.size()));
+    for (const auto& story : context.EnvironmentMaps) {
+        data.WriteUInt32(uint32_t(story.size()));
+        for (const auto cell : story) data.WriteUInt32(cell);
+    }
+    data.WriteUInt32(uint32_t(context.EnvironmentRooms.size()));
+    for (const auto& room : context.EnvironmentRooms) {
+        data.WriteUInt16(room.CanonicalID);data.WriteByte(room.Story);
+        data.WriteUInt32(uint32_t(room.SpatialTileOrder.size()));
+        for (const auto tile : room.SpatialTileOrder) data.WriteUInt32(uint32_t(tile));
+    }
+    return Files::Hash::CalculateHash(data.ToArray());
+}
+
+// Counts are source room-manager state, not a fresh entity query. Bind their
+// identities and tile-visit multiplicity before staging a native continuation.
+void RouteRoomCounts(Archive& io, const VMContext& context, std::vector<int32_t>& counts) {
+    uint32_t signature=RouteRoomSignature(context), stored=signature;
+    io.value(stored);Require(stored==signature,"route room geometry changed");
+    const auto n=io.count(counts.size(),2049); // 2048 canonical rooms plus native sentinel.
+    Require(n==context.EnvironmentRooms.size(),"route room count domain changed");
+    if (io.in) counts.resize(n);
+    for (size_t i=0;i<n;++i) {
+        auto canonical=context.EnvironmentRooms[i].CanonicalID;
+        auto story=context.EnvironmentRooms[i].Story;
+        const auto expectedID=canonical;
+        const auto expectedStory=story;
+        io.value(canonical);io.value(story);io.value(counts[i]);
+        Require(canonical==expectedID && story==expectedStory,"route room identity changed");
+        Require(counts[i]>=0,"negative cached route object count");
+    }
+}
+
 uint32_t BehaviorSignature(BHAV& tree) {
     st::Writer bytes(st::Endian::Little);
     bytes.WriteByte(tree.Type);
@@ -181,6 +217,8 @@ struct Record {
     VMEntity* container = nullptr;
     std::vector<VMEntity*> slots;
     std::unique_ptr<AvatarRecord> avatar;
+    bool numericFootprintKnown = false;
+    std::array<int32_t,4> numericFootprint{};
 };
 }
 
@@ -241,6 +279,60 @@ public:
         vm(vm), io(archive), version(version) {}
     bool PreviewUnpublishedPortals = false;
     int64_t ModelTickLimit;
+
+    static void validateNumericFootprint(const Record& r) {
+        // Signed, zero-area and inverted rectangles are literal source state.
+        // Unknown is the sole tag; it may not smuggle stale bounds.
+        Require(r.numericFootprintKnown || r.numericFootprint==std::array<int32_t,4>{},
+                "unknown numeric footprint retains bounds");
+    }
+    void captureNumericFootprint(Record& r, const VMEntity& e) {
+        r.numericFootprintKnown=e.TS1NumericFootprintKnown;
+        r.numericFootprint=e.TS1NumericFootprint;
+        validateNumericFootprint(r);
+    }
+    void numericFootprint(Record& r) {
+        if (version < 19) return;
+        io.value(r.numericFootprintKnown);io.scalars(r.numericFootprint);
+        validateNumericFootprint(r);
+    }
+    void prepareNumericFootprints(std::map<int16_t,Record>& records, const OBJM& classic) {
+        for (auto& entry : records) {
+            auto& r=entry.second;
+            if (version >= 19) { validateNumericFootprint(r); continue; }
+            // <=18 has no generic numeric channel. Its original ObjM rectangle
+            // is the authoritative retained value, including contained/OOW.
+            const auto found=classic.ObjectData.find(entry.first);
+            Require(found!=classic.ObjectData.end() && found->second.Instance &&
+                    found->second.Instance->OBJT && r.entity && r.entity->Object && r.entity->Object->OBJ &&
+                    found->second.Instance->OBJT->GUID==r.entity->Object->OBJ->GUID,
+                    "legacy numeric footprint identity changed");
+            const auto& b=found->second.Instance->Footprint;
+            r.numericFootprintKnown=true;
+            r.numericFootprint={b.MinX,b.MinY,b.MaxX,b.MaxY};
+        }
+    }
+
+    // Native continuation retains the DVD manager traversal independently of
+    // the VM's sorted dispatch list. Decode into staging: never reorder the
+    // running world until all identities and execution records validate.
+    void objectManagerOrder(bool& known, std::vector<VMEntity*>& order,
+                            const std::set<int16_t>& included) {
+        io.value(known);
+        const auto count = io.count(order.size(), 32767);
+        Require(known || count == 0, "unknown object-manager order has entries");
+        Require(!known || count == included.size(), "incomplete object-manager order");
+        if (io.in) order.resize(count);
+        std::set<int16_t> seen;
+        for (auto& entity : order) {
+            if (io.out) Require(entity && entity->Object && entity->Object->OBJ,
+                                "object-manager order lacks an object definition");
+            reference(entity, "object-manager order");
+            Require(entity && !entity->Dead && !entity->GhostImage &&
+                    included.count(entity->ObjectID), "object-manager identity outside saved graph");
+            Require(seen.insert(entity->ObjectID).second, "duplicate object-manager identity");
+        }
+    }
 
     static int64_t motivePhase(const VMAvatar& avatar) { return avatar.MotiveDecay->LastTick; }
 
@@ -837,6 +929,18 @@ public:
         else if (io.in) r.TS1SharedModelRouting = false;
         else Require(!r.TS1MotionToken,
                      "owned model route requires checkpoint version18");
+        if (version >= 19) {
+            io.value(r.TS1OriginalGraphRouting);io.value(r.TS1MaximumScore);
+            io.value(r.TS1MaximumScoreKnown);
+            Require(r.TS1MaximumScore >= -1, "original route maximum is below its initial value");
+            Require(r.TS1MaximumScoreKnown || r.TS1MaximumScore == -1,
+                    "unknown original route maximum retains a score");
+        } else if (io.in) {
+            r.TS1OriginalGraphRouting=false;r.TS1MaximumScore=-1;r.TS1MaximumScoreKnown=false;
+        } else Require(!vm.TS1 || !r.TS1OriginalGraphRouting ||
+                     (r.State == VMRoutingFrameState::INITIAL && !r.TS1MaximumScoreKnown) ||
+                     r.State == VMRoutingFrameState::FAILED,
+                     "original route graph requires checkpoint version19");
         // Older snapshots cannot establish a route-owned request from live PD72.
         if (version >= 10) { io.value(r.TS1PendingFootprint); io.value(r.TS1PendingFootprintKnown); }
         else if (io.in) { r.TS1PendingFootprint = 0; r.TS1PendingFootprintKnown = false; }
@@ -1332,6 +1436,7 @@ public:
             r.position = e.Position(); r.container = e.Container; r.slot = e.Container ? e.ContainerSlot : -1;
             for (int i = 0; i < e.TotalSlots(); ++i) r.slots.push_back(e.GetSlot(i));
             r.list.assign(e.MyList.begin(), e.MyList.end());
+            if (version >= 19) captureNumericFootprint(r,e);
         }
         io.vector(r.attributes, 32768); io.vector(r.objectData, 1024); io.vector(r.list, 32768);
         Require(r.objectData.size() == e.ObjectData.size(), "incompatible object data");
@@ -1358,10 +1463,12 @@ public:
         thread(io.in ? *r.preparedThread : *e.Thread);
         if (isAvatar) { r.avatar = std::make_unique<AvatarRecord>(); avatar(*r.avatar, *av); }
         else if (io.out) validateModelMotion(Routing::TS1MotionRequest{}, nullptr, e.Thread->Stack, e.Thread.get());
+        numericFootprint(r);
     }
 
     void publish(std::map<int16_t, Record>& records, const OBJM& objm, bool validateOnly = false) {
         for (auto& p : participants) Require(records.count(p.first), "partial participant group");
+        prepareNumericFootprints(records,objm);
         for (auto& p : records) {
             auto& r = p.second;
             const auto* motion = r.avatar ? &r.avatar->modelMotion : nullptr;
@@ -1477,7 +1584,12 @@ public:
                 const auto& bounds = saved->second.Instance->Footprint;
                 if (version >= 10) {
                     if (a.hasFootprint) live->RestoreTS1Footprint(a.minX, a.minY, a.maxX, a.maxY);
-                    else live->Footprint.reset();
+                    else {
+                        // The old native registration flag did not erase the
+                        // independent numeric rectangle in its classic graph.
+                        live->RestoreTS1Footprint(bounds.MinX,bounds.MinY,bounds.MaxX,bounds.MaxY);
+                        live->Footprint.reset();
+                    }
                 } else live->RestoreTS1Footprint(bounds.MinX, bounds.MinY, bounds.MaxX, bounds.MaxY);
                 live->TS1Appearance.Body=std::move(a.bodyPart); live->TS1Appearance.Head=std::move(a.headPart);
                 live->DefaultSuits=a.suits; live->BodyOutfit(a.body); live->HeadOutfit(a.head);
@@ -1501,6 +1613,15 @@ public:
             if (vm.TS1 && e->Position() == LotView::Model::LotTilePos::OUT_OF_WORLD) {
                 e->SetRoom(0);
             }
+        }
+        // Containment placement and authored restore setters above may rebuild
+        // the numeric rectangle of a later/earlier participant. Publish the
+        // staged source values only after ALL those commits, independently of
+        // each object's separate native occupancy Footprint.
+        for (auto& entry : records) {
+            auto& r=entry.second;
+            r.entity->TS1NumericFootprintKnown=r.numericFootprintKnown;
+            r.entity->TS1NumericFootprint=r.numericFootprint;
         }
     }
 private:
@@ -1692,6 +1813,26 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool d
             pendingCodec.reference(entity, "pending removal");
         }
     }
+    if (captureVersion >= 19) {
+        vm.ValidateTS1ObjectManagerOrder();
+        bool known = vm.TS1ObjectManagerOrderKnown;
+        std::vector<VMEntity*> order;
+        if (known) for (auto entity : vm.TS1ObjectManagerOrder)
+            if (entity && !entity->Dead && !entity->GhostImage && entity->Object && entity->Object->OBJ)
+                order.push_back(entity);
+        InteractionCheckpointCodec managerCodec(vm, header, captureVersion);
+        managerCodec.objectManagerOrder(known, order, done);
+        std::vector<int32_t> counts;
+        for (const auto& room : vm.Context->EnvironmentRooms) counts.push_back(room.SpatialObjects);
+        RouteRoomCounts(header,*vm.Context,counts);
+        auto spatial=VMTS1SpatialCheckpoint::Capture(vm);
+        VMTS1SpatialCheckpoint::Fields(header,vm,spatial,[&](VMEntity*& entity,const char* use) {
+            if (entity) Require(entity->Object && entity->Object->OBJ,
+                                "spatial cache lacks an object definition");
+            managerCodec.reference(entity,use);
+            Require(!entity || done.count(entity->ObjectID),"spatial cache identity outside saved graph");
+        });
+    }
     Require(data.size() <= ODHI::MaxBytes, "snapshot exceeds limit");
     const auto objmHash = Files::Hash::CalculateHash(objm->Data);
     const auto native = data.ToArray();
@@ -1863,6 +2004,21 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     // Historical captures could not contain pending removals. Empty is their
     // migration default, never a queue inferred from templates or loaded Init.
     auto preparedRemovals = vm.PrepareTS1PendingRemovalRestore(pendingRemovals);
+    bool managerOrderKnown = false;
+    std::vector<VMEntity*> managerOrder;
+    std::vector<int32_t> routeRoomCounts;
+    std::unique_ptr<VMTS1SpatialCheckpoint::State> spatialState;
+    if (version >= 19) {
+        std::set<int16_t> included;
+        for (const auto& record : records) included.insert(record.first);
+        codec.objectManagerOrder(managerOrderKnown, managerOrder, included);
+        RouteRoomCounts(fields,*vm.Context,routeRoomCounts);
+        spatialState=std::make_unique<VMTS1SpatialCheckpoint::State>();
+        VMTS1SpatialCheckpoint::Fields(fields,vm,*spatialState,[&](VMEntity*& entity,const char* use) {
+            codec.reference(entity,use);
+            Require(!entity || included.count(entity->ObjectID),"spatial cache identity outside saved graph");
+        });
+    }
     Require(!input.has_more(), "trailing execution state");
     if (version >= 7) {
         // v7 is a complete native graph, not a partial execution overlay.
@@ -1908,7 +2064,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
         const auto& record = entry.second; const auto& a = *record.avatar;
         const bool inWorld = !record.container && record.position != LotView::Model::LotTilePos::OUT_OF_WORLD;
         Require(inWorld || !a.hasFootprint, "contained or out-of-world avatar has a footprint");
-        if (schedulerWordsBound && inWorld && a.hasFootprint) {
+        if (version <= 18 && schedulerWordsBound && inWorld && a.hasFootprint) {
             const auto saved = objm->ObjectData.find(entry.first);
             Require(saved != objm->ObjectData.end() && saved->second.Instance, "missing classic avatar footprint");
             const auto& b = saved->second.Instance->Footprint;
@@ -1969,6 +2125,11 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     }
     vm.TS1TextInput=std::move(textInput);
     vm.CommitTS1PendingRemovalRestore(preparedRemovals);
+    vm.TS1ObjectManagerOrderKnown = managerOrderKnown;
+    vm.TS1ObjectManagerOrder.swap(managerOrder);
+    for (size_t i=0;i<routeRoomCounts.size();++i)
+        vm.Context->EnvironmentRooms[i].SpatialObjects=routeRoomCounts[i];
+    if (spatialState) VMTS1SpatialCheckpoint::Publish(vm,std::move(*spatialState));
     // Reopening the source of a saved visit must finish its accepted transfer.
     // Loading a previous home snapshot on arrival must never rearm that trip.
     if (departing && resumeDispatch) vm.Departure = std::move(departure);

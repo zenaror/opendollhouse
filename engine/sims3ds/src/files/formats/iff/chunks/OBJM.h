@@ -221,6 +221,8 @@ public:
     };
 
     std::map<int32_t, MappedObject> ObjectData; //std::map: stable element addresses
+    // Actual compressed record order; meaningful only when Decoded is true.
+    std::vector<int32_t> RecordOrder;
 
     /// TS1(sims): true when Prepare decoded every per-object record.
     uint32_t SourceSignature = 0;

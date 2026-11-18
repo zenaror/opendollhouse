@@ -65,4 +65,7 @@ bool ScoreTS1SlotProbe(const Files::Formats::IFF::Chunks::SLOTItem& slot,
 // Keep the machine's modulo32 result without a signed-overflow conversion.
 int32_t TS1SlotGoalPenalty(int32_t maximumScore, int32_t score);
 
+// DVD452129 uses integer 2:1 sectors; threshold ties remain diagonal.
+int TS1SlotHeadingBetween(st::Point from, st::Point to);
+
 }}}

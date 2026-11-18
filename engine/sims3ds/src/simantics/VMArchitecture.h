@@ -44,6 +44,10 @@ public:
     // pond sentinels. Empty entries derive coverage from ordinary floor tiles.
     std::vector<std::vector<uint8_t>> TS1FloorPresent;
     std::vector<uint8_t> TS1PoolTiles;
+    // Original routing consumes the signed ARRY10 channel independently of
+    // pool masks and the per-story ARRY8/108 flags without renderer sentinels.
+    std::vector<int8_t> TS1WaterTiles;
+    std::vector<std::vector<uint8_t>> TS1TileFlags;
     std::vector<std::vector<uint16_t>> TS1WallStyleTopLeft, TS1WallStyleTopRight;
 
     std::vector<std::vector<bool>> ObjectSupport;

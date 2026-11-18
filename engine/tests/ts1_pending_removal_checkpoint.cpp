@@ -93,7 +93,14 @@ static void pausedRoundtrip(){
 }
 static void malformedTail(){
  Fixture source;source.pending();auto raw=source.raw();Checkpoint::Capture(source.Machine,raw,false);
- const auto bytes=raw.Find("ODHI",1)->Data;const size_t countAt=bytes.size()-16;const size_t first=countAt+4;
+ const auto bytes=raw.Find("ODHI",1)->Data;
+ // New continuation sections may follow this FIFO. Locate its independently
+ // encoded unique fixture instead of corrupting whichever field is last.
+ st::Writer fifo(st::Endian::Little);fifo.WriteUInt32(source.ids().size());
+ for(const auto id:source.ids()){fifo.WriteUInt16(uint16_t(id));fifo.WriteUInt32(source.Def.GUID);}
+ const auto pattern=fifo.ToArray();const auto found=std::search(bytes.begin(),bytes.end(),pattern.begin(),pattern.end());
+ need(found!=bytes.end()&&std::search(found+1,bytes.end(),pattern.begin(),pattern.end())==bytes.end(),"pending FIFO fixture is absent or ambiguous");
+ const size_t countAt=size_t(found-bytes.begin()),first=countAt+4;
  for(int scenario=0;scenario<9;++scenario){
   Fixture target;target.pending();auto broken=raw;broken.Remove("ODMP",1);auto& data=broken.Find("ODHI",1)->Data;
   if(scenario==0){data[first+6]=data[first];data[first+7]=data[first+1];} // duplicate
@@ -101,7 +108,7 @@ static void malformedTail(){
   if(scenario==2){data[first]=0xff;data[first+1]=0xff;} // negative ID
   if(scenario==3){data[first]=0xff;data[first+1]=0x7f;} // unknown ID
   if(scenario==4)data[first+2]^=1; // wrong GUID
-  if(scenario==5)data.pop_back(); // truncated reference
+  if(scenario==5)data.resize(first+11); // truncated second reference, before later sections
   if(scenario==6){data[countAt]=0;data[countAt+1]=0x80;} // count overflow
   if(scenario==7)target.Objects[2]->Dead=true;
   if(scenario==8)target.Objects[2]->GhostImage=true;

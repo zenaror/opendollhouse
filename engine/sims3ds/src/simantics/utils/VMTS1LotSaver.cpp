@@ -250,6 +250,8 @@ struct Decoded {
     OBJMInstance Inst;
     std::string Unhandled;
     uint16_t TypeID = 0;
+    std::vector<uint8_t> Raw;
+    int32_t OffsetParity = 0;
 };
 
 const OBJD* ContentOBJD(uint32_t guid) {
@@ -513,6 +515,8 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         auto& rec = objm.Records[i];
         Decoded d;
         d.TypeID = objm.Table[i].second;
+        d.Raw = rec.Data;
+        d.OffsetParity = rec.Offset & 1;
         try {
             st::Reader io(rec.Data.data(), rec.Data.size(), st::Endian::Little);
             IffFieldEncode iop(&io, (rec.Offset & 1) == 1);
@@ -695,14 +699,17 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         VMEntity* root = RootContainer(e);
         LotTilePos pos = root->Position();
         int16_t dir = DirIndexOf(e);
+        const bool numericObject = VM->TS1;
         if (pos == LotTilePos::OUT_OF_WORLD) {
             inst.X = -16; inst.Y = -16; inst.Level = 1;
-            inst.Footprint.MinY = -24; inst.Footprint.MinX = -24; inst.Footprint.MaxY = -8; inst.Footprint.MaxX = -8;
+            if (!numericObject) {
+                inst.Footprint.MinY = -24; inst.Footprint.MinX = -24; inst.Footprint.MaxY = -8; inst.Footprint.MaxX = -8;
+            }
         } else {
             bool unmoved = base && base->Inst.X == pos.x && base->Inst.Y == pos.y && base->Inst.Level == pos.Level &&
                            base->Inst.ObjectData.size() > 1 && base->Inst.ObjectData[1] == dir;
             inst.X = pos.x; inst.Y = pos.y; inst.Level = std::max<int32_t>(1, pos.Level);
-            if (!unmoved || (dynamic_cast<VMAvatar*>(e) && e->Footprint && !e->Container)) {
+            if (!numericObject && (!unmoved || (ava && e->Footprint && !e->Container))) {
                 if (e->Footprint && e->Container == nullptr) {
                     inst.Footprint.MinX = e->Footprint->x1; inst.Footprint.MinY = e->Footprint->y1;
                     inst.Footprint.MaxX = e->Footprint->x2; inst.Footprint.MaxY = e->Footprint->y2;
@@ -719,6 +726,20 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                     inst.Footprint.MinY = pos.y - 8; inst.Footprint.MaxY = pos.y + 8;
                 }
             }
+        }
+        if (numericObject) {
+            // The DVD serializes each object's numeric rectangle even while
+            // contained or off-world. Never translate a template or invent a
+            // PD73-derived rectangle merely because no occupancy is registered.
+            // Registered occupancy can use a different geometry policy.
+            // Only the literal source numeric cache is authoritative here.
+            if (e->TS1NumericFootprintKnown) {
+                const auto& bounds = e->TS1NumericFootprint;
+                inst.Footprint.MinX = bounds[0]; inst.Footprint.MinY = bounds[1];
+                inst.Footprint.MaxX = bounds[2]; inst.Footprint.MaxY = bounds[3];
+            }
+            // Unknown legacy state retains the original/template numeric
+            // fields already copied into inst, including uninterpreted bits.
         }
 
         // attributes / temps / object data (FreeSO: ent.Attributes, thread.TempRegisters (TS1 has 8), ent.ObjectData)
@@ -1007,7 +1028,25 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         LastStats.Objects++;
         records[e->ObjectID] = std::move(rec);
     }
-    for (auto& kv : orig) if (!liveIds.count(kv.first)) LastStats.Removed++;
+    for (auto& kv : orig) if (!liveIds.count(kv.first)) {
+        const auto& historical = kv.second;
+        const auto guid = historical.OK && historical.Inst.OBJT ? historical.Inst.OBJT->GUID : 0;
+        if (guid && VM->HasTS1ObjectIdentity(kv.first, guid)) {
+            ++LastStats.Removed;
+        } else {
+            // Never turn unavailable/uninstantiated historical data into a
+            // deletion. Preserve raw bytes where parity permits; the writer
+            // can re-encode the complete decoded record at the other parity.
+            // Native complete-graph validation may explicitly refuse this
+            // save rather than silently discard an unrepresented instance.
+            if (!historical.OK) { Error = "cannot preserve undecoded historical object"; return false; }
+            OBJMRecordOut rec;
+            rec.ObjectID = uint16_t(kv.first); rec.TypeID = historical.TypeID;
+            rec.UseRaw = true; rec.Raw = historical.Raw; rec.RawOffsetParity = historical.OffsetParity;
+            rec.Instance = historical.Inst; rec.UnhandledBits = historical.Unhandled;
+            records.emplace(kv.first, std::move(rec));
+        }
+    }
     pDone = pTotal - 4; progress(0); // ADDED(sims) save progress: the other houses were not needed / are done
 
     // final objt (OBJTEntry views for the writer: portal / person record layout)
@@ -1026,13 +1065,32 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         }
     }
 
-    // record order: objects that are new since the load first (newest first), then the saved order
+    // The source serializer follows manager order. Unknown legacy/synthetic
+    // machines retain the previous compatibility ordering without claiming
+    // that descending IDs establish original birth order.
     std::vector<OBJMRecordOut> outRecs;
-    {
+    if (VM->TS1 && VM->TS1ObjectManagerOrderKnown) {
+        try { VM->ValidateTS1ObjectManagerOrder(); }
+        catch (const std::exception& e) { Error = e.what(); return false; }
+        std::set<int16_t> emitted;
+        for (auto* entity : VM->TS1ObjectManagerOrder) {
+            const auto found = records.find(entity->ObjectID);
+            if (found == records.end()) { Error = "ordered manager instance has no save record"; return false; }
+            outRecs.push_back(found->second);
+            emitted.insert(entity->ObjectID);
+        }
+        // Missing historical instances retain their relative disk order.
+        for (const auto id : origOrder) if (!emitted.count(id)) {
+            const auto found = records.find(id);
+            if (found != records.end()) { outRecs.push_back(found->second); emitted.insert(id); }
+        }
+        if (emitted.size() != records.size()) { Error = "incomplete ordered save graph"; return false; }
+    } else {
         std::vector<int16_t> fresh;
         for (auto& kv : records) {
             auto it = orig.find(kv.first);
-            bool kept = it != orig.end() && it->second.OK && it->second.Inst.OBJT && it->second.Inst.OBJT->GUID == kv.second.Instance.OBJD->GUID;
+            bool kept = it != orig.end() && it->second.OK && it->second.Inst.OBJT &&
+                kv.second.Instance.OBJT && it->second.Inst.OBJT->GUID == kv.second.Instance.OBJT->GUID;
             if (!kept) fresh.push_back(kv.first);
         }
         std::sort(fresh.begin(), fresh.end(), [](int16_t a, int16_t b) { return a > b; });

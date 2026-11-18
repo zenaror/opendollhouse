@@ -82,6 +82,10 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/engine/VMTS1Travel.cpp
   sims3ds/src/simantics/engine/VMThread.cpp
   sims3ds/src/simantics/engine/TS1SlotGeometry.cpp
+  sims3ds/src/simantics/engine/Routing/VMTS1RoutePath.cpp
+  sims3ds/src/simantics/engine/Routing/VMTS1RouteGraph.cpp
+  sims3ds/src/simantics/engine/Routing/VMTS1RouteScene.cpp
+  sims3ds/src/simantics/engine/Routing/VMTS1RouteWorld.cpp
   sims3ds/src/simantics/engine/translator/VMTranslator.cpp
   sims3ds/src/simantics/entities/VMAvatar.cpp
   sims3ds/src/simantics/entities/VMAvatarMotiveDecay.cpp
@@ -273,11 +277,14 @@ set(ODH_ORIGINAL_ARITHMETIC_SOURCES
   sims3ds/src/simantics/primitives/VMFindBestAction.cpp
   sims3ds/src/simantics/engine/TS1SlotGeometry.cpp
   sims3ds/src/simantics/engine/VMSlotParser.cpp
+  sims3ds/src/simantics/engine/Routing/VMTS1RouteGraph.cpp
   sims3ds/src/simantics/engine/VMRoutingFrame.cpp
   sims3ds/src/simantics/entities/VMAvatar.cpp
+  sims3ds/src/simantics/engine/Routing/VMTS1RouteWorld.cpp
   sims3ds/src/simantics/primitives/VMLookTowards.cpp
   tests/original_autonomy_contract.cpp
   tests/ts1_slot_geometry_contract.cpp
+  tests/ts1_original_route_graph_contract.cpp
   tests/ts1_motion_request_contract.cpp
   tests/ts1_authored_slot_consumer_contract.cpp)
 if(MSVC)
@@ -593,6 +600,35 @@ if(BUILD_TESTING)
   add_executable(odh-ts1-motion-owner-lifecycle-contract tests/ts1_motion_owner_lifecycle_contract.cpp)
   target_link_libraries(odh-ts1-motion-owner-lifecycle-contract PRIVATE odh_engine)
   add_test(NAME ts1-motion-owner-lifecycle-contract COMMAND odh-ts1-motion-owner-lifecycle-contract)
+  add_executable(odh-ts1-route-facing-contract tests/ts1_route_facing_contract.cpp)
+  target_link_libraries(odh-ts1-route-facing-contract PRIVATE odh_engine)
+  add_test(NAME ts1-route-facing-contract COMMAND odh-ts1-route-facing-contract)
+  add_executable(odh-ts1-original-route-graph-contract tests/ts1_original_route_graph_contract.cpp)
+  target_link_libraries(odh-ts1-original-route-graph-contract PRIVATE odh_engine)
+  add_test(NAME ts1-original-route-graph-contract COMMAND odh-ts1-original-route-graph-contract)
+  add_executable(odh-ts1-original-route-scene-contract tests/ts1_original_route_scene_contract.cpp)
+  target_link_libraries(odh-ts1-original-route-scene-contract PRIVATE odh_engine)
+  add_test(NAME ts1-original-route-scene-contract COMMAND odh-ts1-original-route-scene-contract)
+  add_executable(odh-ts1-object-manager-order-contract tests/ts1_object_manager_order_contract.cpp)
+  target_link_libraries(odh-ts1-object-manager-order-contract PRIVATE odh_engine)
+  add_test(NAME ts1-object-manager-order-contract COMMAND odh-ts1-object-manager-order-contract)
+  add_executable(odh-ts1-numeric-footprint-contract tests/ts1_numeric_footprint_contract.cpp)
+  target_link_libraries(odh-ts1-numeric-footprint-contract PRIVATE odh_engine)
+  add_test(NAME ts1-numeric-footprint-contract COMMAND odh-ts1-numeric-footprint-contract)
+  add_executable(odh-ts1-spatial-checkpoint-contract tests/ts1_spatial_checkpoint_contract.cpp)
+  target_link_libraries(odh-ts1-spatial-checkpoint-contract PRIVATE odh_engine)
+  add_test(NAME ts1-spatial-checkpoint-contract COMMAND odh-ts1-spatial-checkpoint-contract)
+  add_executable(odh-ts1-route-obstacle-callback-contract tests/ts1_route_obstacle_callback_contract.cpp)
+  target_link_libraries(odh-ts1-route-obstacle-callback-contract PRIVATE odh_engine)
+  add_test(NAME ts1-route-obstacle-callback-contract COMMAND odh-ts1-route-obstacle-callback-contract)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    foreach(contract odh-ts1-route-obstacle-callback-contract odh-ts1-numeric-footprint-contract
+        odh-ts1-spatial-checkpoint-contract odh-ts1-original-route-scene-contract
+        odh-ts1-original-route-graph-contract odh-ts1-object-manager-order-contract)
+      target_compile_options(${contract} PRIVATE -g0)
+      target_link_options(${contract} PRIVATE -Wl,--strip-debug)
+    endforeach()
+  endif()
   add_executable(odh-ts1-fresh-lifecycle tests/ts1_fresh_lifecycle.cpp)
   target_link_libraries(odh-ts1-fresh-lifecycle PRIVATE odh_engine)
   add_test(NAME ts1-fresh-lifecycle COMMAND odh-ts1-fresh-lifecycle)

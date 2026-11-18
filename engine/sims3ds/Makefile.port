@@ -60,4 +60,5 @@ build-port/simcache: $(OBJ) $(APP_OBJ) build-port/src/tools/simcache.o
 -include build-port/src/tools/simcache.d
 
 # Preserve original simulation arithmetic without global compiler flag changes.
+build-port/src/simantics/engine/Routing/VMTS1RouteGraph.o build-port/src/simantics/engine/Routing/VMTS1RouteWorld.o: CXXFLAGS += -fno-fast-math -ffp-contract=off
 build-port/src/simantics/primitives/VMFindBestAction.o build-port/src/common/TS1/TS1Curve.o build-port/src/simantics/engine/TS1SlotGeometry.o build-port/src/simantics/engine/VMSlotParser.o build-port/src/simantics/engine/VMRoutingFrame.o build-port/src/simantics/entities/VMAvatar.o build-port/src/simantics/primitives/VMLookTowards.o: CXXFLAGS += -fno-fast-math -ffp-contract=off

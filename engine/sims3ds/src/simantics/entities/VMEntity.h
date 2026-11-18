@@ -7,6 +7,7 @@
 #pragma once
 namespace FSO { namespace SimAntics { namespace Engine { namespace Utils { class InteractionCheckpointCodec; }}}}
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 #include <list>
@@ -211,6 +212,9 @@ public:
     uint64_t DynamicSpriteFlags = 0; /** Used to show/hide dynamic sprites **/
     uint64_t DynamicSpriteFlags2 = 0;
     std::unique_ptr<Model::Routing::VMObstacle> Footprint; // null when the object has zero extent
+    // DVD object+100..10c is numeric state, independent of occupancy/containment.
+    bool TS1NumericFootprintKnown = false;
+    std::array<int32_t,4> TS1NumericFootprint{}; // x1,y1,x2,y2
 
     std::unique_ptr<FSO::LotView::Components::EntityComponent> WorldUI;
 
@@ -324,6 +328,11 @@ public:
     /// Returns null for zero-extent objects. (caller owns the result)
     virtual std::unique_ptr<Model::Routing::VMObstacle> GetObstacle(const LotTilePos& pos, DirectionT dir) = 0;
 
+    // Pure hypothetical geometry never publishes the retained source rectangle.
+    std::array<int32_t,4> GetTS1NumericFootprint(const LotTilePos& pos, DirectionT dir);
+    void RememberTS1Footprint();
+    void RefreshTS1Footprint();
+    void RestoreTS1Footprint(int minX, int minY, int maxX, int maxY);
     virtual void PrePositionChange(VMContext* context);
     virtual void PositionChange(VMContext* context, bool noEntryPoint);
     virtual VMPlacementResult SetPosition(const LotTilePos& pos, DirectionT direction, VMContext* context);

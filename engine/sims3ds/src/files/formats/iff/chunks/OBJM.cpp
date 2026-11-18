@@ -253,6 +253,7 @@ void OBJM::Read(IffFile* iff, st::Reader& stream)
     IDToOBJTMap.clear();
     IDToOBJT.clear();
     ObjectData.clear();
+    RecordOrder.clear();
     SourceSignature = FSO::Files::Hash::CalculateHash(stream.raw(stream.size()), static_cast<int32_t>(stream.size()));
     stream.seek(0);
     st::Reader& io = stream;
@@ -293,7 +294,8 @@ void OBJM::Read(IffFile* iff, st::Reader& stream)
                 if (id == 0) { terminated = true; break; }
                 auto type = iop.ReadUInt16();
                 if (iop.StreamEnd) throw std::runtime_error("OBJM: truncated object type");
-                IDToOBJTMap[id] = type;
+                if (!IDToOBJTMap.emplace(id, type).second)
+                    throw std::runtime_error("OBJM: duplicate object table ID");
             }
             if (!terminated) throw std::runtime_error("OBJM: missing object table terminator");
             iop.Interrupt();
@@ -327,6 +329,9 @@ bool OBJM::Prepare(const std::function<OBJMResource(uint16_t typeID)>& typeIdToR
         return false;
     }
     std::map<int32_t, MappedObject> decoded;
+    std::vector<int32_t> recordOrder;
+    RecordOrder.clear();
+    Decoded = false;
     auto idToResource = [&](int16_t objID) -> OBJMResource {
         auto it = IDToOBJTMap.find((uint16_t)objID);
         if (it == IDToOBJTMap.end()) throw std::runtime_error("OBJM: unknown object id " + std::to_string(objID));
@@ -348,14 +353,18 @@ bool OBJM::Prepare(const std::function<OBJMResource(uint16_t typeID)>& typeIdToR
             mapped.ContainerSlot = obj->ObjectData[3];
             mapped.Data = obj->ObjectData;
             if (obj->OBJT != nullptr) { mapped.Name = obj->OBJT->Name; mapped.GUID = obj->OBJT->GUID; }
-            decoded[mapped.ObjectID] = mapped;
+            if (!decoded.emplace(mapped.ObjectID, mapped).second)
+                throw std::runtime_error("OBJM: duplicate object record");
+            recordOrder.push_back(mapped.ObjectID);
         }
     } catch (std::exception& e) {
         DecodeError = e.what();
         return false;
     }
     ObjectData = std::move(decoded);
+    RecordOrder = std::move(recordOrder);
     Decoded = true;
+    DecodeError.clear();
     return true;
 }
 

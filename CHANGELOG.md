@@ -8,8 +8,9 @@ Notable changes for players and contributors, following
 ### Changed
 
 - Interaction positions use the original oriented search and weighted destination
-  selection, including the chosen chair's entry action. Other pathfinding
-  differences remain under comparison with Complete Collection.
+  selection, including the chosen chair's entry action. Walking paths also use
+  the original weighted regions, corner refinement and final-facing rules.
+  Movement and animation timing differences remain under comparison.
 - Walking and turning share a movement request that can survive saving and
   reopening a house. New saves require updated builds when transferred between
   platforms. Original-game save behavior is still under comparison.
@@ -48,6 +49,13 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Sims can plan a path while seated and leave the chair to reach another object,
+  including a bed.
+- Preserve the saved position information used by pathfinding for carried and
+  off-lot objects. Prevent a crash when a path check moves or contains an object.
+- Saving and reopening preserves the object traversal order and room-manager
+  history used by pathfinding. Full original-game continuation remains under
+  comparison; sharing new saves requires updated builds on every device.
 - Autonomous action scoring now applies the original room-dependent adjustment
   after an action's checks. Objects in another room no longer advertise the
   same room benefit as nearby objects.
@@ -60,10 +68,9 @@ Notable changes for players and contributors, following
 - New walking paths use the original corner sampling, position constraints and
   separate steering and stationary-turn rules. Some pathfinding and final-step
   differences remain under comparison.
-- Ordinary walking saves rebuild their path when resumed, following the original
-  continuation rule while preserving queued actions and progress. More complex
-  routes retain their native continuation until their original behavior is
-  established. Older native saves keep their recorded motion policy on load.
+- Imported classic saves can resume ordinary walking while preserving queued
+  actions and progress. More complex continuation remains under comparison.
+  Older native saves keep their recorded motion policy on load.
 - Destination checks use the requested footprint and candidate direction, then
   restore the Sim's heading and clear the temporary footprint extension.
 

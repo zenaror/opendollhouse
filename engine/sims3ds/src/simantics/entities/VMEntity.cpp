@@ -511,6 +511,15 @@ bool VMEntity::ExecuteEntryPoint(int32_t entry, VMContext* context, bool runImme
             frame->Routine = routine;
             frame->StackObject = stackOBJ;
             frame->Args = args;
+            if (entry==5 && argsIn==nullptr && context->VM->TS1) {
+                // DVD422d79 forwards a null argument pointer. The interpreter
+                // (4749b7) then copies the declared arguments from its own
+                // temporary bank; the other object's ID is only StackObject.
+                if (!Thread || routine->Arguments>Thread->TempRegisters.size())
+                    throw std::runtime_error("Original intersection check lacks its argument bank");
+                frame->Args.assign(std::max<size_t>(4,routine->Arguments),0);
+                std::copy_n(Thread->TempRegisters.begin(),routine->Arguments,frame->Args.begin());
+            }
 
             if (runImmediately) {
                 auto checkResult = VMThread::EvaluateCheck(context, this, frame);
@@ -603,7 +612,10 @@ void VMEntity::SetFlag(VMEntityFlags flag, bool set) {
     if (set) ObjectData[(int)VMStackObjectVariable::Flags] |= (int16_t)(flag);
     else ObjectData[(int)VMStackObjectVariable::Flags] &= ((int16_t)~(int32_t)(flag));
 
-    if (flag == VMEntityFlags::HasZeroExtent) Footprint = GetObstacle(Position(), Direction());
+    if (flag == VMEntityFlags::HasZeroExtent) {
+        if (Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1) RefreshTS1Footprint();
+        else Footprint = GetObstacle(Position(), Direction());
+    }
     return;
 }
 
@@ -664,8 +676,10 @@ bool VMEntity::SetValue(VMStackObjectVariable var, int16_t value) {
             // breakpoint (QA3 Q6), and objects that clear the flag stayed walk-through.
             auto old = ObjectData[(int16_t)var];
             ObjectData[(int16_t)var] = value;
-            if (((value ^ old) & (int32_t)VMEntityFlags::HasZeroExtent) > 0)
-                Footprint = GetObstacle(Position(), Direction());
+            if (((value ^ old) & (int32_t)VMEntityFlags::HasZeroExtent) > 0) {
+                if (Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1) RefreshTS1Footprint();
+                else Footprint = GetObstacle(Position(), Direction());
+            }
             if (dynamic_cast<VMAvatar*>(this) != nullptr && ((value ^ old) & (int32_t)VMEntityFlags::Burning) > 0)
                 this->Reset(Thread->Context);
             return true;
@@ -954,11 +968,70 @@ void VMEntity::Delete(bool cleanupAll, VMContext* context) {
     }
 }
 
+std::array<int32_t,4> VMEntity::GetTS1NumericFootprint(const LotTilePos& pos, DirectionT dir) {
+    unsigned bits = static_cast<unsigned>(dir), d = 0;
+    if (bits && !(bits & (bits-1))) while ((bits >>= 1) != 0) ++d;
+    d %= 8;
+    const uint16_t mask = Object && Object->OBJ ? uint16_t(Object->OBJ->FootprintMask) : 0;
+    int width = Object && Object->OBJ ? int16_t(Object->OBJ->TileWidth) : 0;
+    if (width == 0) width = 16; // 435244 defaults BEFORE signed division.
+    int half = width / 2;
+    uint16_t extension = 0;
+    if (auto* actor = dynamic_cast<VMAvatar*>(this)) {
+        half = ((actor->GetPersonData(static_cast<VMPersonDataVariable>(68)) & 1) ||
+                (actor->GetPersonData(static_cast<VMPersonDataVariable>(84)) & 1)) ? 0 : 3;
+        if (!(d & 1)) extension = uint16_t(actor->GetPersonData(static_cast<VMPersonDataVariable>(73)));
+    }
+    int e[4];
+    for (int i=0; i<4; ++i) e[i] = ((mask >> (4*i)) & 15) - ((extension >> (4*i)) & 15);
+    const unsigned q = ((8-d)/2)%4;
+    return {pos.x-half+e[(q+3)%4],pos.y-half+e[q],
+            pos.x+half-e[(q+1)%4],pos.y+half-e[(q+2)%4]};
+}
+
+void VMEntity::RememberTS1Footprint() {
+    // A source numeric rectangle may intentionally differ from physical native
+    // occupancy (odd heading, width1, zero/inverted bounds). Never replace it
+    // with a renderer/placement approximation merely when unregistering.
+    if (!TS1NumericFootprintKnown && Footprint) {
+        TS1NumericFootprint = {Footprint->x1,Footprint->y1,Footprint->x2,Footprint->y2};
+        TS1NumericFootprintKnown = true;
+    }
+}
+
+void VMEntity::RefreshTS1Footprint() {
+    auto physical = GetObstacle(Position(), Direction());
+    TS1NumericFootprint = GetTS1NumericFootprint(Position(), Direction());
+    TS1NumericFootprintKnown = true;
+    if (Container || Position() == LotTilePos::OUT_OF_WORLD) { Footprint.reset(); return; }
+    Footprint = std::move(physical);
+}
+
+void VMEntity::RestoreTS1Footprint(int minX, int minY, int maxX, int maxY) {
+    TS1NumericFootprint = {minX,minY,maxX,maxY};
+    TS1NumericFootprintKnown = true;
+    if (Container || Position() == LotTilePos::OUT_OF_WORLD ||
+        (!dynamic_cast<VMAvatar*>(this) && GetFlag(VMEntityFlags::HasZeroExtent))) {
+        Footprint.reset(); return;
+    }
+    // Generic source bounds are not the native placement rectangle: signed
+    // width, odd headings and width1 deliberately have different results.
+    // Restoring saved numeric state must not change that placement policy.
+    if (!dynamic_cast<VMAvatar*>(this)) {
+        Footprint = GetObstacle(Position(), Direction());
+        return;
+    }
+    Footprint = std::make_unique<Routing::VMObstacle>();
+    Footprint->x1=minX; Footprint->y1=minY; Footprint->x2=maxX; Footprint->y2=maxY;
+}
+
 void VMEntity::PrePositionChange(VMContext* /*context*/) {
+    RememberTS1Footprint();
 }
 
 void VMEntity::PositionChange(VMContext* context, bool noEntryPoint) {
-    Footprint = GetObstacle(Position(), Direction());
+    if (context && context->VM && context->VM->TS1) RefreshTS1Footprint();
+    else Footprint = GetObstacle(Position(), Direction());
     if (!(GhostImage || noEntryPoint)) ExecuteEntryPoint(9, context, true); //Placement
 }
 

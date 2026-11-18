@@ -469,7 +469,7 @@ void VMContext::FlushSpatialLighting() {
         // result would introduce an extra F1 and alter future source order.
         const float previousFactor = Common::TS1::DirectVisualFactor(room.SpatialLightFactor,
             room.SpatialPool, VisualOverhead[id], room.SpatialLamps, room.SpatialPeople);
-        int people = 0, lamps = 0;
+        int people = 0, lamps = 0, objects = 0;
         for (const auto tile : room.SpatialTileOrder) {
             if (tile < 0 || size_t(tile) >= SpatialTileHeads[room.Story - 1].size()) continue;
             auto* root = VM->GetObjectById(SpatialTileHeads[room.Story - 1][size_t(tile)]);
@@ -484,6 +484,7 @@ void VMContext::FlushSpatialLighting() {
                 const auto source = SpatialSource(*this, entity);
                 ++SpatialObjectVisits;
                 if (!source.Hidden && source.ObjectRoom >= 0 && entity->Object && entity->Object->OBJ) {
+                    ++objects;
                     const auto type = entity->Object->OBJ->ObjectType;
                     if (type == OBJDType::Person) ++people;
                     if ((source.Flags2 & 0x400) && SpatialLights.Interior(source.Position) && type != OBJDType::Portal) ++lamps;
@@ -497,6 +498,7 @@ void VMContext::FlushSpatialLighting() {
             VisualOverhead[id], lamps, people);
         room.SpatialLightFactor = room.LightFactor; room.SpatialPool = room.Pool;
         room.SpatialLamps = lamps; room.SpatialPeople = people;
+        room.SpatialObjects = objects;
         if (previousFactor != factor) SpatialSchedule.Mark(id); // synchronous original changed-factor F1
     });
     SpatialSnapshotDirty = true;

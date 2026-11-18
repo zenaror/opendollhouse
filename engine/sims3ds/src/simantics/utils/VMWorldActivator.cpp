@@ -124,6 +124,12 @@ template<class T> static T* Req(T* p, const char* what) {
 }
 
 VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool deferInteractionRestore) {
+    if (VM->TS1 && VM->Entities.empty()) {
+        // This load owns a fresh empty graph, so births during installation
+        // can be retained independently of the saved record-order suffix.
+        VM->TS1ObjectManagerOrder.clear();
+        VM->TS1ObjectManagerOrderKnown = true;
+    }
     SIMI* simi = Req(iff->Get<SIMI>(1), "SIMI#1");
     Engine::Utils::VMTS1InteractionCheckpoint::ValidateFinanceBinding(*iff);
     const bool legacyFinance = Engine::Utils::VMTS1InteractionCheckpoint::PreflightLegacyBudget(*iff);
@@ -197,6 +203,22 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     VMArchitecture* arch = VM->Context->Architecture();
     ARRY* advFloors = iff->Get<ARRY>(11);
     std::vector<uint8_t> flags = Req(iff->Get<ARRY>(8), "ARRY#8")->TransposeData();
+    // Original architecture+30/story is ARRY8/108, independent of the
+    // rendered floor/pool sentinels. Keep absent upper-story data unknown;
+    // the source's missing108 initialization has not been established.
+    arch->TS1TileFlags.assign(size_t(arch->Stories), {});
+    for (int level = 0; level < arch->Stories && level < 2; ++level) {
+        auto* source = iff->Get<ARRY>(uint16_t(8 + 100 * level));
+        if (!source) continue;
+        const auto raw = level == 0 ? flags : source->TransposeData();
+        auto& targetFlags = arch->TS1TileFlags[size_t(level)];
+        targetFlags.assign(size_t(arch->Width) * arch->Height, 0);
+        for (int y = 0; y < arch->Height && y < 64; ++y)
+            for (int x = 0; x < arch->Width && x < 64; ++x) {
+                const size_t from = size_t(y) * 64 + x;
+                if (from < raw.size()) targetFlags[size_t(y) * arch->Width + x] = raw[from];
+            }
+    }
     const auto logicalWalls = [&](ARRY* source, bool advanced, int level) {
         const auto raw = source->TransposeData();
         const size_t stride = advanced ? 14 : 8;
@@ -237,6 +259,16 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     }
     std::vector<uint8_t> pools = Req(iff->Get<ARRY>(9), "ARRY#9")->TransposeData();
     std::vector<uint8_t> water = Req(iff->Get<ARRY>(10), "ARRY#10")->TransposeData();
+    arch->TS1WaterTiles.assign(size_t(arch->Width) * arch->Height, int8_t(-1));
+    for (int y = 0; y < arch->Height && y < 64; ++y)
+        for (int x = 0; x < arch->Width && x < 64; ++x) {
+            const size_t from = size_t(y) * 64 + x;
+            if (from < water.size()) {
+                const auto value = water[from];
+                arch->TS1WaterTiles[size_t(y) * arch->Width + x] = value <= 127
+                    ? int8_t(value) : int8_t(int(value) - 256);
+            }
+        }
     arch->TS1PoolTiles.assign(size_t(size) * size, 0);
     if (BlueprintPtr) BlueprintPtr->TerrainPoolBlocked.assign(size_t(size) * size, 0);
     for (int y = 0; y < size && y < 64; ++y) for (int x = 0; x < size && x < 64; ++x) {
@@ -688,6 +720,7 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
     // Loading either a decoded snapshot or a legacy fallback is not user
     // placement. Entry11 remains owned by actual placement/purchase consumers.
     VM->ReservedObjectIDs.clear(); // TS1(sims)
+    if (VM->TS1) VM->EstablishTS1ObjectManagerOrderFromClassic(*objm);
     if (objm->Decoded && !getenv("WA_NO_RESTORE")) {
         RestoreSavedState(objm);
         // Only absent controllers are new instances; their normal init can now
@@ -866,11 +899,6 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
         auto entity = VM->GetObjectById(int16_t(saved.first));
         if (entity && !entity->Dead && !entity->Container) {
             entity->PositionChange(ctx, true);
-            auto avatar = dynamic_cast<VMAvatar*>(entity);
-            if (avatar && saved.second.Instance && avatar->Position() != LotTilePos::OUT_OF_WORLD) {
-                const auto& bounds = saved.second.Instance->Footprint;
-                avatar->RestoreTS1Footprint(bounds.MinX, bounds.MinY, bounds.MaxX, bounds.MaxY);
-            }
         }
     }
     // Init-created entities outside the saved graph were also detached if they
@@ -881,6 +909,17 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
         auto saved = objm->ObjectData.find(entity->ObjectID);
         if (saved == objm->ObjectData.end() || !saved->second.Instance)
             entity->PositionChange(ctx, true);
+    }
+    // Numeric object bounds are saved model state, separate from registered
+    // collision occupancy. Restore after every recursive PositionChange so a
+    // parent's later publication cannot overwrite a contained child's cache.
+    for (const auto& saved : objm->ObjectData) {
+        auto entity = VM->GetObjectById(int16_t(saved.first));
+        const auto& instance = saved.second.Instance;
+        if (!entity || entity->Dead || entity->GhostImage || !entity->Object || !entity->Object->OBJ ||
+            !instance || !instance->OBJT || entity->Object->OBJ->GUID != instance->OBJT->GUID) continue;
+        const auto& bounds = instance->Footprint;
+        entity->RestoreTS1Footprint(bounds.MinX, bounds.MinY, bounds.MaxX, bounds.MaxY);
     }
     if (getenv("WA_DEBUG")) printf("WA: restored %d objects (%d persons, %d placed at their saved position, %d interaction objects left fresh), %d contained, %d records without object\n",
         LastRestore.Objects, LastRestore.Persons, LastRestore.PersonsPlaced, LastRestore.Skipped, LastRestore.Contained, LastRestore.Missing);
