@@ -6,7 +6,9 @@
 // FSO.SimAntics.Engine.VMSlotParser
 #include "simantics/engine/VMSlotParser.h"
 #include "simantics/engine/VMSlotEnumeration.h"
+#include "simantics/engine/VMTS1RelativePosition.h"
 #include "simantics/engine/VMRoutingFrame.h"
+#include "simantics/entities/VMAvatar.h"
 #include "simantics/engine/VMThread.h"
 #include "simantics/model/VMSetToNextCache.h"
 #include "simantics/entities/VMEntity.h"
@@ -47,6 +49,8 @@ VMSlotParser::VMSlotParser(SLOTItem* slot) {
 }
 
 std::vector<VMFindLocationResult> VMSlotParser::FindAvaliableLocations(VMEntity* obj, VMContext* context, VMEntity* caller) {
+    if (Slot->RoutingPolicy == SLOTRoutingPolicy::TS1RelativePosition)
+        return FindTS1RelativeLocations(obj, context, caller);
     /**
      * Start at min proximity and circle around the object to find the avaliable locations.
      * Then pick the one nearest to the optimal value
@@ -242,6 +246,133 @@ void VMSlotParser::SetFail(VMRouteFailCode code, VMEntity* blocker) {
         FailCode = code;
         Blocker = blocker;
     }
+}
+
+namespace {
+int TS1Heading(VMEntity* entity) {
+    const unsigned direction = unsigned(entity->Direction());
+    for (int i=0;i<8;++i) if (direction==(1u<<i)) return i;
+    return -1;
+}
+
+uint8_t TS1WallDirections(VMContext* context, const LotTilePos& point, unsigned heading,
+                        std::vector<VMEntity*>& pending) {
+    if (context->IsOutOfBounds(point)) return 0;
+    const auto* arch=context->Architecture();
+    const auto walls=uint8_t(arch->Walls[point.Level-1][size_t(point.TileY())*arch->Width+point.TileX()].Segments);
+    uint32_t mask=((walls&1)?64:0)|((walls&2)?1:0)|((walls&4)?4:0)|((walls&8)?16:0);
+    const auto tile=size_t(point.TileY())*arch->Width+point.TileX();
+    if (size_t(point.Level)<=context->SpatialTileHeads.size() &&
+        tile<context->SpatialTileHeads[point.Level-1].size()) {
+        pending.clear();
+        if (auto* root=context->VM->GetObjectById(context->SpatialTileHeads[point.Level-1][tile])) pending.push_back(root);
+        size_t remaining=context->VM->Entities.size()+1;
+        while (!pending.empty() && remaining--) {
+            auto* object=pending.back();pending.pop_back();
+            if (!object || object->Dead) continue;
+            const int direction=TS1Heading(object);
+            if (direction>=0) mask|=TS1ObjectWallMask(object->GetValue(VMStackObjectVariable::WallBlockFlags),unsigned(direction));
+            for (int slot=object->TotalSlots()-1;slot>=0;--slot)
+                if (auto* child=object->GetSlot(slot)) pending.push_back(child);
+        }
+    }
+    return TS1RotateMask(mask,heading);
+}
+
+struct TS1FacingGuard {
+    VMEntity* Actor;
+    VMAvatar* Avatar;
+    float Radians;
+    explicit TS1FacingGuard(VMEntity* actor) : Actor(actor), Avatar(dynamic_cast<VMAvatar*>(actor)), Radians(actor->RadianDirection()) {
+        if (Avatar) Avatar->SetPersonData(VMPersonDataVariable::FootprintExtension,
+            Avatar->GetPersonData(VMPersonDataVariable::RouteFootprintMask));
+    }
+    ~TS1FacingGuard() {
+        if (Avatar) Avatar->SetPersonData(VMPersonDataVariable::FootprintExtension,0);
+        Actor->RadianDirection(Radians);
+    }
+};
+}
+
+std::vector<VMFindLocationResult> VMSlotParser::FindTS1RelativeLocations(
+        VMEntity* obj, VMContext* context, VMEntity* caller) {
+    Results.clear(); Blocker=nullptr; FailCode=VMRouteFailCode::NoValidGoals;
+    if (!obj || !caller || !context || !context->VM || !context->Architecture() ||
+        !ValidTS1RelativeSlot(*Slot) || context->IsOutOfBounds(obj->Position()) ||
+        context->IsOutOfBounds(caller->Position())) return Results;
+    const int targetHeading=TS1Heading(obj);
+    if (targetHeading<0) return Results;
+    const auto target=obj->Position();
+    const auto callerRoom=context->GetEnvironmentRoomAt(caller->Position());
+    if (callerRoom<0 || size_t(callerRoom)>=context->EnvironmentRooms.size()) return Results;
+    auto* person=dynamic_cast<VMAvatar*>(caller);
+    if (!person) return Results;
+    const bool exceptionalRoom=(person->GetPersonData(VMPersonDataVariable::IsGhost)&1) ||
+        (person->GetPersonData(static_cast<VMPersonDataVariable>(84))&1);
+    if (!exceptionalRoom && context->GetEnvironmentRoomAt(target)!=callerRoom) {
+        FailCode=VMRouteFailCode::NoRoomRoute;return Results;
+    }
+    std::vector<VMEntity*> pending;
+    const auto walls=TS1WallDirections(context,target,unsigned(targetHeading),pending);
+    const auto candidates=TS1RelativeCandidates(*Slot,st::Point(target.x,target.y),unsigned(targetHeading),walls,
+        st::Point(caller->Position().x,caller->Position().y));
+    TS1FacingGuard restore(caller);
+    for (const auto& candidate:candidates) {
+        caller->RadianDirection(restore.Radians);
+        int acceptance=-1;
+        if (!candidate.Region) acceptance=(targetHeading+4)&7;
+        else if (int(Slot->Facing)==-2) acceptance=(candidate.Heading+4)&7;
+        else if (int(Slot->Facing)>=0) acceptance=(targetHeading+int(Slot->Facing))&7;
+        if (acceptance>=0) caller->Direction(FSO::LotView::Model::Direction(1u<<acceptance));
+        const LotTilePos pos(int16_t(candidate.Position.X),int16_t(candidate.Position.Y),caller->Position().Level);
+        if (context->IsOutOfBounds(pos)) continue;
+        if (context->GetEnvironmentRoomAt(pos)!=callerRoom) { FailCode=VMRouteFailCode::NoRoomRoute;continue; }
+        if (candidate.Region) {
+            const auto wall=TS1WallDirections(context,pos,(candidate.Heading+4)&7,pending);
+            if ((wall&1) || ((candidate.Heading&1) && (wall&0x82))) { FailCode=VMRouteFailCode::WallInWay;continue; }
+        }
+        if ((uint32_t(Slot->Rsflags)&0x8000)==0) {
+            std::array<int,4> reference{},height{};
+            const auto& terrain=context->Architecture()->Terrain;
+            if (!terrain || !terrain->GetTS1HeightQuad(target.TileX(),target.TileY(),reference) ||
+                !terrain->GetTS1HeightQuad(pos.TileX(),pos.TileY(),height) || reference!=height ||
+                height[0]!=height[1] || height[0]!=height[2] || height[0]!=height[3]) {
+                FailCode=VMRouteFailCode::AltsDontMatch;continue;
+            }
+        }
+        const auto placement=caller->PositionValid(pos,caller->Direction(),context,true);
+        if (placement.Status!=VMPlacementError::Success) {
+            Blocker=placement.Object;
+            FailCode=dynamic_cast<VMAvatar*>(Blocker)?VMRouteFailCode::DestTileOccupiedPerson:VMRouteFailCode::DestTileOccupied;
+            continue;
+        }
+        VMFindLocationResult result;
+        result.Position=pos;result.Score=candidate.Score;result.RouteEntryFlags=SLOTFlags(candidate.Region);
+        result.FaceAnywhere=int(Slot->Facing)==-3;
+        int facing=targetHeading;
+        if (int(Slot->Facing)>=0) facing=(targetHeading+int(Slot->Facing))&7;
+        else if (int(Slot->Facing)==-2 && !(pos==target)) {
+            const double angle=GetDirectionTo(Vector2(pos.x,pos.y),Vector2(target.x,target.y));
+            facing=(int(std::nearbyint(angle/(M_PI/4)))+8)&7;
+        }
+        result.RadianDirection=float(facing*(M_PI/4));
+        Results.push_back(result);
+    }
+    const auto halfTiles=context->EnvironmentRooms[size_t(callerRoom)].Environment.HalfTiles;
+    const size_t cap=halfTiles/2>250?8:48;
+    if (Results.size()>cap) {
+        auto all=std::move(Results);Results.clear();Results.reserve(cap);
+        // Generated OP27 descriptors allow standing only, so there are no
+        // chair entries to retain before the original bounded random attempts.
+        for (size_t attempt=0;attempt<cap;++attempt) {
+            const size_t start=size_t(context->NextRandom(all.size()));
+            for (size_t i=start;i<all.size();++i) if (all[i].Score!=0) {
+                Results.push_back(all[i]);all[i].Score=0;break;
+            }
+        }
+    }
+    if (!Results.empty()) { FailCode=VMRouteFailCode::Success;Blocker=nullptr; }
+    return Results;
 }
 
 double VMSlotParser::FlagsAsRad(SLOTFlags dir) {

@@ -30,6 +30,9 @@ VMPrimitiveExitCode VMGotoRelativePosition::Execute(VMStackFrame* context, VMPri
 
     if (context->Thread->IsCheck) return VMPrimitiveExitCode::GOTO_FALSE;
 
+    const auto direction = static_cast<int32_t>(operand->Direction);
+    if (direction < -2 || direction > 7) return VMPrimitiveExitCode::GOTO_FALSE;
+
     auto obj = context->StackObject;
     if (obj == nullptr) return VMPrimitiveExitCode::GOTO_FALSE;
     // C#: var avatar = (VMAvatar)context.Caller; (unused, but the cast throws InvalidCastException for non-avatars)
@@ -55,19 +58,24 @@ SLOTItem VMGotoRelativePosition::CreateSlot(const VMGotoRelativePositionOperand&
     SLOTItem slot;
     slot.Type = 3;
     slot.Standing = 1;
-    if (operand.Location != VMGotoRelativeLocation::OnTopOf) {
-        if (operand.Location == VMGotoRelativeLocation::AnywhereNear) {
-            slot.MinProximity = 16;
-            slot.MaxProximity = 32;
-            slot.OptimalProximity = 16;
-            slot.Rsflags |= (SLOTFlags)255;
-        } else {
-            slot.MinProximity = 16;
-            slot.MaxProximity = 24;
-            // Preserve the C# shift-count masking for encoded operands.
-            slot.Rsflags |= (SLOTFlags)(1u << ((((int32_t)operand.Location) % 8) & 31));
-        }
+    slot.RoutingPolicy = FSO::Files::Formats::IFF::Chunks::SLOTRoutingPolicy::TS1RelativePosition;
+    slot.Gradient = 3.0f / 16.0f;
+    slot.MinProximity = slot.MaxProximity = slot.OptimalProximity = 16;
+    const auto location = static_cast<int32_t>(operand.Location);
+    if (location >= 0 && location < 8) {
+        // The PC primitive combines the two neighboring cardinal regions for
+        // an odd location; it does not request a single diagonal destination.
+        const auto mask = (location & 1)
+            ? (1u << (location - 1)) | (1u << ((location + 1) & 7))
+            : 1u << location;
+        slot.Rsflags |= static_cast<SLOTFlags>(mask);
+    } else if (operand.Location != VMGotoRelativeLocation::OnTopOf) {
+        // All other encoded locations use the original anywhere-near fallback.
+        slot.MaxProximity = 32;
+        slot.Rsflags |= static_cast<SLOTFlags>(0x55);
     }
+    if (!operand.NoFailureTrees()) slot.Rsflags |= static_cast<SLOTFlags>(0x4000);
+    if (operand.AllowDiffAlt()) slot.Rsflags |= SLOTFlags::AllowDifferentAlts;
     slot.Facing = (operand.Direction == VMGotoRelativeDirection::AnyDirection)
         ? SLOTFacing::FaceAnywhere : (SLOTFacing)operand.Direction;
     return slot;

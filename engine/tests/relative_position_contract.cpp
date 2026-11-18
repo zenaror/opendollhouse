@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-// Destination-selection contract: literal reference vectors, production producers/filter.
+// Authored/managed SLOT enumeration and collision contracts.
+// Generated DVD OP27 routing has a separate source-derived consumer and test.
 #include "simantics/engine/VMSlotEnumeration.h"
 #include "simantics/engine/VMSlotParser.h"
 #include "simantics/primitives/VMGotoRelativePosition.h"
@@ -125,17 +126,7 @@ int main(int argc,char** argv) {
     check(nominal==8,"circle callback count");
     auto square=slot(16,16);square.MaxProximity=0;square.Rsflags=(SLOTFlags)(255 | (1<<30));
     equal("square-range-raw-max0",goals(square),{{-16,-16},{-16,0},{-16,16},{0,-16},{0,16},{16,-16},{16,0},{16,16}});
-    const std::vector<std::vector<GoalOffset>> sectors={
-        {{0,-16}},{{16,-16}},{{16,0}},{{16,16}},
-        {{0,16}},{{-16,16}},{{-16,0}},{{-16,-16}}};
-    for(int loc=-2;loc<8;++loc) for(int dir=-2;dir<8;++dir) for(int flags=0;flags<4;++flags) {
-        VMGotoRelativePositionOperand op;op.Location=(VMGotoRelativeLocation)loc;op.Direction=(VMGotoRelativeDirection)dir;op.Flags=(VMGotoRelativeFlags)flags;
-        auto produced=VMGotoRelativePosition::CreateSlot(op);
-        auto expected=loc==-2?std::vector<GoalOffset>{{0,0}}:loc==-1?goals(slot(16,32)):sectors[loc];
-        check(goals(produced)==expected,"OP27 destinations loc="+std::to_string(loc)+" dir="+std::to_string(dir)+" flags="+std::to_string(flags));
-        check((int)produced.Facing==(dir==-1?-3:dir),"OP27 facing operand");
-        // Removing all authored near-sector destinations must not admit far32.
-        if(loc>=0) { auto actual=goals(produced); for(auto p:expected) actual.erase(std::remove(actual.begin(),actual.end(),p),actual.end());check(actual.empty(),"blocked near-sector yields no far fallback"); }
-    }
+    // Generated OP27 destinations use the DVD-specific consumer. Their literal
+    // source vectors and production checks live in ts1_relative_position_contract.
     std::cout<<"checks="<<checks<<" failures="<<failures<<'\n';return failures?1:0;
 }

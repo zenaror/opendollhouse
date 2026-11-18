@@ -25,7 +25,7 @@ VMPrimitiveExitCode VMRemoveObjectInstance::Execute(VMStackFrame* context, VMPri
     // FIX(sims): FreeSO always deletes the whole multitile group (`obj?.Delete(true, ...)`). FreeSims passed the
     // CleanupAll flag, so a vehicle removing itself without it left its other tiles behind: every Old Town / community
     // visitor trolley (24 tiles) piled up out of world (15 trolleys = 360 orphan objects after 8 game hours).
-    if (obj != nullptr)
+    if (obj != nullptr && !context->VM()->QueueTS1Removal(obj))
         obj->Delete(true, context->VM()->Context);
 
     //if (obj == context.StackObject) context.StackObject = null;

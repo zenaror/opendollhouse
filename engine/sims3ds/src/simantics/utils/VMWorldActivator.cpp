@@ -286,6 +286,9 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
         }
         if (auto alt = iff->Get<ARRY>(0)) {
             auto raw = alt->TransposeData();
+            if (alt->Width == 64 && alt->Height == 64 && alt->Type == ARRYType::RLEAlt)
+                arch->Terrain->SetTS1HeightSource(raw);
+            else arch->Terrain->SetTS1HeightSource({});
             auto& H = arch->Terrain->Heights;
             for (int32_t y = 0; y < size && y < 64; y++) for (int32_t x = 0; x < size && x < 64; x++) {
                 size_t si = (size_t)(y * 64 + x) * 4 + 1;
@@ -295,7 +298,7 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
                 if (auto grass = iff->Get<ARRY>(6))
                     BlueprintPtr->Terrain->SetOriginalSource(raw, grass->TransposeData(), 64);
             }
-        }
+        } else arch->Terrain->SetTS1HeightSource({});
         arch->Terrain->RegenerateCenters();
         arch->SyncTerrain(false);
     }
@@ -436,7 +439,7 @@ VMWorldActivator::Blueprint* VMWorldActivator::LoadFromIff(IffFile* iff, bool de
             throw std::runtime_error("Interaction checkpoint: ambiguous ODHI");
         st::Reader header(snapshots.front()->Data);
         const auto snapshotVersion = header.u32();
-        if (snapshotVersion >= 7 && snapshotVersion <= 12) {
+        if (snapshotVersion >= 7 && snapshotVersion <= Engine::Utils::VMTS1InteractionCheckpoint::CurrentVersion) {
             if (!objm->Decoded || header.u32() != objm->SourceSignature)
                 throw std::runtime_error("Interaction checkpoint: ObjM changed since capture");
             completeNativeSnapshot = true;

@@ -196,6 +196,8 @@ static void TS1DailyObjects(VM& vm) {
 }
 
 void VM::InternalTick() {
+    if (TS1 && TS1DrainingRemovals)
+        throw std::runtime_error("Object removal did not finish; reload the last saved lot");
     // STUB(3ds): GlobalLink.Tick / EODHost.Tick — no TSO server.
     auto publishClock = [&]() {
         GlobalState[6] = (int16_t)Context->Clock->Seconds();
@@ -253,6 +255,7 @@ void VM::InternalTick() {
         }
     }
     if (TS1) advanceClock();
+    if (TS1) DrainTS1Removals();
     if (TS1) Engine::Utils::VMTS1Travel::KeepSelectedSim(this); // FIX(sims) H1: global 3 names a living Sim
     //Context.SetToNextCache.VerifyPositions(); use only for debug!
 }
@@ -296,7 +299,40 @@ void VM::AddToObjList(std::vector<VMEntity*>& list, VMEntity* entity) {
 }
 
 /// Removes an entity from this Virtual Machine.
+bool VM::QueueTS1Removal(VMEntity* entity) {
+    if (!TS1 || !entity || entity->GhostImage || (!EntityTickActive && !TS1DrainingRemovals)) return false;
+    if (entity->Dead || entity == TS1RemovingNow) return true;
+    if (GetObjectById(entity->ObjectID) != entity) return false;
+    for (const auto& pending : TS1PendingRemovals)
+        if (pending.ID == entity->ObjectID && pending.Identity == entity) return true;
+    TS1PendingRemovals.push_back({entity->ObjectID,entity});
+    return true;
+}
+
+void VM::DrainTS1Removals() {
+    if (TS1DrainingRemovals || TS1PendingRemovals.empty()) return;
+    struct Scope {
+        VM& Owner;
+        bool Complete = false;
+        explicit Scope(VM& vm) : Owner(vm) { Owner.TS1DrainingRemovals=true; }
+        // On failure retain the incomplete-drain barrier: no further sweep or
+        // save may publish a partly removed group. A fresh lot load recovers.
+        ~Scope() { if (Complete) { Owner.TS1RemovingNow=nullptr;Owner.TS1DrainingRemovals=false; } }
+    } draining(*this);
+    while (!TS1PendingRemovals.empty()) {
+        const auto request=TS1PendingRemovals.front();
+        TS1PendingRemovals.pop_front();
+        auto* entity=GetObjectById(request.ID);
+        if (entity!=request.Identity || !entity || entity->Dead) continue;
+        TS1RemovingNow=entity;
+        entity->Delete(true,Context);
+        TS1RemovingNow=nullptr;
+    }
+    draining.Complete=true;
+}
+
 void VM::RemoveEntity(VMEntity* entity) {
+    Context->RemoveSpatialEntity(entity);
     if (TS1) for (auto other : Entities)
         if (other && other!=entity && other->Thread) other->Thread->TS1ObjectUseTargetRemoved(entity);
     if (TS1 && entity && entity->Thread) entity->Thread->DiscardTS1ObjectUses();
@@ -306,7 +342,6 @@ void VM::RemoveEntity(VMEntity* entity) {
                 if (frame && frame->IsRoutingFrame())
                     static_cast<Engine::VMRoutingFrame*>(frame.get())->ForgetAvatar(avatar);
     }
-    Context->RemoveSpatialEntity(entity);
     auto it = std::find(Entities.begin(), Entities.end(), entity);
     if (it != Entities.end()) {
         Context->SetToNextCache->RemoveObject(entity);
@@ -396,6 +431,8 @@ std::unique_ptr<VMSandboxRestoreState> VM::Sandbox() {
     state->ObjectId = ObjectId;
     state->ObjectsById = ObjectsById;
     state->SetToNext = std::move(Context->SetToNextCache);
+    state->PendingRemovals = std::move(TS1PendingRemovals);
+    TS1PendingRemovals.clear();
 
     Context->SetToNextCache.reset(new VMSetToNextCache(Context));
     Entities.clear();
@@ -410,6 +447,7 @@ void VM::SandboxRestore(std::unique_ptr<VMSandboxRestoreState> state) {
     ObjectsById = state->ObjectsById;
     ObjectId = state->ObjectId;
     Context->SetToNextCache = std::move(state->SetToNext);
+    TS1PendingRemovals = std::move(state->PendingRemovals);
 }
 
 void VM::BreakpointHit(VMEntity* entity) {

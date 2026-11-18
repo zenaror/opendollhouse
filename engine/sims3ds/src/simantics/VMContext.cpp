@@ -6,6 +6,7 @@
  */
 // FSO.SimAntics.VMContext
 #include "simantics/VMContext.h"
+#include "common/TS1/TS1Random.h"
 #include "simantics/VM.h"
 #include "simantics/entities/VMEntity.h"
 #include "simantics/entities/VMAvatar.h"
@@ -86,6 +87,7 @@ uint64_t VMContext::DebugSeed = 0; // FIX(sims) QA
 
 uint64_t VMContext::NextRandom(uint64_t max) {
     if (max == 0) return 0;
+    if (VM && VM->TS1) return Common::TS1::RandomStep(RandomSeed) % max;
     RandomSeed ^= RandomSeed >> 12;
     RandomSeed ^= RandomSeed << 25;
     RandomSeed ^= RandomSeed >> 27;

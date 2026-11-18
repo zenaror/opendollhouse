@@ -50,6 +50,7 @@ public:
     static double GetDirectionTo(st::Vector2 pos1, st::Vector2 pos2);
 
 private:
+    std::vector<VMFindLocationResult> FindTS1RelativeLocations(VMEntity* obj, VMContext* context, VMEntity* caller);
     static const Model::Routing::VMRouteFailCode FailPrio[4];
     FSO::Files::Formats::IFF::Chunks::SLOTFlags Flags;
     int32_t MinProximity;

@@ -8,6 +8,7 @@
 // one byte per vertex, stored here x10 like FreeSO) and the lawn state (ARRY 6). The perlin grass generator and the
 // network serialization are not needed (TS1 houses always carry their lawn state).
 #pragma once
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -33,9 +34,15 @@ public:
     void ExitVis();
     void RegenerateCenters();
 
+    // ARRY #0 is the authoritative TS1 packed four-corner terrain data.
+    // A VM created from a marshal alone has no such source and returns false.
+    bool SetTS1HeightSource(const std::vector<uint8_t>& raw);
+    bool GetTS1HeightQuad(int x, int y, std::array<int, 4>& result) const;
+
 private:
     std::vector<int16_t> OldHeights;
     std::vector<uint8_t> OldGrass;
+    std::vector<uint8_t> TS1HeightSource;
 };
 
 }}}

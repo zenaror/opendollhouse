@@ -5,6 +5,7 @@
  */
 // FSO.SimAntics.Model.VMArchitectureTerrain (FreeSO) — see the header.
 #include "simantics/model/VMArchitectureTerrain.h"
+#include "common/TS1/TS1TerrainLighting.h"
 
 namespace FSO { namespace SimAntics { namespace Model {
 
@@ -16,6 +17,40 @@ VMArchitectureTerrain::VMArchitectureTerrain(int32_t width, int32_t height) : Wi
     Sloped.assign(n, false);
     VisHeights.assign(n, 0);
     VisGrass.assign(n, 0);
+}
+
+bool VMArchitectureTerrain::SetTS1HeightSource(const std::vector<uint8_t>& raw) {
+    constexpr size_t sourceSize = 64u * 64u * 4u;
+    if (raw.size() != sourceSize) {
+        TS1HeightSource.clear();
+        return false;
+    }
+    TS1HeightSource = raw;
+    return true;
+}
+
+bool VMArchitectureTerrain::GetTS1HeightQuad(int x, int y, std::array<int, 4>& result) const {
+    constexpr int sourceWidth = 64;
+    if (TS1HeightSource.size() != size_t(sourceWidth * sourceWidth * 4) ||
+        x < 0 || y < 0 || x >= Width || y >= Height || x >= sourceWidth || y >= sourceWidth ||
+        Width <= 0 || Height <= 0 || Heights.size() != size_t(Width) * size_t(Height)) return false;
+
+    FSO::Common::TS1::TerrainCorners authored{}, baseline{}, current{};
+    const int xs[4] = {x, x, x + 1, x + 1};
+    const int ys[4] = {y + 1, y, y, y + 1};
+    for (size_t i = 0; i < 4; ++i) {
+        authored[i] = TS1HeightSource[(size_t(y) * sourceWidth + size_t(x)) * 4 + i];
+        const int vx = xs[i], vy = ys[i];
+        const bool saved = vx < sourceWidth && vy < sourceWidth;
+        baseline[i] = saved ? TS1HeightSource[(size_t(vy) * sourceWidth + size_t(vx)) * 4 + 1] : authored[i];
+        const bool live = vx < Width && vy < Height;
+        // Use the same integer conversion as ARRY serialization; preview
+        // rendering currently rounds fractional heights instead.
+        current[i] = live ? int(Heights[size_t(vy) * size_t(Width) + size_t(vx)]) / 10
+                          : baseline[i];
+    }
+    result = FSO::Common::TS1::BindTerrainHeightQuad(authored, baseline, current, true);
+    return true;
 }
 
 void VMArchitectureTerrain::EnterVis() {

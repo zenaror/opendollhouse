@@ -25,6 +25,7 @@
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/engine/VMThread.h"
 #include "simantics/engine/VMRoutingFrame.h"
+#include "simantics/engine/VMTS1RelativePosition.h"
 #include "simantics/engine/VMActionCallback.h"
 #include "simantics/engine/VMTS1MotiveDecay.h"
 #include "simantics/primitives/VMDialogPrivateStrings.h"
@@ -786,6 +787,18 @@ public:
             io.value(s.SnapTargetSlot); io.value(s.MinProximity); io.value(s.MaxProximity);
             io.value(s.OptimalProximity); io.value(s.Gradient); io.value(s.Facing);
             io.value(s.Resolution); io.value(s.Height);
+            if (version >= 13) {
+                io.value(s.RoutingPolicy);
+                Require(s.RoutingPolicy == FSO::Files::Formats::IFF::Chunks::SLOTRoutingPolicy::Authored ||
+                        s.RoutingPolicy == FSO::Files::Formats::IFF::Chunks::SLOTRoutingPolicy::TS1RelativePosition,
+                        "invalid route slot provenance");
+                if (s.RoutingPolicy == FSO::Files::Formats::IFF::Chunks::SLOTRoutingPolicy::TS1RelativePosition)
+                    Require(ValidTS1RelativeSlot(s), "invalid generated relative-position slot");
+            } else {
+                Require(io.in || s.RoutingPolicy == FSO::Files::Formats::IFF::Chunks::SLOTRoutingPolicy::Authored,
+                        "legacy checkpoint cannot retain generated slot provenance");
+                if (io.in) s.RoutingPolicy = FSO::Files::Formats::IFF::Chunks::SLOTRoutingPolicy::Authored;
+            }
         }
         bool hasWalk = bool(r.WalkTo); io.value(hasWalk);
         if (hasWalk) {
@@ -1290,6 +1303,7 @@ void VerifyDeparture(VM& vm, const TS1Departure& departure, VMThread* thread) {
 
 void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool departing,
                                        bool schedulerWordsBound, uint32_t outputVersion) {
+    Require(!vm.HasTS1PendingRemovals(), "object-removal dispatch is incomplete");
     // Publish no portion of a failed capture, including synchronized SIMI.
     IffRawFile house=destination;
     FSO::SimAntics::Utils::SyncTS1Budget(vm, house);
@@ -1332,7 +1346,7 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool d
         }
     }
     bool financeBound = vm.TS1 && vm.TS1Budget.Initialized;
-    Require(outputVersion==12 || (outputVersion==10 && !financeBound) || (outputVersion==11 && financeBound),
+    Require((outputVersion>=12 && outputVersion<=CurrentVersion) || (outputVersion==10 && !financeBound) || (outputVersion==11 && financeBound),
             "unsupported capture compatibility version");
     const uint32_t captureVersion = outputVersion;
     st::Writer body(st::Endian::Little);
@@ -1448,7 +1462,7 @@ void VMTS1InteractionCheckpoint::ValidateFinanceBinding(IffFile& house) {
     if (native.empty()) return;
     Require(native.size()==1 && native.front()->ChunkID==1, "ambiguous ODHI");
     st::Reader input(native.front()->Data);const auto version=input.u32();
-    Require(version>=2 && version<=12, "unsupported ODHI version");
+    Require(version>=2 && version<=CurrentVersion, "unsupported ODHI version");
     if (version<11) return;
     input.u32(); // ObjM signature is independently checked on restore.
     Archive header(input);bool departing=false;header.value(departing);
@@ -1471,7 +1485,7 @@ bool VMTS1InteractionCheckpoint::IsDeparture(IffFile& house) {
     st::Reader input(chunks.front()->Data);
     auto version = input.u32();
     if (version == 2) return false;
-    Require(version >= 3 && version <= 12, "unsupported ODHI version");
+    Require(version >= 3 && version <= CurrentVersion, "unsupported ODHI version");
     input.u32(); // ObjM signature is checked during restore.
     Archive header(input);
     bool departing = false;
@@ -1487,7 +1501,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     auto objm = house.Get<OBJM>(1);
     st::Reader input(chunks.front()->Data);
     const auto version = input.u32();
-    Require(version >= 2 && version <= 12, "unsupported ODHI version");
+    Require(version >= 2 && version <= CurrentVersion, "unsupported ODHI version");
     Require(objm && objm->Decoded && input.u32() == objm->SourceSignature, "ObjM changed since capture");
     Archive fields(input);
     bool departing = false;

@@ -26,21 +26,33 @@ struct VMExtendRectResult {
     int32_t BestN = 0;
 };
 
+struct VMWeightedGoal { st::Point Position; int32_t Penalty = 0; };
+struct VMWeightedRoute {
+    std::shared_ptr<std::list<st::Point>> Path;
+    size_t Goal = size_t(-1);
+    float Cost = 0;
+};
+
 class VMRectRouter {
 public:
     /// `map` entries are not owned (they usually point into a caller-owned obstacle vector).
     explicit VMRectRouter(const std::vector<Model::Routing::VMObstacle*>& map) : Map(map) {}
     /// Returns null when no route exists.
     std::shared_ptr<std::list<st::Point>> Route(st::Point from, st::Point to);
+    // One forward weighted search. Goal branches share spatial expansion,
+    // never their search entry, predecessor, cost, or OPEN/CLOSED state.
+    VMWeightedRoute Route(st::Point from, const std::vector<VMWeightedGoal>& goals);
 private:
     std::vector<Model::Routing::VMObstacle*> Map;
     std::vector<std::unique_ptr<Model::Routing::VMWalkableRect>> Owned; // walkable rects created during the search
     int32_t PointDist(st::Point pt1, st::Point pt2);
     void OpenSetSortedInsert(std::vector<Model::Routing::VMWalkableRect*>& set, Model::Routing::VMWalkableRect* item);
     st::Point RectIntersect(Model::Routing::VMObstacle* r1, Model::Routing::VMObstacle* r2, st::Point destPoint);
-    void ExtendFrom(Model::Routing::VMWalkableRect* source, int32_t dir);
+    void ExtendFrom(Model::Routing::VMWalkableRect* source, int32_t dir,
+                    std::vector<Model::Routing::VMWalkableRect*>* changed = nullptr);
     VMExtendRectResult ExtendRect(int32_t dir, int32_t d1, int32_t d2, int32_t p);
-    void ConstructFree(Model::Routing::VMWalkableRect* rect, bool d1, bool d2, bool d3, bool d4);
+    void ConstructFree(Model::Routing::VMWalkableRect* rect, bool d1, bool d2, bool d3, bool d4,
+                       std::vector<Model::Routing::VMWalkableRect*>* changed = nullptr);
     void ConstructFirstFree(Model::Routing::VMWalkableRect* rect);
 };
 }}}}

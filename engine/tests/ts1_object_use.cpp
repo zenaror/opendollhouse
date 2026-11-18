@@ -10,6 +10,7 @@
 #include "simantics/engine/VMThread.h"
 #include "simantics/engine/VMRoutingFrame.h"
 #include "simantics/primitives/VMRunFunctionalTree.h"
+#include "simantics/primitives/VMExpression.h"
 #include "files/formats/iff/IffFile.h"
 #include "files/formats/iff/chunks/BHAV.h"
 #include <cstdio>
@@ -81,6 +82,25 @@ struct Fixture {
     }
     int count(){return target->GetValue(VMStackObjectVariable::UseCount);}
 };
+
+static void configureResetEntries(Fixture& f) {
+    auto main=new BHAV();main->ChunkID=4096;main->ChunkProcessed=true;main->Args=4;
+    BHAVInstruction mainInstruction;mainInstruction.Opcode=2;mainInstruction.TruePointer=254;mainInstruction.FalsePointer=255;
+    Primitives::VMExpressionOperand mainOperand;mainOperand.Operator=Primitives::VMExpressionOperator::Assign;
+    mainOperand.LhsOwner=Scopes::VMVariableScope::MyObjectAttributes;mainOperand.LhsData=1;
+    mainOperand.RhsOwner=Scopes::VMVariableScope::Literal;mainOperand.RhsData=88;
+    mainOperand.Write(mainInstruction.Operand.data());main->Instructions.push_back(mainInstruction);
+    f.iff.AddChunk(main);
+    auto reset3=new BHAV();reset3->ChunkID=4097;reset3->ChunkProcessed=true;reset3->Args=4;
+    BHAVInstruction writeAttribute;writeAttribute.Opcode=2;writeAttribute.TruePointer=254;writeAttribute.FalsePointer=255;
+    Primitives::VMExpressionOperand operand;operand.Operator=Primitives::VMExpressionOperator::Assign;
+    operand.LhsOwner=Scopes::VMVariableScope::MyObjectAttributes;operand.LhsData=0;
+    operand.RhsOwner=Scopes::VMVariableScope::Literal;operand.RhsData=77;
+    operand.Write(writeAttribute.Operand.data());reset3->Instructions.push_back(writeAttribute);f.iff.AddChunk(reset3);
+    f.actor->EntryPoints[1].ActionFunction=4096;
+    f.actor->EntryPoints[3].ActionFunction=4097;
+    f.actor->SetPersonData(VMPersonDataVariable::Gender,2);
+}
 
 static void duplicateReturns() {
     Fixture f;f.frame();f.frame(true);f.thread().AcquireTS1ObjectUse(f.target.get());
@@ -162,6 +182,18 @@ static void isolationAndAbandonment() {
     need(f.count()==1&&f.actor->GetValue(VMStackObjectVariable::UseCount)==1,"self use was discarded");
     f.actor->Reset(&f.context);
     need(f.count()==0&&f.actor->GetValue(VMStackObjectVariable::UseCount)==0&&f.thread().TS1ObjectUses.empty(),"Reset abandoned use counts");
+    auto resetActive=std::make_shared<VMQueuedAction>();
+    auto resetPending=std::make_shared<VMQueuedAction>();
+    f.thread().Queue={resetActive,resetPending};f.thread().ActiveQueueBlock=0;
+    configureResetEntries(f);
+    f.actor->SetAttribute(0,5);
+    f.actor->Reset(&f.context);
+    need(f.thread().Queue.empty()&&f.thread().ActiveQueueBlock==-1,
+         "general Reset did not clear active and pending actions");
+    need(f.actor->GetAttribute(0)==77&&f.thread().Stack.size()==1&&
+         f.thread().Stack.back()->Routine&&f.thread().Stack.back()->Routine->ID==4096&&
+         f.actor->GetAttribute(1)==0,
+         "general pet Reset stopped running authored Reset3 or Main");
     f.frame();f.thread().AcquireTS1ObjectUse(f.target.get());
     (f.thread().*field(ResultDispatch{}))(f.thread().Stack.back().get(),nullptr,VMPrimitiveExitCode::INTERRUPT);
     need(f.count()==0&&f.thread().Stack.empty()&&f.thread().TS1ObjectUses.empty(),"interrupt abandoned use state");
@@ -171,7 +203,20 @@ static void removedTarget() {
     Fixture f;f.frame();f.frame(true);
     auto active=std::make_shared<VMQueuedAction>();active->Callee=f.target.get();
     active->ActionRoutine=&f.parent;active->IconOwner(f.target.get());
-    f.thread().Queue.push_back(active);f.thread().ActiveQueueBlock=0;
+    active->UID=41;active->Flags=TTABFlags::MustRun;active->Args={11,12,13,14};
+    auto retainedFirst=std::make_shared<VMQueuedAction>();retainedFirst->UID=42;
+    retainedFirst->Callee=f.actor.get();retainedFirst->IconOwner(f.actor.get());
+    retainedFirst->Flags=TTABFlags::Joinable;retainedFirst->Args={21,22,23,24};
+    auto removedTargetAction=std::make_shared<VMQueuedAction>();removedTargetAction->UID=43;
+    removedTargetAction->Callee=f.target.get();removedTargetAction->IconOwner(f.actor.get());
+    auto removedIconAction=std::make_shared<VMQueuedAction>();removedIconAction->UID=44;
+    removedIconAction->Callee=f.actor.get();removedIconAction->IconOwner(f.target.get());
+    auto retainedLast=std::make_shared<VMQueuedAction>();retainedLast->UID=45;
+    retainedLast->Callee=f.actor.get();retainedLast->IconOwner(f.actor.get());
+    retainedLast->Flags=TTABFlags::Joinable;retainedLast->Args={31,32,33,34};
+    f.thread().Queue={active,retainedFirst,removedTargetAction,removedIconAction,retainedLast};
+    f.thread().ActiveQueueBlock=0;
+    f.actor->SetPersonData(VMPersonDataVariable::Priority,50);
     f.thread().AcquireTS1ObjectUse(f.target.get(),1);f.masks();
     const auto id=f.target->ObjectID;f.vm.RemoveEntity(f.target.get());
     need(f.thread().TS1ObjectUses.empty()&&f.count()==0,"removed target kept ownership");
@@ -179,11 +224,46 @@ static void removedTarget() {
     need(f.thread().TS1LastInteraction.Icon==0,"removed target was recreated as the last interaction icon during unwind");
     need(f.thread().TS1LastInteraction.TargetID==0&&!f.thread().TS1LastInteraction.IsValid(),
          "removed last target did not clear the entire last interaction");
+    need(f.thread().Queue.size()==2&&f.thread().Queue[0]==retainedFirst&&f.thread().Queue[1]==retainedLast,
+         "matched-use removal did not preserve unrelated pending actions in order or retained target/icon actions");
+    need(f.thread().Queue[0]->UID==42&&f.thread().Queue[0]->Flags==TTABFlags::Joinable&&
+         f.thread().Queue[0]->Args==std::vector<int16_t>({21,22,23,24})&&
+         f.thread().Queue[1]->UID==45&&f.thread().Queue[1]->Flags==TTABFlags::Joinable&&
+         f.thread().Queue[1]->Args==std::vector<int16_t>({31,32,33,34}),
+         "matched-use pending actions lost UID, flags, or arguments");
+    need(f.thread().ActiveQueueBlock==-1&&f.thread().QueueDirty&&
+         f.actor->GetPersonData(VMPersonDataVariable::Priority)==0,
+         "matched-use removal did not leave reset Main/queue state and priority zero");
+    need(f.thread().Queue[0]->Callee==f.actor.get()&&f.thread().Queue[0]->IconOwner()==f.actor.get()&&
+         f.thread().Queue[1]->Callee==f.actor.get()&&f.thread().Queue[1]->IconOwner()==f.actor.get(),
+         "matched-use removal altered retained pending action targets");
     VMGameObject replacement(&f.object,nullptr);Entities::VMMultitileGroup group;
     replacement.Thread=std::make_unique<VMThread>(&f.context,&replacement,16);
     replacement.MultitileGroup=&group;group.AddObject(&replacement);f.vm.AddEntity(&replacement);
     need(replacement.ObjectID==id,"fixture did not exercise recycled object ID");
     need(replacement.GetValue(VMStackObjectVariable::UseCount)==0,"recycled ID inherited old ownership");
+}
+
+static void removedPetRestartsMainWithoutReset3() {
+    Fixture f;configureResetEntries(f);f.actor->SetAttribute(0,5);
+    f.actor->Reseted=true;f.actor->TS1SetSchedulerDelay(9);
+    f.frame();f.frame(true);
+    auto active=std::make_shared<VMQueuedAction>();active->UID=51;active->Callee=f.target.get();
+    active->ActionRoutine=&f.parent;active->IconOwner(f.target.get());
+    auto pending=std::make_shared<VMQueuedAction>();pending->UID=52;
+    pending->Callee=f.actor.get();pending->IconOwner(f.actor.get());
+    f.thread().Queue={active,pending};f.thread().ActiveQueueBlock=0;
+    f.thread().AcquireTS1ObjectUse(f.target.get(),1);
+    f.vm.RemoveEntity(f.target.get());
+    need(f.actor->GetAttribute(0)==5&&f.actor->GetAttribute(1)==0,
+         "matched pet target removal executed authored Reset3 or advanced Main instead of stacking it");
+    need(f.thread().Stack.size()==1&&f.thread().Stack.back()->Routine&&
+         f.thread().Stack.back()->Routine->ID==4096,"matched pet target removal did not stack authored Main");
+    need(f.thread().Queue.size()==1&&f.thread().Queue.front()==pending&&f.thread().ActiveQueueBlock==-1,
+         "matched pet target removal failed to retain native pending record while restarting Main");
+    need(!f.actor->Reseted&&f.actor->TS1SchedulerDelay()==-1&&
+         f.actor->GetPersonData(VMPersonDataVariable::Priority)==0,
+         "matched pet target removal omitted scheduler/reset/priority cleanup");
 }
 
 static void removedIconOnly() {
@@ -227,7 +307,7 @@ static void failureUsesStackObject() {
 
 int main() {
     try {VM::UseWorld(false);duplicateReturns();functionalFlags();retainedContextIcon();isolationAndAbandonment();
-        removedTarget();removedIconOnly();removedPendingIcon();failureUsesStackObject();
+        removedTarget();removedPetRestartsMainWithoutReset3();removedIconOnly();removedPendingIcon();failureUsesStackObject();
         std::printf("TS1 object-use lifecycle: %d checks passed\n",checks);return 0;
     } catch(const std::exception& e) {std::fprintf(stderr,"TS1 object-use: %s\n",e.what());return 1;}
 }

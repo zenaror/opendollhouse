@@ -20,6 +20,7 @@
 #include "simantics/model/VMInventoryItem.h"
 #include "simantics/model/VMTuningCache.h"
 #include "simantics/model/DynamicTuning.h"
+#include <deque>
 #include "simantics/model/VMPlatformState.h"
 #include "simantics/model/VMRuntimeHeadline.h"
 #include "simantics/engine/TSOGlobalLink/VMTSOGlobalLinkStub.h"
@@ -34,12 +35,18 @@ class VMFreeWill;
 namespace Entities { class VMMultitileGroup; }
 namespace Model { class VMSetToNextCache; namespace TSOPlatform { class VMTSOLotState; } }
 
+struct VMTS1RemovalRequest {
+    int16_t ID;
+    VMEntity* Identity;
+};
+
 class VMSandboxRestoreState {
 public:
     std::vector<VMEntity*> Entities;
     std::unordered_map<int16_t, VMEntity*> ObjectsById;
     int16_t ObjectId = 1;
     std::unique_ptr<Model::VMSetToNextCache> SetToNext;
+    std::deque<VMTS1RemovalRequest> PendingRemovals;
 };
 
 // TS1 source purse and six ordered daily records: current, then five older.
@@ -108,6 +115,9 @@ public:
     // ADDED(sims): diagnostic hook, called after every primitive a (non-check) thread executes (result code), and
     // with result 255 when it calls a subroutine. Null by default (no cost).
     std::function<void(Engine::VMStackFrame* frame, uint16_t opcode, int result)> OnTraceInstruction;
+    // Diagnostic hook called before VMThread retires a frame; result is the exact Pop input.
+    // Null by default so frame-return observation adds no work when unused.
+    std::function<void(const Engine::VMStackFrame* frame, int result)> OnTraceFrameReturn;
     // TS1(sims): FreeSO VM.OnRequestLotSwitch — Generic Sims Call 17 "Change To Lot In Temp 0" (-1 = the family's
     // home lot) asks the front-end to save this lot and load another. See engine/VMTS1Travel.h for the whole API.
     std::function<void(int16_t lotId)> OnRequestLotSwitch;
@@ -151,6 +161,10 @@ public:
     static void AddToObjList(std::vector<VMEntity*>& list, VMEntity* entity);
     /// Removes an entity from this Virtual Machine.
     void RemoveEntity(VMEntity* entity);
+    // Script removal during ordinary TS1 dispatch is committed after the
+    // completed sweep and clock step. Internal rollback/UI deletion stays immediate.
+    bool QueueTS1Removal(VMEntity* entity);
+    bool HasTS1PendingRemovals() const { return !TS1PendingRemovals.empty() || TS1DrainingRemovals; }
     static void DeleteFromObjList(std::vector<VMEntity*>& list, VMEntity* entity);
 
     /// Gets a global value set for this Virtual Machine.
@@ -190,6 +204,10 @@ private:
     friend class Engine::Utils::VMTS1InteractionCheckpoint;
     bool AlternateTick = false;
     bool EntityTickActive = false; // transient execution context; never saved
+    std::deque<VMTS1RemovalRequest> TS1PendingRemovals;
+    bool TS1DrainingRemovals = false;
+    VMEntity* TS1RemovingNow = nullptr;
+    void DrainTS1Removals();
     std::vector<std::unique_ptr<VMEntity>> EntityStore;
     std::vector<std::unique_ptr<Entities::VMMultitileGroup>> GroupStore;
     static std::unordered_map<FSO::Files::Formats::IFF::Chunks::BHAV*, std::unique_ptr<VMRoutine>>& _Assembled();

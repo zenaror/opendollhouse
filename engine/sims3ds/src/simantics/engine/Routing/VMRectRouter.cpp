@@ -8,6 +8,8 @@
 #include <cmath>
 #include <climits>
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 namespace FSO { namespace SimAntics { namespace Engine { namespace Routing {
 using namespace FSO::SimAntics::Model::Routing;
 using st::Point;
@@ -77,6 +79,96 @@ std::shared_ptr<std::list<Point>> VMRectRouter::Route(Point from, Point to) {
     return nullptr; //failed
 }
 
+VMWeightedRoute VMRectRouter::Route(Point from, const std::vector<VMWeightedGoal>& goals) {
+    VMWeightedRoute result;
+    if (goals.empty()) return result;
+    struct Node {
+        VMWalkableRect* Rect = nullptr;
+        Node* Parent = nullptr;
+        Point Entry;
+        size_t Goal = 0, Edges = 0;
+        float G = 0, F = 0;
+        uint8_t State = 0;
+    };
+    const auto distance=[](Point a,Point b) {
+        const double dx=double(a.X)-b.X,dy=double(a.Y)-b.Y;
+        return float(std::sqrt(dx*dx+dy*dy));
+    };
+    const auto midpoint=[](VMWalkableRect* a,VMWalkableRect* b) {
+        return Point((std::max(a->x1,b->x1)+std::min(a->x2,b->x2))/2,
+                     (std::max(a->y1,b->y1)+std::min(a->y2,b->y2))/2);
+    };
+    std::unordered_map<VMWalkableRect*,std::vector<Node>> states;
+    auto nodeFor=[&](VMWalkableRect* rect,size_t goal)->Node& {
+        auto found=states.find(rect);
+        if (found==states.end()) found=states.emplace(rect,std::vector<Node>(goals.size())).first;
+        auto& node=found->second[goal];node.Rect=rect;node.Goal=goal;return node;
+    };
+    std::vector<Node> terminals(goals.size());
+    std::vector<Node*> open;
+    Owned.emplace_back(new VMWalkableRect(from.X,from.Y,from.X,from.Y));
+    auto* start=Owned.back().get();start->Start=true;ConstructFirstFree(start);
+    for (size_t i=0;i<goals.size();++i) {
+        if (goals[i].Penalty<0) continue;
+        auto& node=nodeFor(start,i);node.Entry=from;node.G=float(goals[i].Penalty);
+        node.F=node.G+distance(from,goals[i].Position);node.State=1;open.push_back(&node);
+        terminals[i].Goal=i;terminals[i].Entry=goals[i].Position;
+    }
+    std::unordered_set<VMWalkableRect*> expanded;
+    std::vector<VMWalkableRect*> changed;
+    while (!open.empty()) {
+        size_t best=0;
+        for (size_t i=1;i<open.size();++i) if (open[i]->F<open[best]->F) best=i;
+        auto* current=open[best];open.erase(open.begin()+best);current->State=2;
+        if (!current->Rect) {
+            result.Goal=current->Goal;result.Cost=current->G;
+            result.Path=std::make_shared<std::list<Point>>();
+            for (auto* n=current;n;n=n->Parent)
+                if (result.Path->empty() || result.Path->front()!=n->Entry) result.Path->push_front(n->Entry);
+            return result;
+        }
+        const auto& goal=goals[current->Goal];
+        if (current->Rect->Contains(goal.Position)) {
+            auto& terminal=terminals[current->Goal];
+            const float cost=current->G+(current->Entry==goal.Position?0.0f:float(distance(current->Entry,goal.Position)+1.0f));
+            if (terminal.State==0 || cost<terminal.G) {
+                terminal.G=terminal.F=cost;terminal.Parent=current;
+                if (terminal.State!=1) {terminal.State=1;open.push_back(&terminal);}
+            }
+        }
+        if (expanded.insert(current->Rect).second) {
+            changed.clear();
+            for (int direction=0;direction<4;++direction) ExtendFrom(current->Rect,direction,&changed);
+            // Another branch can expose a new adjacency on an already visited
+            // region. Revisit its closed branch states instead of losing that
+            // edge or sharing one branch's CLOSED state with another goal.
+            for (auto* rect:changed) {
+                const auto found=states.find(rect);
+                if (found==states.end()) continue;
+                for (auto& node:found->second)
+                    if (&node!=current && node.State==2 && node.Edges<rect->Adj.size()) {
+                        node.State=1;open.push_back(&node);
+                    }
+            }
+        }
+        const auto adjacent=current->Rect->Adj;
+        for (auto* rect:adjacent) {
+            const auto entry=midpoint(current->Rect,rect);
+            // Source goal penalties and stable float relaxation apply to the
+            // current native region graph. Its geometry/region weights remain
+            // a separate comparison with the original planner.
+            const float cost=current->G+float(distance(current->Entry,entry)+1.0f);
+            auto& node=nodeFor(rect,current->Goal);
+            if (node.State==0 || cost<node.G) {
+                node.G=cost;node.F=cost+distance(entry,goal.Position);node.Entry=entry;node.Parent=current;
+                if (node.State!=1) {node.State=1;open.push_back(&node);}
+            }
+        }
+        current->Edges=current->Rect->Adj.size();
+    }
+    return result;
+}
+
 int32_t VMRectRouter::PointDist(Point pt1, Point pt2) {
     Point diff = pt1 - pt2;
     return (int32_t)std::sqrt((double)(diff.X * diff.X + diff.Y * diff.Y));
@@ -109,7 +201,7 @@ Point VMRectRouter::RectIntersect(VMObstacle* r1, VMObstacle* r2, Point destPoin
     }
 }
 
-void VMRectRouter::ExtendFrom(VMWalkableRect* source, int32_t dir) {
+void VMRectRouter::ExtendFrom(VMWalkableRect* source, int32_t dir, std::vector<VMWalkableRect*>* changed) {
     auto free = source->Free[dir].List; // copy: subtraction below may modify other rects' lists
     for (VMFreeListRegion line : free) {
         VMExtendRectResult extension;
@@ -140,6 +232,7 @@ void VMRectRouter::ExtendFrom(VMWalkableRect* source, int32_t dir) {
 
         source->Adj.push_back(newRect);
         newRect->Adj.push_back(source);
+        if (changed) { changed->push_back(source); changed->push_back(newRect); }
 
         auto bounds = ((dir % 2) == 0) ? VMFreeListRegion(newRect->x1, newRect->x2) : VMFreeListRegion(newRect->y1, newRect->y2);
         VMFreeList free2(bounds);
@@ -151,13 +244,14 @@ void VMRectRouter::ExtendFrom(VMWalkableRect* source, int32_t dir) {
                 w->Free[(dir + 2) % 4].Subtract(bounds);
                 w->Adj.push_back(newRect);
                 newRect->Adj.push_back(w);
+                if (changed) changed->push_back(w);
             }
         }
 
         newRect->Free[dir] = free2;
         newRect->Free[(dir + 2) % 4] = VMFreeList(0, 0);
 
-        ConstructFree(newRect, ((dir % 2) == 1), ((dir % 2) == 0), ((dir % 2) == 1), ((dir % 2) == 0));
+        ConstructFree(newRect, ((dir % 2) == 1), ((dir % 2) == 0), ((dir % 2) == 1), ((dir % 2) == 0), changed);
 
         if (!source->Start) Map.push_back(newRect);
     }
@@ -221,7 +315,8 @@ VMExtendRectResult VMRectRouter::ExtendRect(int32_t dir, int32_t d1, int32_t d2,
     return result;
 }
 
-void VMRectRouter::ConstructFree(VMWalkableRect* rect, bool d1, bool d2, bool d3, bool d4) {
+void VMRectRouter::ConstructFree(VMWalkableRect* rect, bool d1, bool d2, bool d3, bool d4,
+                                 std::vector<VMWalkableRect*>* changed) {
     if (d1) rect->Free[0] = VMFreeList(rect->x1, rect->x2);
     if (d2) rect->Free[1] = VMFreeList(rect->y1, rect->y2);
     if (d3) rect->Free[2] = VMFreeList(rect->x1, rect->x2);
@@ -236,6 +331,7 @@ void VMRectRouter::ConstructFree(VMWalkableRect* rect, bool d1, bool d2, bool d3
                 w->Free[2].Subtract(VMFreeListRegion(rect->x1, rect->x2));
                 rect->Adj.push_back(w);
                 w->Adj.push_back(rect);
+                if (changed) changed->push_back(w);
             }
         }
 
@@ -245,6 +341,7 @@ void VMRectRouter::ConstructFree(VMWalkableRect* rect, bool d1, bool d2, bool d3
                 w->Free[3].Subtract(VMFreeListRegion(rect->y1, rect->y2));
                 rect->Adj.push_back(w);
                 w->Adj.push_back(rect);
+                if (changed) changed->push_back(w);
             }
         }
 
@@ -254,6 +351,7 @@ void VMRectRouter::ConstructFree(VMWalkableRect* rect, bool d1, bool d2, bool d3
                 w->Free[0].Subtract(VMFreeListRegion(rect->x1, rect->x2));
                 rect->Adj.push_back(w);
                 w->Adj.push_back(rect);
+                if (changed) changed->push_back(w);
             }
         }
 
@@ -263,6 +361,7 @@ void VMRectRouter::ConstructFree(VMWalkableRect* rect, bool d1, bool d2, bool d3
                 w->Free[1].Subtract(VMFreeListRegion(rect->y1, rect->y2));
                 rect->Adj.push_back(w);
                 w->Adj.push_back(rect);
+                if (changed) changed->push_back(w);
             }
         }
     }

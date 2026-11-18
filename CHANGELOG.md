@@ -41,6 +41,14 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Scripted object removal waits until the current simulation round finishes,
+  allowing eating to finish before its food is removed. Removing a used object
+  preserves unrelated pending actions instead of clearing the whole queue.
+- Improved nearby positioning, including diagonal requests, facing, wall and
+  terrain checks. Full movement parity remains under comparison.
+- Repeated terrain edits and saves refresh the terrain data used by movement.
+  Current native saves also retain the new routing rules without recreating
+  previously removed background objects when reopened.
 - Saving retains the full household balance and daily expense history,
   including the tested transition to a new day.
 - Sims release objects when their interaction returns, instead of leaving

@@ -420,6 +420,10 @@ bool VMTS1LotSaver::SaveHouse(const std::string& sourcePath, const std::string& 
 
 bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_t>& out) {
     Error.clear();
+    if (VM && VM->HasTS1PendingRemovals()) {
+        Error = "Cannot save until the current object-removal dispatch has finished";
+        return false;
+    }
     LastStats = Stats();
     // ADDED(sims) save progress (files/LoadProgress.h, the app's "Saving..." overlay): one scale for the whole house
     // file: 4 units for loading the source, one per original record decoded and per entity written, 100 for the

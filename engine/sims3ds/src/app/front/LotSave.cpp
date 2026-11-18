@@ -18,6 +18,7 @@
 #include "files/SafeFile.h"
 #include "content/TS1CharacterFiles.h"
 #include "files/formats/iff/chunks/SIMI.h"
+#include "files/formats/iff/chunks/ARRY.h"
 #include "world/World.h"
 #include "common/TS1/TS1LotPictures.h"
 #include "world/utils/TriangleRaster.h"
@@ -235,6 +236,10 @@ void RenderPictures(LotSession& s,const std::string&,VMTS1LotSaver& saver) {
 }
 
 bool SaveLot(LotSession& session, std::string& error, std::string& log, bool departing) {
+    if (session.VM() && session.VM()->HasTS1PendingRemovals()) {
+        error = "Cannot save until the current object-removal dispatch has finished";
+        return false;
+    }
     FSO::Files::LoadProgress::Step("save: house " + std::to_string(session.HouseNumber)); // TS1(sims) hardware pass
     auto content = FSO::Content::Content::Get();
     auto hood = content ? content->Neighborhood.get() : nullptr;
@@ -278,7 +283,45 @@ bool SaveLot(LotSession& session, std::string& error, std::string& log, bool dep
     saver.ObjectsDelta = session.ObjectsSpent;
     FSO::Files::LoadProgress::Step("save: house file"); // ADDED(sims) save progress (VMTS1LotSaver reports inside)
     bool ok = saver.SaveHouse(source, dest);
-    if (ok) { session.ArchitectureSpent = 0; session.ObjectsSpent = 0; }
+    if (ok) {
+        // The house is committed even if a later neighbourhood update fails.
+        // Rebase from the actual destination, never from BuildHouse's buffer.
+        session.LoadedHousePath = dest;
+        session.ArchitectureSpent = 0; session.ObjectsSpent = 0;
+        auto arch = session.Context()->Architecture();
+        std::vector<uint8_t> bytes, heights;
+        std::vector<FSO::Content::TS1::RawIffChunk> chunks;
+        bool decoded = false;
+        try {
+            if (FSO::Content::TS1::RawIff::ReadFile(dest, bytes) &&
+                FSO::Content::TS1::RawIff::Parse(bytes, chunks)) {
+                const FSO::Content::TS1::RawIffChunk* found = nullptr;
+                for (const auto& chunk : chunks) if (chunk.Type == "Arry" && chunk.ID == 0) {
+                    if (found) { found = nullptr; break; }
+                    found = &chunk;
+                }
+                if (found) {
+                    FSO::Files::Formats::IFF::Chunks::ARRY alt;
+                    st::Reader reader(found->Data, st::Endian::Little);
+                    alt.Read(nullptr, reader);
+                    if (alt.Width == 64 && alt.Height == 64 &&
+                        alt.Type == FSO::Files::Formats::IFF::Chunks::ARRYType::RLEAlt) {
+                        heights = alt.TransposeData();
+                        decoded = heights.size() == 64u * 64u * 4u;
+                    }
+                }
+            }
+        } catch (const std::exception&) { decoded = false; }
+        if (arch && arch->Terrain) arch->Terrain->SetTS1HeightSource(decoded ? heights : std::vector<uint8_t>{});
+        if (session.Blueprint && session.Blueprint->Terrain) {
+            if (decoded) session.Blueprint->Terrain->SetOriginalHeightSource(heights);
+            else session.Blueprint->Terrain->SetOriginalSource({}, {}, 0);
+        }
+        if (!decoded) {
+            error = "House was saved, but its terrain source could not be read back";
+            return false;
+        }
+    }
     if (ok) ok = saver.UpdateNeighbourhood();
     // Only a successful save of this family's actual home can refresh its
     // FAMI ValueInArch cache. A travel snapshot/destination never values home.

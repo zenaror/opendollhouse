@@ -105,6 +105,15 @@ void TerrainComponent::SetOriginalSource(const std::vector<uint8_t>& heightQuads
     if(Blueprint) Blueprint->SignalFloorChange();
 }
 
+bool TerrainComponent::SetOriginalHeightSource(const std::vector<uint8_t>& heightQuads) {
+    if (OriginalStorageWidth != 64 || heightQuads.size() != 64u * 64u * 4u) return false;
+    OriginalSourceHeights = heightQuads;
+    ++HeightGeneration;
+    OriginalShadePeriod = -1; OriginalBoundsDirty = true; TerrainDirty = true;
+    if (Blueprint) Blueprint->SignalFloorChange();
+    return true;
+}
+
 float TerrainComponent::GetElevationPoint(int x, int y) const {
     if (Heights.empty() || HeightWidth <= 0) return 0.0f;
     x = std::max<int32_t>(0, std::min<int32_t>(HeightWidth - 1, x));

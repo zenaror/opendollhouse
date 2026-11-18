@@ -471,6 +471,8 @@ int main(){try{
  vm.ObjectsById[8]=&live;
  auto write=[&](VMRoutingFrame& r,VMRoutingFrame* parent=nullptr){st::Writer bytes(st::Endian::Little);Archive archive(bytes);InteractionCheckpointCodec codec(vm,archive,6);codec.route(r,parent);return bytes.ToArray();};
  auto read=[&](const std::vector<uint8_t>& bytes,VMRoutingFrame& r,VMRoutingFrame* parent=nullptr){st::Reader input(bytes);Archive archive(input);InteractionCheckpointCodec codec(vm,archive,6);codec.route(r,parent);};
+ auto writeRouteVersion=[&](VMRoutingFrame& r,uint32_t version){st::Writer bytes(st::Endian::Little);Archive archive(bytes);InteractionCheckpointCodec codec(vm,archive,version);codec.route(r,nullptr);return bytes.ToArray();};
+ auto readRouteVersion=[&](const std::vector<uint8_t>& bytes,VMRoutingFrame& r,uint32_t version){st::Reader input(bytes);Archive archive(input);InteractionCheckpointCodec codec(vm,archive,version);codec.route(r,nullptr);return !input.has_more();};
  VMRoutingFrame route;route.Target=&dead;route.State=VMRoutingFrameState::WALKING;route.PushTick=22;route.WaitTime=91;route.CallFailureTrees=true;route.Velocity=3;
  route.WalkTo=std::make_shared<std::list<st::Point>>();route.WalkTo->push_back({12,13});route.CurRoute=std::make_shared<VMFindLocationResult>();route.CurRoute->Chair=&dead;
  route.Rooms.push_back({99,5});route.CurrentPortal={99,5};route.IgnoredRooms.insert({99,5});
@@ -486,6 +488,43 @@ int main(){try{
  auto pendingBytes=pendingOut.ToArray();st::Reader pendingIn(pendingBytes);Archive pendingReader(pendingIn);InteractionCheckpointCodec pendingDecoder(vm,pendingReader,10);VMRoutingFrame pendingRestored;pendingDecoder.route(pendingRestored,nullptr);
  check(pendingRestored.TS1PendingFootprintKnown && pendingRestored.TS1PendingFootprint==0x1234 && !pendingIn.has_more(),"v10 retains pending route request independent of live person data");
  VMRoutingFrame legacy;read(write(pendingRoute),legacy);check(!legacy.TS1PendingFootprintKnown && legacy.TS1PendingFootprint==0,"legacy route does not infer a pending mask");
+ auto configureRelativeSlot=[](VMRoutingFrame& frame,SLOTRoutingPolicy policy){
+  frame.OwnedSlot=std::make_unique<SLOTItem>();auto& slot=*frame.OwnedSlot;
+  slot.Type=3;slot.Offset=st::Vector3();slot.Standing=1;slot.Sitting=0;slot.Ground=0;
+  slot.Rsflags=SLOTFlags::NORTH;slot.SnapTargetSlot=-1;slot.MinProximity=16;
+  slot.MaxProximity=16;slot.OptimalProximity=16;slot.Gradient=3.0f/16.0f;
+  slot.Facing=SLOTFacing::FaceTowardsObject;slot.Resolution=16;slot.Height=0;
+  slot.RoutingPolicy=policy;frame.Slot=&slot;
+ };
+ VMRoutingFrame generatedRoute;generatedRoute.Target=&live;
+ configureRelativeSlot(generatedRoute,SLOTRoutingPolicy::TS1RelativePosition);
+ const auto generatedRouteBytes=writeRouteVersion(generatedRoute,13);
+ VMRoutingFrame generatedRouteRestored;
+ check(readRouteVersion(generatedRouteBytes,generatedRouteRestored,13)&&generatedRouteRestored.Slot&&
+       generatedRouteRestored.Slot->RoutingPolicy==SLOTRoutingPolicy::TS1RelativePosition&&
+       generatedRouteRestored.Slot->Rsflags==SLOTFlags::NORTH&&
+       generatedRouteRestored.Slot->Gradient==3.0f/16.0f,
+       "ODHI13 route codec roundtrips generated relative-position slot provenance");
+ // The policy byte follows the serialized SLOTItem; an empty route then ends
+ // with hasWalk, hasChoices, hasGoal and the 32-bit blocker count.
+ check(generatedRouteBytes.size()>=8,"ODHI13 route contains the expected policy suffix");
+ auto malformedPolicy=generatedRouteBytes;const auto policyOffset=malformedPolicy.size()-8;
+ check(malformedPolicy[policyOffset]==uint8_t(SLOTRoutingPolicy::TS1RelativePosition),
+       "ODHI13 emits the generated routing policy byte");
+ malformedPolicy[policyOffset]=0xff;
+ rejects([&]{VMRoutingFrame invalid;readRouteVersion(malformedPolicy,invalid,13);},
+         "ODHI13 reader rejects an unknown generated-slot policy");
+ VMRoutingFrame legacyRelativeShape;legacyRelativeShape.Target=&live;
+ configureRelativeSlot(legacyRelativeShape,SLOTRoutingPolicy::Authored);
+ const auto legacyRelativeBytes=writeRouteVersion(legacyRelativeShape,12);
+ VMRoutingFrame legacyRelativeRestored;
+ check(readRouteVersion(legacyRelativeBytes,legacyRelativeRestored,12)&&legacyRelativeRestored.Slot&&
+       legacyRelativeRestored.Slot->RoutingPolicy==SLOTRoutingPolicy::Authored&&
+       legacyRelativeRestored.Slot->Rsflags==SLOTFlags::NORTH,
+       "ODHI12 legacy route defaults generated-shaped SLOTItem to Authored without inference");
+ configureRelativeSlot(legacyRelativeShape,SLOTRoutingPolicy::TS1RelativePosition);
+ rejects([&]{writeRouteVersion(legacyRelativeShape,12);},
+         "ODHI12 writer rejects generated route-slot provenance");
  VMRoutingFrame normal;normal.Target=&live;normal.State=VMRoutingFrameState::INITIAL;auto liveBytes=write(normal);VMRoutingFrame liveRestored;read(liveBytes,liveRestored);check(liveRestored.Target==&live&&write(liveRestored)==liveBytes,"live route retains exact identity and bytes");
  normal.Target=&dead;dead.Dead=false;rejects([&]{write(normal);},"nondead replaced target remains rejected");dead.Dead=true;
  normal.Target=&live;live.GhostImage=true;rejects([&]{write(normal);},"ghost route target remains rejected");live.GhostImage=false;

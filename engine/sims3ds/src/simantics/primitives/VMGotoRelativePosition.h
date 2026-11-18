@@ -41,7 +41,7 @@ enum class VMGotoRelativeLocation : int32_t {
 // [Flags]
 enum class VMGotoRelativeFlags : uint8_t
 {
-    AllowDiffAlt = 0x1,
+    AllowDiffAlt = 0x4,
     NoFailureTrees = 0x2
 };
 FSO_FLAGS_ENUM(VMGotoRelativeFlags)

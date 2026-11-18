@@ -400,6 +400,21 @@ void VMThread::TS1ObjectUseTargetRemoved(VMEntity* target) {
     bool matched=TS1FlaggedUseTarget==target;
     for (const auto& use : TS1ObjectUses) if (use.Target==target) matched=true;
     if (!matched) { clearLast();return; }
+    // The matched native path removes the active interaction and pending
+    // actions that reference the deleted target (as callee or icon), then
+    // restarts Main at priority zero. Generic Reset() also runs authored Reset3
+    // for pets and clears the queue, so perform the interpreter restart here
+    // without Reset3 and preserve the unrelated pending suffix. The native
+    // pending domain starts after ActiveQueueBlock; nested active prefixes are
+    // discarded with the interaction, not reconstructed. The source match
+    // establishes selective deletion, Main restart, and priority, but not all
+    // surrounding state; auxiliary cleanup follows the existing Reset path.
+    std::vector<std::shared_ptr<VMQueuedAction>> retainedPending;
+    const auto pendingStart=std::min(Queue.size(),size_t(ActiveQueueBlock+1));
+    retainedPending.reserve(Queue.size()-pendingStart);
+    for (auto it=Queue.begin()+pendingStart;it!=Queue.end();++it)
+        if (*it && (*it)->Callee!=target && (*it)->IconOwner()!=target)
+            retainedPending.push_back(*it);
     while (!TS1ObjectUses.empty()) {
         const auto depth=TS1ObjectUses.back().StackDepth;
         if (depth<=0 || size_t(depth)>Stack.size()) { DiscardTS1ObjectUses(); break; }
@@ -408,7 +423,19 @@ void VMThread::TS1ObjectUseTargetRemoved(VMEntity* target) {
     // Unwinding can copy the just-ended current record into LastInteraction.
     clearLast();
     if (auto avatar=dynamic_cast<VMAvatar*>(Entity)) avatar->ClearTS1InteractionFootprint();
-    Entity->Reset(Context);
+    if (Context->VM->TS1) Entity->TS1SetSchedulerDelay(-1);
+    DiscardTS1ObjectUses();
+    Stack.clear();
+    Queue=std::move(retainedPending);
+    QueueDirty=true;
+    ActiveQueueBlock=-1;
+    BlockingState=nullptr;
+    EODConnection=nullptr;
+    Entity->Reseted=false;
+    if (auto avatar=dynamic_cast<VMAvatar*>(Entity)) {
+        avatar->SetPersonData(Model::VMPersonDataVariable::Priority,0);
+    }
+    if (!Entity->GhostImage) Entity->ExecuteEntryPoint(1,Context,false);
 }
 
 // TS1(sims): FreeSO VMThread.EndCurrentInteraction.
@@ -801,7 +828,11 @@ void VMThread::Breakpoint(VMStackFrame* frame) {
 // interaction; the frame that pushed it continues next tick at the same instruction (C#: CONTINUE_NEXT_TICK, or
 // CONTINUE for run immediately). FreeSims detected a "context switch" and always removed Queue[0].
 void VMThread::Pop(VMPrimitiveExitCode result) {
-    auto discardResult = Stack[Stack.size() - 1]->SpecialResult;
+    if (Context->VM->OnTraceFrameReturn) {
+        auto frame = Stack.back();
+        Context->VM->OnTraceFrameReturn(frame.get(), static_cast<int>(result));
+    }
+    auto discardResult = Stack.back()->SpecialResult;
     Stack.pop_back();
     RetireTS1ObjectUse();
     LastStackExitCode = result;

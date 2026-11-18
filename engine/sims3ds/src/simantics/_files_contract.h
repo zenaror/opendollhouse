@@ -405,6 +405,7 @@ enum class SLOTFlags : int {
 FSO_FLAGS_ENUM(SLOTFlags)
 
 enum class SLOTFacing : int { FaceAnywhere = -3, FaceTowardsObject = -2, FaceAwayFromObject = -1 };
+enum class SLOTRoutingPolicy : uint8_t { Authored = 0, TS1RelativePosition = 1 };
 
 class SLOTItem {
 public:
@@ -422,6 +423,7 @@ public:
     SLOTFacing Facing = SLOTFacing::FaceTowardsObject;
     int32_t Resolution = 16;
     int32_t Height = 0;
+    SLOTRoutingPolicy RoutingPolicy = SLOTRoutingPolicy::Authored;
 };
 
 class SLOT : public IffChunk {

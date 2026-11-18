@@ -176,6 +176,24 @@ bool VMRoutingFrame::DoRoomRoute(VMFindLocationResult* route) {
         else return false; //???
     }
 
+    // The original relative planner rejects an ordinary cross-room request
+    // before executing any portal. A later candidate-only gate would run
+    // after the actor had already crossed the doorway and miss this case.
+    if (Slot != nullptr && Slot->RoutingPolicy == SLOTRoutingPolicy::TS1RelativePosition) {
+        auto* context = VM()->Context;
+        auto* actor = dynamic_cast<VMAvatar*>(Caller);
+        if (!actor || context->IsOutOfBounds(Caller->Position()) || context->IsOutOfBounds(dest)) return false;
+        const bool exceptionalRoom = (actor->GetPersonData(VMPersonDataVariable::IsGhost) & 1) ||
+            (actor->GetPersonData(static_cast<VMPersonDataVariable>(84)) & 1);
+        if (!exceptionalRoom && context->GetEnvironmentRoomAt(Caller->Position()) != context->GetEnvironmentRoomAt(dest))
+            return false;
+        // Candidate admission still belongs to the caller's room for the
+        // exceptional actors. The target is a reference point, not a request
+        // to traverse its room's portals first.
+        IgnoreRooms = false;
+        return true;
+    }
+
     auto DestRoom = VM()->Context->GetRoomAt(dest);
     auto MyRoom = VM()->Context->GetRoomAt(Caller->Position());
 
@@ -349,6 +367,38 @@ bool VMRoutingFrame::AttemptWalk() {
     std::vector<VMObstacle*> map;
     for (auto& o : obstacles) map.push_back(&o);
     Routing::VMRectRouter router(map);
+
+    // Generated TS1 relative goals are alternatives in a single weighted
+    // search, not a score-sorted list of independent routes. Keep authored
+    // SLOT routing on its existing path.
+    if (Slot != nullptr && Slot->RoutingPolicy == SLOTRoutingPolicy::TS1RelativePosition) {
+        std::vector<VMFindLocationResult> candidates{*CurRoute};
+        if (Choices != nullptr) candidates.insert(candidates.end(), Choices->begin(), Choices->end());
+        double maxScore = candidates.front().Score;
+        for (const auto& goal : candidates) maxScore = std::max(maxScore, goal.Score);
+        std::vector<Routing::VMWeightedGoal> goals;
+        for (const auto& goal : candidates) {
+            goals.push_back({Point(goal.Position.x, goal.Position.y),
+                             int32_t(16 * (maxScore - goal.Score))});
+        }
+        auto selected = router.Route(startPoint, goals);
+        if (selected.Path == nullptr || selected.Goal >= candidates.size()) return false;
+        CurRoute = std::make_shared<VMFindLocationResult>(candidates[selected.Goal]);
+        if (Choices == nullptr) Choices = std::make_unique<std::vector<VMFindLocationResult>>();
+        Choices->clear();
+        for (size_t i = 0; i < candidates.size(); ++i)
+            if (i != selected.Goal) Choices->push_back(candidates[i]);
+        endPoint = Point(CurRoute->Position.x, CurRoute->Position.y);
+        if (startPoint == endPoint) {
+            State = VMRoutingFrameState::TURN_ONLY;
+            return true;
+        }
+        WalkTo = std::move(selected.Path);
+        if (!WalkTo->empty() && WalkTo->front() == startPoint) WalkTo->pop_front();
+        if (WalkTo->empty()) return false;
+        AdvanceWaypoint();
+        return true;
+    }
 
     if (startPoint == endPoint) {
         State = VMRoutingFrameState::TURN_ONLY;
