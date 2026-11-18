@@ -41,6 +41,9 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- Ordinary walking destinations no longer add random score noise that shifts
+  later scripted choices.
+
 - The simulation sees the selected Live, Buy, Build or Options mode instead of
   the mode left in the house file. Opening a house also respects its saved Pause
   state; switching panels keeps that preference.

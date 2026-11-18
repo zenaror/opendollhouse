@@ -121,7 +121,13 @@ std::vector<VMFindLocationResult> VMSlotParser::FindAvaliableLocations(VMEntity*
                 auto routeEntryFlags = (SLOTFlags)(GetSearchDirection(circleCtr, pos, dir) & Flags); //the route needs to know what conditions it fulfilled
                 if (routeEntryFlags > 0) //within search location
                 {
-                    double baseScore = SlotBaseScore((int)Flags, maxScore, DesiredProximity, distance, [&](int max) { return context->VM->Context->NextRandom(max); });
+                    // DVD 45ad3a/45aecf -> 483572: ordinary authored slots
+                    // do not draw score noise. Keep the reference behavior for
+                    // TSO and explicit RandomScoring; its complete TS1 scoring
+                    // and candidate-reduction policy are separate contracts.
+                    const bool referenceNoise = !context->VM->TS1 || (Flags & SLOTFlags::RandomScoring) > 0;
+                    double baseScore = SlotBaseScore((int)Flags, maxScore, DesiredProximity, distance,
+                        [&](int max) { return context->VM->Context->NextRandom(max); }, referenceNoise);
                     VerifyAndAddLocation(obj, pos, center, routeEntryFlags, baseScore, context, caller, std::numeric_limits<float>::quiet_NaN(), level);
                 }
             }

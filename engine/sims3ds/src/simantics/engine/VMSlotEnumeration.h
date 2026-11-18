@@ -25,9 +25,10 @@ inline int8_t SlotDestinationLevel(int8_t baseLevel, float offsetZ)
     return (int8_t)(baseLevel + (int)std::floor(offsetZ / 15));
 }
 template<typename NextRandom>
-double SlotBaseScore(int flags, double maxScore, int desired, double distance, NextRandom nextRandom)
+double SlotBaseScore(int flags, double maxScore, int desired, double distance, NextRandom nextRandom,
+                     bool addReferenceNoise = true)
 {
-    double result = nextRandom(1024) / 1024.0f;
+    double result = addReferenceNoise ? nextRandom(1024) / 1024.0f : 0.0;
     if ((flags & 8192) == 0) result += maxScore - std::abs(desired - distance);
     return result;
 }

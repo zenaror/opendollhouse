@@ -113,6 +113,10 @@ int main(int argc,char** argv) {
     check(SlotBaseScore(0,10,16,24,draw)==2.5,"ordinary proximity score");
     check(SlotBaseScore(8192,10,16,24,draw)==.5,"RandomScoring excludes proximity bonus");
     check(draws==2,"one RNG draw per scored candidate");
+    const auto beforeOrdinaryTS1 = draws;
+    check(SlotBaseScore(255,10,16,24,draw,false)==2.0,
+          "TS1 ordinary candidate retains deterministic proximity term without reference noise");
+    check(draws==beforeOrdinaryTS1,"DVD ordinary authored candidate does not draw score RNG");
     check(SlotCallerDistanceScore(0,10,6)==8 && SlotCallerDistanceScore(8192,10,6)==10,"RandomScoring excludes caller-distance penalty");
     auto weighted=slot(0,0);weighted.Standing=3;weighted.Sitting=5;
     check(SlotStandingScore(weighted,false,2)==6 && SlotStandingScore(weighted,true,2)==10,"standing/sitting weighted score");
