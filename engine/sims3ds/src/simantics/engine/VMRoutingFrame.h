@@ -76,6 +76,11 @@ public:
     int8_t HeldResult = -1;
     int16_t TS1PendingFootprint = 0;
     bool TS1PendingFootprintKnown = false;
+    // Restored pre-15 routes retain their previous integer movement contract.
+    // Fresh routes use authored TS1 animation distance and model-clock state.
+    bool TS1SourceLocomotion = true;
+    bool UsesTS1SourceLocomotion() const;
+    int TS1MotionModelState();
 
     VMRoutingFrame() {}
     bool IsRoutingFrame() const override { return true; }

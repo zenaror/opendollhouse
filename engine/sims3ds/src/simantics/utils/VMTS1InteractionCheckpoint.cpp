@@ -119,10 +119,14 @@ uint32_t BehaviorSignature(BHAV& tree) {
     return Files::Hash::CalculateHash(bytes.ToArray());
 }
 
-uint32_t AnimationSignature(const Vitaboy::Animation& anim, const VMAnimationState& full) {
+uint32_t AnimationSignature(const Vitaboy::Animation& anim, const VMAnimationState& full,
+                            uint32_t version = VMTS1InteractionCheckpoint::CurrentVersion) {
     st::Writer bytes(st::Endian::Little);
     bytes.WriteInt32(anim.NumFrames());
     bytes.WriteFloat(anim.Duration);
+    // A resumed source-time walk also depends on the asset's displacement.
+    // Older checkpoints retain their original signature algorithm.
+    if (version >= 15) bytes.WriteFloat(anim.Distance);
     // Include every property's order, timestamp and payload, including non-xevt
     // sounds, gestures, suits and accessories which the avatar itself consumes.
     for (const auto& tp : full.TimePropertyLists) {
@@ -142,6 +146,10 @@ uint32_t AnimationSignature(const Vitaboy::Animation& anim, const VMAnimationSta
 struct AvatarRecord {
     std::vector<std::shared_ptr<VMAnimationState>> animations;
     std::shared_ptr<VMAnimationState> carry;
+    bool rawAnimationClock = false, hurryableAnimation = false, motionPositionKnown = false;
+    float motionX = 0, motionY = 0, motionRate = 1;
+    int8_t motionLevel = 0;
+    int64_t motionRateTick = -1;
     std::array<int16_t,101> person{};
     std::array<int16_t,16> motives{};
     std::array<MotivePersistence::LegacyChange,16> changes{};
@@ -603,6 +611,31 @@ public:
         Require(actual == signature, "changed BHAV " + std::to_string(id));
         if (io.in) routine = vm.Assemble(bhav);
     }
+    void animationTiming(VMAnimationState& state, uint32_t propertyCount) {
+        if (version >= 15) {
+            io.value(state.TS1Clock); io.value(state.TS1ScriptAnimation); io.value(state.TS1Phase);
+            io.value(state.TS1Timestamp); io.value(state.TS1EventCursor);
+            if (state.TS1Clock) {
+                // A model-wide clock-policy switch can produce a signed
+                // negative delta. The source retains the resulting phase on
+                // the nonterminal side; Archive already rejects nonfinite data.
+                const int64_t low = state.PlayingBackwards ? -1 : 0;
+                const int64_t high = int64_t(propertyCount) - (state.PlayingBackwards ? 1 : 0);
+                Require(state.TS1EventCursor >= low && int64_t(state.TS1EventCursor) <= high,
+                        "invalid animation event cursor");
+            }
+        } else {
+            Require(!io.out || !state.TS1Clock,
+                    "source animation clock requires checkpoint version15");
+            if (io.in) {
+                state.TS1Clock = false;
+                state.TS1ScriptAnimation = false;
+                state.TS1Phase = 0;
+                state.TS1Timestamp = 0;
+                state.TS1EventCursor = 0;
+            }
+        }
+    }
     void animation(std::shared_ptr<VMAnimationState>& state) {
         bool present = bool(state); io.value(present);
         if (!present) return;
@@ -615,7 +648,8 @@ public:
         bool backwards = state && state->PlayingBackwards;
         io.value(backwards);
         auto full = std::make_shared<VMAnimationState>(resource, backwards);
-        uint32_t signature = AnimationSignature(*resource, *full);
+        const auto resourcePropertyCount = full->TimePropertyLists.size();
+        uint32_t signature = AnimationSignature(*resource, *full, version);
         uint32_t savedSignature = signature;
         io.value(savedSignature);
         Require(savedSignature == signature, "changed animation " + name);
@@ -629,6 +663,9 @@ public:
         io.value(state->CurrentFrame); io.value(state->Speed); io.value(state->Weight);
         io.value(state->EndReached); io.value(state->Loop);
         io.value(state->EventsRun); io.vector(state->EventQueue, 65535);
+        animationTiming(*state, resourcePropertyCount);
+        Require(!state->TS1Clock || remaining == resourcePropertyCount,
+                "source animation is missing event properties");
     }
     void callback(std::shared_ptr<VMActionCallback>& cb) {
         bool present = bool(cb); io.value(present);
@@ -771,6 +808,11 @@ public:
         }
         io.value(r.State); io.value(r.PortalTurns); io.value(r.WaitTime);
         io.value(r.CallFailureTrees); io.value(r.PushTick); io.value(r.HeldResult);
+        if (version >= 15) io.value(r.TS1SourceLocomotion);
+        else if (io.in) r.TS1SourceLocomotion = false;
+        else Require(!vm.TS1 || !r.TS1SourceLocomotion || r.State == VMRoutingFrameState::INITIAL ||
+                     r.State == VMRoutingFrameState::FAILED,
+                     "source locomotion requires checkpoint version15");
         // Older snapshots cannot establish a route-owned request from live PD72.
         if (version >= 10) { io.value(r.TS1PendingFootprint); io.value(r.TS1PendingFootprintKnown); }
         else if (io.in) { r.TS1PendingFootprint = 0; r.TS1PendingFootprintKnown = false; }
@@ -997,10 +1039,31 @@ public:
                     "outfit identity changed");
         }
     }
+    void avatarTiming(AvatarRecord& a) {
+        if (version >= 15) {
+            io.value(a.rawAnimationClock); io.value(a.hurryableAnimation);
+            io.value(a.motionPositionKnown); io.value(a.motionX); io.value(a.motionY);
+            io.value(a.motionLevel); io.value(a.motionRate); io.value(a.motionRateTick);
+            Require(a.motionRate > 0, "invalid locomotion rate");
+            Require(!a.motionPositionKnown || (a.motionLevel > 0 &&
+                    a.motionX >= -32768.f && a.motionX < 32768.f &&
+                    a.motionY >= -32768.f && a.motionY < 32768.f),
+                    "invalid locomotion position");
+        } else if (io.out) {
+            Require(!a.rawAnimationClock && !a.hurryableAnimation && !a.motionPositionKnown,
+                    "source model state requires checkpoint version15");
+        }
+    }
     void avatar(AvatarRecord& a, VMAvatar& live) {
         Require(live.Avatar && live.MotiveDecay, "avatar has no animation or motive service");
         if (io.out) {
             a.animations = live.Animations; a.carry = live.CarryAnimationState;
+            a.rawAnimationClock = live.TS1RawAnimationClock;
+            a.hurryableAnimation = live.TS1HurryableAnimation;
+            a.motionX = live.TS1MotionX; a.motionY = live.TS1MotionY;
+            a.motionLevel = live.TS1MotionLevel;
+            a.motionPositionKnown = live.TS1MotionPositionKnown;
+            a.motionRate = live.TS1MotionRate; a.motionRateTick = live.TS1MotionRateTick;
             a.person = live.PersonData;
             a.hasFootprint = bool(live.Footprint);
             if (a.hasFootprint) {
@@ -1041,6 +1104,7 @@ public:
         if (io.in) a.animations.resize(n);
         for (auto& layer : a.animations) { animation(layer); Require(bool(layer), "empty animation layer"); }
         animation(a.carry);
+        avatarTiming(a);
         io.scalars(a.person); io.scalars(a.motives);
         for (auto& change : a.changes) {
             io.value(change.rate); io.value(change.stop); io.value(change.motive);
@@ -1214,6 +1278,12 @@ public:
                 live->MotiveDecay->LastMinute = a.decayMinute;
                 live->MotiveDecay->LastTick = a.precision.lastTick;
                 live->Animations = std::move(a.animations); live->CarryAnimationState = std::move(a.carry);
+                live->TS1RawAnimationClock = a.rawAnimationClock;
+                live->TS1HurryableAnimation = a.hurryableAnimation;
+                live->TS1MotionX = a.motionX; live->TS1MotionY = a.motionY;
+                live->TS1MotionLevel = a.motionLevel;
+                live->TS1MotionPositionKnown = a.motionPositionKnown;
+                live->TS1MotionRate = a.motionRate; live->TS1MotionRateTick = a.motionRateTick;
                 live->RadianDirection(a.direction); live->Velocity=a.velocity; live->KillTimeout = a.killTimeout;
                 const auto saved = objm.ObjectData.find(e->ObjectID);
                 const auto& bounds = saved->second.Instance->Footprint;

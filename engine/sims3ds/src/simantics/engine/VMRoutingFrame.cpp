@@ -11,6 +11,7 @@
 #include "simantics/engine/VMThread.h"
 #include "simantics/engine/VMSimanticsException.h"
 #include "simantics/engine/Routing/VMRectRouter.h"
+#include "simantics/engine/Routing/VMTS1Locomotion.h"
 #include "simantics/entities/VMEntity.h"
 #include "simantics/entities/VMAvatar.h"
 #include "simantics/entities/VMGameObject.h"
@@ -465,8 +466,24 @@ bool VMRoutingFrame::PushEntryPoint(int32_t entryPoint, VMEntity* ent) {
     }
 }
 
+bool VMRoutingFrame::UsesTS1SourceLocomotion() const {
+    return VM()->TS1 && TS1SourceLocomotion;
+}
+
+int VMRoutingFrame::TS1MotionModelState() {
+    switch (State) {
+        case VMRoutingFrameState::BEGIN_TURN:
+        case VMRoutingFrameState::END_TURN:
+        case VMRoutingFrameState::TURN_ONLY: return 4;
+        case VMRoutingFrameState::WALKING:
+        case VMRoutingFrameState::SHOOED: return WalkStyle() == 1 ? 10 : 9;
+        default: return 3;
+    }
+}
+
 VMPrimitiveExitCode VMRoutingFrame::Tick() {
     auto avatar = (VMAvatar*)Caller;
+    if (UsesTS1SourceLocomotion()) avatar->UpdateTS1MotionRate(TS1MotionModelState());
     if (VM()->TS1 && TS1PendingFootprintKnown)
         avatar->SetPersonData(VMPersonDataVariable::RouteFootprintMask, TS1PendingFootprint);
 
@@ -489,10 +506,16 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
     if (WaitTime > 0) {
         if (Velocity > 0) Velocity--;
 
-        if (avatar->Animations.size() < 3) StartWalkAnimation();
-        avatar->Animations[0]->Weight = (8 - Velocity) / 8.0f;
-        avatar->Animations[1]->Weight = (Velocity / 8.0f) * 0.66f;
-        avatar->Animations[2]->Weight = (Velocity / 8.0f) * 0.33f;
+        if (UsesTS1SourceLocomotion()) {
+            // Waiting does not advance translation. The active authored walk
+            // clip remains available; TSO keeps its three-way velocity blend.
+            StartWalkAnimation();
+        } else {
+            if (avatar->Animations.size() < 3) StartWalkAnimation();
+            avatar->Animations[0]->Weight = (8 - Velocity) / 8.0f;
+            avatar->Animations[1]->Weight = (Velocity / 8.0f) * 0.66f;
+            avatar->Animations[2]->Weight = (Velocity / 8.0f) * 0.33f;
+        }
 
         WaitTime--;
         Timeout--;
@@ -649,6 +672,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     auto animation = FSO::Content::Content::Get()->AvatarAnimations->Get(anims[3] + ".anim");
                     auto state = std::make_shared<VMAnimationState>(animation, false);
                     state->Loop = true;
+                    if (UsesTS1SourceLocomotion()) avatar->StartTS1Animation(state, avatar->TS1MotionRate);
                     avatar->Animations.push_back(state);
 
                     return CompleteRoute(); //we are here!
@@ -665,7 +689,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                 return VMPrimitiveExitCode::CONTINUE;
             }
 
-            if (WalkTo->size() == 0 && MoveTotalFrames - MoveFrames <= 28 && CanPortalTurn()) //7+6+5+4...
+            if (!UsesTS1SourceLocomotion() && WalkTo->size() == 0 && MoveTotalFrames - MoveFrames <= 28 && CanPortalTurn()) //7+6+5+4...
             {
                 //tail off
                 if (Velocity <= 0) Velocity = 1;
@@ -675,12 +699,15 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                 if (Velocity < 8) Velocity++;
             }
 
-            if (avatar->Animations.size() < 3) StartWalkAnimation();
-            avatar->Animations[0]->Weight = (8 - Velocity) / 8.0f;
-            avatar->Animations[1]->Weight = (Velocity / 8.0f) * 0.66f;
-            avatar->Animations[2]->Weight = (Velocity / 8.0f) * 0.33f;
+            if (UsesTS1SourceLocomotion()) StartWalkAnimation();
+            else {
+                if (avatar->Animations.size() < 3) StartWalkAnimation();
+                avatar->Animations[0]->Weight = (8 - Velocity) / 8.0f;
+                avatar->Animations[1]->Weight = (Velocity / 8.0f) * 0.66f;
+                avatar->Animations[2]->Weight = (Velocity / 8.0f) * 0.33f;
+            }
 
-            MoveFrames += Velocity;
+            if (!UsesTS1SourceLocomotion()) MoveFrames += Velocity;
             if (MoveFrames >= MoveTotalFrames) {
                 MoveFrames = MoveTotalFrames;
                 //move us to the final spot, then attempt an advance.
@@ -699,8 +726,41 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                 diff.y = (int16_t)((diff.y * MoveFrames) / MoveTotalFrames);
             }
 
+            auto nextPosition = PreviousPosition + diff;
+            float motionX = 0, motionY = 0;
+            if (UsesTS1SourceLocomotion()) {
+                const auto position = Caller->Position();
+                if (!avatar->TS1MotionPositionKnown || avatar->TS1MotionLevel != position.Level ||
+                    static_cast<int>(avatar->TS1MotionX) != position.x ||
+                    static_cast<int>(avatar->TS1MotionY) != position.y) {
+                    // A placement/teleport outside this route invalidates the
+                    // fractional position. Never carry fractions to a new tile.
+                    avatar->TS1MotionX = position.x;
+                    avatar->TS1MotionY = position.y;
+                    avatar->TS1MotionLevel = position.Level;
+                    avatar->TS1MotionPositionKnown = true;
+                }
+                motionX = avatar->TS1MotionX;
+                motionY = avatar->TS1MotionY;
+                const float dx = CurrentWaypoint.x - motionX;
+                const float dy = CurrentWaypoint.y - motionY;
+                const float remaining = std::sqrt(dx * dx + dy * dy);
+                const auto animation = avatar->Animations.front();
+                const float step = Routing::TS1MotionStep(animation->Anim->Distance,
+                    animation->Anim->Duration, animation->Speed);
+                if (remaining <= step) {
+                    motionX = CurrentWaypoint.x;
+                    motionY = CurrentWaypoint.y;
+                    MoveFrames = MoveTotalFrames;
+                } else if (remaining > 0.0f) {
+                    motionX += step * dx / remaining;
+                    motionY += step * dy / remaining;
+                }
+                nextPosition = LotTilePos(static_cast<int16_t>(motionX),
+                    static_cast<int16_t>(motionY), position.Level);
+            }
             auto storedDir = avatar->RadianDirection();
-            auto result = Caller->SetPosition(PreviousPosition + diff, VM()->TS1 ? Caller->Direction() : FSO::LotView::Model::Direction::NORTH, VM()->Context);
+            auto result = Caller->SetPosition(nextPosition, VM()->TS1 ? Caller->Direction() : FSO::LotView::Model::Direction::NORTH, VM()->Context);
             avatar->RadianDirection(storedDir);
             if (result.Status != VMPlacementError::Success && result.Status != VMPlacementError::CantBeThroughWall) {
                 //route failure, either something changed or we hit an avatar
@@ -808,13 +868,21 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     return VMPrimitiveExitCode::CONTINUE;
                 }
             }
-            float t = (MoveTotalFrames == 0) ? 1.0f : MoveFrames / (float)MoveTotalFrames;
-            Caller->VisualPosition(st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), t));
-
-            float tv = (MoveTotalFrames == 0) ? 0.0f : Velocity / (float)MoveTotalFrames;
-            auto velocity = st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), tv) - PreviousPosition.ToVector3();
-            velocity.Z = 0;
-            avatar->Velocity = velocity;
+            if (UsesTS1SourceLocomotion()) {
+                avatar->Velocity = st::Vector3((motionX - avatar->TS1MotionX) / 16.0f,
+                    (motionY - avatar->TS1MotionY) / 16.0f, 0);
+                avatar->TS1MotionX = motionX;
+                avatar->TS1MotionY = motionY;
+                Caller->VisualPosition(st::Vector3(motionX / 16.0f, motionY / 16.0f,
+                    (Caller->Position().Level - 1) * 2.95f));
+            } else {
+                float t = (MoveTotalFrames == 0) ? 1.0f : MoveFrames / (float)MoveTotalFrames;
+                Caller->VisualPosition(st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), t));
+                float tv = (MoveTotalFrames == 0) ? 0.0f : Velocity / (float)MoveTotalFrames;
+                auto velocity = st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), tv) - PreviousPosition.ToVector3();
+                velocity.Z = 0;
+                avatar->Velocity = velocity;
+            }
 
             if (MoveTotalFrames == MoveFrames) {
                 MoveTotalFrames = 0;
@@ -960,7 +1028,7 @@ bool VMRoutingFrame::Turn(double directionDiff) {
 
     obj->Animations.clear();
     auto anim = PlayAnim(animName, obj);
-    if (WalkStyle() == 1) anim->Speed = 2.0f;
+    if (!UsesTS1SourceLocomotion() && WalkStyle() == 1) anim->Speed = 2.0f;
     auto frames = anim->Anim->NumFrames();
     TurnTweak /= (frames == 0) ? 1.0f : frames / anim->Speed;
     if (off == 1) TurnTweak = -TurnTweak;
@@ -971,6 +1039,19 @@ void VMRoutingFrame::StartWalkAnimation() {
     auto obj = (VMAvatar*)Caller;
     auto pool = InPool();
     auto& anims = (pool) ? obj->SwimAnimations : obj->WalkAnimations;
+
+    if (UsesTS1SourceLocomotion()) {
+        const auto& name = anims[(WalkStyle() == 1) ? 21 : 20];
+        if (obj->Animations.size() != 1 || obj->Animations[0]->Anim->Name != name ||
+            !obj->Animations[0]->TS1Clock) {
+            obj->Animations.clear();
+            auto state = PlayAnim(name, obj);
+            state->Loop = true;
+        }
+        obj->Animations[0]->Speed = obj->TS1MotionRate;
+        obj->Animations[0]->Weight = 1.0f;
+        return;
+    }
 
     if (obj->Animations.size() == 3 &&
         obj->Animations[0]->Anim->Name == anims[3] &&
@@ -999,6 +1080,7 @@ VMAnimationState* VMRoutingFrame::PlayAnim(const std::string& name, VMAvatar* av
     // C#: new VMAnimationState(null) threw a NullReferenceException (caught by the thread -> reset); don't crash.
     if (animation == nullptr) throw std::runtime_error("Object reference not set to an instance of an object. (missing animation " + name + ")");
     auto state = std::make_shared<VMAnimationState>(animation, false);
+    if (UsesTS1SourceLocomotion()) avatar->StartTS1Animation(state, avatar->TS1MotionRate);
     avatar->Animations.push_back(state);
     return state.get();
 }

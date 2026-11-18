@@ -48,11 +48,17 @@ VMPrimitiveExitCode VMAnimateSim::Execute(VMStackFrame* context, VMPrimitiveOper
 
     // TS1(sims): FreeSO — the animation id can come from a parameter.
     uint16_t id = operand->IDFromParam() ? (uint16_t)context->Args.at(operand->AnimationID) : operand->AnimationID;
-    // TS1(sims): FreeSO plays TS1 animations at 30/25 speed (and twice that when hurrying).
-    float ts1Speed = context->VM()->TS1 ? 30 / 25.0f : 1.0f;
+    const bool originalClock = context->VM()->TS1 && !avatar->TS1ExternalAnimationClock;
+    // The isolated CAS controller still supplies its own duration-based clock.
+    float ts1Speed = context->VM()->TS1 && !originalClock ? 30 / 25.0f : 1.0f;
     auto speedFor = [&](std::shared_ptr<VMAnimationState>& st) {
         st->Speed = ts1Speed;
-        if (avatar->GetValue(VMStackObjectVariable::WalkStyle) == 1 && operand->Hurryable()) st->Speed *= 2;
+        if (originalClock) {
+            st->TS1ScriptAnimation = true;
+            avatar->TS1RawAnimationClock = operand->RawTS1Clock();
+            avatar->TS1HurryableAnimation = operand->Hurryable();
+            avatar->StartTS1Animation(st, operand->Hurryable() ? avatar->TS1MotionRate : 1.f);
+        } else if (avatar->GetValue(VMStackObjectVariable::WalkStyle) == 1 && operand->Hurryable()) st->Speed *= 2;
     };
 
     if (id == 0) { //reset
@@ -68,12 +74,15 @@ VMPrimitiveExitCode VMAnimateSim::Execute(VMStackFrame* context, VMPrimitiveOper
         if (animation == nullptr && context->VM()->TS1) return VMPrimitiveExitCode::GOTO_TRUE; // FreeSO
         auto state = NewAnimState(animation, operand->PlayBackwards(), context);
         state->Speed = ts1Speed;
+        avatar->StartTS1Animation(state);
         state->Loop = true;
         avatar->Animations.push_back(state);
 
         if (avatar->GetSlot(0) != nullptr) //if we're carrying something, set carry animation to default carry.
         {
             avatar->CarryAnimationState = NewAnimState(FSO::Content::Content::Get()->AvatarAnimations->Get("a2o-rarm-carry-loop.anim"), false, context);
+            avatar->StartTS1Animation(avatar->CarryAnimationState);
+            if (avatar->CarryAnimationState->TS1Clock) avatar->CarryAnimationState->Loop = true;
         }
         else avatar->CarryAnimationState = nullptr;
         return VMPrimitiveExitCode::GOTO_TRUE;
@@ -158,6 +167,11 @@ VMPrimitiveExitCode VMAnimateSim::Execute(VMStackFrame* context, VMPrimitiveOper
     else if (operand->Mode() == 2) //set custom carry animation
     {
         avatar->CarryAnimationState = NewAnimState(animation, false, context);
+        if (originalClock) {
+            avatar->TS1RawAnimationClock = operand->RawTS1Clock();
+            avatar->StartTS1Animation(avatar->CarryAnimationState);
+            avatar->CarryAnimationState->Loop = true;
+        }
         return VMPrimitiveExitCode::GOTO_TRUE;
     }
     else return VMPrimitiveExitCode::GOTO_TRUE;

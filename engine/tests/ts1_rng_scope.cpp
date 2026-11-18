@@ -213,8 +213,8 @@ void captureDuringDispatch() {
         const auto snapshot = house.Find("ODHI", 1);
         need(snapshot && snapshot->Data.size() >= 67, "in-dispatch Capture omitted the ODHI14 header");
         const auto& bytes = snapshot->Data;
-        need(bytes[0] == 14 && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == 0,
-             "capture test requires the version14 wire contract");
+        need(bytes[0] == Utils::VMTS1InteractionCheckpoint::CurrentVersion && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == 0,
+             "capture test requires the current wire contract with independent RNG");
         need(bytes[8] == 0 && bytes[9] == 0 && bytes[10] == 0,
              "direct capture unexpectedly added departure/scheduler/finance binding");
         // Independent fixed-header contract: version/hash(8), three bools(3),

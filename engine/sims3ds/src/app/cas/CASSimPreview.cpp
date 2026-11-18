@@ -89,6 +89,7 @@ struct CASSimPreview::OriginalIdle {
         Machine->Init();
         Machine->FreeWillEnabled = false;
         Actor = static_cast<VMAvatar*>(Machine->OwnEntity(new VMAvatar(object)));
+        Actor->TS1ExternalAnimationClock = true;
         Actor->MultitileGroup = Machine->OwnGroup(new Entities::VMMultitileGroup());
         Actor->MultitileGroup->AddObject(Actor);
         Machine->AddEntity(Actor);

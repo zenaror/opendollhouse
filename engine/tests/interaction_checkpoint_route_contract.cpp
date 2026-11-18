@@ -42,6 +42,38 @@ static int cases=0;
 static void check(bool ok,const char* name){if(!ok)throw std::runtime_error(name);++cases;printf("PASS %s\n",name);}
 template<class F> static void rejects(F f,const char* name){bool rejected=false;try{f();}catch(const std::runtime_error&){rejected=true;}check(rejected,name);}
 
+static void sourceAnimationPersistenceContract() {
+ VMContext context(nullptr);VM vm(&context,nullptr);
+ FSO::Vitaboy::Animation asset;asset.Name="source-clock-fixture";asset.Duration=1000;asset.Distance=3;
+ asset.Motions.resize(1);asset.Motions[0].FrameCount=30;
+ Model::VMAnimationState live(&asset,false);
+ live.StartTS1Clock(12300,1.4f);live.AdvanceTS1Clock(12400);live.TS1EventCursor=2;
+ auto write=[&](Model::VMAnimationState& state,uint32_t version){st::Writer bytes(st::Endian::Little);Archive archive(bytes);InteractionCheckpointCodec codec(vm,archive,version);codec.animationTiming(state,3);return bytes.ToArray();};
+ auto read=[&](const std::vector<uint8_t>& bytes,Model::VMAnimationState& state,uint32_t version){st::Reader input(bytes);Archive archive(input);InteractionCheckpointCodec codec(vm,archive,version);codec.animationTiming(state,3);check(!input.has_more(),"animation timing consumes its complete versioned record");};
+ auto bytes=write(live,15);Model::VMAnimationState restored(&asset,false);restored.Speed=live.Speed;read(bytes,restored,15);
+ check(restored.TS1Clock&&restored.TS1Phase==live.TS1Phase&&restored.TS1Timestamp==12400&&restored.TS1EventCursor==2,"source clock retains phase, timestamp and consumed-event cursor");
+ live.AdvanceTS1Clock(12450);restored.AdvanceTS1Clock(12450);
+ check(live.TS1Phase==restored.TS1Phase&&live.CurrentFrame==restored.CurrentFrame,"restored source animation takes the same next clock step");
+ const auto legacySignature=AnimationSignature(asset,live,14),sourceSignature=AnimationSignature(asset,live,15);asset.Distance=4;
+ check(AnimationSignature(asset,live,14)==legacySignature&&AnimationSignature(asset,live,15)!=sourceSignature,"changed locomotion distance invalidates only the new asset binding");
+ rejects([&]{write(live,14);},"old writer cannot silently discard source-clock continuation");
+ Model::VMAnimationState legacy(&asset,false);legacy.Speed=1.2f;legacy.CurrentFrame=17;
+ read(write(legacy,14),legacy,14);
+ check(!legacy.TS1Clock&&legacy.CurrentFrame==17&&legacy.Speed==1.2f,"legacy timing migration preserves saved frame and speed policy");
+ restored.TS1Phase=-1.01f;read(write(restored,15),live,15);
+ check(live.TS1Phase==-1.01f,"signed clock-switch phase is retained without a guessed clamp");
+ restored.TS1Phase=std::numeric_limits<float>::infinity();rejects([&]{write(restored,15);},"nonfinite source phase rejected before capture");restored.TS1Phase=0.5f;
+ restored.TS1EventCursor=4;rejects([&]{write(restored,15);},"out-of-resource event cursor rejected");
+ restored.TS1EventCursor=-1;rejects([&]{write(restored,15);},"forward cursor cannot index before first property");
+ restored.PlayingBackwards=true;restored.TS1EventCursor=3;rejects([&]{write(restored,15);},"reverse cursor cannot index beyond last property");
+ AvatarRecord model;model.rawAnimationClock=true;model.hurryableAnimation=true;model.motionPositionKnown=true;
+ model.motionX=361.25f;model.motionY=485.75f;model.motionLevel=1;model.motionRate=1.35f;model.motionRateTick=232561;
+ st::Writer modelBytes(st::Endian::Little);Archive modelOutput(modelBytes);InteractionCheckpointCodec encoder(vm,modelOutput,15);encoder.avatarTiming(model);
+ auto modelPayload=modelBytes.ToArray();st::Reader modelInput(modelPayload);Archive modelArchive(modelInput);InteractionCheckpointCodec decoder(vm,modelArchive,15);AvatarRecord modelRestored;decoder.avatarTiming(modelRestored);
+ check(modelRestored.rawAnimationClock&&modelRestored.hurryableAnimation&&modelRestored.motionPositionKnown&&modelRestored.motionX==361.25f&&modelRestored.motionY==485.75f&&modelRestored.motionRate==1.35f&&modelRestored.motionRateTick==232561,"model clock policy and fractional movement survive the checkpoint");
+ rejects([&]{st::Writer data(st::Endian::Little);Archive archive(data);InteractionCheckpointCodec old(vm,archive,14);old.avatarTiming(model);},"legacy model projection cannot silently drop source movement state");
+}
+
 static OBJTEntry classicType(uint32_t guid,uint16_t type) {
  st::Writer bytes(st::Endian::Little);bytes.WriteUInt32(guid);
  for(int i=0;i<4;++i)bytes.WriteUInt16(0);
@@ -498,12 +530,15 @@ int main(){try{
  };
  VMRoutingFrame generatedRoute;generatedRoute.Target=&live;
  configureRelativeSlot(generatedRoute,SLOTRoutingPolicy::TS1RelativePosition);
+ const auto sourceRouteBytes=writeRouteVersion(generatedRoute,15);VMRoutingFrame sourceRouteRestored;
+ check(readRouteVersion(sourceRouteBytes,sourceRouteRestored,15)&&sourceRouteRestored.TS1SourceLocomotion,
+       "ODHI15 retains the route-owned source locomotion policy");
  const auto generatedRouteBytes=writeRouteVersion(generatedRoute,13);
  VMRoutingFrame generatedRouteRestored;
  check(readRouteVersion(generatedRouteBytes,generatedRouteRestored,13)&&generatedRouteRestored.Slot&&
        generatedRouteRestored.Slot->RoutingPolicy==SLOTRoutingPolicy::TS1RelativePosition&&
        generatedRouteRestored.Slot->Rsflags==SLOTFlags::NORTH&&
-       generatedRouteRestored.Slot->Gradient==3.0f/16.0f,
+       generatedRouteRestored.Slot->Gradient==3.0f/16.0f&&!generatedRouteRestored.TS1SourceLocomotion,
        "ODHI13 route codec roundtrips generated relative-position slot provenance");
  // The policy byte follows the serialized SLOTItem; an empty route then ends
  // with hasWalk, hasChoices, hasGoal and the 32-bit blocker count.
@@ -565,6 +600,7 @@ int main(){try{
  check(thread.Stack.size()==1&&thread.Stack[0]==mainFrame&&mainFrame->InstructionPointer==2&&mainFrame->Args==std::vector<int16_t>{42}&&mainFrame->Locals==std::vector<int16_t>{123},"real VMThread preserves Main and takes authored false edge");
  check(thread.Queue.size()==1&&thread.Queue[0]==pending&&thread.TempRegisters[2]==73&&thread.ActiveQueueBlock==-1,"failed route leaves pending work and thread registers intact");
  portalPreviewContract();
+ sourceAnimationPersistenceContract();
  classicContract();
  dialogContract();
  footprintConsumerContract();

@@ -71,7 +71,7 @@ static void legacyCandidate() {
  need(vm.TS1Budget.Purse==100,"later legacy snapshot uses its own saved purse");
  VMTS1InteractionCheckpoint::Capture(vm,raw,false);
  st::Reader upgraded(raw.Find("SIMI",1)->Data);SIMI canonical;canonical.Read(nullptr,upgraded);
- need(raw.Find("ODHI",1)->Data[0]==14&&canonical.BudgetDays.size()==6&&!canonical.LegacyBudgetCandidate,"accepted legacy candidate rewrites authentic SIMI and bound checkpoint");
+ need(raw.Find("ODHI",1)->Data[0]==VMTS1InteractionCheckpoint::CurrentVersion&&canonical.BudgetDays.size()==6&&!canonical.LegacyBudgetCandidate,"accepted legacy candidate rewrites authentic SIMI and bound checkpoint");
  auto malformed=legacy;malformed.back()=1;IffRawFile invalid=raw;invalid.Set("SIMI",1,malformed);IffFile invalidHouse;invalidHouse.Read(invalid.Write());rejected([&]{invalidHouse.Get<SIMI>(1);},"nonzero marker-only tail accepted");
 }
 static void earlyUpgrade() {
@@ -120,7 +120,7 @@ int main(){try{
  IffRawFile raw;raw.Set("ObjM",1,{1,2,3});
  ctx.RandomSeed=3784694001u;ctx.TS1SimulationRandomSeed=1918150980u;
  // Historic fixtures with no initialized owner and no SIMI still capture.
- VMTS1InteractionCheckpoint::Capture(vm,raw,false);need(raw.Find("ODHI",1)&&raw.Find("ODHI",1)->Data[0]==14,"uninitialized direct overlay uses v14 without finance");
+ VMTS1InteractionCheckpoint::Capture(vm,raw,false);need(raw.Find("ODHI",1)&&raw.Find("ODHI",1)->Data[0]==VMTS1InteractionCheckpoint::CurrentVersion,"uninitialized direct overlay uses current version without finance");
  // Nonfinancial direct snapshots still synchronize both authentic SIMI slots.
  SIMI unbudgeted;unbudgeted.Version=0x49;unbudgeted.GlobalData.resize(38);unbudgeted.GlobalTail.resize(26);unbudgeted.BudgetDays.resize(6);
  st::Writer unbudgetedBytes(st::Endian::Little);unbudgeted.Write(nullptr,unbudgetedBytes);raw.Set("SIMI",1,unbudgetedBytes.ToArray());
@@ -134,7 +134,7 @@ int main(){try{
  st::Writer source(st::Endian::Little);original.Write(nullptr,source);raw.Set("SIMI",1,source.ToArray());
  auto invalid=raw;invalid.Set("FSOV",1,{1});untouched=invalid.Write();rejected([&]{VMTS1InteractionCheckpoint::Capture(vm,invalid,false);},"conflicting graph accepted");need(invalid.Write()==untouched,"later failure published partial synchronized SIMI");
  auto bad=raw;bad.Find("SIMI",1)->Data.resize(5);untouched=bad.Write();rejected([&]{VMTS1InteractionCheckpoint::Capture(vm,bad,false);},"truncated SIMI accepted");need(bad.Write()==untouched,"bad SIMI changed capture input");
- VMTS1InteractionCheckpoint::Capture(vm,raw,false);auto native=raw.Find("ODHI",1);need(native&&native->Data[0]==14,"financially bound direct capture is v14");
+ VMTS1InteractionCheckpoint::Capture(vm,raw,false);auto native=raw.Find("ODHI",1);need(native&&native->Data[0]==VMTS1InteractionCheckpoint::CurrentVersion,"financially bound direct capture uses current version");
  auto rawSimi=raw.Find("SIMI",1);st::Reader sr(rawSimi->Data);SIMI saved;saved.Read(nullptr,sr);
  need(saved.Unknown3==0x12345678&&saved.BudgetDays[0].Values()==days[0]&&saved.BudgetDays[1].Values()==days[1]&&saved.BudgetDays[5].Values()==days[5]&&saved.SchedulerCursor==-8&&saved.SavedSimulationRandomState()==1918150980u&&saved.SavedRandomState()==3784694001u&&saved.UnknownTail==original.UnknownTail,"direct capture synchronized purse and six records without altering metadata");
  auto entry=type(def.GUID);

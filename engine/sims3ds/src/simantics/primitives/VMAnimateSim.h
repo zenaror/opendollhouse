@@ -52,6 +52,7 @@ public:
     uint8_t Mode() const { return (uint8_t)((Flags & 1) | ((Flags >> 3) & 2)); }
     // TS1(sims): FreeSO operand flags.
     bool Hurryable() const { return (Flags & 64) == 64; }
+    bool RawTS1Clock() const { return (Flags & 128) != 0; }
     bool IDFromParam() const { return (Flags & 4) == 4; }
 
     std::string ToString() const;

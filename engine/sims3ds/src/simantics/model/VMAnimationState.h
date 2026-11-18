@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <vector>
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include "vitaboy/Animation.h"
 #include "simantics/utils/TimePropertyListItemSorter.h"
 namespace FSO { namespace SimAntics { namespace Model {
@@ -22,7 +24,74 @@ public:
     float Speed = 1.0f;
     float Weight = 1.0f; //For animation blending. All active animations should add up to 1 but won't break if it doesn't.
     bool Loop = false;
+    // TS1 uses a model counter clock and normalized asset duration. Legacy
+    // native checkpoints retain their frame-driven policy until replacement.
+    bool TS1Clock = false;
+    bool TS1ScriptAnimation = false;
+    float TS1Phase = 0;
+    int32_t TS1Timestamp = 0;
+    int32_t TS1EventCursor = 0;
     std::vector<FSO::Vitaboy::TimePropertyListItem> TimePropertyLists;
+
+    // Convert only at consumers. A legitimate clock-policy change can leave
+    // a signed phase outside [0,1]; it must not be rewritten to fit a pose.
+    int32_t TS1EventTime() const {
+        const float time = Anim ? Anim->Duration * TS1Phase : 0.f;
+        if (std::isnan(time)) return 0;
+        return int32_t(std::clamp(double(time), double(INT32_MIN), double(INT32_MAX)));
+    }
+    float TS1PoseFrame() const {
+        return BoundTS1PoseFrame(CurrentFrame);
+    }
+    float BoundTS1PoseFrame(float frame) const {
+        if (!Anim || std::isnan(frame)) return 0.f;
+        const float maxIndex = std::nextafter(float(INT32_MAX), 0.f);
+        return std::clamp(frame, 0.f, std::max(0.f, std::min(float(Anim->NumFrames()), maxIndex)));
+    }
+    void SyncTS1Frame() {
+        const double frame = Anim ? double(TS1Phase) * Anim->NumFrames() : 0.;
+        const double bound = std::numeric_limits<float>::max();
+        CurrentFrame = std::isnan(frame) ? 0.f : float(std::clamp(frame, -bound, bound));
+    }
+
+    void StartTS1Clock(int32_t timestamp, float rate) {
+        TS1Clock = true;
+        TS1Timestamp = timestamp;
+        TS1Phase = PlayingBackwards ? 1.f : 0.f;
+        TS1EventCursor = PlayingBackwards ? int32_t(TimePropertyLists.size()) - 1 : 0;
+        Speed = rate;
+        SyncTS1Frame();
+    }
+
+    // Returns a wrap crossing; the caller traverses time properties before
+    // posing bones. Endpoint equality belongs to the ending cycle.
+    bool AdvanceTS1Clock(int32_t timestamp) {
+        const uint32_t bits = uint32_t(timestamp) - uint32_t(TS1Timestamp);
+        const int64_t delta = bits <= 0x7fffffff ? int64_t(bits) : int64_t(bits) - 0x100000000LL;
+        TS1Timestamp = timestamp;
+        if (!Anim || Anim->NumFrames() == 0 || Anim->Motions.empty()) return false;
+        const float duration = std::abs(Speed) > 1e-6f ? std::abs(Anim->Duration / Speed) : 0.f;
+        // Malformed zero-duration resources cannot define a finite phase.
+        // Keep their last pose rather than making rendering decide completion.
+        if (!(duration > 0.f) || !std::isfinite(duration)) return false;
+        float increment = float(delta) / duration;
+        if (PlayingBackwards) increment = -increment;
+        const float nextPhase = TS1Phase + increment;
+        // Invalid metadata must not publish NaN/Inf into persistent state.
+        if (!std::isfinite(nextPhase)) return false;
+        TS1Phase = nextPhase;
+        const bool ended = PlayingBackwards ? TS1Phase <= 0.f : TS1Phase >= 1.f;
+        bool wrapped = false;
+        if (delta != 0) EndReached = ended;
+        if (ended) {
+            if (Loop) {
+                wrapped = TS1Phase < 0.f || TS1Phase > 1.f;
+                if (wrapped) TS1Phase -= std::floor(TS1Phase);
+            } else TS1Phase = std::clamp(TS1Phase, 0.f, 1.f);
+        }
+        SyncTS1Frame();
+        return wrapped;
+    }
 
     VMAnimationState(FSO::Vitaboy::Animation* animation, bool backwards) : Anim(animation) {
         if (backwards) {

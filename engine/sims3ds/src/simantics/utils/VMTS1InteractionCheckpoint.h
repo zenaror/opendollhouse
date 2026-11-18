@@ -12,7 +12,7 @@ class VM;
 namespace Engine { namespace Utils {
 class VMTS1InteractionCheckpoint {
 public:
-    static constexpr uint32_t CurrentVersion = 14;
+    static constexpr uint32_t CurrentVersion = 15;
     static void PresentDialogs(VM& vm);
     static void RestoreClassic(VM& vm, Files::Formats::IFF::IffFile& house);
     // Only a freshly synchronized, validated ObjM can carry authoritative

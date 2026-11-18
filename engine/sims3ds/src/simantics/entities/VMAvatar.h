@@ -70,6 +70,18 @@ public:
     std::vector<std::shared_ptr<Model::VMAnimationState>> Animations;
     Model::VMAnimationState* CurrentAnimationState() const { return (Animations.size() == 0) ? nullptr : Animations[0].get(); }
     std::shared_ptr<Model::VMAnimationState> CarryAnimationState;
+    bool TS1RawAnimationClock = false;
+    bool TS1HurryableAnimation = false;
+    // The isolated CAS preview owns a separate renderer clock/controller.
+    bool TS1ExternalAnimationClock = false;
+    float TS1MotionX = 0, TS1MotionY = 0;
+    int8_t TS1MotionLevel = 0;
+    bool TS1MotionPositionKnown = false;
+    float TS1MotionRate = 1.f;
+    int64_t TS1MotionRateTick = -1;
+    int32_t TS1AnimationTimestamp() const;
+    void StartTS1Animation(const std::shared_ptr<Model::VMAnimationState>& state, float rate = 1.f);
+    void UpdateTS1MotionRate(int modelState);
 
     const std::string& Message() const { return m_Message; }
     void Message(const std::string& value);
@@ -140,6 +152,7 @@ public:
     /// Advance authored animation channels/events without a household tick.
     /// World Tick calls this same block; isolated UI previews can reuse it.
     void AdvanceAnimations(bool allowSound = true);
+    void HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool allowSound, Model::VMAnimationState* eventOwner);
     void UserLeaveLot();
     void FractionalAnim(float fraction);
 

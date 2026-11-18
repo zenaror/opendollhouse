@@ -11,6 +11,8 @@
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/engine/VMTS1MotiveDecay.h"
 #include "simantics/engine/VMThread.h"
+#include "simantics/engine/VMRoutingFrame.h"
+#include "simantics/engine/Routing/VMTS1Locomotion.h"
 #include "simantics/engine/VMTS1Neighbourhood.h"
 #include "files/formats/iff/chunks/CTSS.h"
 #include "content/TS1PersonalText.h"
@@ -496,16 +498,20 @@ void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp) {
 }
 
 void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool allowSound) {
+    HandleTimePropsEvent(tp, allowSound, CurrentAnimationState());
+}
+
+void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool allowSound, VMAnimationState* eventOwner) {
     VMAvatar* avatar = this;
     auto evt = tp.Properties.Get("xevt");
-    if (evt != nullptr) {
+    if (evt != nullptr && eventOwner != nullptr) {
         auto eventValue = (int16_t)atoi(evt->c_str());
-        avatar->CurrentAnimationState()->EventQueue.push_back(eventValue);
+        eventOwner->EventQueue.push_back(eventValue);
         // TS1(sims): FreeSO — only events below 100 count towards the operand's expected event count. Events
         // >= 100 (101 = 'sound' cue) are extra; when the animation ends short of its count, Animate Sim queues the
         // missing ones (0, 1, ...). E.g. 'A2O-tvsmall-turnon' carries only xevt 101 and its tree switches the TV on
         // on the forced event 0: counting 101 meant small TVs never turned on and 'Watch TV' never ran.
-        if (eventValue < 100) avatar->CurrentAnimationState()->EventsRun++;
+        if (eventValue < 100) eventOwner->EventsRun++;
     }
     auto rhevt = tp.Properties.Get("righthand");
     if (rhevt != nullptr) {
@@ -623,12 +629,30 @@ void VMAvatar::Tick() {
     }
 
     VMAvatar* avatar = this;
+    if (Thread && Thread->Context->VM->TS1 && !TS1ExternalAnimationClock) {
+        int modelState = CurrentAnimationState() && CurrentAnimationState()->TS1ScriptAnimation ? 0 : 3;
+        for (auto frame = Thread->Stack.rbegin(); frame != Thread->Stack.rend(); ++frame) {
+            if (auto route = dynamic_cast<Engine::VMRoutingFrame*>(frame->get())) {
+                if (route->UsesTS1SourceLocomotion()) {
+                    modelState = route->TS1MotionModelState();
+                    break;
+                }
+            }
+        }
+        UpdateTS1MotionRate(modelState);
+        if (modelState == 0 && TS1HurryableAnimation && CurrentAnimationState() && CurrentAnimationState()->TS1Clock)
+            CurrentAnimationState()->Speed = TS1MotionRate;
+    }
     AdvanceAnimations();
 
     UpdateHeadSeek();
 
     if (avatar->CarryAnimationState != nullptr) {
-        FSO::Vitaboy::Animator::RenderFrame(avatar->Avatar.get(), avatar->CarryAnimationState->Anim, (int)avatar->CarryAnimationState->CurrentFrame, 0.0f, 1.0f); //currently don't advance frames... I don't think any of them are animated anyways.
+        auto& carry = avatar->CarryAnimationState;
+        const float pose = carry->TS1Clock ? carry->TS1PoseFrame() : carry->CurrentFrame;
+        if (carry->TS1Clock) FSO::Vitaboy::Animator::RenderFrameTS1(avatar->Avatar.get(), carry->Anim,
+            int(pose), std::fmod(pose, 1.f), 1.f, carry->Loop);
+        else FSO::Vitaboy::Animator::RenderFrame(avatar->Avatar.get(), carry->Anim, int(carry->CurrentFrame), 0.f, 1.f);
     }
 
     if (Thread && Thread->Context->VM->TS1) {
@@ -658,13 +682,76 @@ void VMAvatar::Tick() {
     }
 }
 
+int32_t VMAvatar::TS1AnimationTimestamp() const {
+    const uint32_t counter = Thread && Thread->Context && Thread->Context->Clock
+        ? uint32_t(Thread->Context->Clock->Ticks) : 0;
+    const uint32_t bits = counter * (TS1RawAnimationClock ? 42u : 50u);
+    return bits <= 0x7fffffffu ? int32_t(bits) : int32_t(int64_t(bits) - 0x100000000LL);
+}
+
+void VMAvatar::UpdateTS1MotionRate(int modelState) {
+    if (!Thread || !Thread->Context || !Thread->Context->Clock || !Thread->Context->VM->TS1) return;
+    const auto tick = Thread->Context->Clock->Ticks;
+    if (TS1MotionRateTick == tick) return;
+    TS1MotionRateTick = tick;
+    TS1MotionRate = Engine::Routing::TS1AdvanceMotionRate(TS1MotionRate,
+        Engine::Routing::TS1TargetMotionRate(GetValue(Model::VMStackObjectVariable::WalkStyle),
+            modelState, GetPersonData(Model::VMPersonDataVariable::Gender)));
+}
+
+void VMAvatar::StartTS1Animation(const std::shared_ptr<VMAnimationState>& state, float rate) {
+    if (state && !TS1ExternalAnimationClock && Thread && Thread->Context && Thread->Context->VM->TS1)
+        state->StartTS1Clock(TS1AnimationTimestamp(), rate);
+}
+
 void VMAvatar::AdvanceAnimations(bool allowSound) {
     //animation update for avatars
     VMAvatar* avatar = this;
     float totalWeight = 0.0f;
-    for (auto& stateP : Animations) {
-        auto state = stateP.get();
-        totalWeight += state->Weight;
+    for (size_t channel = 0; channel <= Animations.size(); ++channel) {
+        const bool carry = channel == Animations.size();
+        auto state = carry ? CarryAnimationState.get() : Animations[channel].get();
+        if (carry && (!state || !state->TS1Clock)) break;
+        if (carry) totalWeight = 1.f;
+        else totalWeight += state->Weight;
+        if (state->TS1Clock) {
+            if (!state->EndReached || state->Loop) {
+                const int32_t previousEventTime = state->TS1EventTime();
+                state->AdvanceTS1Clock(TS1AnimationTimestamp());
+                const int32_t eventTime = state->TS1EventTime();
+                const bool eventWrap = state->PlayingBackwards ? eventTime > previousEventTime : eventTime < previousEventTime;
+                auto& props = state->TimePropertyLists;
+                auto dispatch = [&](size_t index) {
+                    // The source advances its cursor over invalid property
+                    // times too, but only calls back inside the authored clip.
+                    const auto id = props[index].ID;
+                    if (id <= uint32_t(INT32_MAX) && double(id) <= std::trunc(double(state->Anim->Duration)))
+                        HandleTimePropsEvent(props[index], allowSound, state);
+                };
+                auto emit = [&](int32_t limit, bool toEnd) {
+                    auto& cursor = state->TS1EventCursor;
+                    if (state->PlayingBackwards) {
+                        while (cursor >= 0 && (toEnd || int64_t(props[size_t(cursor)].ID) >= limit))
+                            dispatch(size_t(cursor--));
+                    } else {
+                        while (cursor < int32_t(props.size()) && (toEnd || int64_t(props[size_t(cursor)].ID) <= limit))
+                            dispatch(size_t(cursor++));
+                    }
+                };
+                if (state->Weight > 0.f && state->Anim->NumFrames() != 0 && !state->Anim->Motions.empty()) {
+                    if (eventWrap) {
+                        emit(0, true);
+                        state->TS1EventCursor = state->PlayingBackwards ? int32_t(props.size()) - 1 : 0;
+                    }
+                    emit(eventTime, false);
+                }
+            }
+            const float poseFrame = state->TS1PoseFrame();
+            FSO::Vitaboy::Animator::RenderFrameTS1(avatar->Avatar.get(), state->Anim,
+                int(poseFrame), std::fmod(poseFrame, 1.f),
+                carry ? 1.f : state->Weight, state->Loop);
+            continue;
+        }
         if (!state->EndReached && state->Weight != 0) {
             if (state->PlayingBackwards) state->CurrentFrame -= state->Speed;
             else state->CurrentFrame += state->Speed;
@@ -780,13 +867,32 @@ void VMAvatar::FractionalAnim(float fraction) {
         totalWeight += state->Weight;
         if (!state->EndReached) {
             float visualFrame = state->CurrentFrame;
+            if (state->TS1Clock) {
+                float phase = state->TS1Phase;
+                if (state->Anim->Duration > 0.f) {
+                    float change = fraction * float(TS1RawAnimationClock ? 42 : 50) * state->Speed / state->Anim->Duration;
+                    phase += state->PlayingBackwards ? -change : change;
+                    if (state->Loop && (phase < 0.f || phase > 1.f)) phase -= std::floor(phase);
+                    else phase = std::clamp(phase, 0.f, 1.f);
+                }
+                visualFrame = state->BoundTS1PoseFrame(phase * state->Anim->NumFrames());
+                FSO::Vitaboy::Animator::RenderFrameTS1(avatar->Avatar.get(), state->Anim, int(visualFrame),
+                    std::fmod(visualFrame, 1.f), state->Weight, state->Loop);
+                continue;
+            }
             if (state->PlayingBackwards) visualFrame -= state->Speed / 2;
             else visualFrame += state->Speed / 2;
 
             FSO::Vitaboy::Animator::RenderFrame(avatar->Avatar.get(), state->Anim, (int)visualFrame, std::fmod(visualFrame, 1.0f), state->Weight / totalWeight);
         }
     }
-    if (avatar->CarryAnimationState != nullptr) FSO::Vitaboy::Animator::RenderFrame(avatar->Avatar.get(), avatar->CarryAnimationState->Anim, (int)avatar->CarryAnimationState->CurrentFrame, 0.0f, 1.0f);
+    if (avatar->CarryAnimationState != nullptr) {
+        const auto& carry = avatar->CarryAnimationState;
+        const float pose = carry->TS1Clock ? carry->TS1PoseFrame() : carry->CurrentFrame;
+        if (carry->TS1Clock) FSO::Vitaboy::Animator::RenderFrameTS1(avatar->Avatar.get(), carry->Anim,
+            int(pose), std::fmod(pose,1.f), 1.f, carry->Loop);
+        else FSO::Vitaboy::Animator::RenderFrame(avatar->Avatar.get(), carry->Anim, int(carry->CurrentFrame), 0.f, 1.f);
+    }
 
     ApplyHeadSeek(fraction); // after all ordinary/carry channels, before absolute matrices
 
@@ -1015,7 +1121,11 @@ bool VMAvatar::PlaceInSlot(VMEntity* obj, int32_t slot, bool cleanOld, VMContext
     if (!obj->GhostImage) {
         Contained[(size_t)slot] = obj;
 
-        if (slot == 0) CarryAnimationState = std::make_shared<VMAnimationState>(FSO::Content::Content::Get()->AvatarAnimations->Get("a2o-rarm-carry-loop.anim"), false); // only the hand uses the carry pose
+        if (slot == 0) {
+            CarryAnimationState = std::make_shared<VMAnimationState>(FSO::Content::Content::Get()->AvatarAnimations->Get("a2o-rarm-carry-loop.anim"), false);
+            StartTS1Animation(CarryAnimationState);
+            if (CarryAnimationState->TS1Clock) CarryAnimationState->Loop = true;
+        }
 
         obj->Container = this;
         obj->ContainerSlot = (int16_t)slot;

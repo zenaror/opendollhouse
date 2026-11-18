@@ -41,6 +41,12 @@ Notable changes for players and contributors, following
 
 ### Fixed
 
+- New character animations and walks use the original duration-based clock and
+  movement metadata. Animation events keep their owning character layer. Existing
+  native saves retain their previous animation and route timing until replaced;
+  new saves require an updated engine on every device sharing them. Some walking,
+  turning and animation-layer differences remain under comparison.
+
 - Ordinary walking destinations no longer add random score noise that shifts
   later scripted choices.
 
