@@ -82,6 +82,8 @@ public:
     // Pre-16 routes store TurnTweak as a per-tick adjustment. New source
     // turns store a complete residual, sampled by authored clip phase.
     bool TS1SourceModelRouting = true;
+    // Older native snapshots retain their pre-request movement policy.
+    bool TS1SharedModelRouting = true;
     bool UsesTS1SourceLocomotion() const;
     bool UsesTS1SourceTurning() const;
     bool UsesTS1SourceLookahead() const;
@@ -99,11 +101,13 @@ public:
     void InvalidateRoomRoute();
     void SoftFail(Model::Routing::VMRouteFailCode code, VMEntity* blocker);
     VMPrimitiveExitCode Tick();
+    VMPrimitiveExitCode AdvanceTS1Model();
     void WalkInterrupt(int32_t waitTime);
     void ForgetAvatar(VMAvatar* avatar) { AvatarsToConsider.erase(avatar); }
 
 private:
     friend class FSO::SimAntics::Engine::Utils::InteractionCheckpointCodec;
+    VMPrimitiveExitCode TickCore();
     static uint16_t ROUTE_FAIL_TREE;
     static const int16_t FAILED_ROUTE_LOCKOUT; // TS1(sims)
 
@@ -163,6 +167,8 @@ private:
     void BeginWalk();
     VMPrimitiveExitCode CompleteRoute();
     bool EndWalk(); //returns true if we should exit immediately.
+    int StepTS1FinalAnchor();
+    VMPrimitiveExitCode ResolveMovementCollision(int16_t status, VMEntity* blocker);
     bool Turn(double directionDiff);
     void StartWalkAnimation();
     Model::VMAnimationState* PlayAnim(const std::string& name, VMAvatar* avatar);

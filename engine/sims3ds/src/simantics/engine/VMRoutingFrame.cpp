@@ -12,6 +12,7 @@
 #include "simantics/engine/VMSimanticsException.h"
 #include "simantics/engine/Routing/VMRectRouter.h"
 #include "simantics/engine/Routing/VMTS1Locomotion.h"
+#include "simantics/engine/TS1SlotGeometry.h"
 #include "simantics/entities/VMEntity.h"
 #include "simantics/entities/VMAvatar.h"
 #include "simantics/entities/VMGameObject.h"
@@ -131,6 +132,15 @@ bool VMRoutingFrame::IntersectsOurDestination(const VMFindLocationResult& target
 void VMRoutingFrame::HardFail(VMRouteFailCode code, VMEntity* blocker) {
     State = VMRoutingFrameState::FAILED;
     auto avatar = (VMAvatar*)Caller;
+    if (TS1SharedModelRouting && avatar->TS1ModelMotion.ModelUpdating && avatar->OwnsTS1MotionRequest(this)) {
+        // The model produces a failure; the interpreter owns authored calls.
+        // Keep the exact payload for the next script-stage dispatch/save.
+        avatar->TS1ModelMotion.Status = 3;
+        avatar->TS1ModelMotion.Outcome = 3;
+        avatar->TS1ModelMotion.PendingFailureCode = static_cast<int16_t>(code);
+        avatar->TS1ModelMotion.PendingFailureBlocker = blocker ? blocker->ObjectID : 0;
+        return;
+    }
     if (CallFailureTrees && ParentRoute == nullptr) {
         auto bhav = Global()->Resource->Get<BHAV>(ROUTE_FAIL_TREE);
         const auto depth=Thread->Stack.size();
@@ -369,26 +379,32 @@ bool VMRoutingFrame::AttemptWalk() {
     for (auto& o : obstacles) map.push_back(&o);
     Routing::VMRectRouter router(map);
 
-    // Generated TS1 relative goals are alternatives in a single weighted
-    // search, not a score-sorted list of independent routes. Keep authored
-    // SLOT routing on its existing path.
-    if (Slot != nullptr && Slot->RoutingPolicy == SLOTRoutingPolicy::TS1RelativePosition) {
+    // DVD482558 searches all admitted goals together, for authored OP45 as
+    // well as generated OP27 descriptors. Preserve candidate order on ties.
+    if (Slot != nullptr && (VM()->TS1 || Slot->RoutingPolicy == SLOTRoutingPolicy::TS1RelativePosition)) {
         std::vector<VMFindLocationResult> candidates{*CurRoute};
         if (Choices != nullptr) candidates.insert(candidates.end(), Choices->begin(), Choices->end());
         double maxScore = candidates.front().Score;
         for (const auto& goal : candidates) maxScore = std::max(maxScore, goal.Score);
         std::vector<Routing::VMWeightedGoal> goals;
-        for (const auto& goal : candidates) {
-            goals.push_back({Point(goal.Position.x, goal.Position.y),
-                             int32_t(16 * (maxScore - goal.Score))});
+        std::vector<size_t> candidateIndices;
+        for (size_t i=0; i<candidates.size(); ++i) {
+            const auto& goal = candidates[i];
+            if (VM()->TS1 && goal.Score <= 0) continue;
+            const auto penalty = VM()->TS1
+                ? TS1SlotGoalPenalty(int32_t(maxScore), int32_t(goal.Score))
+                : int32_t(16 * (maxScore - goal.Score));
+            goals.push_back({Point(goal.Position.x, goal.Position.y), penalty, VM()->TS1});
+            candidateIndices.push_back(i);
         }
         auto selected = router.Route(startPoint, goals);
-        if (selected.Path == nullptr || selected.Goal >= candidates.size()) return false;
-        CurRoute = std::make_shared<VMFindLocationResult>(candidates[selected.Goal]);
+        if (selected.Path == nullptr || selected.Goal >= candidateIndices.size()) return false;
+        const auto selectedIndex = candidateIndices[selected.Goal];
+        CurRoute = std::make_shared<VMFindLocationResult>(candidates[selectedIndex]);
         if (Choices == nullptr) Choices = std::make_unique<std::vector<VMFindLocationResult>>();
         Choices->clear();
         for (size_t i = 0; i < candidates.size(); ++i)
-            if (i != selected.Goal) Choices->push_back(candidates[i]);
+            if (i != selectedIndex) Choices->push_back(candidates[i]);
         endPoint = Point(CurRoute->Position.x, CurRoute->Position.y);
         if (startPoint == endPoint) {
             State = VMRoutingFrameState::TURN_ONLY;
@@ -490,8 +506,83 @@ int VMRoutingFrame::TS1MotionModelState() {
 }
 
 VMPrimitiveExitCode VMRoutingFrame::Tick() {
+    auto avatar = static_cast<VMAvatar*>(Caller);
+    if (TS1SharedModelRouting && avatar->OwnsTS1MotionRequest(this)) {
+        auto& model = avatar->TS1ModelMotion;
+        if (model.PendingCollisionStatus >= 0) {
+            const auto status = model.PendingCollisionStatus;
+            auto blocker = VM()->GetObjectById(model.PendingCollisionObject);
+            avatar->DetachTS1MotionRequest(model.Token);
+            return ResolveMovementCollision(status, blocker);
+        }
+        if (model.PendingFailureCode >= 0) {
+            const auto code = static_cast<VMRouteFailCode>(model.PendingFailureCode);
+            auto blocker = VM()->GetObjectById(model.PendingFailureBlocker);
+            avatar->DetachTS1MotionRequest(model.Token);
+            HardFail(code, blocker);
+            return VMPrimitiveExitCode::CONTINUE;
+        }
+        const auto next = Thread->Queue.empty() ? nullptr : Thread->Queue.front();
+        const bool maximum = VM()->TS1 && !Thread->IsCheck && !ActionTree && ParentRoute == nullptr
+            && Thread->ActiveQueueBlock == -1 && next && !next->Cancelled && next->Callee
+            && !next->Callee->Dead && next->Mode == VMQueueMode::Normal
+            && next->Priority >= int16_t(VMQueuePriority::Maximum);
+        const bool cancelled = (avatar->GetFlag(VMEntityFlags::InteractionCanceled) || maximum)
+            && avatar->GetPersonData(VMPersonDataVariable::NonInterruptable) == 0;
+        const bool planner = State == VMRoutingFrameState::INITIAL || State == VMRoutingFrameState::ROOM_PORTAL
+            || State == VMRoutingFrameState::STAND_FUNC || State == VMRoutingFrameState::FAILED;
+        if (planner || cancelled || (RoomRouteInvalid && State != VMRoutingFrameState::BEGIN_TURN
+            && State != VMRoutingFrameState::END_TURN)) {
+            avatar->DetachTS1MotionRequest(model.Token);
+            return TickCore();
+        }
+    }
+    const bool motionState = State == VMRoutingFrameState::BEGIN_TURN || State == VMRoutingFrameState::END_TURN
+        || State == VMRoutingFrameState::WALKING || State == VMRoutingFrameState::TURN_ONLY
+        || State == VMRoutingFrameState::SHOOED;
+    if (UsesTS1SourceLookahead() && TS1SharedModelRouting && motionState && !Thread->IsCheck) {
+        if (!avatar->OwnsTS1MotionRequest(this)) {
+            std::vector<Routing::TS1MotionPoint> path;
+            path.push_back({Caller->Position().x, Caller->Position().y});
+            if (CurrentWaypoint != LotTilePos::OUT_OF_WORLD)
+                path.push_back({CurrentWaypoint.x, CurrentWaypoint.y});
+            if (WalkTo) for (const auto& point : *WalkTo) path.push_back({point.X, point.Y});
+            if (path.size() == 1) path.push_back(path.front());
+            const auto goal = CurRoute ? CurRoute->Position : Caller->Position();
+            path.back() = {goal.x, goal.y};
+            // The orientation point is not traversed. The planner still owns
+            // segment geometry; the request owns its immutable input copy.
+            const double heading = CurRoute && !CurRoute->FaceAnywhere ? CurRoute->RadianDirection : Caller->RadianDirection();
+            path.push_back({int32_t(goal.x + std::sin(heading) * 16), int32_t(goal.y - std::cos(heading) * 16)});
+            if (!avatar->StartTS1MotionRequest(this, Routing::TS1MotionKind::Route, path))
+                return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+            avatar->TS1ModelMotion.ModelState = TS1MotionModelState();
+        }
+        const int result = avatar->PollTS1MotionRequest(TS1MotionToken);
+        if (result == 2) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+        const auto token = TS1MotionToken;
+        if (!avatar->StopTS1MotionRequest(token)) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+        avatar->DetachTS1MotionRequest(token);
+        if (result == 1) return CompleteRoute();
+        HardFail(VMRouteFailCode::Unknown, nullptr);
+        return VMPrimitiveExitCode::CONTINUE;
+    }
+    return TickCore();
+}
+
+VMPrimitiveExitCode VMRoutingFrame::AdvanceTS1Model() {
+    // Planning/portal/chair/failure BHAV dispatch belongs to the interpreter.
+    // Invalidating rooms from placement cannot execute scripts in this stage.
+    if ((RoomRouteInvalid && State != VMRoutingFrameState::BEGIN_TURN && State != VMRoutingFrameState::END_TURN)
+        || (State != VMRoutingFrameState::BEGIN_TURN && State != VMRoutingFrameState::END_TURN
+            && State != VMRoutingFrameState::WALKING && State != VMRoutingFrameState::TURN_ONLY
+            && State != VMRoutingFrameState::SHOOED)) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    return TickCore();
+}
+
+VMPrimitiveExitCode VMRoutingFrame::TickCore() {
     auto avatar = (VMAvatar*)Caller;
-    if (UsesTS1SourceLocomotion()) avatar->UpdateTS1MotionRate(TS1MotionModelState());
+    if (UsesTS1SourceLocomotion() && !TS1SharedModelRouting) avatar->UpdateTS1MotionRate(TS1MotionModelState());
     if (VM()->TS1 && TS1PendingFootprintKnown)
         avatar->SetPersonData(VMPersonDataVariable::RouteFootprintMask, TS1PendingFootprint);
 
@@ -609,8 +700,25 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                 return VMPrimitiveExitCode::CONTINUE;
             }
 
-            //do we need to sit in a seat? it should take over.
+            // DVD45c4fa chooses the weighted destination before consulting
+            // that destination's chair. A chair in the first array entry is
+            // not necessarily the selected chair. Selection builds the path
+            // but does not begin physical movement.
+            if (VM()->TS1 && Slot && !AttemptedChair && WalkTo == nullptr) {
+                if (!AttemptWalk()) {
+                    SoftFail(VMRouteFailCode::NoPath, nullptr);
+                    return VMPrimitiveExitCode::CONTINUE;
+                }
+                if (CurRoute->Chair) State = VMRoutingFrameState::INITIAL;
+            }
+
+            // The selected chair's entry26 takes over before the walker.
             if (CurRoute->Chair != nullptr) {
+                if (VM()->TS1)
+                    avatar->SetPersonData(VMPersonDataVariable::RouteEntryFlags,
+                        int16_t(CurRoute->RouteEntryFlags));
+                if (VM()->TS1 && Caller->Container == CurRoute->Chair)
+                    return CompleteRoute();
                 if (!AttemptedChair) {
                     AttemptedChair = true;
                     if (PushEntryPoint(26, CurRoute->Chair)) return VMPrimitiveExitCode::CONTINUE;
@@ -655,6 +763,9 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
         case VMRoutingFrameState::FAILED:
             return VMPrimitiveExitCode::RETURN_FALSE;
         case VMRoutingFrameState::TURN_ONLY:
+            if (TS1SharedModelRouting && avatar->OwnsTS1MotionRequest(this)
+                && avatar->TS1ModelMotion.Status == 1 && StepTS1FinalAnchor() != 2)
+                return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
             return (EndWalk()) ? CompleteRoute() : VMPrimitiveExitCode::CONTINUE;
         case VMRoutingFrameState::SHOOED:
             StartWalkAnimation();
@@ -690,6 +801,9 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     //reset animation, so that we're facing the correct direction afterwards.
                     avatar->Animations.clear();
 
+                    if (TS1SharedModelRouting && avatar->TS1ModelMotion.ModelUpdating)
+                        return CompleteRoute();
+
                     auto& anims = InPool() ? avatar->SwimAnimations : avatar->WalkAnimations;
 
                     auto animation = FSO::Content::Content::Get()->AvatarAnimations->Get(anims[3] + ".anim");
@@ -710,6 +824,16 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     SoftFail(VMRouteFailCode::NoPath, nullptr);
                 }
                 return VMPrimitiveExitCode::CONTINUE;
+            }
+
+            if (UsesTS1SourceLookahead() && TS1SharedModelRouting && WalkTo->empty()
+                && avatar->OwnsTS1MotionRequest(this)) {
+                const int anchor = StepTS1FinalAnchor();
+                if (anchor == 2) return EndWalk() ? CompleteRoute() : VMPrimitiveExitCode::CONTINUE;
+                const float dx = CurrentWaypoint.x - avatar->TS1MotionX;
+                const float dy = CurrentWaypoint.y - avatar->TS1MotionY;
+                if (anchor == 1 && dx * dx + dy * dy <= 1e-12f)
+                    return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
             }
 
             if (!UsesTS1SourceLocomotion() && WalkTo->size() == 0 && MoveTotalFrames - MoveFrames <= 28 && CanPortalTurn()) //7+6+5+4...
@@ -836,6 +960,51 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
             auto result = Caller->SetPosition(nextPosition, VM()->TS1 ? Caller->Direction() : FSO::LotView::Model::Direction::NORTH, VM()->Context);
             avatar->RadianDirection(storedDir);
             if (result.Status != VMPlacementError::Success && result.Status != VMPlacementError::CantBeThroughWall) {
+                if (TS1SharedModelRouting && avatar->TS1ModelMotion.ModelUpdating
+                    && avatar->OwnsTS1MotionRequest(this)) {
+                    avatar->TS1ModelMotion.PendingCollisionStatus = static_cast<int16_t>(result.Status);
+                    avatar->TS1ModelMotion.PendingCollisionObject = result.Object ? result.Object->ObjectID : 0;
+                    return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+                }
+                return ResolveMovementCollision(static_cast<int16_t>(result.Status), result.Object);
+            }
+            if (UsesTS1SourceLocomotion()) {
+                avatar->Velocity = st::Vector3((motionX - avatar->TS1MotionX) / 16.0f,
+                    (motionY - avatar->TS1MotionY) / 16.0f, 0);
+                avatar->TS1MotionX = motionX;
+                avatar->TS1MotionY = motionY;
+                avatar->TS1MotionPublishedX = Caller->Position().x;
+                avatar->TS1MotionPublishedY = Caller->Position().y;
+                Caller->VisualPosition(st::Vector3(motionX / 16.0f, motionY / 16.0f,
+                    (Caller->Position().Level - 1) * 2.95f));
+            } else {
+                float t = (MoveTotalFrames == 0) ? 1.0f : MoveFrames / (float)MoveTotalFrames;
+                Caller->VisualPosition(st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), t));
+                float tv = (MoveTotalFrames == 0) ? 0.0f : Velocity / (float)MoveTotalFrames;
+                auto velocity = st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), tv) - PreviousPosition.ToVector3();
+                velocity.Z = 0;
+                avatar->Velocity = velocity;
+            }
+
+            if (MoveTotalFrames == MoveFrames) {
+                MoveTotalFrames = 0;
+                while (MoveTotalFrames == 0) {
+                    auto remains = AdvanceWaypoint();
+                    if (!remains) {
+                        MoveTotalFrames = -1;
+                        if (EndWalk()) return CompleteRoute();
+                    }
+                }
+            }
+            return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+        }
+    }
+    return VMPrimitiveExitCode::GOTO_FALSE; //???
+}
+
+VMPrimitiveExitCode VMRoutingFrame::ResolveMovementCollision(int16_t status, VMEntity* blocker) {
+    auto avatar = static_cast<VMAvatar*>(Caller);
+    const VMPlacementResult result(static_cast<VMPlacementError>(status), blocker);
                 //route failure, either something changed or we hit an avatar
                 //on both cases try again, but if we hit an avatar then detect if they have a routing frame and stop us for a bit.
                 //we stop the first collider because in most cases they're walking across our walk direction and the problem will go away after a second once they're past.
@@ -940,39 +1109,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
                     WalkInterrupt(30);
                     return VMPrimitiveExitCode::CONTINUE;
                 }
-            }
-            if (UsesTS1SourceLocomotion()) {
-                avatar->Velocity = st::Vector3((motionX - avatar->TS1MotionX) / 16.0f,
-                    (motionY - avatar->TS1MotionY) / 16.0f, 0);
-                avatar->TS1MotionX = motionX;
-                avatar->TS1MotionY = motionY;
-                avatar->TS1MotionPublishedX = Caller->Position().x;
-                avatar->TS1MotionPublishedY = Caller->Position().y;
-                Caller->VisualPosition(st::Vector3(motionX / 16.0f, motionY / 16.0f,
-                    (Caller->Position().Level - 1) * 2.95f));
-            } else {
-                float t = (MoveTotalFrames == 0) ? 1.0f : MoveFrames / (float)MoveTotalFrames;
-                Caller->VisualPosition(st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), t));
-                float tv = (MoveTotalFrames == 0) ? 0.0f : Velocity / (float)MoveTotalFrames;
-                auto velocity = st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), tv) - PreviousPosition.ToVector3();
-                velocity.Z = 0;
-                avatar->Velocity = velocity;
-            }
-
-            if (MoveTotalFrames == MoveFrames) {
-                MoveTotalFrames = 0;
-                while (MoveTotalFrames == 0) {
-                    auto remains = AdvanceWaypoint();
-                    if (!remains) {
-                        MoveTotalFrames = -1;
-                        if (EndWalk()) return CompleteRoute();
-                    }
-                }
-            }
-            return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
-        }
-    }
-    return VMPrimitiveExitCode::GOTO_FALSE; //???
+    return VMPrimitiveExitCode::CONTINUE;
 }
 
 bool VMRoutingFrame::CanShooAvatar(VMAvatar* avatar) {
@@ -1065,6 +1202,12 @@ void VMRoutingFrame::BeginWalk() { //faces the avatar towards the initial walk d
 VMPrimitiveExitCode VMRoutingFrame::CompleteRoute() {
     if (!VM()->TS1) return VMPrimitiveExitCode::RETURN_TRUE;
     auto avatar = static_cast<VMAvatar*>(Caller);
+    if (TS1SharedModelRouting && avatar->TS1ModelMotion.ModelUpdating && avatar->OwnsTS1MotionRequest(this)) {
+        avatar->TS1ModelMotion.Status = 2;
+        avatar->TS1ModelMotion.ModelState = 3;
+        avatar->TS1ModelMotion.Outcome = 2;
+        return VMPrimitiveExitCode::RETURN_TRUE;
+    }
     const auto request = TS1PendingFootprintKnown ? TS1PendingFootprint : int16_t(0);
     if (request) avatar->SetPersonData(VMPersonDataVariable::FootprintExtension, request);
     const auto valid = avatar->PositionValid(avatar->Position(), avatar->Direction(), VM()->Context);
@@ -1082,6 +1225,14 @@ VMPrimitiveExitCode VMRoutingFrame::CompleteRoute() {
 
 bool VMRoutingFrame::EndWalk() { //returns true if we should exit immediately.
     auto avatar = (VMAvatar*)Caller;
+    if (TS1SharedModelRouting && avatar->OwnsTS1MotionRequest(this)
+        && avatar->TS1ModelMotion.Status == 1) {
+        // The model creates/consumes its stop window before this planner
+        // proceeds to the final orientation. Reaching the last waypoint alone
+        // must not complete the request or consume a just-created window.
+        State = VMRoutingFrameState::TURN_ONLY;
+        return false;
+    }
     WalkDirection = Caller->RadianDirection();
     TargetDirection = CurRoute->RadianDirection;
 
@@ -1095,6 +1246,40 @@ bool VMRoutingFrame::EndWalk() { //returns true if we should exit immediately.
         return true; //we are here!
     }
     return false;
+}
+
+int VMRoutingFrame::StepTS1FinalAnchor() {
+    auto avatar = static_cast<VMAvatar*>(Caller);
+    auto& model = avatar->TS1ModelMotion;
+    if (!CurRoute || !avatar->OwnsTS1MotionRequest(this)) return 0;
+    const float dx = CurRoute->Position.x - avatar->TS1MotionX;
+    const float dy = CurRoute->Position.y - avatar->TS1MotionY;
+    const float distance = std::sqrt(dx * dx + dy * dy);
+    auto clip = avatar->CurrentAnimationState();
+    const bool direct = avatar->GetPersonData(static_cast<VMPersonDataVariable>(64)) != 0;
+    Routing::TS1StopWindowStep step;
+    if (Caller->GetValue(VMStackObjectVariable::RoutePrefference) != 0) {
+        const float threshold = WalkStyle() == 1 ? 3.f : 2.f;
+        if (model.Outcome == 0 && distance >= threshold * 1.5f) return 0;
+        model.Outcome = 1;
+        step = Routing::TS1StopWindowStep::Finalize;
+    } else {
+        step = Routing::TS1StepStopWindow(model, distance, clip ? clip->TS1Phase : 0.f,
+            clip != nullptr, clip && clip->EndReached, clip ? clip->Speed : 0.f,
+            clip && clip->Anim ? clip->Anim->Duration : 0.f, avatar->TS1MotionRate,
+            WalkStyle(), direct, avatar->TS1AnimationTimestamp(), clip ? clip->Weight : 1.f);
+    }
+    if (step != Routing::TS1StopWindowStep::Finalize)
+        return step == Routing::TS1StopWindowStep::Created ? 1 : 0;
+    model.TargetX = avatar->TS1MotionX = CurRoute->Position.x;
+    model.TargetY = avatar->TS1MotionY = CurRoute->Position.y;
+    model.TargetHeading = CurRoute->FaceAnywhere ? avatar->RadianDirection() : CurRoute->RadianDirection;
+    model.PathCursor = model.Path.size() >= 2 ? int32_t(model.Path.size() - 2) : -1;
+    model.StopDeadline = 0; model.Status = -1; model.ModelState = 3;
+    model.SegmentProgress = 1.f;
+    avatar->Animations.clear();
+    model.BlendActive = false; model.ForegroundAnimation.clear(); model.ForegroundInterruptible = 0;
+    return 2;
 }
 
 bool VMRoutingFrame::Turn(double directionDiff) {
@@ -1155,7 +1340,9 @@ void VMRoutingFrame::StartWalkAnimation() {
             state->Loop = true;
         }
         obj->Animations[0]->Speed = obj->TS1MotionRate;
-        obj->Animations[0]->Weight = 1.0f;
+        if (!obj->TS1ModelMotion.BlendActive
+            || obj->TS1ModelMotion.ForegroundAnimation != obj->Animations[0]->Anim->Name)
+            obj->Animations[0]->Weight = 1.0f;
         return;
     }
 
@@ -1209,6 +1396,10 @@ bool VMRoutingFrame::AdvanceWaypoint() {
     const auto previousWaypoint = CurrentWaypoint;
     auto point = WalkTo->front();
     WalkTo->pop_front();
+    auto avatar = static_cast<VMAvatar*>(Caller);
+    if (TS1SharedModelRouting && avatar->OwnsTS1MotionRequest(this)
+        && avatar->TS1ModelMotion.PathCursor + 1 < int32_t(avatar->TS1ModelMotion.Path.size()) - 1)
+        ++avatar->TS1ModelMotion.PathCursor;
     if (WalkTo->size() > 0) {
         CurrentWaypoint = LotTilePos((int16_t)point.X, (int16_t)point.Y, Caller->Position().Level);
     }

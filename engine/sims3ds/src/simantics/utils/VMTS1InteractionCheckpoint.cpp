@@ -145,6 +145,7 @@ uint32_t AnimationSignature(const Vitaboy::Animation& anim, const VMAnimationSta
 }
 
 struct AvatarRecord {
+    Routing::TS1MotionRequest modelMotion;
     std::vector<std::shared_ptr<VMAnimationState>> animations;
     std::shared_ptr<VMAnimationState> carry;
     bool rawAnimationClock = false, hurryableAnimation = false, motionPositionKnown = false;
@@ -235,8 +236,11 @@ std::shared_ptr<VMAnimationState> ClassicAnimation(Vitaboy::Animation* resource,
 
 class InteractionCheckpointCodec {
 public:
-    InteractionCheckpointCodec(VM& vm, Archive& archive, uint32_t version) : vm(vm), io(archive), version(version) {}
+    InteractionCheckpointCodec(VM& vm, Archive& archive, uint32_t version) :
+        ModelTickLimit(vm.Context && vm.Context->Clock ? vm.Context->Clock->Ticks : 0),
+        vm(vm), io(archive), version(version) {}
     bool PreviewUnpublishedPortals = false;
+    int64_t ModelTickLimit;
 
     static int64_t motivePhase(const VMAvatar& avatar) { return avatar.MotiveDecay->LastTick; }
 
@@ -800,6 +804,7 @@ public:
         // must not call HardFail (feedback BHAVs and lockouts mutate the live VM).
         // Ghosts and non-dead replaced instances are not evidence of deletion.
         if (io.out && r.Target && r.Target->Dead && !r.Target->GhostImage) {
+            Require(!r.TS1MotionToken, "owned model route has a deleted target");
             Require(r.Target->ObjectID > 0 && r.Target->Object && r.Target->Object->OBJ &&
                     r.Target->Object->OBJ->GUID, "deleted route target has invalid identity");
             Require(r.State <= VMRoutingFrameState::FAILED &&
@@ -828,6 +833,10 @@ public:
         else Require(!vm.TS1 || !r.TS1SourceModelRouting ||
                      r.State == VMRoutingFrameState::INITIAL || r.State == VMRoutingFrameState::FAILED,
                      "source path and turn state requires checkpoint version16");
+        if (version >= 18) io.value(r.TS1SharedModelRouting);
+        else if (io.in) r.TS1SharedModelRouting = false;
+        else Require(!r.TS1MotionToken,
+                     "owned model route requires checkpoint version18");
         // Older snapshots cannot establish a route-owned request from live PD72.
         if (version >= 10) { io.value(r.TS1PendingFootprint); io.value(r.TS1PendingFootprintKnown); }
         else if (io.in) { r.TS1PendingFootprint = 0; r.TS1PendingFootprintKnown = false; }
@@ -912,11 +921,13 @@ public:
     void thread(VMThread& t) {
         Require(!t.IsCheck && (version >= 8 || !t.BlockingState) && !t.EODConnection && t.ThreadBreak == VMThreadBreakMode::Active,
                 "unrepresented check, debugger, async or EOD state");
+        if (io.out && version < 18) for (const auto& frame : t.Stack)
+            Require(frame && !frame->TS1MotionToken, "owned model frame requires checkpoint version18");
         // The plan is shared with the classic writer. Saving an eligible
         // leaf route records the original count-only continuation, without
         // altering the live route or its owning instruction.
         const auto projection = io.out && version >= 16
-            ? BuildTS1RouteSavePlan(t, vm.TS1) : TS1RouteSavePlan{};
+            ? BuildTS1RouteSavePlan(t, vm.TS1, version >= 18) : TS1RouteSavePlan{};
         Require(!io.out || version >= 16 || t.TS1RouteDefaultsCount == 0,
                 "classic default route records require checkpoint version16");
         bool defaultsKnown = io.out ? projection.DefaultsKnown : false;
@@ -985,6 +996,9 @@ public:
             reference(stackObject, "frame stack object"); io.value(rawID);
             if (io.in) { f->StackObject = stackObject; f->StackObjectRawID = rawID; }
             io.value(f->InstructionPointer);
+            if (version >= 18) io.value(f->TS1MotionToken);
+            else if (io.in) f->TS1MotionToken = 0;
+            else Require(!f->TS1MotionToken, "owned model frame requires checkpoint version18");
             if (version >= 16) {
                 int32_t primitiveState = io.out ? projection.PrimitiveState(f.get()) : 0;
                 io.value(primitiveState);
@@ -1081,6 +1095,122 @@ public:
                     "outfit identity changed");
         }
     }
+    void modelMotion(Routing::TS1MotionRequest& m) {
+        Require(!m.ModelUpdating, "model update is in progress");
+        if (version < 18) {
+            Require(!io.out || (m.Kind == Routing::TS1MotionKind::None && !m.Token),
+                    "owned model motion requires checkpoint version18");
+            if (io.in) m = Routing::TS1MotionRequest{};
+            return;
+        }
+        io.value(m.Kind); io.value(m.Token); io.value(m.NextToken);
+        io.value(m.OwnerFrame); io.value(m.OwnerCaller); io.value(m.OwnerCallee);
+        io.value(m.OwnerCodeGUID); io.value(m.OwnerRoutine); io.value(m.OwnerPC);
+        io.value(m.Status); io.value(m.ModelState); io.value(m.Outcome);
+        io.value(m.PathCursor); io.value(m.Stopped); io.value(m.StopDeadline);
+        io.value(m.StopRequested); io.value(m.LastModelTick);
+        auto n = io.count(m.Path.size(), 65536);
+        if (io.in) m.Path.resize(n);
+        for (auto& point : m.Path) { io.value(point.X); io.value(point.Y); }
+        io.value(m.TargetX); io.value(m.TargetY); io.value(m.TargetHeading);
+        io.value(m.StartX); io.value(m.StartY); io.value(m.StartHeading);
+        io.value(m.EndX); io.value(m.EndY); io.value(m.EndHeading);
+        io.value(m.SegmentProgress); io.value(m.StopPhase1); io.value(m.StopPhase2);
+        io.value(m.StopDistance1); io.value(m.StopDistance2);
+        io.value(m.TurnStart); io.value(m.TurnResidual);
+        io.value(m.StopProfileKnown); io.string(m.StopProfileAnimation);
+        io.value(m.StopProfileSignature); io.value(m.ForegroundInterruptible);
+        io.string(m.ForegroundAnimation);
+        io.value(m.PendingFailureCode); io.value(m.PendingFailureBlocker);
+        io.value(m.PendingCollisionStatus); io.value(m.PendingCollisionObject);
+        io.value(m.BlendActive); io.value(m.BlendStart); io.value(m.BlendDuration);
+        io.value(m.BlendFrom); io.value(m.BlendTo);
+        Require(m.PendingFailureCode >= -1 && m.PendingFailureCode <= 13 &&
+                (m.PendingFailureCode == -1 || (m.Kind == Routing::TS1MotionKind::Route && m.Status == 3)),
+                "invalid deferred model routing failure");
+        Require(m.PendingCollisionStatus >= -1 && m.PendingCollisionStatus <= 50 &&
+                m.PendingCollisionStatus != 6 &&
+                (m.PendingCollisionStatus == -1 || (m.Kind == Routing::TS1MotionKind::Route &&
+                    (m.Status == 1 || m.Status == -1))), "invalid deferred model collision");
+        Require(m.Status >= -1 && m.Status <= 3 && m.Outcome >= 0 && m.Outcome <= 3 &&
+                (m.Stopped == 0 || m.Stopped == 1), "invalid model status, outcome or stopped flag");
+        Require(m.LastModelTick >= -1 && m.LastModelTick <= ModelTickLimit,
+                "model tick exceeds the saved clock");
+        Require(!m.BlendActive || (m.Kind != Routing::TS1MotionKind::None &&
+                    !m.ForegroundAnimation.empty() && m.BlendDuration >= 100 &&
+                    m.BlendFrom >= 0 && m.BlendFrom <= 1 && m.BlendTo >= 0 && m.BlendTo <= 1),
+                "invalid active model foreground blend");
+        Require(uint8_t(m.Kind) <= uint8_t(Routing::TS1MotionKind::Body) && m.NextToken,
+                "invalid model motion kind or next token");
+        if (m.Kind == Routing::TS1MotionKind::None) {
+            Require(!m.Token && m.OwnerFrame == -1 && m.Path.empty() && m.Status == 0 &&
+                    m.ModelState == 3 && m.Outcome == 0 && m.Stopped == 1 && m.PathCursor == -1,
+                    "inactive model motion retains ownership or active state");
+        } else {
+            Require(m.Token && m.OwnerFrame >= 0 && m.OwnerFrame < 1024 &&
+                    m.OwnerCaller > 0 && m.OwnerCallee > 0 && m.OwnerCodeGUID && m.OwnerRoutine &&
+                    n >= 3 && m.PathCursor >= -1 && m.PathCursor <= int32_t(n)-2,
+                    "invalid owned model motion record");
+            Require(m.ModelState == 3 || m.ModelState == 4 || m.ModelState == 9 ||
+                    (m.Kind == Routing::TS1MotionKind::Route && m.ModelState == 10),
+                    "invalid owned model state");
+            Require(m.Status == 0 ? m.Stopped == 1 && m.PathCursor == -1 :
+                    m.Stopped == 0 && m.PathCursor >= 0,
+                    "model stopped state disagrees with its cursor");
+            Require((m.Status != 1 && m.Status != -1) || m.Outcome <= 1,
+                    "pending model has a terminal outcome");
+            Require(m.Status != 2 || (m.Outcome == 2 && m.ModelState == 3),
+                    "ready model has an inconsistent outcome or state");
+            Require(m.Status != 3 || m.Outcome == 3,
+                    "failed model has no failure outcome");
+        }
+        Require(m.StopProfileKnown ? !m.StopProfileAnimation.empty() && m.StopProfileSignature != 0 :
+                m.StopProfileAnimation.empty() && m.StopProfileSignature == 0 &&
+                m.StopPhase1 == 0 && m.StopPhase2 == 0 && m.StopDistance1 == 0 && m.StopDistance2 == 0,
+                "model stop profile binding disagrees with its values");
+    }
+    void validateModelMotion(const Routing::TS1MotionRequest& m, VMAvatar* avatar,
+                             const std::vector<std::shared_ptr<VMStackFrame>>& frames,
+                             const VMThread* thread = nullptr) {
+        size_t tokenCount = 0;
+        for (const auto& frame : frames) if (frame->TS1MotionToken) {
+            Require(avatar && m.Kind != Routing::TS1MotionKind::None &&
+                    frame->TS1MotionToken == m.Token,
+                    "dangling model frame token");
+            ++tokenCount;
+        }
+        if (m.Kind == Routing::TS1MotionKind::None) {
+            Require(tokenCount == 0, "inactive model motion has a frame token");
+            return;
+        }
+        Require(avatar && tokenCount == 1 && m.OwnerFrame >= 0 && size_t(m.OwnerFrame) < frames.size(),
+                "model owner frame is missing or duplicated");
+        const auto& frame = *frames[size_t(m.OwnerFrame)];
+        Require((!thread || frame.Thread == thread) && frame.TS1MotionToken == m.Token && frame.Caller == avatar &&
+                m.OwnerCaller == avatar->ObjectID && frame.Callee &&
+                frame.Callee->ObjectID == m.OwnerCallee && frame.CodeOwner && frame.CodeOwner->OBJ &&
+                frame.CodeOwner->OBJ->GUID == m.OwnerCodeGUID && frame.Routine &&
+                frame.Routine->ID == m.OwnerRoutine && frame.InstructionPointer == m.OwnerPC &&
+                frame.InstructionPointer < frame.Routine->Instructions.size(),
+                "model owner identity differs from its frame");
+        if (m.Kind == Routing::TS1MotionKind::Body) {
+            Require(!frame.IsRoutingFrame() && frame.PrimitiveState == 1 &&
+                    frame.Routine->Instructions[frame.InstructionPointer].Opcode == 22,
+                    "body model owner is not a waiting OP22 frame");
+        } else {
+            auto route = dynamic_cast<const VMRoutingFrame*>(&frame);
+            Require(route && route->TS1SharedModelRouting,
+                    "route model owner lacks shared model routing");
+        }
+    }
+    void validateModelProfile(const Routing::TS1MotionRequest& m, VMAvatar& live) {
+        if (!m.StopProfileKnown) return;
+        Require(live.Avatar && live.Avatar->BaseSkeleton && !m.StopProfileAnimation.empty() &&
+                m.StopProfileSignature, "model stop profile has no resource binding");
+        auto resource = Content::Content::Get()->AvatarAnimations->Get(m.StopProfileAnimation + ".anim");
+        Require(resource && Routing::TS1StopProfileSignature(*resource, *live.Avatar->BaseSkeleton) ==
+                m.StopProfileSignature, "model stop profile animation or skeleton changed");
+    }
     void avatarTiming(AvatarRecord& a) {
         if (version >= 15) {
             io.value(a.rawAnimationClock); io.value(a.hurryableAnimation);
@@ -1108,6 +1238,7 @@ public:
             a.motionLevel = live.TS1MotionLevel;
             a.motionPositionKnown = live.TS1MotionPositionKnown;
             a.motionRate = live.TS1MotionRate; a.motionRateTick = live.TS1MotionRateTick;
+            a.modelMotion = live.TS1ModelMotion;
             a.person = live.PersonData;
             a.hasFootprint = bool(live.Footprint);
             if (a.hasFootprint) {
@@ -1149,6 +1280,12 @@ public:
         for (auto& layer : a.animations) { animation(layer); Require(bool(layer), "empty animation layer"); }
         animation(a.carry);
         avatarTiming(a);
+        modelMotion(a.modelMotion);
+        validateModelProfile(a.modelMotion, live);
+        if (io.out) {
+            const auto frames = version >= 16 ? BuildTS1RouteSavePlan(*live.Thread, vm.TS1, version >= 18).NativeFrames : live.Thread->Stack;
+            validateModelMotion(a.modelMotion, &live, frames, live.Thread.get());
+        }
         io.scalars(a.person); io.scalars(a.motives);
         for (auto& change : a.changes) {
             io.value(change.rate); io.value(change.stop); io.value(change.motive);
@@ -1220,12 +1357,16 @@ public:
         if (io.in) r.preparedThread = std::make_unique<VMThread>(vm.Context, &e, 0);
         thread(io.in ? *r.preparedThread : *e.Thread);
         if (isAvatar) { r.avatar = std::make_unique<AvatarRecord>(); avatar(*r.avatar, *av); }
+        else if (io.out) validateModelMotion(Routing::TS1MotionRequest{}, nullptr, e.Thread->Stack, e.Thread.get());
     }
 
     void publish(std::map<int16_t, Record>& records, const OBJM& objm, bool validateOnly = false) {
         for (auto& p : participants) Require(records.count(p.first), "partial participant group");
         for (auto& p : records) {
             auto& r = p.second;
+            const auto* motion = r.avatar ? &r.avatar->modelMotion : nullptr;
+            validateModelMotion(motion ? *motion : Routing::TS1MotionRequest{},
+                                dynamic_cast<VMAvatar*>(r.entity), r.preparedThread->Stack, r.preparedThread.get());
             if (r.avatar) {
                 const auto saved = objm.ObjectData.find(r.entity->ObjectID);
                 Require(saved != objm.ObjectData.end() && saved->second.Instance &&
@@ -1330,6 +1471,7 @@ public:
                 live->TS1MotionLevel = a.motionLevel;
                 live->TS1MotionPositionKnown = a.motionPositionKnown;
                 live->TS1MotionRate = a.motionRate; live->TS1MotionRateTick = a.motionRateTick;
+                live->TS1ModelMotion = std::move(a.modelMotion);
                 live->RadianDirection(a.direction); live->Velocity=a.velocity; live->KillTimeout = a.killTimeout;
                 const auto saved = objm.ObjectData.find(e->ObjectID);
                 const auto& bounds = saved->second.Instance->Footprint;
@@ -1694,6 +1836,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     const auto n = fields.count(0, 32767);
     Require(n, "empty execution supplement");
     InteractionCheckpointCodec codec(vm, fields, version);
+    codec.ModelTickLimit=clock.Ticks;
     codec.PreviewUnpublishedPortals=previewUnpublishedPortals;
     std::map<int16_t, Record> records;
     for (uint32_t i = 0; i < n; ++i) {

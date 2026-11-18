@@ -15,6 +15,7 @@ namespace FSO { namespace SimAntics { namespace Engine { namespace Utils { class
 #include "simantics/model/VMPersonDataVariable.h"
 #include "simantics/model/VMMotiveChange.h"
 #include "simantics/model/VMAnimationState.h"
+#include "simantics/engine/Routing/VMTS1MotionRequest.h"
 #include "simantics/model/TSOPlatform/VMTSOAvatarState.h"
 #include "simantics/model/VMTS1Appearance.h"
 #include "vitaboy/Appearance.h"
@@ -22,6 +23,7 @@ namespace FSO { namespace SimAntics { namespace Engine { namespace Utils { class
 namespace FSO { namespace HIT { class HITThread; } }
 namespace FSO { namespace SimAntics {
 namespace Entities { class VMTS1MotiveDecay; }
+namespace Engine { class VMStackFrame; }
 
 enum class VMAvatarType : uint8_t { Adult, Child, Cat, Dog };
 
@@ -85,6 +87,19 @@ public:
     int32_t TS1AnimationTimestamp() const;
     void StartTS1Animation(const std::shared_ptr<Model::VMAnimationState>& state, float rate = 1.f);
     void UpdateTS1MotionRate(int modelState);
+    Engine::Routing::TS1MotionRequest TS1ModelMotion;
+    // Reconstructable setup cache, never active ownership or saved model state.
+    Engine::Routing::TS1MotionRequest TS1StopProfileCache;
+    const FSO::Vitaboy::Animation* TS1StopProfileAnimationSource = nullptr;
+    const FSO::Vitaboy::Skeleton* TS1StopProfileSkeletonSource = nullptr;
+    uint64_t StartTS1MotionRequest(Engine::VMStackFrame* owner,
+        Engine::Routing::TS1MotionKind kind,
+        const std::vector<Engine::Routing::TS1MotionPoint>& path);
+    bool OwnsTS1MotionRequest(const Engine::VMStackFrame* owner) const;
+    int PollTS1MotionRequest(uint64_t token);
+    bool StopTS1MotionRequest(uint64_t token);
+    void DetachTS1MotionRequest(uint64_t token);
+    void UpdateTS1ModelMotion();
 
     const std::string& Message() const { return m_Message; }
     void Message(const std::string& value);

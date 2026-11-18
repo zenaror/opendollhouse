@@ -119,6 +119,7 @@ bool VMThread::RunTS1Initializer(std::shared_ptr<VMStackFrame> frame) {
             Initializing(thread.TS1InitializerActive), Result(thread.LastStackExitCode),
             Break(thread.ThreadBreak), Boundary(thread.TS1InitializerBoundary) {}
         ~Restore() {
+            Thread.DetachTS1StackMotion(Stack.size());
             Thread.Stack=std::move(Stack);Thread.TicksThisFrame=Count;
             Thread.ContinueExecution=Continue;Thread.TS1InitializerActive=Initializing;
             Thread.LastStackExitCode=Result;Thread.ThreadBreak=Break;
@@ -430,6 +431,21 @@ void VMThread::RetireTS1ObjectUse() {
     }
 }
 
+void VMThread::DetachTS1FrameMotion(VMStackFrame* frame) {
+    if (IsCheck || !Context || !Context->VM || !Context->VM->TS1 ||
+        !frame || frame->Thread!=this || !frame->TS1MotionToken) return;
+    auto* avatar=dynamic_cast<VMAvatar*>(Entity);
+    if (!avatar || avatar->Thread.get()!=this || frame->Caller!=avatar) return;
+    // The avatar verifies the token before clearing either the shared model
+    // or its owner frame, so an obsolete frame cannot detach a newer request.
+    avatar->DetachTS1MotionRequest(frame->TS1MotionToken);
+}
+
+void VMThread::DetachTS1StackMotion(size_t first) {
+    if (IsCheck) return;
+    for (size_t i=Stack.size();i>first;--i) DetachTS1FrameMotion(Stack[i-1].get());
+}
+
 void VMThread::DiscardTS1ObjectUses() {
     // Reset/interrupt previously discarded the interpreter stack outright.
     // Release counts without inventing additional person-field Reset behavior.
@@ -490,13 +506,16 @@ void VMThread::TS1ObjectUseTargetRemoved(VMEntity* target) {
     while (!TS1ObjectUses.empty()) {
         const auto depth=TS1ObjectUses.back().StackDepth;
         if (depth<=0 || size_t(depth)>Stack.size()) { DiscardTS1ObjectUses(); break; }
-        while (Stack.size()>=size_t(depth)) { Stack.pop_back(); RetireTS1ObjectUse(); }
+        while (Stack.size()>=size_t(depth)) {
+            DetachTS1FrameMotion(Stack.back().get());Stack.pop_back();RetireTS1ObjectUse();
+        }
     }
     // Unwinding can copy the just-ended current record into LastInteraction.
     clearLast();
     if (auto avatar=dynamic_cast<VMAvatar*>(Entity)) avatar->ClearTS1InteractionFootprint();
     if (Context->VM->TS1) Entity->TS1SetSchedulerDelay(-1);
     DiscardTS1ObjectUses();
+    DetachTS1StackMotion();
     Stack.clear();
     TS1RouteDefaultsCount = 0;
     TS1RouteDefaultsKnown = Context->VM->TS1;
@@ -544,7 +563,9 @@ void VMThread::AbortCurrentInteraction() {
     int ind = -1;
     for (int i = (int)Stack.size() - 1; i >= 0; i--) if (Stack[i]->SpecialResult == VMSpecialResult::Interaction) { ind = i; break; }
     if (ind != -1) {
-        while ((int)Stack.size() > ind) { Stack.pop_back(); RetireTS1ObjectUse(); }
+        while ((int)Stack.size() > ind) {
+            DetachTS1FrameMotion(Stack.back().get());Stack.pop_back();RetireTS1ObjectUse();
+        }
         EndCurrentInteraction();
     }
 }
@@ -845,6 +866,7 @@ void VMThread::HandleResult(VMStackFrame* frame, VMInstruction* instruction, VMP
             break;
         case VMPrimitiveExitCode::INTERRUPT:
             if (Context->VM->TS1 && !IsCheck) DiscardTS1ObjectUses();
+            DetachTS1StackMotion();
             Stack.clear();
             if (Context->VM->TS1 && !IsCheck) {
                 TS1RouteDefaultsCount = 0;
@@ -921,6 +943,7 @@ void VMThread::Pop(VMPrimitiveExitCode result) {
         Context->VM->OnTraceFrameReturn(frame.get(), static_cast<int>(result));
     }
     auto discardResult = Stack.back()->SpecialResult;
+    DetachTS1FrameMotion(Stack.back().get());
     Stack.pop_back();
     RetireTS1ObjectUse();
     LastStackExitCode = result;
@@ -928,6 +951,7 @@ void VMThread::Pop(VMPrimitiveExitCode result) {
     // The immediate call returns to its sentinel, never branches the prepared
     // Main frame or treats Init as a completed user interaction.
     if (TS1InitializerActive && !Stack.empty() && Stack.back()==TS1InitializerBoundary) {
+        DetachTS1FrameMotion(Stack.back().get());
         Stack.pop_back();
         ContinueExecution=false;
         return;

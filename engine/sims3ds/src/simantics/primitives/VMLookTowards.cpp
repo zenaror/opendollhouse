@@ -35,13 +35,83 @@ VMPrimitiveExitCode VMLookTowards::Execute(VMStackFrame* context, VMPrimitiveOpe
     auto sim = dynamic_cast<VMAvatar*>(context->Caller);
     if (!sim) throw VMSimanticsException("Look Towards: caller is not an avatar (invalid cast).", context);
 
+    if (context->VM()->TS1) {
+        const int mode = static_cast<int16_t>(operand->Mode);
+        if (mode < 0 || mode > 3) throw VMSimanticsException("Look Towards: invalid original mode (0x27).", context);
+        if (mode == 0) {
+            if (!context->Thread->IsCheck) {
+                const auto oid = context->StackObjectID();
+                sim->SetPersonData(Model::VMPersonDataVariable::HeadSeekObject, oid);
+                sim->SetPersonData(Model::VMPersonDataVariable::HeadSeekState, oid != 0);
+                sim->SetPersonData(Model::VMPersonDataVariable::HeadSeekFinishAction, 0);
+                sim->SetPersonData(Model::VMPersonDataVariable::HeadSeekLimitAction, 1);
+                sim->SetPersonData(Model::VMPersonDataVariable::HeadSeekTimeout, 0);
+            }
+            return VMPrimitiveExitCode::GOTO_TRUE;
+        }
+        if (context->Thread->IsCheck) return VMPrimitiveExitCode::GOTO_FALSE;
+        if (context->PrimitiveState == 0) {
+            if (sim->GetPersonData(Model::VMPersonDataVariable::Posture) != 0)
+                return VMPrimitiveExitCode::GOTO_FALSE;
+            const auto self = sim->Position();
+            Routing::TS1MotionPoint target;
+            if (mode == 1) {
+                int32_t x = self.x, y = self.y;
+                const int quadrant = context->Thread->Context->World
+                    ? int(context->Thread->Context->World->State.Rotation()) & 3 : 0;
+                const auto rotate = [](int32_t& a, int32_t& b, int q) {
+                    const auto oldA = a, oldB = b;
+                    if (q == 1) { a = 1023 - oldB; b = oldA; }
+                    else if (q == 2) { a = 1023 - oldA; b = 1023 - oldB; }
+                    else if (q == 3) { a = oldB; b = 1023 - oldA; }
+                };
+                rotate(x, y, quadrant); x += 16; y += 16; rotate(x, y, (-quadrant) & 3);
+                target = {x, y};
+                sim->SetValue(Model::VMStackObjectVariable::RoutePrefference, 0);
+            } else {
+                auto object = context->Thread->Context->VM->GetObjectById(context->StackObjectID());
+                if (!object) throw VMSimanticsException("Look Towards: missing original target (0x15).", context);
+                target = {object->Position().x, object->Position().y};
+                if (mode == 3) {
+                    const auto reflect = [](int32_t origin, int32_t point) {
+                        const uint32_t bits = uint32_t(origin) * 2u - uint32_t(point);
+                        return bits <= 0x7fffffffu ? int32_t(bits) : int32_t(int64_t(bits) - 0x100000000LL);
+                    };
+                    target = {reflect(self.x, target.X), reflect(self.y, target.Y)};
+                }
+            }
+            const std::vector<Routing::TS1MotionPoint> path{{self.x, self.y}, {self.x, self.y}, target};
+            if (!sim->StartTS1MotionRequest(context, Routing::TS1MotionKind::Body, path))
+                throw VMSimanticsException("Look Towards: model request is owned by another frame.", context);
+            context->PrimitiveState = 1;
+        } else if (!sim->OwnsTS1MotionRequest(context)) {
+            // A classic/native pre-request continuation polls the original
+            // idle model:0 maps to true, then stop succeeds. Do not fabricate
+            // a path or confuse it with a malformed new ownership token.
+            if (context->TS1MotionToken == 0
+                && sim->TS1ModelMotion.Kind == Routing::TS1MotionKind::None)
+                return VMPrimitiveExitCode::GOTO_TRUE;
+            throw VMSimanticsException("Look Towards: missing saved model request ownership.", context);
+        }
+        int result = sim->PollTS1MotionRequest(context->TS1MotionToken);
+        if (result == 0) result = 1;
+        if (result != 2 && sim->StopTS1MotionRequest(context->TS1MotionToken)) {
+            sim->DetachTS1MotionRequest(context->TS1MotionToken);
+            return VMPrimitiveExitCode::GOTO_TRUE;
+        }
+        return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    }
+
+    // TSO retains its original byte-sized modes, including group averages.
+    const auto legacyMode = static_cast<VMLookTowardsMode>(static_cast<uint8_t>(operand->Mode));
+
     auto result = VMFindLocationResult();
     result.Position = LotTilePos(sim->Position());
 
     LotTilePos pos = LotTilePos();
     // FIX(sims) QA4: a missing stack object was a null dereference (segfault); C# throws (the Sim resets).
-    if (context->StackObject == nullptr && operand->Mode != VMLookTowardsMode::HeadTowardsObject && operand->Mode != VMLookTowardsMode::BodyTowardsCamera) throw VMSimanticsException("Object reference not set to an instance of an object.", context);
-    switch (operand->Mode)
+    if (context->StackObject == nullptr && legacyMode != VMLookTowardsMode::HeadTowardsObject && legacyMode != VMLookTowardsMode::BodyTowardsCamera) throw VMSimanticsException("Object reference not set to an instance of an object.", context);
+    switch (legacyMode)
     {
         case VMLookTowardsMode::HeadTowardsObject:
             sim->SetPersonData(Model::VMPersonDataVariable::HeadSeekObject, context->StackObjectID());
@@ -96,12 +166,13 @@ SLOTFlags VMLookTowards::RadianToFlags(double rad)
 void VMLookTowardsOperand::Read(const uint8_t* bytes)
 {
     st::Reader io(bytes, 8, st::Endian::Little);
-    Mode = (VMLookTowardsMode)io.ReadByte();
+    Mode = static_cast<VMLookTowardsMode>(io.ReadInt16());
 }
 
 void VMLookTowardsOperand::Write(uint8_t* bytes)
 {
     bytes[0] = (uint8_t)Mode;
+    bytes[1] = uint8_t(uint16_t(Mode) >> 8);
 }
 
 }}}

@@ -26,7 +26,13 @@ struct VMExtendRectResult {
     int32_t BestN = 0;
 };
 
-struct VMWeightedGoal { st::Point Position; int32_t Penalty = 0; };
+struct VMWeightedGoal {
+    st::Point Position;
+    int32_t Penalty = 0;
+    // Legacy clients use negative penalties to disable a branch. TS1's
+    // original DWORD cost may wrap negative and remains a real root edge.
+    bool SignedSourcePenalty = false;
+};
 struct VMWeightedRoute {
     std::shared_ptr<std::list<st::Point>> Path;
     size_t Goal = size_t(-1);

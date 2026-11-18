@@ -60,6 +60,9 @@ int main() { try {
     need(penalized.Goal==1,"penalty can outweigh shorter path");empty.valid(penalized,start,far);
     auto disabled=empty.route(start,{{near,-1},{far,0}});
     need(disabled.Goal==1,"negative penalty branch disabled");empty.valid(disabled,start,far);
+    auto signedSource=empty.route(start,{{near,-32,true},{far,0,true}});
+    need(signedSource.Goal==0,"signed original DWORD penalty was treated as disabled");
+    empty.valid(signedSource,start,near);
     auto none=empty.route(start,{});need(!none.Path && none.Goal==size_t(-1),"empty goals fail");
     World maze(true);const Point destination(90,50),blocked(40,30);
     auto mixed=maze.route(start,{{blocked,0},{destination,0}});

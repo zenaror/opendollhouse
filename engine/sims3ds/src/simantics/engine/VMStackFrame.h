@@ -61,6 +61,9 @@ public:
     /// Original frame state (+8); Idle For Input sets 1 while retrying after
     /// a pushed child. Independent of belonging to an interaction tree.
     int32_t PrimitiveState = 0;
+    // Native identity of a shared TS1 model request. It is independent of the
+    // original frame state and is persisted by ODHI18, never as a pointer.
+    uint64_t TS1MotionToken = 0;
 
     /** Used to get strings and other resources (for primitives) from the code owner, as it may not be the callee but instead a semiglobal or global. **/
     FSO::Content::GameIffResource* ScopeResource() const { return CodeOwner->Resource; }

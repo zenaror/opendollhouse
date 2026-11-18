@@ -92,6 +92,14 @@ int main() {try {
  f.Owner->PrimitiveState=9;check(plan.PrimitiveState(f.Owner.get())==1,"plan state overlay remains independent of live state");f.Owner->PrimitiveState=0;
  check(plan.NativeDepth(1)==1&&plan.ClassicDepth(1)==1,"shared depth mapping preserves authored ownership");
  rejects([&]{plan.NativeDepth(2);},"removed descriptor cannot own a projected use");
+ route->TS1MotionToken=73;
+ auto nativeMotion=BuildTS1RouteSavePlan(f.Thread,true,true);
+ check(!nativeMotion.LeafProjected&&nativeMotion.NativeFrames.size()==2&&
+  nativeMotion.DefaultsCount==0&&nativeMotion.PrimitiveState(f.Owner.get())==0,
+  "owned motion retains the native frame and unchanged primitive state");
+ check(BuildTS1RouteSavePlan(f.Thread,true).LeafProjected,
+  "native model ownership does not change the separate classic projection");
+ route->TS1MotionToken=0;
  f.Thread.TS1RouteDefaultsCount=2;plan=BuildTS1RouteSavePlan(f.Thread,true);
  check(plan.DefaultsCount==3&&plan.ClassicRecordCount==3,"default lower prefix survives native leaf conversion");
  auto child=std::make_shared<VMStackFrame>();child->Routine=&f.Routine;child->Thread=&f.Thread;

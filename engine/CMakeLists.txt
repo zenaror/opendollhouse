@@ -81,6 +81,7 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/engine/VMTS1Outfits.cpp
   sims3ds/src/simantics/engine/VMTS1Travel.cpp
   sims3ds/src/simantics/engine/VMThread.cpp
+  sims3ds/src/simantics/engine/TS1SlotGeometry.cpp
   sims3ds/src/simantics/engine/translator/VMTranslator.cpp
   sims3ds/src/simantics/entities/VMAvatar.cpp
   sims3ds/src/simantics/entities/VMAvatarMotiveDecay.cpp
@@ -265,17 +266,25 @@ set(ODH_ENGINE_SOURCES
 add_subdirectory(original-ui)
 find_package(ZLIB REQUIRED)
 add_library(odh_engine STATIC ${ODH_ENGINE_SOURCES})
-# Original autonomy arithmetic has individual binary32 rounding steps. Keep
+# Original simulation arithmetic has individual binary32 rounding steps. Keep
 # these consumers independent of platform FMA or relaxed floating-point flags.
-set(ODH_AUTONOMY_ARITHMETIC_SOURCES
+set(ODH_ORIGINAL_ARITHMETIC_SOURCES
   sims3ds/src/common/TS1/TS1Curve.cpp
   sims3ds/src/simantics/primitives/VMFindBestAction.cpp
-  tests/original_autonomy_contract.cpp)
+  sims3ds/src/simantics/engine/TS1SlotGeometry.cpp
+  sims3ds/src/simantics/engine/VMSlotParser.cpp
+  sims3ds/src/simantics/engine/VMRoutingFrame.cpp
+  sims3ds/src/simantics/entities/VMAvatar.cpp
+  sims3ds/src/simantics/primitives/VMLookTowards.cpp
+  tests/original_autonomy_contract.cpp
+  tests/ts1_slot_geometry_contract.cpp
+  tests/ts1_motion_request_contract.cpp
+  tests/ts1_authored_slot_consumer_contract.cpp)
 if(MSVC)
-  set_property(SOURCE ${ODH_AUTONOMY_ARITHMETIC_SOURCES} APPEND PROPERTY
+  set_property(SOURCE ${ODH_ORIGINAL_ARITHMETIC_SOURCES} APPEND PROPERTY
     COMPILE_OPTIONS /fp:strict)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  set_property(SOURCE ${ODH_AUTONOMY_ARITHMETIC_SOURCES} APPEND PROPERTY
+  set_property(SOURCE ${ODH_ORIGINAL_ARITHMETIC_SOURCES} APPEND PROPERTY
     COMPILE_OPTIONS -fno-fast-math -ffp-contract=off)
 endif()
 target_include_directories(odh_engine PUBLIC "${ODH_ENGINE_SOURCE_ROOT}")
@@ -566,6 +575,24 @@ if(BUILD_TESTING)
   add_executable(odh-ts1-route-continuation tests/ts1_route_continuation.cpp)
   target_link_libraries(odh-ts1-route-continuation PRIVATE odh_engine)
   add_test(NAME ts1-route-continuation COMMAND odh-ts1-route-continuation)
+  add_executable(odh-ts1-motion-request-contract tests/ts1_motion_request_contract.cpp)
+  target_link_libraries(odh-ts1-motion-request-contract PRIVATE odh_engine)
+  add_executable(odh-ts1-motion-checkpoint-contract tests/ts1_motion_checkpoint_contract.cpp)
+  target_link_libraries(odh-ts1-motion-checkpoint-contract PRIVATE odh_engine)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    foreach(contract odh-ts1-motion-request-contract odh-ts1-motion-checkpoint-contract)
+      target_compile_options(${contract} PRIVATE -g0)
+      target_link_options(${contract} PRIVATE -Wl,--strip-debug)
+    endforeach()
+  endif()
+  add_test(NAME ts1-motion-request-contract COMMAND odh-ts1-motion-request-contract)
+  add_test(NAME ts1-motion-checkpoint-contract COMMAND odh-ts1-motion-checkpoint-contract)
+  add_executable(odh-ts1-body-facing-contract tests/ts1_body_facing_contract.cpp)
+  target_link_libraries(odh-ts1-body-facing-contract PRIVATE odh_engine)
+  add_test(NAME ts1-body-facing-contract COMMAND odh-ts1-body-facing-contract)
+  add_executable(odh-ts1-motion-owner-lifecycle-contract tests/ts1_motion_owner_lifecycle_contract.cpp)
+  target_link_libraries(odh-ts1-motion-owner-lifecycle-contract PRIVATE odh_engine)
+  add_test(NAME ts1-motion-owner-lifecycle-contract COMMAND odh-ts1-motion-owner-lifecycle-contract)
   add_executable(odh-ts1-fresh-lifecycle tests/ts1_fresh_lifecycle.cpp)
   target_link_libraries(odh-ts1-fresh-lifecycle PRIVATE odh_engine)
   add_test(NAME ts1-fresh-lifecycle COMMAND odh-ts1-fresh-lifecycle)
@@ -653,6 +680,20 @@ if(BUILD_TESTING)
     target_link_options(odh-original-autonomy-contract PRIVATE -Wl,--strip-debug)
   endif()
   add_test(NAME original-autonomy-contract COMMAND odh-original-autonomy-contract)
+  add_executable(odh-ts1-slot-geometry-contract tests/ts1_slot_geometry_contract.cpp)
+  target_link_libraries(odh-ts1-slot-geometry-contract PRIVATE odh_engine)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(odh-ts1-slot-geometry-contract PRIVATE -g0)
+    target_link_options(odh-ts1-slot-geometry-contract PRIVATE -Wl,--strip-debug)
+  endif()
+  add_test(NAME ts1-slot-geometry-contract COMMAND odh-ts1-slot-geometry-contract)
+  add_executable(odh-ts1-authored-slot-consumer-contract tests/ts1_authored_slot_consumer_contract.cpp)
+  target_link_libraries(odh-ts1-authored-slot-consumer-contract PRIVATE odh_engine)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(odh-ts1-authored-slot-consumer-contract PRIVATE -g0)
+    target_link_options(odh-ts1-authored-slot-consumer-contract PRIVATE -Wl,--strip-debug)
+  endif()
+  add_test(NAME ts1-authored-slot-consumer-contract COMMAND odh-ts1-authored-slot-consumer-contract)
   add_executable(odh-original-action-queue-contract tests/original_action_queue_contract.cpp)
   target_link_libraries(odh-original-action-queue-contract PRIVATE odh_engine)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

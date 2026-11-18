@@ -86,6 +86,10 @@ public:
     void AcquireTS1ObjectUse(VMEntity* target, uint8_t flag = 0);
     void RetireTS1ObjectUse();
     void DiscardTS1ObjectUses();
+    // Release only this machine's matching model owner before actual frame
+    // destruction. Temporary check-stack switches preserve the live request.
+    void DetachTS1FrameMotion(VMStackFrame* frame);
+    void DetachTS1StackMotion(size_t first = 0);
     void TS1ObjectUseTargetRemoved(VMEntity* target);
     int32_t TS1ClassicUseDepth(int32_t nativeDepth) const;
     int32_t TS1NativeUseDepth(int32_t classicDepth) const;

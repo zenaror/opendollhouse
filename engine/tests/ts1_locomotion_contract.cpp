@@ -75,6 +75,9 @@ struct Fixture {
         auto clip=std::make_shared<VMAnimationState>(&Walk,false);
         Actor->StartTS1Animation(clip,1.4f);clip->Loop=true;Actor->Animations.push_back(clip);
         Route.Caller=Actor.get();Route.Thread=Actor->Thread.get();
+        // Direct-step controls retain the ODHI15/16 motion adapter. The
+        // shared post-script model is exercised by the application journey.
+        Route.TS1SharedModelRouting=false;
         Route.State=VMRoutingFrameState::WALKING;
         Route.WalkTo=std::make_shared<std::list<st::Point>>();
         Route.CurRoute=std::make_shared<VMFindLocationResult>();

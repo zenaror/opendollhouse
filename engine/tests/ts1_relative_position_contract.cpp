@@ -53,7 +53,7 @@ public:
     struct Observation { VMEntity::DirectionT DirectionArgument; float Radians; int Extension; std::array<int,4> Bounds; };
     std::vector<Observation> Placement;
     explicit ObservedAvatar(FSO::Content::GameObject* object) : VMAvatar(object) {}
-    std::unique_ptr<Routing::VMObstacle> GetObstacle(const LotTilePos& p,VMEntity::DirectionT d) override {
+    std::unique_ptr<FSO::SimAntics::Model::Routing::VMObstacle> GetObstacle(const LotTilePos& p,VMEntity::DirectionT d) override {
         auto result=VMAvatar::GetObstacle(p,d);
         Placement.push_back({d,RadianDirection(),GetPersonData(VMPersonDataVariable::FootprintExtension),
             {result->x1,result->y1,result->x2,result->y2}});

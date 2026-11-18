@@ -15,7 +15,7 @@ namespace FSO { namespace SimAntics { namespace Primitives {
 // This primitive allows the sim to look at objects or other people eg. when talking to them. Not important right now
 // but crucial for tv/eating conversations to make sense
 
-enum class VMLookTowardsMode : uint8_t
+enum class VMLookTowardsMode : int16_t
 {
     HeadTowardsObject = 0,
     BodyTowardsCamera = 1,

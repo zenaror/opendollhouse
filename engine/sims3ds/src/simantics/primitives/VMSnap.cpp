@@ -70,7 +70,7 @@ VMPrimitiveExitCode VMSnap::Execute(VMStackFrame* context, VMPrimitiveOperand* a
         // TS1(sims): FreeSO — no such slot: false (FreeSims threw; e.g. Hot Date 'Flies' snap past the slot table).
         if (slot == nullptr) return VMPrimitiveExitCode::GOTO_FALSE;
         VMSlotParser parser(slot);
-        auto locations = parser.FindAvaliableLocations(obj, context->VM()->Context, avatar);
+        auto locations = parser.FindSnapLocations(obj, context->VM()->Context, avatar);
         if (slot->SnapTargetSlot > -1)
         {
             if (!context->StackObject->PlaceInSlot(context->Caller, slot->SnapTargetSlot, true, context->VM()->Context)) return VMPrimitiveExitCode::GOTO_FALSE;

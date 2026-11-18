@@ -33,7 +33,7 @@ public:
     int32_t ClassicDepth(int32_t liveDepth) const { return Depth(liveDepth, classicDepth); }
 
 private:
-    friend TS1RouteSavePlan BuildTS1RouteSavePlan(const VMThread&, bool);
+    friend TS1RouteSavePlan BuildTS1RouteSavePlan(const VMThread&, bool, bool);
     const VMStackFrame* projectedOwner = nullptr;
     std::unordered_map<const VMStackFrame*, int32_t> primitiveStates;
     std::vector<int32_t> nativeDepth, classicDepth;
@@ -46,7 +46,8 @@ private:
 
 // A plan is computed without changing live frames, uses, paths or RNG. Both
 // checkpoint and classic writers must consume this same projection contract.
-inline TS1RouteSavePlan BuildTS1RouteSavePlan(const VMThread& thread, bool ts1) {
+inline TS1RouteSavePlan BuildTS1RouteSavePlan(const VMThread& thread, bool ts1,
+                                            bool preserveOwnedMotion = false) {
     TS1RouteSavePlan plan;
     if (thread.TS1RouteDefaultsCount > TS1RouteDefaultsLimit ||
         (!thread.TS1RouteDefaultsKnown && thread.TS1RouteDefaultsCount != 0))
@@ -54,14 +55,20 @@ inline TS1RouteSavePlan BuildTS1RouteSavePlan(const VMThread& thread, bool ts1) 
     plan.DefaultsKnown = ts1 && thread.TS1RouteDefaultsKnown;
     plan.DefaultsCount = plan.DefaultsKnown ? thread.TS1RouteDefaultsCount : 0;
     size_t routes = 0;
+    bool ownsMotion = false;
     for (const auto& frame : thread.Stack) {
         if (!frame) throw std::runtime_error("TS1 route projection: null frame");
         if (!frame->Routine) throw std::runtime_error("TS1 route projection: missing frame routine");
         if (!plan.primitiveStates.emplace(frame.get(), frame->PrimitiveState).second)
             throw std::runtime_error("TS1 route projection: duplicate frame");
         if (frame->IsRoutingFrame()) ++routes;
+        ownsMotion |= frame->TS1MotionToken != 0;
     }
-    bool eligible = ts1 && !thread.IsCheck && routes == 1 && thread.Stack.size() >= 2 &&
+    // ODHI18 owns model requests by exact native frame identity. Its native
+    // graph retains these frames; the independent classic writer keeps its
+    // historical count-only leaf projection through the default argument.
+    bool eligible = ts1 && !(preserveOwnedMotion && ownsMotion) &&
+        !thread.IsCheck && routes == 1 && thread.Stack.size() >= 2 &&
         thread.Stack.back()->IsRoutingFrame();
     if (eligible) {
         const auto& owner = thread.Stack[thread.Stack.size()-2];

@@ -7,6 +7,12 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Interaction positions use the original oriented search and weighted destination
+  selection, including the chosen chair's entry action. Other pathfinding
+  differences remain under comparison with Complete Collection.
+- Walking and turning share a movement request that can survive saving and
+  reopening a house. New saves require updated builds when transferred between
+  platforms. Original-game save behavior is still under comparison.
 - Roofs use the original game's piece shapes, texture coordinates and placement,
   including their response to terrain and upper floors. Character Detail follows
   the original material history when roofs change or house pictures are taken.

@@ -463,7 +463,7 @@ static void footprintConsumerContract() {
  actor.SetValue(VMStackObjectVariable::PlacementFlags,int16_t(VMPlacementFlags::OnTerrain));
  const LotTilePos pos(64,64,1);actor.Position(pos);actor.Direction(Direction::NORTH);
  actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);actor.RefreshTS1Footprint();
- blocker.Footprint=std::make_unique<Routing::VMObstacle>(61,54,67,58);
+ blocker.Footprint=std::make_unique<Model::Routing::VMObstacle>(61,54,67,58);
  ctx.RoomInfo[0].Entities={&blocker};
  check(actor.PositionValid(pos,Direction::NORTH,&ctx).Status==VMPlacementError::Success,"ordinary pose is clear before requested extension");
  auto routeFor=[&](int posture) {
@@ -472,6 +472,9 @@ static void footprintConsumerContract() {
   actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);
   actor.RefreshTS1Footprint();
   auto route=std::make_shared<VMRoutingFrame>();route->Caller=&actor;route->Callee=&actor;route->Thread=actor.Thread.get();
+  // Isolate the pre18 completion/footprint consumer; no model-update stage
+  // runs in this direct Tick fixture.
+  route->TS1SharedModelRouting=false;
   actor.Thread->Stack={route};route->Init();route->State=VMRoutingFrameState::TURN_ONLY;
   route->CurRoute=std::make_shared<VMFindLocationResult>();route->CurRoute->FaceAnywhere=true;
   return route;
@@ -497,7 +500,7 @@ static void footprintConsumerContract() {
  auto yielding=routeFor(0);yielding->State=VMRoutingFrameState::INITIAL;
  yielding->Choices=std::make_unique<std::vector<VMFindLocationResult>>();yielding->CurRoute->Chair=&chair;
  chair.EntryPoints[26].ActionFunction=4096;ctx.RoomInfo[0].Entities={&chair};
- chair.Footprint=std::make_unique<Routing::VMObstacle>(61,61,67,67);
+ chair.Footprint=std::make_unique<Model::Routing::VMObstacle>(61,61,67,67);
  chair.SetValue(VMStackObjectVariable::Flags,int16_t(VMEntityFlags::AllowPersonIntersection));
  check(yielding->Tick()==VMPrimitiveExitCode::CONTINUE && actor.Thread->Stack.size()==2 &&
        actor.GetPersonData(VMPersonDataVariable::RouteFootprintMask)==0 && yielding->TS1PendingFootprint==8,

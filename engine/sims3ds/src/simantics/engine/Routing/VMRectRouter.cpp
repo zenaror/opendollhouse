@@ -109,7 +109,7 @@ VMWeightedRoute VMRectRouter::Route(Point from, const std::vector<VMWeightedGoal
     Owned.emplace_back(new VMWalkableRect(from.X,from.Y,from.X,from.Y));
     auto* start=Owned.back().get();start->Start=true;ConstructFirstFree(start);
     for (size_t i=0;i<goals.size();++i) {
-        if (goals[i].Penalty<0) continue;
+        if (goals[i].Penalty<0 && !goals[i].SignedSourcePenalty) continue;
         auto& node=nodeFor(start,i);node.Entry=from;node.G=float(goals[i].Penalty);
         node.F=node.G+distance(from,goals[i].Position);node.State=1;open.push_back(&node);
         terminals[i].Goal=i;terminals[i].Entry=goals[i].Position;

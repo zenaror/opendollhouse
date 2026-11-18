@@ -33,6 +33,8 @@ public:
     std::vector<VMFindLocationResult> Results;
     Model::Routing::VMRouteFailCode FailCode = Model::Routing::VMRouteFailCode::NoValidGoals;
     VMEntity* Blocker = nullptr;
+    // Original route+7c: this blocker may be ignored during destination admission.
+    VMEntity* TS1IgnoredBlocker = nullptr;
     FSO::Files::Formats::IFF::Chunks::SLOTItem* Slot;
 
     explicit VMSlotParser(FSO::Files::Formats::IFF::Chunks::SLOTItem* slot);
@@ -44,13 +46,17 @@ public:
     /// its in another room.
     std::vector<VMFindLocationResult> FindAvaliableLocations(VMEntity* obj, VMContext* context, VMEntity* caller);
 
+    // Snap has its own descriptor/arrival contract, separate from routing.
+    std::vector<VMFindLocationResult> FindSnapLocations(VMEntity* obj, VMContext* context, VMEntity* caller);
+
     /// Returns which search direction (n/s/e/w/ne/nw/se/sw) a target is in relation to an object. (absolute)
     static FSO::Files::Formats::IFF::Chunks::SLOTFlags GetSearchDirection(st::Vector2 pos1, st::Vector2 pos2, float rotShift);
     static FSO::Files::Formats::IFF::Chunks::SLOTFlags RadianToFlags(double rad);
     static double GetDirectionTo(st::Vector2 pos1, st::Vector2 pos2);
 
 private:
-    std::vector<VMFindLocationResult> FindTS1RelativeLocations(VMEntity* obj, VMContext* context, VMEntity* caller);
+    std::vector<VMFindLocationResult> FindTS1Locations(VMEntity* obj, VMContext* context, VMEntity* caller);
+    std::vector<VMFindLocationResult> FindReferenceLocations(VMEntity* obj, VMContext* context, VMEntity* caller);
     static const Model::Routing::VMRouteFailCode FailPrio[4];
     FSO::Files::Formats::IFF::Chunks::SLOTFlags Flags;
     int32_t MinProximity;

@@ -7,6 +7,7 @@
 #include "simantics/engine/VMSlotParser.h"
 #include "simantics/engine/VMSlotEnumeration.h"
 #include "simantics/engine/VMTS1RelativePosition.h"
+#include "simantics/engine/TS1SlotGeometry.h"
 #include "simantics/engine/VMRoutingFrame.h"
 #include "simantics/entities/VMAvatar.h"
 #include "simantics/engine/VMThread.h"
@@ -73,8 +74,17 @@ struct TS1FacingGuard {
 
 std::vector<VMFindLocationResult> VMSlotParser::FindAvaliableLocations(VMEntity* obj, VMContext* context, VMEntity* caller) {
     TS1FacingGuard restore(caller, context && context->VM && context->VM->TS1);
-    if (Slot->RoutingPolicy == SLOTRoutingPolicy::TS1RelativePosition)
-        return FindTS1RelativeLocations(obj, context, caller);
+    if (context && context->VM && context->VM->TS1)
+        return FindTS1Locations(obj, context, caller);
+    return FindReferenceLocations(obj, context, caller);
+}
+
+std::vector<VMFindLocationResult> VMSlotParser::FindSnapLocations(VMEntity* obj, VMContext* context, VMEntity* caller) {
+    TS1FacingGuard restore(caller, context && context->VM && context->VM->TS1);
+    return FindReferenceLocations(obj, context, caller);
+}
+
+std::vector<VMFindLocationResult> VMSlotParser::FindReferenceLocations(VMEntity* obj, VMContext* context, VMEntity* caller) {
     /**
      * Start at min proximity and circle around the object to find the avaliable locations.
      * Then pick the one nearest to the optimal value
@@ -334,84 +344,243 @@ uint8_t TS1WallDirections(VMContext* context, const LotTilePos& point, unsigned 
 
 }
 
-std::vector<VMFindLocationResult> VMSlotParser::FindTS1RelativeLocations(
+namespace {
+// Original4324fc follows the tile-head/slot0 chain; it does not search all
+// coincident objects or select an arbitrary chair from an unordered cache.
+VMEntity* TS1ObjectAt(VMContext* context, const LotTilePos& point) {
+    if (context->IsOutOfBounds(point)) return nullptr;
+    const auto* arch=context->Architecture();
+    const auto tile=size_t(point.TileY())*arch->Width+point.TileX();
+    if (size_t(point.Level)>context->SpatialTileHeads.size() ||
+        tile>=context->SpatialTileHeads[point.Level-1].size()) return nullptr;
+    auto* object=context->VM->GetObjectById(context->SpatialTileHeads[point.Level-1][tile]);
+    size_t remaining=context->VM->Entities.size()+1;
+    while (object && remaining--) {
+        const auto flags=uint16_t(object->GetValue(VMStackObjectVariable::Flags));
+        if ((flags&4) ? bool(flags&2) : !(flags&16)) return object;
+        object=object->TotalSlots()>0?object->GetSlot(0):nullptr;
+    }
+    return nullptr;
+}
+
+bool TS1HasChairEntry(VMEntity* object) {
+    return object && object->EntryPoints.size()>26 && object->EntryPoints[26].ActionFunction!=0;
+}
+
+bool TS1ChairBounds(VMContext* context, const LotTilePos& position) {
+    const auto* arch=context->Architecture();
+    return !context->IsOutOfBounds(position) && position.TileX()>0 && position.TileY()>0 &&
+        position.TileX()<arch->Width-1 && position.TileY()<arch->Height-1;
+}
+
+const st::Point TS1Neighbor[8]={{0,-16},{16,-16},{16,0},{16,16},
+                              {0,16},{-16,16},{-16,0},{-16,-16}};
+
+// DVD452129 uses integer 2:1 sectors, not nearest-angle octants.
+int TS1HeadingBetween(st::Point from,st::Point to) {
+    const int64_t x=int64_t(to.X)-from.X,y=int64_t(to.Y)-from.Y;
+    const int64_t ax=std::abs(x),ay=std::abs(y);
+    int heading=ax*2<ay?4:int(ax<=ay*2)+2;
+    if (x<0) { if (heading==2) heading=6;else if (heading==3) heading=5; }
+    if (y<0) { if (heading==3) heading=1;else if (heading==4) heading=0;else if (heading==5) heading=7; }
+    return heading;
+}
+}
+
+std::vector<VMFindLocationResult> VMSlotParser::FindTS1Locations(
         VMEntity* obj, VMContext* context, VMEntity* caller) {
-    Results.clear(); Blocker=nullptr; FailCode=VMRouteFailCode::NoValidGoals;
-    if (!obj || !caller || !context || !context->VM || !context->Architecture() ||
-        !ValidTS1RelativeSlot(*Slot) || context->IsOutOfBounds(obj->Position()) ||
+    Results.clear();Blocker=nullptr;FailCode=VMRouteFailCode::NoValidGoals;
+    if (!Slot || Slot->Type!=3 || !obj || !caller || !context || !context->VM ||
+        !context->Architecture() || context->IsOutOfBounds(obj->Position()) ||
         context->IsOutOfBounds(caller->Position())) return Results;
     const int targetHeading=TS1Heading(obj);
     if (targetHeading<0) return Results;
+    const auto flags=uint32_t(Slot->Rsflags);
+    const unsigned base=flags&0x200?0:unsigned(targetHeading);
     const auto target=obj->Position();
     const auto callerRoom=context->GetEnvironmentRoomAt(caller->Position());
-    if (callerRoom<0 || size_t(callerRoom)>=context->EnvironmentRooms.size()) return Results;
     auto* person=dynamic_cast<VMAvatar*>(caller);
-    if (!person) return Results;
-    const bool exceptionalRoom=(person->GetPersonData(VMPersonDataVariable::IsGhost)&1) ||
-        (person->GetPersonData(static_cast<VMPersonDataVariable>(84))&1);
-    if (!exceptionalRoom && context->GetEnvironmentRoomAt(target)!=callerRoom) {
-        FailCode=VMRouteFailCode::NoRoomRoute;return Results;
-    }
-    std::vector<VMEntity*> pending;
-    const auto walls=TS1WallDirections(context,target,unsigned(targetHeading),pending);
-    const auto candidates=TS1RelativeCandidates(*Slot,st::Point(target.x,target.y),unsigned(targetHeading),walls,
-        st::Point(caller->Position().x,caller->Position().y));
-    const float originalRadians = caller->RadianDirection();
-    for (const auto& candidate:candidates) {
-        caller->RadianDirection(originalRadians);
-        int acceptance=-1;
-        if (!candidate.Region) acceptance=(targetHeading+4)&7;
-        else if (int(Slot->Facing)==-2) acceptance=(candidate.Heading+4)&7;
-        else if (int(Slot->Facing)>=0) acceptance=(targetHeading+int(Slot->Facing))&7;
-        if (acceptance>=0) caller->Direction(FSO::LotView::Model::Direction(1u<<acceptance));
-        const LotTilePos pos(int16_t(candidate.Position.X),int16_t(candidate.Position.Y),caller->Position().Level);
-        if (context->IsOutOfBounds(pos)) continue;
-        if (context->GetEnvironmentRoomAt(pos)!=callerRoom) { FailCode=VMRouteFailCode::NoRoomRoute;continue; }
-        if (candidate.Region) {
-            const auto wall=TS1WallDirections(context,pos,(candidate.Heading+4)&7,pending);
-            if ((wall&1) || ((candidate.Heading&1) && (wall&0x82))) { FailCode=VMRouteFailCode::WallInWay;continue; }
+    if (Slot->RoutingPolicy==SLOTRoutingPolicy::TS1RelativePosition) {
+        // This is the OP27 producer's early room gate, not an authored SLOT
+        // candidate restriction. A normal authored route can cross rooms.
+        const bool exceptional=person && ((person->GetPersonData(VMPersonDataVariable::IsGhost)&1) ||
+            (person->GetPersonData(static_cast<VMPersonDataVariable>(84))&1));
+        if (!exceptional && context->GetEnvironmentRoomAt(target)!=callerRoom) {
+            FailCode=VMRouteFailCode::NoRoomRoute;return Results;
         }
-        if ((uint32_t(Slot->Rsflags)&0x8000)==0) {
+    }
+    st::Point center(target.x,target.y);
+    if ((flags&0x10000) && obj->MultitileGroup && obj->MultitileGroup->MultiTile &&
+        !obj->MultitileGroup->Objects.empty()) {
+        // DVD407200 accumulates integer part positions, then IDIV count.
+        int64_t x=0,y=0;size_t count=0;
+        for (auto* part:obj->MultitileGroup->Objects) if (part) {
+            x+=part->Position().x;y+=part->Position().y;++count;
+        }
+        if (count) center=st::Point(int(x/int64_t(count)),int(y/int64_t(count)));
+    }
+    const int8_t level=caller->Position().Level;
+    const float originalRadians=caller->RadianDirection();
+    std::vector<VMEntity*> pending;
+    auto admit=[&](st::Point position,int searchHeading) {
+        if (position.X<std::numeric_limits<int16_t>::min() || position.X>std::numeric_limits<int16_t>::max() ||
+            position.Y<std::numeric_limits<int16_t>::min() || position.Y>std::numeric_limits<int16_t>::max()) return 0;
+        const LotTilePos pos(int16_t(position.X),int16_t(position.Y),level);
+        if (context->IsOutOfBounds(pos)) return 0;
+        if (!(flags&0x800)) {
+            if (context->GetEnvironmentRoomAt(pos)!=callerRoom) { FailCode=VMRouteFailCode::NoRoomRoute;return 2; }
+            if (searchHeading>=0) {
+                const auto wall=TS1WallDirections(context,pos,unsigned(searchHeading+4)&7,pending);
+                if ((wall&1) || ((searchHeading&1) && (wall&0x82))) { FailCode=VMRouteFailCode::WallInWay;return 3; }
+            }
+        }
+        if (!(flags&0x8000)) {
             std::array<int,4> reference{},height{};
             const auto& terrain=context->Architecture()->Terrain;
             if (!terrain || !terrain->GetTS1HeightQuad(target.TileX(),target.TileY(),reference) ||
                 !terrain->GetTS1HeightQuad(pos.TileX(),pos.TileY(),height) || reference!=height ||
                 height[0]!=height[1] || height[0]!=height[2] || height[0]!=height[3]) {
-                FailCode=VMRouteFailCode::AltsDontMatch;continue;
+                FailCode=VMRouteFailCode::AltsDontMatch;return 4;
             }
         }
         const auto placement=caller->PositionValid(pos,caller->Direction(),context,true);
-        if (placement.Status!=VMPlacementError::Success) {
-            Blocker=placement.Object;
-            FailCode=dynamic_cast<VMAvatar*>(Blocker)?VMRouteFailCode::DestTileOccupiedPerson:VMRouteFailCode::DestTileOccupied;
-            continue;
+        if (placement.Status==VMPlacementError::Success) return 6;
+        if (placement.Status==VMPlacementError::CantBeThroughWall) { FailCode=VMRouteFailCode::WallInWay;return 3; }
+        if (placement.Status!=VMPlacementError::CantIntersectOtherObjects) return 0;
+        if (!placement.Object || placement.Object==TS1IgnoredBlocker) return 6;
+        Blocker=placement.Object;
+        const bool avatar=dynamic_cast<VMAvatar*>(Blocker)!=nullptr;
+        FailCode=avatar?VMRouteFailCode::DestTileOccupiedPerson:VMRouteFailCode::DestTileOccupied;
+        return avatar?5:1;
+    };
+    auto setFacing=[&](unsigned search,bool point) {
+        // FaceAnywhere preserves even the actor's fractional radian cache.
+        caller->RadianDirection(originalRadians);
+        int heading=-1;
+        if (point) heading=(base+4)&7;
+        else if (int(Slot->Facing)==-2) heading=(search+4)&7;
+        else if (int(Slot->Facing)==-1) heading=int(search);
+        else if (int(Slot->Facing)>=0) heading=(base+unsigned(Slot->Facing))&7;
+        if (heading>=0) caller->Direction(FSO::LotView::Model::Direction(1u<<heading));
+    };
+    // 483432 prefers the caller's position, or its nearest admissible chair
+    // exit. These probes precede generation and consume no score-noise draws.
+    const st::Point callerPoint(caller->Position().x,caller->Position().y);
+    st::Point preferred=callerPoint;
+    auto* seated=caller->Container;
+    size_t containmentLimit=context->VM->Entities.size()+1;
+    while (seated && seated->Container && containmentLimit--) seated=seated->Container;
+    if (TS1HasChairEntry(seated) && seated->Object && seated->Object->OBJ) {
+        const int heading=TS1Heading(seated);
+        const unsigned entry=seated->Object->OBJ->ChairEntryFlags;
+        bool found=false;int64_t nearest=0;
+        if (heading>=0) for (unsigned k=0;k<8;++k) if (entry&(1u<<k)) {
+            const unsigned direction=(unsigned(heading)+k)&7;
+            const auto offset=TS1Neighbor[direction];
+            const st::Point point(callerPoint.X+offset.X,callerPoint.Y+offset.Y);
+            const int status=admit(point,int(direction));
+            if (status!=6 && status!=5) continue;
+            const int64_t dx=int64_t(target.x)-point.X,dy=int64_t(target.y)-point.Y;
+            const int64_t distance=dx*dx+dy*dy;
+            if (!found || distance<nearest) { preferred=point;nearest=distance;found=true; }
         }
-        VMFindLocationResult result;
-        result.Position=pos;result.Score=candidate.Score;result.RouteEntryFlags=SLOTFlags(candidate.Region);
-        result.FaceAnywhere=int(Slot->Facing)==-3;
-        int facing=targetHeading;
-        if (int(Slot->Facing)>=0) facing=(targetHeading+int(Slot->Facing))&7;
-        else if (int(Slot->Facing)==-2 && !(pos==target)) {
-            const double angle=GetDirectionTo(Vector2(pos.x,pos.y),Vector2(target.x,target.y));
-            facing=(int(std::nearbyint(angle/(M_PI/4)))+8)&7;
-        }
-        result.RadianDirection=float(facing*(M_PI/4));
-        Results.push_back(result);
     }
-    const auto halfTiles=context->EnvironmentRooms[size_t(callerRoom)].Environment.HalfTiles;
-    const size_t cap=halfTiles/2>250?8:48;
+    const auto walls=flags&0x800?0:TS1WallDirections(context,target,base,pending);
+    TS1SlotGeometryContext geometry;
+    geometry.Center=center;geometry.TargetHeading=unsigned(targetHeading);geometry.TargetWallMask=uint8_t(walls);
+    geometry.AllowSitting=person && person->GetPersonData(VMPersonDataVariable::Gender)<2;
+    const int32_t sitting=geometry.AllowSitting?Slot->Sitting:0;
+    const int32_t standing=std::max(Slot->Standing,Slot->Ground);
+    const bool onlySitting=(flags&255) && sitting>0 && standing==0;
+    bool chairOccupied=false,sawPerson=false,sawObject=false,sawWall=false,sawAltitude=false;
+    VisitTS1SlotRegionCells(*Slot,geometry,[&](const TS1SlotRegionCell& cell) {
+        setFacing(cell.Heading,cell.PointOnly);
+        bool stopAfterRow=false;
+        const int last=cell.PointOnly?-1:8;
+        for (int probe=-1;probe<=last;++probe) {
+            VMEntity* chair=nullptr;
+            st::Point radius=cell.RadiusPoint,comparison=cell.PreferredPosition;
+            uint8_t entry=cell.Region;
+            int32_t weight=standing;
+            if (!cell.PointOnly) {
+                if (probe==-1 || probe==8) {
+                    if (probe!=(standing>=sitting?-1:8)) continue;
+                } else {
+                    if (!sitting) continue;
+                    radius.X+=TS1Neighbor[probe].X;radius.Y+=TS1Neighbor[probe].Y;
+                    const int iy=radius.Y>>4,ix=radius.X>>4;
+                    const bool edge=iy==cell.Radial ? cell.Radial<=ix && ix<=cell.TangentEnd :
+                        iy<=cell.Radial || (cell.Radial<ix && ix<cell.TangentEnd);
+                    if (!edge || !ProjectTS1SlotPoint(center,cell.Heading,float(radius.X),float(radius.Y),comparison)) continue;
+                    if (comparison.X<std::numeric_limits<int16_t>::min() || comparison.X>std::numeric_limits<int16_t>::max() ||
+                        comparison.Y<std::numeric_limits<int16_t>::min() || comparison.Y>std::numeric_limits<int16_t>::max()) continue;
+                    const LotTilePos lookup(int16_t(comparison.X),int16_t(comparison.Y),target.Level);
+                    if (!TS1ChairBounds(context,lookup)) continue;
+                    chair=TS1ObjectAt(context,lookup);
+                    if (!TS1HasChairEntry(chair) || TS1Heading(chair)!=int((cell.Heading+4)&7) ||
+                        !chair->Object || !chair->Object->OBJ || !(chair->Object->OBJ->ChairEntryFlags&(1u<<probe))) continue;
+                    auto* occupant=chair->TotalSlots()>1?chair->GetSlot(1):nullptr;
+                    if (occupant && occupant!=caller) { Blocker=occupant;chairOccupied=true;continue; }
+                    entry=uint8_t(1u<<probe);weight=sitting;
+                }
+                if (!weight || !IsTS1SlotProbeInRange(*Slot,radius)) continue;
+            }
+            TS1SlotScoreInput input;
+            input.RadiusPoint=radius;input.Weight=weight;input.Region=cell.Region;
+            input.TargetWallMask=uint8_t(walls);input.Preferred=comparison==preferred;input.PointOnly=cell.PointOnly;
+            if (!cell.PointOnly && (flags&0x2000)) input.RandomSample=uint32_t(context->NextRandom(UINT64_C(0x100000000)));
+            int32_t score;
+            if (!ScoreTS1SlotProbe(*Slot,input,score)) continue;
+            int direction=cell.Heading;
+            if (cell.PointOnly && ((cell.Position.X^center.X)&~15)==0 && ((cell.Position.Y^center.Y)&~15)==0) direction=-1;
+            else if (cell.PointOnly) direction=TS1HeadingBetween(center,cell.Position);
+            const int status=admit(cell.Position,direction);
+            sawObject |= status==1;sawPerson |= status==5;
+            sawWall |= status==2 || status==3;sawAltitude |= status==4;
+            if (status==3) stopAfterRow=true;
+            if (status!=6) continue;
+            VMFindLocationResult result;
+            result.Position=LotTilePos(int16_t(cell.Position.X),int16_t(cell.Position.Y),level);
+            result.Score=score;result.Chair=chair;result.RouteEntryFlags=SLOTFlags(entry);
+            result.FaceAnywhere=int(Slot->Facing)==-3;
+            // 45c4fa final-facing uses the actual target, independently of
+            // the Absolute/group-center settings used by candidate admission.
+            const st::Point finalTarget(target.x,target.y);
+            int finalHeading=targetHeading;
+            if (int(Slot->Facing)>=0) finalHeading=(targetHeading+int(Slot->Facing))&7;
+            else if (int(Slot->Facing)!=-3) {
+                finalHeading=cell.PointOnly && cell.Position==finalTarget ? targetHeading :
+                    TS1HeadingBetween(cell.Position,finalTarget);
+                if (int(Slot->Facing)==-1) finalHeading=(finalHeading+4)&7;
+            }
+            result.RadianDirection=float(finalHeading*(M_PI/4));
+            Results.push_back(result);break;
+        }
+        return stopAfterRow?TS1SlotRowControl::StopAfterRow:TS1SlotRowControl::Continue;
+    });
+    const size_t cap=callerRoom>=0 && size_t(callerRoom)<context->EnvironmentRooms.size() &&
+        context->EnvironmentRooms[size_t(callerRoom)].Environment.HalfTiles/2>250?8:48;
     if (Results.size()>cap) {
         auto all=std::move(Results);Results.clear();Results.reserve(cap);
-        // Generated OP27 descriptors allow standing only, so there are no
-        // chair entries to retain before the original bounded random attempts.
-        for (size_t attempt=0;attempt<cap;++attempt) {
+        for (auto& result:all) if (result.Chair) { Results.push_back(result);result.Score=0; }
+        const size_t attempts=cap>Results.size()?cap-Results.size():0;
+        for (size_t attempt=0;attempt<attempts;++attempt) {
             const size_t start=size_t(context->NextRandom(all.size()));
             for (size_t i=start;i<all.size();++i) if (all[i].Score!=0) {
                 Results.push_back(all[i]);all[i].Score=0;break;
             }
         }
     }
-    if (!Results.empty()) { FailCode=VMRouteFailCode::Success;Blocker=nullptr; }
+    // DVD484015 aggregates failures after all probes, in this exact order.
+    // Code0 also means that no explanatory rejection was found; result
+    // presence, not the numeric failure field, decides route success.
+    if (!Results.empty()) FailCode=VMRouteFailCode::Success;
+    else if (chairOccupied) FailCode=VMRouteFailCode::DestChairOccupied;
+    else if (sawPerson) FailCode=VMRouteFailCode::DestTileOccupiedPerson;
+    else if (sawObject) FailCode=VMRouteFailCode::DestTileOccupied;
+    else if (sawWall) FailCode=VMRouteFailCode::WallInWay;
+    else if (sawAltitude) FailCode=VMRouteFailCode::AltsDontMatch;
+    else FailCode=onlySitting?VMRouteFailCode::NoChair:VMRouteFailCode::Success;
     return Results;
 }
 

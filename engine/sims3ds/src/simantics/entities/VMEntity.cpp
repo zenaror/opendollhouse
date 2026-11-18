@@ -440,6 +440,7 @@ void VMEntity::Reset(VMContext* context) {
         Thread->TS1RouteDefaultsCount = 0;
         Thread->TS1RouteDefaultsKnown = true;
     }
+    this->Thread->DetachTS1StackMotion();
     this->Thread->Stack.clear();
     this->Thread->Queue.clear();
     Thread->QueueDirty = true;

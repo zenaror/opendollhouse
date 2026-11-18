@@ -26,6 +26,9 @@
 #include <stdexcept>
 #include <algorithm>
 #include <set>
+#include <cstring>
+#include <limits>
+#include <type_traits>
 
 #if __has_include("simantics/primitives/VMFindLocationFor.h")
 #include "simantics/primitives/VMFindLocationFor.h"
@@ -48,6 +51,326 @@ uint32_t VMAvatar::NPC_GARDENER = 0xD62B91B4;
 uint32_t VMAvatar::DOG_TEMPLATE = 0x3AC5D780;
 uint32_t VMAvatar::CAT_TEMPLATE = 0x3762D78D;
 const int32_t VMAvatar::FORCE_DELETE_TIMEOUT = 60 * 30;
+
+namespace Engine { namespace Routing {
+uint64_t TS1StopProfileSignature(FSO::Vitaboy::Animation& animation,
+    const FSO::Vitaboy::Skeleton& skeleton) {
+    if (!animation.EnsureKeyframes()) return 0;
+    uint64_t hash = 1469598103934665603ULL;
+    const auto bytes = [&](const void* data, size_t count) {
+        auto p = static_cast<const uint8_t*>(data);
+        while (count--) { hash ^= *p++; hash *= 1099511628211ULL; }
+    };
+    // Explicit scalar ordering, not object representations or pointer values.
+    const auto scalar = [&](const auto& v) {
+        using T = std::decay_t<decltype(v)>;
+        uint64_t bits;
+        if constexpr (std::is_floating_point_v<T>) {
+            static_assert(sizeof(T) == sizeof(uint32_t), "profile stores float32");
+            uint32_t raw; std::memcpy(&raw, &v, sizeof raw); bits = raw;
+        } else bits = static_cast<uint64_t>(v);
+        for (size_t i = 0; i < sizeof(T); ++i) {
+            const uint8_t byte = uint8_t(bits >> (8 * i)); bytes(&byte, 1);
+        }
+    };
+    const auto text = [&](const std::string& s) {
+        scalar(static_cast<uint32_t>(s.size())); bytes(s.data(), s.size());
+    };
+    text(animation.Name); scalar(animation.Duration); scalar(animation.Distance);
+    scalar(static_cast<uint32_t>(animation.Motions.size()));
+    for (const auto& motion : animation.Motions) {
+        text(motion.BoneName); scalar(motion.FrameCount); scalar(motion.FirstTranslationIndex);
+        scalar(motion.FirstRotationIndex); scalar(motion.HasTranslation); scalar(motion.HasRotation);
+        scalar(static_cast<uint32_t>(motion.TimeProperties.size()));
+        for (const auto& group : motion.TimeProperties) { scalar(static_cast<uint32_t>(group.Items.size())); for (const auto& event : group.Items) {
+            scalar(event.ID);
+            scalar(static_cast<uint32_t>(event.Properties.Items.size()));
+            for (const auto& item : event.Properties.Items) { scalar(static_cast<uint32_t>(item.KeyPairs.size())); for (const auto& pair : item.KeyPairs) {
+                text(pair.first); text(pair.second);
+            }}
+        }}
+    }
+    scalar(static_cast<uint32_t>(animation.Translations.size()));
+    for (const auto& v : animation.Translations) { scalar(v.X); scalar(v.Y); scalar(v.Z); }
+    scalar(static_cast<uint32_t>(animation.Rotations.size()));
+    for (const auto& q : animation.Rotations) { scalar(q.X); scalar(q.Y); scalar(q.Z); scalar(q.W); }
+    scalar(static_cast<uint32_t>(skeleton.Bones.size()));
+    for (const auto& bone : skeleton.Bones) {
+        text(bone->Name); text(bone->ParentName);
+        scalar(bone->Translation.X); scalar(bone->Translation.Y); scalar(bone->Translation.Z);
+        scalar(bone->Rotation.X); scalar(bone->Rotation.Y); scalar(bone->Rotation.Z); scalar(bone->Rotation.W);
+    }
+    return hash ? hash : 1;
+}
+}}
+
+namespace {
+void SetTS1StopProfile(VMAvatar& avatar) {
+    auto& model = avatar.TS1ModelMotion;
+    if (!avatar.Avatar || !avatar.Avatar->BaseSkeleton) return;
+    auto& names = avatar.WalkAnimations;
+    if (names.size() <= 20) return;
+    auto animation = FSO::Content::Content::Get()->AvatarAnimations->Get(names[20] + ".anim");
+    if (!animation || !(animation->Duration > 0)) return;
+    auto& cached = avatar.TS1StopProfileCache;
+    if (cached.StopProfileKnown && cached.StopProfileAnimation == animation->Name
+        && avatar.TS1StopProfileAnimationSource == animation
+        && avatar.TS1StopProfileSkeletonSource == avatar.Avatar->BaseSkeleton) {
+        model.StopPhase1 = cached.StopPhase1; model.StopPhase2 = cached.StopPhase2;
+        model.StopDistance1 = cached.StopDistance1; model.StopDistance2 = cached.StopDistance2;
+        model.StopProfileSignature = cached.StopProfileSignature;
+        model.StopProfileAnimation = cached.StopProfileAnimation; model.StopProfileKnown = true;
+        return;
+    }
+    if (!animation->EnsureKeyframes()) return;
+    uint32_t times[2] = {};
+    std::string bones[2];
+    // DVD 588e2c searches motions in order and each time-property group
+    // backwards, returning both the event timestamp and its owning bone.
+    for (int which = 0; which < 2; ++which) {
+        for (const auto& motion : animation->Motions) {
+            for (const auto& group : motion.TimeProperties) {
+                for (auto event = group.Items.rbegin(); event != group.Items.rend(); ++event) {
+                    auto anchor = event->Properties.Get("anchor");
+                    if (anchor && *anchor == (which ? "2" : "1")) {
+                        times[which] = event->ID; bones[which] = motion.BoneName; break;
+                    }
+                }
+                if (!bones[which].empty()) break;
+            }
+            if (!bones[which].empty()) break;
+        }
+    }
+    if (bones[0].empty() || bones[1].empty()) return;
+    FSO::Vitaboy::Avatar preview(avatar.Avatar->BaseSkeleton);
+    auto first = preview.Skeleton->GetBone(bones[0]);
+    auto second = preview.Skeleton->GetBone(bones[1]);
+    if (!first || !second) return;
+    model.StopPhase1 = float(times[0]) / animation->Duration;
+    model.StopPhase2 = float(times[1]) / animation->Duration;
+    auto sample = [&](float phase) {
+        const float frame = phase * animation->NumFrames();
+        FSO::Vitaboy::Animator::RenderFrameTS1(&preview, animation, int(frame), std::fmod(frame, 1.f), 1.f, true);
+        preview.ReloadSkeleton();
+    };
+    sample(model.StopPhase2);
+    model.StopDistance2 = (second->AbsolutePosition.Z - first->AbsolutePosition.Z) * (16.f / 3.f);
+    sample(model.StopPhase1);
+    model.StopDistance1 = (first->AbsolutePosition.Z - second->AbsolutePosition.Z) * (16.f / 3.f);
+    if (!std::isfinite(model.StopDistance1) || !std::isfinite(model.StopDistance2)) {
+        model.StopPhase1 = model.StopPhase2 = model.StopDistance1 = model.StopDistance2 = 0; return;
+    }
+    model.StopProfileSignature = Engine::Routing::TS1StopProfileSignature(*animation, *avatar.Avatar->BaseSkeleton);
+    model.StopProfileAnimation = animation->Name;
+    model.StopProfileKnown = model.StopProfileSignature != 0;
+    cached.StopPhase1 = model.StopPhase1; cached.StopPhase2 = model.StopPhase2;
+    cached.StopDistance1 = model.StopDistance1; cached.StopDistance2 = model.StopDistance2;
+    cached.StopProfileSignature = model.StopProfileSignature;
+    cached.StopProfileAnimation = model.StopProfileAnimation; cached.StopProfileKnown = model.StopProfileKnown;
+    avatar.TS1StopProfileAnimationSource = animation;
+    avatar.TS1StopProfileSkeletonSource = avatar.Avatar->BaseSkeleton;
+}
+}
+
+uint64_t VMAvatar::StartTS1MotionRequest(Engine::VMStackFrame* owner,
+    Engine::Routing::TS1MotionKind kind,
+    const std::vector<Engine::Routing::TS1MotionPoint>& path) {
+    if (!Thread || !owner || owner->Thread != Thread.get() || Thread->IsCheck || path.size() < 3) return 0;
+    auto found = std::find_if(Thread->Stack.begin(), Thread->Stack.end(),
+        [&](const auto& item) { return item.get() == owner; });
+    if (found == Thread->Stack.end()) return 0;
+    if (TS1ModelMotion.Kind != Engine::Routing::TS1MotionKind::None) {
+        if (!OwnsTS1MotionRequest(owner)) return 0;
+        DetachTS1MotionRequest(TS1ModelMotion.Token);
+    }
+    auto& model = TS1ModelMotion;
+    model.Kind = kind;
+    model.Token = model.NextToken++;
+    if (!model.Token) model.Token = model.NextToken++;
+    if (!model.NextToken) model.NextToken = 1;
+    owner->TS1MotionToken = model.Token;
+    model.OwnerFrame = static_cast<int32_t>(found - Thread->Stack.begin());
+    model.OwnerCaller = owner->Caller ? owner->Caller->ObjectID : 0;
+    model.OwnerCallee = owner->Callee ? owner->Callee->ObjectID : 0;
+    model.OwnerCodeGUID = owner->CodeOwner && owner->CodeOwner->OBJ ? owner->CodeOwner->OBJ->GUID : 0;
+    model.OwnerRoutine = owner->Routine ? owner->Routine->ID : 0;
+    model.OwnerPC = owner->InstructionPointer;
+    model.Path = path; model.PathCursor = 0;
+    TS1MotionX = Position().x; TS1MotionY = Position().y;
+    TS1MotionPublishedX = Position().x; TS1MotionPublishedY = Position().y;
+    TS1MotionLevel = Position().Level; TS1MotionPositionKnown = true;
+    model.TargetX = TS1MotionX; model.TargetY = TS1MotionY; model.TargetHeading = RadianDirection();
+    model.Status = 1; model.ModelState = 3; model.Stopped = 0;
+    model.StopRequested = false; model.Outcome = 0; model.SegmentProgress = 0;
+    SetTS1StopProfile(*this);
+    return model.Token;
+}
+
+bool VMAvatar::OwnsTS1MotionRequest(const Engine::VMStackFrame* owner) const {
+    const auto& model = TS1ModelMotion;
+    return owner && model.Kind != Engine::Routing::TS1MotionKind::None && model.Token
+        && owner->TS1MotionToken == model.Token && owner->Caller == this
+        && owner->InstructionPointer == model.OwnerPC
+        && (owner->Routine ? owner->Routine->ID : 0) == model.OwnerRoutine
+        && (owner->Callee ? owner->Callee->ObjectID : 0) == model.OwnerCallee
+        && (owner->CodeOwner && owner->CodeOwner->OBJ ? owner->CodeOwner->OBJ->GUID : 0) == model.OwnerCodeGUID;
+}
+
+int VMAvatar::PollTS1MotionRequest(uint64_t token) {
+    auto& model = TS1ModelMotion;
+    if (!token || model.Token != token) return 0;
+    if (model.Status == 1 || model.Status == -1) return 2;
+    if (model.Status != 2) return 0;
+    if (!std::isfinite(TS1MotionX) || !std::isfinite(TS1MotionY)
+        || TS1MotionX < -32768.f || TS1MotionX > 32767.f || TS1MotionY < -32768.f || TS1MotionY > 32767.f) return 0;
+    auto target = Position();
+    target.x = static_cast<int16_t>(TS1MotionX); target.y = static_cast<int16_t>(TS1MotionY);
+    const auto valid = PositionValid(target, Direction(), Thread->Context);
+    if (valid.Status != VMPlacementError::Success) return 0;
+    const auto heading = RadianDirection();
+    const auto published = SetPosition(target, Direction(), Thread->Context);
+    RadianDirection(heading);
+    if (published.Status != VMPlacementError::Success) return 0;
+    TS1MotionPublishedX = Position().x; TS1MotionPublishedY = Position().y;
+    RefreshTS1Footprint();
+    return 1;
+}
+
+bool VMAvatar::StopTS1MotionRequest(uint64_t token) {
+    auto& model = TS1ModelMotion;
+    if (!token || model.Token != token) return false;
+    if (model.Status == 1 || model.Status == -1) { model.StopRequested = true; return false; }
+    model.Status = 0; model.PathCursor = -1; model.StopDeadline = 0;
+    model.TargetX = TS1MotionX; model.TargetY = TS1MotionY; model.TargetHeading = RadianDirection();
+    model.Stopped = 1; model.ModelState = 3;
+    return true;
+}
+
+void VMAvatar::DetachTS1MotionRequest(uint64_t token) {
+    auto& model = TS1ModelMotion;
+    if (!token || model.Token != token) return;
+    if (Thread && model.OwnerFrame >= 0 && size_t(model.OwnerFrame) < Thread->Stack.size()) {
+        auto frame = Thread->Stack[model.OwnerFrame].get();
+        if (frame->TS1MotionToken == token) frame->TS1MotionToken = 0;
+    }
+    const auto next = model.NextToken;
+    model = Engine::Routing::TS1MotionRequest{};
+    model.NextToken = next;
+}
+
+void VMAvatar::UpdateTS1ModelMotion() {
+    using namespace Engine::Routing;
+    auto& model = TS1ModelMotion;
+    if (!Thread || !Thread->Context || !Thread->Context->Clock || model.Kind == TS1MotionKind::None) return;
+    const auto tick = Thread->Context->Clock->Ticks;
+    if (model.LastModelTick == tick) return;
+    if (model.OwnerFrame < 0 || size_t(model.OwnerFrame) >= Thread->Stack.size()
+        || !OwnsTS1MotionRequest(Thread->Stack[model.OwnerFrame].get())) {
+        DetachTS1MotionRequest(model.Token); return;
+    }
+    model.LastModelTick = tick;
+    UpdateTS1MotionRate(model.ModelState);
+    if (auto clip = CurrentAnimationState()) {
+        if (clip->Anim->Name != model.ForegroundAnimation) {
+            model.ForegroundAnimation = clip->Anim->Name;
+            model.ForegroundInterruptible = 0;
+            model.BlendActive = false;
+        }
+    } else { model.ForegroundAnimation.clear(); model.ForegroundInterruptible = 0; model.BlendActive = false; }
+    if (model.Status != 1 && model.Status != -1) return;
+    model.ModelUpdating = true;
+    struct ModelUpdateGuard { TS1MotionRequest& State; ~ModelUpdateGuard() { State.ModelUpdating = false; } } guard{model};
+    if (model.Kind == TS1MotionKind::Route) {
+        auto route = dynamic_cast<Engine::VMRoutingFrame*>(Thread->Stack[model.OwnerFrame].get());
+        if (!route) { model.Status = 3; model.Outcome = 3; return; }
+        // Reuse the verified planner/motion math at the model stage. Source
+        // redispatch permits several state transitions, but not a second walk
+        // displacement or consumption of a just-created stop window.
+        for (size_t i = 0; i < model.Path.size() + 16; ++i) {
+            const auto state = route->State;
+            const auto deadline = model.StopDeadline;
+            const auto result = route->AdvanceTS1Model();
+            model.ModelState = model.Status == 2 ? 3 : route->TS1MotionModelState();
+            if (result == Engine::VMPrimitiveExitCode::RETURN_FALSE) {
+                model.Status = 3; model.Outcome = 3; return;
+            }
+            if (result != Engine::VMPrimitiveExitCode::CONTINUE || model.Status == 2
+                || (state == route->State && deadline == model.StopDeadline)
+                || (deadline == 0 && model.StopDeadline != 0)) return;
+        }
+        return;
+    }
+
+    const float eighthTurn = 0.7853981633974483f;
+    const auto now = TS1AnimationTimestamp();
+    // Each iteration must change state or consume a path node. Source may
+    // redispatch3→9→3 in one update, unlike a per-state tick delay.
+    for (size_t i = 0; i < model.Path.size() + 16; ++i) {
+        if (model.ModelState == 4) {
+            auto clip = CurrentAnimationState();
+            if (clip && clip->TS1Phase < 1.f) {
+                RadianDirection(model.TurnStart + clip->TS1Phase * model.TurnResidual);
+                clip->Speed = TS1MotionRate;
+                return;
+            }
+            RadianDirection(model.TargetHeading);
+            Animations.clear();
+            model.BlendActive = false; model.ForegroundAnimation.clear(); model.ForegroundInterruptible = 0;
+            model.ModelState = 3;
+            continue;
+        }
+        if (model.ModelState == 3) {
+            const auto turn = TS1SelectTurn((model.TargetHeading - RadianDirection()) / eighthTurn,
+                TS1MotionRate, GetPersonData(VMPersonDataVariable::Gender));
+            if (turn.Animate) {
+                auto& names = WalkAnimations;
+                if (size_t(turn.ClipCode) >= names.size()) { model.Status = 3; model.Outcome = 3; return; }
+                auto animation = FSO::Content::Content::Get()->AvatarAnimations->Get(names[turn.ClipCode] + ".anim");
+                if (!animation) { model.Status = 3; model.Outcome = 3; return; }
+                model.TurnStart = RadianDirection();
+                model.TurnResidual = turn.Residual * eighthTurn;
+                Animations.clear();
+                auto clip = std::make_shared<VMAnimationState>(animation, false);
+                StartTS1Animation(clip, TS1MotionRate); Animations.push_back(clip);
+                model.ForegroundAnimation = animation->Name; model.ForegroundInterruptible = 0;
+                model.BlendActive = false;
+                model.ModelState = 4;
+                continue;
+            }
+            if (model.Status == -1) { model.Status = 2; model.Outcome = 2; return; }
+            model.ModelState = 9;
+            continue;
+        }
+        if (model.ModelState != 9 || model.Path.size() < 3) { model.Status = 3; model.Outcome = 3; return; }
+        const size_t last = model.Path.size() - 2;
+        while (model.PathCursor >= 0 && size_t(model.PathCursor) < last) ++model.PathCursor;
+        const auto anchor = model.Path[last];
+        const auto tangent = model.Path.back();
+        const float dx = float(anchor.X) - TS1MotionX, dy = float(anchor.Y) - TS1MotionY;
+        const float distance = std::sqrt(dx * dx + dy * dy);
+        auto clip = CurrentAnimationState();
+        const bool direct = PersonData[64] != 0;
+        const bool alternate = GetValue(VMStackObjectVariable::RoutePrefference) != 0;
+        const auto step = alternate ? TS1StopWindowStep::Finalize
+            : TS1StepStopWindow(model, distance, clip ? clip->TS1Phase : 0.f,
+                clip != nullptr, clip && clip->EndReached, clip ? clip->Speed : 0.f,
+                clip && clip->Anim ? clip->Anim->Duration : 0.f, TS1MotionRate,
+                GetValue(VMStackObjectVariable::WalkStyle), direct, now, clip ? clip->Weight : 1.f);
+        if (step != TS1StopWindowStep::Finalize) return;
+        // Body-facing paths have duplicate physical nodes; target is a copied
+        // tangent, so deleting/moving that object cannot change this request.
+        TS1MotionX = model.TargetX = float(anchor.X);
+        TS1MotionY = model.TargetY = float(anchor.Y);
+        // Source virtual98=59208a uses atan2(dY,dX), then adds2 heading
+        // units. Its atan2(+0,+0) yields heading2, not atan2(+0,-0)'s4.
+        const float tx = float(int64_t(tangent.X) - anchor.X), ty = float(int64_t(tangent.Y) - anchor.Y);
+        model.TargetHeading = alternate && !direct ? RadianDirection()
+            : tx == 0.f && ty == 0.f ? 2.f * eighthTurn : std::atan2(tx, -ty);
+        model.StopDeadline = 0; model.Status = -1; model.ModelState = 3; model.SegmentProgress = 1.f;
+        Animations.clear();
+        model.BlendActive = false; model.ForegroundAnimation.clear(); model.ForegroundInterruptible = 0;
+    }
+}
 
 static bool EqualsIgnoreCase(const std::string& a, const char* b) {
     return FSO::Content::ToLowerInvariant(a) == FSO::Content::ToLowerInvariant(b);
@@ -155,6 +478,8 @@ VMAvatar::VMAvatar(FSO::Content::GameObject* obj) : VMEntity(obj) {
 VMAvatar::~VMAvatar() {}
 
 void VMAvatar::SetAvatarType(STR* data) {
+    TS1StopProfileCache = Engine::Routing::TS1MotionRequest{};
+    TS1StopProfileAnimationSource = nullptr; TS1StopProfileSkeletonSource = nullptr;
     if (data == nullptr) {
         AvatarType = VMAvatarType::Adult;
     } else {
@@ -503,6 +828,12 @@ void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool
 
 void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool allowSound, VMAnimationState* eventOwner) {
     VMAvatar* avatar = this;
+    if (eventOwner && eventOwner == CurrentAnimationState()
+        && TS1ModelMotion.Kind != Engine::Routing::TS1MotionKind::None) {
+        auto interruptible = tp.Properties.Get("interruptible");
+        if (!interruptible) interruptible = tp.Properties.Get("interruptable");
+        if (interruptible) TS1ModelMotion.ForegroundInterruptible = std::atoi(interruptible->c_str());
+    }
     auto evt = tp.Properties.Get("xevt");
     if (evt != nullptr && eventOwner != nullptr) {
         auto eventValue = (int16_t)atoi(evt->c_str());
@@ -629,9 +960,12 @@ void VMAvatar::Tick() {
     }
 
     VMAvatar* avatar = this;
+    if (Thread && Thread->Context->VM->TS1 && !TS1ExternalAnimationClock)
+        UpdateTS1ModelMotion();
     if (Thread && Thread->Context->VM->TS1 && !TS1ExternalAnimationClock) {
         int modelState = CurrentAnimationState() && CurrentAnimationState()->TS1ScriptAnimation ? 0 : 3;
-        for (auto frame = Thread->Stack.rbegin(); frame != Thread->Stack.rend(); ++frame) {
+        for (auto frame = Thread->Stack.rbegin(); TS1ModelMotion.Kind == Engine::Routing::TS1MotionKind::None
+            && frame != Thread->Stack.rend(); ++frame) {
             if (auto route = dynamic_cast<Engine::VMRoutingFrame*>(frame->get())) {
                 if (route->UsesTS1SourceLocomotion()) {
                     modelState = route->TS1MotionModelState();
@@ -718,6 +1052,9 @@ void VMAvatar::AdvanceAnimations(bool allowSound) {
             if (!state->EndReached || state->Loop) {
                 const int32_t previousEventTime = state->TS1EventTime();
                 state->AdvanceTS1Clock(TS1AnimationTimestamp());
+                if (!carry && channel == 0 && TS1ModelMotion.BlendActive
+                    && TS1ModelMotion.ForegroundAnimation == state->Anim->Name)
+                    state->Weight = Engine::Routing::TS1AdvanceStopBlend(TS1ModelMotion, TS1AnimationTimestamp());
                 const int32_t eventTime = state->TS1EventTime();
                 const bool eventWrap = state->PlayingBackwards ? eventTime > previousEventTime : eventTime < previousEventTime;
                 auto& props = state->TimePropertyLists;
@@ -745,6 +1082,9 @@ void VMAvatar::AdvanceAnimations(bool allowSound) {
                     }
                     emit(eventTime, false);
                 }
+            } else if (!carry && channel == 0 && TS1ModelMotion.BlendActive
+                && TS1ModelMotion.ForegroundAnimation == state->Anim->Name) {
+                state->Weight = Engine::Routing::TS1AdvanceStopBlend(TS1ModelMotion, TS1AnimationTimestamp());
             }
             const float poseFrame = state->TS1PoseFrame();
             FSO::Vitaboy::Animator::RenderFrameTS1(avatar->Avatar.get(), state->Anim,
