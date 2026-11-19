@@ -7,9 +7,12 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Sims can autonomously join activities already being used by another Sim,
+  using the original eligibility checks and selection rules.
 - Sims keep their walking animation and direction when passing through doors,
   following the original movement rules. New saves also retain the movement
-  history needed to continue these actions; earlier engine saves remain readable.
+  history needed to continue these actions. Compatibility with earlier
+  experimental saves remains under validation.
 - Objects run their original loading routines when a lot opens, including
   newly created expansion helpers. Helpers that do not belong on the current
   lot can leave normally instead of repeatedly failing.

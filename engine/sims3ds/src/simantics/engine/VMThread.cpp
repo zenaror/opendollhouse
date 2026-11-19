@@ -1224,7 +1224,8 @@ bool VMThread::ExecuteAction(std::shared_ptr<VMQueuedAction> action) {
 }
 
 // TS1(sims): FreeSO VMThread.CheckTS1Action.
-std::unique_ptr<std::vector<VMPieMenuInteraction>> VMThread::CheckTS1Action(std::shared_ptr<VMQueuedAction> action, bool autonomous) {
+std::unique_ptr<std::vector<VMPieMenuInteraction>> VMThread::CheckTS1Action(std::shared_ptr<VMQueuedAction> action, bool autonomous, bool joining) {
+    if (!action) return nullptr;
     std::unique_ptr<std::vector<VMPieMenuInteraction>> result(new std::vector<VMPieMenuInteraction>());
     if (!action->Callee || action->Callee->Dead || action->Callee->GetFlag(VMEntityFlags::Burning)) return nullptr;
 
@@ -1288,6 +1289,8 @@ std::unique_ptr<std::vector<VMPieMenuInteraction>> VMThread::CheckTS1Action(std:
         frame->Routine = action->CheckRoutine;
         frame->Args.assign(4, 0);
         if (autonomous) frame->Args[0] = 1;
+        // DVD458485: type1 (joining) is the second check argument.
+        if (joining) frame->Args[1] = 1;
         if (EvaluateCheck(Context, Entity, frame, nullptr, result.get()) != VMPrimitiveExitCode::RETURN_TRUE) return nullptr;
     }
     return result;

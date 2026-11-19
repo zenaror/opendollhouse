@@ -128,6 +128,44 @@ static BHAVInstruction AssignCheckValue(Scopes::VMVariableScope scope,int index,
     operand.LhsOwner=scope;operand.LhsData=index;operand.RhsOwner=Scopes::VMVariableScope::Literal;operand.RhsData=value;
     operand.Write(instruction.Operand.data());return instruction;
 }
+// A person and the object they are using both remain ordinary scan candidates.
+// This fixture assembles real BHAV/action/check resources, not score mocks.
+struct JoinFixture:Fixture {
+    Entities::VMMultitileGroup otherGroup;
+    std::unique_ptr<VMAvatar> other;
+    std::shared_ptr<VMQueuedAction> active,pending;
+    struct CheckCall{VMEntity* callee;std::vector<int16_t> args;int routine;};
+    std::vector<CheckCall> calls;std::vector<VMPieMenuInteraction> ranked;
+    explicit JoinFixture(bool rejectJoin=false){
+        Add(0,50,0);Add(1,50,9000);
+        if(rejectJoin){
+            // Set the fixture BHAV before GetAction assembles its shared routine.
+            auto* check=iff.Get<BHAV>(4201);auto& ins=check->Instructions[0];VMExpressionOperand op;
+            op.Operator=VMExpressionOperator::Equals;op.LhsOwner=Scopes::VMVariableScope::Parameters;op.LhsData=1;
+            op.RhsOwner=Scopes::VMVariableScope::Literal;op.RhsData=0;op.Write(ins.Operand.data());
+            ins.TruePointer=254;ins.FalsePointer=255;
+        }
+        table.Interactions[0]->Flags=TTABFlags::Joinable;
+        table.Interactions[0]->JoiningIndex=1;
+        table.Interactions[1]->AttenuationCode=0;table.Interactions[1]->AttenuationValue=1.f;
+        for(auto motive:VMFindBestAction::WeightMotives)actor->SetMotiveDataFloat(motive,0);
+        target->Position(FSO::LotView::Model::LotTilePos(96,64,1));
+        other=std::make_unique<VMAvatar>(&object);other->ObjectID=3;
+        other->Position(FSO::LotView::Model::LotTilePos(72,64,1));other->MultitileGroup=&otherGroup;otherGroup.AddObject(other.get());
+        other->Thread=std::make_unique<VMThread>(&context,other.get(),16);
+        other->SetPersonData(VMPersonDataVariable::PersonsAge,30);
+        other->TreeTable=&table;other->TreeTableStrings=&strings;
+        active=target->GetAction(0,other.get(),&context);Require(bool(active),"real active action assembled");
+        active->UID=17;other->Thread->Queue={active};other->Thread->ActiveQueueBlock=0;
+        pending=target->GetAction(1,actor.get(),&context);Require(bool(pending),"real pending user action assembled");
+        pending->UID=29;pending->UserQueued=true;actor->Thread->Queue={pending};actor->Thread->ActiveQueueBlock=0;
+        vm.Entities={other.get(),target.get()};
+        vm.OnTraceInstruction=[&](VMStackFrame* f,uint16_t,int){if(f->Thread->IsCheck)calls.push_back({f->Callee,f->Args,int(f->Routine->ID)});};
+        vm.OnAutonomyChoice=[&](VMEntity* caller,const std::vector<VMPieMenuInteraction>& rows,const VMPieMenuInteraction&){Require(caller==actor.get(),"join chooser callback caller");ranked=rows;};
+    }
+    VMPrimitiveExitCode Run(){calls.clear();ranked.clear();context.RandomSeed=1234;return VMFindBestAction().Execute(&frame,nullptr);}
+    int JoinedChecks()const {return int(std::count_if(calls.begin(),calls.end(),[&](const auto& c){return c.callee==target.get()&&c.routine==4201&&c.args==std::vector<int16_t>({1,1,0,0});}));}
+};
 int main(){try{
     VM::UseWorld(false);
     Scenario("check-order-and-lockout",[]{
@@ -445,6 +483,56 @@ int main(){try{
         f.target->SetValue(VMStackObjectVariable::Room,4);
         Require(f.Choose()==VMPrimitiveExitCode::GOTO_TRUE&&f.actor->GetValue(VMStackObjectVariable::TreeTableEntry)==1,
             "cross-room Room adjustment makes the unchanged Hunger-only row win");
+    });
+    Scenario("join-proxy-keeps-person-distance-and-normal-object-record",[]{
+        JoinFixture f;Require(f.Run()==VMPrimitiveExitCode::GOTO_TRUE,"actual mixed chooser must select");
+        Require(f.ranked.size()==3,"person normal row, person join proxy and object normal row must all survive");
+        std::vector<float> objectScores;int personRows=0;
+        for(const auto& row:f.ranked){Require(row.ID==1,"all admitted rows use authored advertised interaction index");if(row.Callee==f.target.get())objectScores.push_back(row.Score);else if(row.Callee==f.other.get())++personRows;else Require(false,"unknown candidate target");}
+        std::sort(objectScores.begin(),objectScores.end());
+        Require(objectScores.size()==2&&personRows==1,"same object target must retain BOTH ordinary and joining records");
+        Require(std::abs(objectScores[0]-1.f/3.f)<.000001f&&std::abs(objectScores[1]-2.f/3.f)<.000001f,
+            "object target scores must use2tile normal distance and.5tile person-proxy distance respectively");
+        Require(f.JoinedChecks()==1,"proxy authored check receives exact autonomous/join args1,1,0,0 once");
+        Require(f.calls.size()==5&&f.calls[0].callee==f.other.get()&&f.calls[0].routine==4201
+            &&f.calls[1].callee==f.other.get()&&f.calls[1].routine==4200
+            &&f.calls[2].callee==f.target.get()&&f.calls[2].args==std::vector<int16_t>({1,1,0,0}),
+            "candidate person's own reverse TTAB checks precede the appended join proxy");
+        for(size_t i=0;i<f.calls.size();++i)if(i!=2)Require(f.calls[i].args==std::vector<int16_t>({1,0,0,0}),"normal autonomous check argument contract unchanged");
+        auto after=f.context.RandomSeed;f.context.RandomSeed=1234;f.context.NextRandom(3);
+        Require(f.context.RandomSeed==after,"three distinct records produce one range3 selection draw");
+        Require(f.actor->Thread->Queue.size()==1&&f.actor->Thread->Queue[0]==f.pending
+            &&f.other->Thread->Queue.size()==1&&f.other->Thread->Queue[0]==f.active,
+            "autonomous selection must neither enqueue a proxy nor rewrite pending/active actions");
+    });
+    Scenario("join-proxy-bypasses-only-normal-autonomy-threshold",[]{
+        JoinFixture f;f.table.Interactions[1]->AutonomyThreshold=200;
+        Require(f.Run()==VMPrimitiveExitCode::GOTO_TRUE&&f.ranked.size()==1&&f.ranked[0].Callee==f.target.get()
+            &&std::abs(f.ranked[0].Score-2.f/3.f)<.000001f&&f.JoinedChecks()==1,
+            "joining row remains eligible above ordinary autonomy threshold, using candidate person distance");
+    });
+    for(int invalid=0;invalid<7;++invalid)Scenario("join-proxy-negative-"+std::to_string(invalid),[=]{
+        JoinFixture f(invalid==5);
+        if(invalid==0)f.other->TreeTable=nullptr;
+        if(invalid==1)f.other->Thread->ActiveQueueBlock=-1;
+        if(invalid==2)f.table.Interactions[0]->Flags=TTABFlags(0);
+        if(invalid==3)f.table.Interactions[0]->JoiningIndex=99;
+        if(invalid==4)f.active->Callee=nullptr;
+        if(invalid==6){f.target->SetValue(VMStackObjectVariable::LockoutCount,1);}
+        Require(f.Run()==VMPrimitiveExitCode::GOTO_TRUE,"remaining ordinary candidate must remain usable");
+        const int expected=invalid==0||invalid==6?1:2;
+        Require(int(f.ranked.size())==expected,"invalid/missing/rejected/locked join must not invent a proxy record");
+        if(invalid==5)Require(f.JoinedChecks()==1,"rejected joining check still receives explicit joining parameter");
+        else Require(f.JoinedChecks()==0,"join precondition rejects before authored joining check");
+    });
+    Scenario("join-proxy-missing-routine-and-check-defaults",[]{
+        JoinFixture f;f.table.Interactions[1]->ActionFunction=65535;
+        Require(f.Run()==VMPrimitiveExitCode::GOTO_FALSE&&f.ranked.empty(),"missing actual join/normal routine never fabricates a candidate or dereferences null");
+        Require(!f.actor->Thread->CheckTS1Action(nullptr,true,true),"null action is rejected at actual check boundary");
+        f.table.Interactions[1]->ActionFunction=4097;
+        auto action=f.target->GetAction(1,f.actor.get(),&f.context);Require(bool(action),"restored actual resource routine");
+        f.calls.clear();Require(bool(f.actor->Thread->CheckAction(action,false))&&f.calls.size()==1&&f.calls[0].args==std::vector<int16_t>({0,0,0,0}),"ordinary user check keeps four zero args");
+        f.calls.clear();Require(bool(f.actor->Thread->CheckAction(action,true))&&f.calls.size()==1&&f.calls[0].args==std::vector<int16_t>({1,0,0,0}),"ordinary autonomous CheckAction default does not imply joining");
     });
     std::cout<<"original autonomy contract: "<<checks<<" checks, "<<failures<<" failed scenarios\n";return failures?1:0;
 }catch(const std::exception& e){std::cerr<<"original autonomy contract: "<<e.what()<<'\n';return 1;}}

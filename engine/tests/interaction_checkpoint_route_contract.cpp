@@ -118,7 +118,7 @@ static OBJTEntry classicType(uint32_t guid,uint16_t type) {
 static void portalPreviewContract() {
  using namespace FSO::LotView::Model;
  VMContext ctx(nullptr);VM vm(&ctx,nullptr);ctx.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&ctx));
- ctx.Architecture()->Rooms[0].Map.assign(64,0);ctx.Architecture()->Rooms[0].Map[9]=1;ctx.Architecture()->Rooms[0].Map[10]=2;ctx.RoomInfo.resize(3);
+ ctx.Architecture()->Rooms[0].Map.assign(64,0);ctx.Architecture()->Rooms[0].Map[9]=1;ctx.Architecture()->Rooms[0].Map[10]=2;ctx.RoomInfo.resize(3);ctx.RebuildEnvironmentGeometry();
  IffFile iff;FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"portal-preview",true);
  OBJD def;def.GUID=0xaabbccdd;FSO::Content::GameObject object;object.OBJ=&def;object.GUID=def.GUID;object.Resource=&resource;
  VMGameObject a(&object,nullptr),b(&object,nullptr);Entities::VMMultitileGroup group;a.MultitileGroup=b.MultitileGroup=&group;group.AddObject(&a);group.AddObject(&b);
@@ -154,6 +154,10 @@ static void portalPreviewContract() {
 
 static void classicContract() {
  VM::UseWorld(false);VMContext context(nullptr);VM vm(&context,nullptr);
+ // Family reconciliation below executes real source unplace/delete, including
+ // room/occupancy removal after literal source OOW publication.
+ context.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&context));
+ context.Architecture()->Rooms[0].Map.assign(64,0);context.RoomInfo.resize(1);context.RebuildEnvironmentGeometry();
  IffFile iff;FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"classic fixture",true);
  auto bhav=new BHAV();bhav->ChunkProcessed=true;bhav->ChunkID=4096;bhav->Args=1;bhav->Locals=2;
  // Instruction0 is a previously completed side effect; the saved PC is1.
@@ -176,8 +180,8 @@ static void classicContract() {
  Entities::VMMultitileGroup furnitureGroup,actorGroup;
  furniture.MultitileGroup=&furnitureGroup;actor.MultitileGroup=&actorGroup;
  furnitureGroup.AddObject(&furniture);actorGroup.AddObject(&actor);
- furniture.ObjectID=10;actor.ObjectID=20;vm.Entities={&furniture,&actor};vm.ObjectsById[10]=&furniture;vm.ObjectsById[20]=&actor;
- context.SetToNextCache->NewObject(&furniture);context.SetToNextCache->NewObject(&actor);
+ vm.PendingIDsByGUID[definition.GUID]=10;vm.AddEntity(&furniture);
+ vm.PendingIDsByGUID[definition.GUID]=20;vm.AddEntity(&actor);
  furniture.Thread=std::make_unique<VMThread>(&context,&furniture,16);actor.Thread=std::make_unique<VMThread>(&context,&actor,16);
  furniture.SetAttribute(0,9);actor.SetAttribute(0,7);
  actor.SetPersonData(Model::VMPersonDataVariable::Posture,1);
@@ -297,7 +301,7 @@ static void classicContract() {
  auto dormant=std::make_shared<VMStackFrame>();dormant->Caller=&visitor;dormant->Callee=&visitor;
  dormant->CodeOwner=&visitorObject;dormant->Routine=vm.Assemble(bhav);dormant->InstructionPointer=0;
  dormant->Args={19};dormant->Locals={23,29};visitor.Thread->Stack.push_back(dormant);
- vm.Entities.push_back(&visitor);vm.ObjectsById[30]=&visitor;context.SetToNextCache->NewObject(&visitor);
+ vm.PendingIDsByGUID[visitorDefinition.GUID]=30;vm.AddEntity(&visitor);
  auto visitorThread=visitor.Thread.get();const auto activationTick=context.Clock->Ticks;const auto activationSeed=context.RandomSeed;
  loader.LoadFamily(9,family,true);
  check(vm.GetObjectById(30)==&visitor&&!visitor.Dead&&visitor.Position()==FSO::LotView::Model::LotTilePos::OUT_OF_WORLD&&
@@ -305,9 +309,9 @@ static void classicContract() {
        dormant->InstructionPointer==0&&dormant->Args==std::vector<int16_t>{19}&&dormant->Locals==std::vector<int16_t>({23,29})&&
        visitor.TS1SchedulerState==0x80000&&context.Clock->Ticks==activationTick&&context.RandomSeed==activationSeed,
        "decoded non-family offworld visitor keeps identity, dormant frame and manager state through family activation");
- // This isolated codec VM has no architecture for household arrival placement.
- // Keep the resident placed while exercising only the undecoded visitor cleanup.
- actor.Position(FSO::LotView::Model::LotTilePos(16,16,1));
+ // Keep the resident placed while exercising only undecoded visitor cleanup;
+ // publish its occupancy through the normal registered placement consumer.
+ actor.Position(FSO::LotView::Model::LotTilePos(16,16,1));actor.PositionChange(&context,true);
  loader.LoadFamily(9,family,false);
  check(visitor.Dead&&vm.GetObjectById(30)==nullptr&&visitorGroup.Objects.empty(),
        "undecoded offworld visitor still follows legacy cleanup fallback");
@@ -449,7 +453,7 @@ static void footprintConsumerContract() {
  using namespace FSO::LotView::Model;
  VM::UseWorld(false); VMContext ctx(nullptr); VM vm(&ctx,nullptr);
  ctx.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&ctx));
- ctx.Architecture()->Rooms[0].Map.assign(64,0); ctx.RoomInfo.resize(1);
+ ctx.Architecture()->Rooms[0].Map.assign(64,0); ctx.RoomInfo.resize(1);ctx.RebuildEnvironmentGeometry();
  IffFile iff; FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"footprint-consumers",true);
  auto child=new BHAV(); child->ChunkProcessed=true;child->ChunkID=4096;
  BHAVInstruction instruction; instruction.Opcode=17; child->Instructions.push_back(instruction);iff.AddChunk(child);
@@ -458,13 +462,18 @@ static void footprintConsumerContract() {
  Entities::VMMultitileGroup ag,dg,bg,cg;
  actor.MultitileGroup=&ag;departed.MultitileGroup=&dg;blocker.MultitileGroup=&bg;chair.MultitileGroup=&cg;
  ag.AddObject(&actor);dg.AddObject(&departed);bg.AddObject(&blocker);cg.AddObject(&chair);
- for(auto entity:{static_cast<VMEntity*>(&actor),static_cast<VMEntity*>(&departed),static_cast<VMEntity*>(&blocker),static_cast<VMEntity*>(&chair)}) vm.AddEntity(entity);
- actor.Thread=std::make_unique<VMThread>(&ctx,&actor,16);
+ for(auto entity:{static_cast<VMEntity*>(&actor),static_cast<VMEntity*>(&departed),static_cast<VMEntity*>(&blocker),static_cast<VMEntity*>(&chair)}) {
+  vm.AddEntity(entity);entity->Thread=std::make_unique<VMThread>(&ctx,entity,16);
+ }
+ auto place=[&](VMEntity& entity,const LotTilePos& where){
+  entity.PrePositionChange(&ctx);entity.Position(where);entity.PositionChange(&ctx,true);
+ };
  actor.SetValue(VMStackObjectVariable::PlacementFlags,int16_t(VMPlacementFlags::OnTerrain));
- const LotTilePos pos(64,64,1);actor.Position(pos);actor.Direction(Direction::NORTH);
+ const LotTilePos pos(64,64,1);actor.Direction(Direction::NORTH);place(actor,pos);
  actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);actor.RefreshTS1Footprint();
- blocker.Footprint=std::make_unique<Model::Routing::VMObstacle>(61,54,67,58);
- ctx.RoomInfo[0].Entities={&blocker};
+ // Import literal authored numeric geometry after real tile registration;
+ // the source placement consumer reads this cache, independently of occupancy.
+ place(blocker,LotTilePos(64,56,1));blocker.RestoreTS1Footprint(61,54,67,58);
  check(actor.PositionValid(pos,Direction::NORTH,&ctx).Status==VMPlacementError::Success,"ordinary pose is clear before requested extension");
  auto routeFor=[&](int posture) {
   actor.SetPersonData(VMPersonDataVariable::Posture,posture);
@@ -492,15 +501,14 @@ static void footprintConsumerContract() {
  check(existing->Tick()==VMPrimitiveExitCode::CONTINUE && existing->State==VMRoutingFrameState::FAILED &&
        actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==8 && actor.Footprint.get()==original,
        "zero request validates existing extension and retains it on rejection");
- ctx.RoomInfo[0].Entities.clear();auto accepted=routeFor(0);
+ place(blocker,LotTilePos::OUT_OF_WORLD);auto accepted=routeFor(0);
  check(accepted->Tick()==VMPrimitiveExitCode::RETURN_TRUE && actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==8 && actor.Footprint && actor.Footprint->y1==53,
        "accepted extension publishes final bounds through turn-only route");
  // The chair entry point yields a real child after route Init captured PD72.
  actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);
  auto yielding=routeFor(0);yielding->State=VMRoutingFrameState::INITIAL;
  yielding->Choices=std::make_unique<std::vector<VMFindLocationResult>>();yielding->CurRoute->Chair=&chair;
- chair.EntryPoints[26].ActionFunction=4096;ctx.RoomInfo[0].Entities={&chair};
- chair.Footprint=std::make_unique<Model::Routing::VMObstacle>(61,61,67,67);
+ chair.EntryPoints[26].ActionFunction=4096;place(chair,pos);chair.RestoreTS1Footprint(61,61,67,67);
  chair.SetValue(VMStackObjectVariable::Flags,int16_t(VMEntityFlags::AllowPersonIntersection));
  check(yielding->Tick()==VMPrimitiveExitCode::CONTINUE && actor.Thread->Stack.size()==2 &&
        actor.GetPersonData(VMPersonDataVariable::RouteFootprintMask)==0 && yielding->TS1PendingFootprint==8,
@@ -523,7 +531,7 @@ static void footprintConsumerContract() {
  actor.SetPersonData(VMPersonDataVariable::FootprintExtension,0);
  check(resumed->Tick()==VMPrimitiveExitCode::RETURN_TRUE && actor.GetPersonData(VMPersonDataVariable::FootprintExtension)==0 && !actor.Footprint,
        "contained chair rejection follows nonstanding policy and clears attempted extension");
- actor.Container=nullptr;ctx.RoomInfo[0].Entities.clear();
+ actor.Container=nullptr;place(chair,LotTilePos::OUT_OF_WORLD);
  // Removal must erase the live cache before a reused identity can be observed.
  auto cache=routeFor(0);cache->AvatarsToConsider.insert(&departed);actor.Thread->Stack={cache};
  vm.RemoveEntity(&departed);

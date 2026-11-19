@@ -178,7 +178,7 @@ public:
     /// TS1(sims): FreeSO `auto` — passes 1 in param 0 of the check tree (autonomous check).
     std::unique_ptr<std::vector<VMPieMenuInteraction>> CheckAction(std::shared_ptr<VMQueuedAction> action, bool autonomous = false);
     /// TS1(sims): FreeSO CheckTS1Action — TS1 TTAB flags (pets, children/adults, visitors, debug), then the check tree.
-    std::unique_ptr<std::vector<VMPieMenuInteraction>> CheckTS1Action(std::shared_ptr<VMQueuedAction> action, bool autonomous);
+    std::unique_ptr<std::vector<VMPieMenuInteraction>> CheckTS1Action(std::shared_ptr<VMQueuedAction> action, bool autonomous, bool joining = false);
 
     VMEntity* GetEntity() const { return Entity; }
 

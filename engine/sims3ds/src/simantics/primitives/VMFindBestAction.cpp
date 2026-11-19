@@ -33,6 +33,8 @@ namespace FSO { namespace SimAntics { namespace Primitives {
 using namespace FSO::SimAntics::Engine;
 using namespace FSO::SimAntics::Model;
 using FSO::Files::Formats::IFF::Chunks::TTAB;
+using FSO::Files::Formats::IFF::Chunks::TTABInteraction;
+using FSO::Files::Formats::IFF::Chunks::TTABFlags;
 using FSO::LotView::Model::LotTilePos;
 
 // ===================================================================================================================
@@ -205,23 +207,22 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
         if (obj->GetFlag(VMEntityFlags::Burning)) continue;
 
         if (obj->TreeTable == nullptr) continue;
-        // DVD 00458992 visits the TTAB from its last row to its first. Checks
-        // can change advertisements and consume random numbers, so this order
-        // matters before candidate scoring as well as when scores tie.
-        const auto& autoEntries = obj->TreeTable->AutoInteractions;
-        for (auto entryIt = autoEntries.rbegin(); entryIt != autoEntries.rend(); ++entryIt) {
-            auto entry = *entryIt;
+        // Each source menu record is checked/scored against its actual target,
+        // while attenuation retains the distance to this outer candidate.
+        // In particular, a person can advertise joining their active object.
+        auto evaluate = [&](VMEntity* obj, TTABInteraction* entry, bool joining) {
             auto id = entry->TTAIndex;
+            if (joining && obj->GetValue(VMStackObjectVariable::LockoutCount) > 0) return;
             // The original compares the signed TTAB threshold against the
             // Sim's script-controlled autonomy level, including equality.
             const auto threshold = static_cast<int16_t>(entry->AutonomyThreshold);
-            if (threshold <= 0 || threshold > caller->GetPersonData(VMPersonDataVariable::AutonomyLevel)) continue;
+            if (!joining && (threshold <= 0 || threshold > caller->GetPersonData(VMPersonDataVariable::AutonomyLevel))) return;
 
             auto action = obj->GetAction((int32_t)id, caller, context->VM()->Context);
             auto ttas = obj->TreeTableStrings;
 
             caller->ObjectData[(int)VMStackObjectVariable::HideInteraction] = 0;
-            auto actionStrings = caller->Thread->CheckAction(action, true);
+            auto actionStrings = caller->Thread->CheckTS1Action(action, true, joining);
 
             std::vector<VMPieMenuInteraction> pie;
             if (actionStrings != nullptr) {
@@ -322,8 +323,33 @@ VMPrimitiveExitCode VMFindBestAction::ExecuteTS1(VMStackFrame* context) {
                     }
                 }
             }
-            //TODO: Lockout interactions that have been used before for a few sim hours (in ts1 ticks. same # of ticks for tso probably)
-            //TODO: special logic for socials?
+        };
+        // DVD 00458992 visits normal TTAB rows backwards, then appends its
+        // person-active-action join record (458c66..458cb5).
+        const auto& autoEntries = obj->TreeTable->AutoInteractions;
+        for (auto entryIt = autoEntries.rbegin(); entryIt != autoEntries.rend(); ++entryIt)
+            evaluate(obj, *entryIt, false);
+
+        auto person = dynamic_cast<VMAvatar*>(obj);
+        auto active = person && person->Thread ? person->Thread->ActiveAction() : nullptr;
+        if (active && active->Callee && !active->Callee->Dead && active->Callee->TreeTable) {
+            const auto& activeRows = active->Callee->TreeTable->InteractionByIndex;
+            const auto activeEntry = activeRows.find(active->InteractionNumber);
+            if (activeEntry == activeRows.end() || (activeEntry->second->Flags & TTABFlags::Joinable) == 0) continue;
+            // 41ee9b copies the running action, resolves its multitile leader,
+            // looks up that row's JoiningIndex, and checks the resulting row
+            // with arguments {autonomous, joining, 0, 0}. It is a distinct
+            // record even when the object also offers that same interaction.
+            auto target = active->Callee->MultitileGroup
+                ? active->Callee->MultitileGroup->GetInteractionGroupLeader(active->Callee) : active->Callee;
+            if (target && target->TreeTable) {
+                const auto& rows = target->TreeTable->InteractionByIndex;
+                const auto current = rows.find(active->InteractionNumber);
+                if (current != rows.end() && current->second->JoiningIndex >= 0) {
+                    const auto join = rows.find(current->second->JoiningIndex);
+                    if (join != rows.end()) evaluate(target, join->second, true);
+                }
+            }
         }
     }
     TS1Autonomy::SortAutonomyRecords(validActions, [](const VMPieMenuInteraction& a, const VMPieMenuInteraction& b) {

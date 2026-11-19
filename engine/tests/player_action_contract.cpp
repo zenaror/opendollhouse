@@ -55,13 +55,23 @@ static void instanceUseContract(){
  for(auto e:group.Objects){e->MultitileGroup=&group;e->Thread=std::make_unique<VMThread>(&context,e,8);}
  VMAvatar sleeper(&objects[0]),awake(&objects[0]);sleeper.ObjectID=10;awake.ObjectID=11;
  sleeper.Thread=std::make_unique<VMThread>(&context,&sleeper,8);awake.Thread=std::make_unique<VMThread>(&context,&awake,8);
- context.SetToNextCache->Avatars={&sleeper,&awake};vm.Entities={&left,&leftPart,&right,&rightPart,&sleeper,&awake};
+ // Live manager identities and real source-use ownership are distinct from
+ // queue metadata. TS1 word62 has been source-owned since33d51eb1.
+ for(auto* e:group.Objects)vm.AddEntity(e);
+ vm.AddEntity(&sleeper);vm.AddEntity(&awake);
  auto use=std::make_shared<VMQueuedAction>();use->Callee=&right;sleeper.Thread->Queue={use};sleeper.Thread->ActiveQueueBlock=0;
  require(group.GetInteractionGroupLeader(&leftPart)==&left&&group.GetInteractionGroupLeader(&rightPart)==&right,
   "two interaction groups retain distinct exact leaders");
+ require(left.UseCount()==0&&right.UseCount()==0,"active queue metadata alone does not acquire source use counters");
+ VMRoutine lifetime;lifetime.ID=4096;lifetime.Instructions.resize(1);
+ auto acquire=[&](VMAvatar& actor,VMEntity& target){
+  auto frame=std::make_shared<VMStackFrame>();frame->Thread=actor.Thread.get();frame->Caller=&actor;frame->Callee=&target;
+  frame->CodeOwner=target.Object;frame->Routine=&lifetime;actor.Thread->Stack.push_back(frame);
+  actor.Thread->AcquireTS1ObjectUse(&target);return frame;
+ };
+ auto rightUse=acquire(sleeper,right);
  require(left.GetValue(VMStackObjectVariable::UseCount)==0&&right.GetValue(VMStackObjectVariable::UseCount)==1,
-  "TS1 empty leader stays unused while opposite leader has an active user");
- // Authored generic availability tree: StackObject UseCount equals zero.
+  "TS1 empty leader stays unused while opposite leader has an acquired source user");
  auto check=new BHAV();check->ChunkID=4097;check->ChunkProcessed=true;
  BHAVInstruction test;test.Opcode=2;test.TruePointer=254;test.FalsePointer=255;
  VMExpressionOperand operand;operand.Operator=VMExpressionOperator::Equals;operand.LhsOwner=Scopes::VMVariableScope::StackObject;
@@ -69,24 +79,36 @@ static void instanceUseContract(){
  operand.Write(test.Operand.data());check->Instructions.push_back(test);iff.AddChunk(check);
  auto available=[&](VMEntity* target){auto action=std::make_shared<VMQueuedAction>();action->Callee=action->StackObject=target;
   action->CodeOwner=target->Object;action->CheckRoutine=vm.Assemble(check);return bool(awake.Thread->CheckTS1Action(action,false));};
- require(available(&left)&&!available(&right),"real TS1 action check admits free leader and rejects occupied leader");
- auto frame=std::make_shared<VMStackFrame>();frame->Callee=&right;sleeper.Thread->Stack.push_back(frame);
+ require(available(&left)&&!available(&right),"real TS1 action check admits free leader and rejects acquired opposite leader");
  require(left.IsInUse(&context,true)&&right.IsInUse(&context,false)&&!left.IsInUse(&context,false),
-  "group-wide reservation still sees the opposite part's live callee");
+  "group-wide reservation separately sees the opposite part's live callee");
  sleeper.Thread->ActiveQueueBlock=-1;
- require(left.UseCount()==0&&right.UseCount()==0,"pending/inactive queue entries do not reserve either leader");
+ require(left.UseCount()==0&&right.UseCount()==1,"inactive queue index does not retire a live source-use frame");
  sleeper.Thread->ActiveQueueBlock=1;sleeper.Thread->Queue.push_back(use);
- require(right.UseCount()==1,"repeated active entries for one avatar retain deduplication");
+ require(right.UseCount()==1,"duplicate queue entries do not acquire duplicate source-use records");
  auto own=std::make_shared<VMQueuedAction>();own->Callee=&left;awake.Thread->Queue={own};awake.Thread->ActiveQueueBlock=0;
- require(left.UseCount()==1&&right.UseCount()==1&&!available(&left),"own active user still blocks the same leader");
+ require(left.UseCount()==0&&right.UseCount()==1,"pending other actor action alone does not acquire its exact target");
+ auto leftUse=acquire(awake,left);
+ require(left.UseCount()==1&&right.UseCount()==1&&!available(&left),"own acquired source user blocks only the same leader");
  own->Callee=&right;
- require(left.UseCount()==0&&right.UseCount()==2,"two active users of one exact instance are both retained");
+ require(left.UseCount()==1&&right.UseCount()==1,"editing queued Callee does not transfer independent source-use ownership");
  vm.TS1=false;
- require(left.UseCount()==2&&right.UseCount()==2,"TSO group aggregation retains both active users");
- left.ObjectData.at(size_t(VMStackObjectVariable::UseCount))=123;
- require(left.GetValue(VMStackObjectVariable::UseCount)==123,"TSO word62 remains the stored field");
- left.MultitileGroup=nullptr;vm.TS1=true;own->Callee=&left;
- require(left.UseCount()==1,"single-instance active use is unchanged");
+ require(left.UseCount()==2&&right.UseCount()==2,"TSO group aggregation still follows both active queue users");
+ require(left.GetValue(VMStackObjectVariable::UseCount)==1,"TSO word62 remains the stored counter rather than computed group count");
+ vm.TS1=true;left.MultitileGroup=nullptr;
+ require(left.UseCount()==1,"single-instance source counter does not depend on a multitile group");left.MultitileGroup=&group;
+ awake.Thread->Pop(VMPrimitiveExitCode::RETURN_TRUE);
+ require(left.UseCount()==0&&right.UseCount()==1&&awake.Thread->TS1ObjectUses.empty(),
+  "actual frame pop retires exact left use despite a changed queued Callee");
+ sleeper.Thread->DiscardTS1ObjectUses();sleeper.Thread->Stack.clear();
+ require(left.UseCount()==0&&right.UseCount()==0&&sleeper.Thread->TS1ObjectUses.empty(),
+  "discard releases source counters while unchanged queue metadata remains");
+ auto a=acquire(sleeper,right);auto b=acquire(awake,right);
+ require(left.UseCount()==0&&right.UseCount()==2,"two real acquired users of one exact instance are both retained");
+ sleeper.Thread->DiscardTS1ObjectUses();awake.Thread->DiscardTS1ObjectUses();
+ require(right.UseCount()==0,"discarding both source owners balances the exact instance counter");
+ sleeper.Thread->Stack.clear();awake.Thread->Stack.clear();
+ for(auto* e:{static_cast<VMEntity*>(&sleeper),static_cast<VMEntity*>(&awake),static_cast<VMEntity*>(&left),static_cast<VMEntity*>(&leftPart),static_cast<VMEntity*>(&right),static_cast<VMEntity*>(&rightPart)})vm.RemoveEntity(e);
  sleeper.Thread.reset();awake.Thread.reset();context.SetToNextCache->Avatars.clear();vm.Entities.clear();
 }
 int main(){try{
