@@ -1223,6 +1223,7 @@ public:
             if (version >= 18) io.value(f->TS1MotionToken);
             else if (io.in) f->TS1MotionToken = 0;
             else Require(!f->TS1MotionToken, "owned model frame requires checkpoint version18");
+            if (version >= 24) io.value(f->TS1LegacyReach);
             if (version >= 16) {
                 int32_t primitiveState = io.out ? projection.PrimitiveState(f.get()) : 0;
                 io.value(primitiveState);
@@ -1232,6 +1233,18 @@ public:
             io.vector(f->Args, 4096); io.vector(f->Locals, 4096);
             Require(f->Caller && f->Callee && f->InstructionPointer < f->Routine->Instructions.size() &&
                     f->SpecialResult <= VMSpecialResult::Retry, "invalid saved frame");
+            const bool reach = !routing && f->GetCurrentInstruction().Opcode == 47;
+            // Old Reach never wrote a phase. PC47 is the structural boundary;
+            // neither a clip name nor its clock can recover transfer ownership.
+            if (io.in && version < 24) f->TS1LegacyReach = reach;
+            Require(!f->TS1LegacyReach || reach, "legacy Reach marker outside its instruction");
+            const auto actor = dynamic_cast<VMAvatar*>(f->Caller);
+            const bool sourceReach = reach && vm.TS1 && !f->TS1LegacyReach && actor &&
+                !actor->TS1ExternalAnimationClock && actor->TS1AnimationController.OriginalLifecycle;
+            Require(version >= 24 || !io.out || !sourceReach,
+                    "source Reach continuation requires checkpoint version24");
+            Require(!io.out || !sourceReach || (f->PrimitiveState >= 0 && f->PrimitiveState <= 3),
+                    "invalid source Reach phase");
             if (routing) { auto rf=static_cast<VMRoutingFrame*>(f.get()); route(*rf, parent); parent=rf; }
             else Require(f->Locals.size() == std::max(f->Routine->Locals, f->Routine->Arguments), "local bank has wrong size");
             if (f->SpecialResult == VMSpecialResult::Interaction) ++boundaries;
@@ -1783,6 +1796,22 @@ public:
         numericFootprint(r);
     }
 
+    void validateReachContinuations(const std::map<int16_t, Record>& records) const {
+        if (version < 24 || !vm.TS1) return;
+        // Thread records precede avatar records. Read-side policy must come
+        // from the staged saved controller, never the constructor's live one.
+        for (const auto& entry : records) for (const auto& frame : entry.second.preparedThread->Stack) {
+            if (frame->IsRoutingFrame() || frame->TS1LegacyReach || frame->GetCurrentInstruction().Opcode != 47)
+                continue;
+            const auto* actor=dynamic_cast<const VMAvatar*>(frame->Caller);
+            if (!actor || actor->TS1ExternalAnimationClock) continue;
+            const auto saved=records.find(actor->ObjectID);
+            Require(saved != records.end() && saved->second.avatar, "Reach caller lacks a staged avatar");
+            if (saved->second.avatar->animationController.OriginalLifecycle)
+                Require(frame->PrimitiveState >= 0 && frame->PrimitiveState <= 3, "invalid source Reach phase");
+        }
+    }
+
     std::unique_ptr<VMTS1HierarchyState> PreparedHierarchy;
     size_t HierarchyLegacyFieldsReconciled=0;
     void publish(std::map<int16_t, Record>& records, const OBJM& objm, bool validateOnly = false) {
@@ -1809,6 +1838,7 @@ public:
             vm.Context->TS1ValidateHierarchy(*PreparedHierarchy);
         }
         for (auto& p : participants) Require(records.count(p.first), "partial participant group");
+        validateReachContinuations(records);
         prepareNumericFootprints(records,objm);
         for (auto& p : records) {
             auto& r = p.second;

@@ -100,6 +100,11 @@ public:
     void TS1DetachRawLink(VMEntity* entity);
     void TS1RemovePlacement(VMEntity* entity);
     void TS1PreflightPhysicalPlacement(VMEntity* entity, const Engine::VMTS1PhysicalPlacement& request);
+    // Original object/person virtual54 query for a contained destination.
+    // Unlike structural preflight this checks gameplay admission, without
+    // detaching, publishing or running placement callbacks.
+    VMPlacementResult TS1QueryContainedPlacement(VMEntity* entity,
+        const Engine::VMTS1PhysicalPlacement& request) const;
     void TS1CommitPhysicalPlacement(VMEntity* entity,
         const Engine::VMTS1PhysicalPlacement& request);
     Engine::VMTS1PhysicalPlacement TS1ResolvePhysicalPlacement(VMEntity* entity,

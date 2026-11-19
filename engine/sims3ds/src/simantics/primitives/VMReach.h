@@ -11,11 +11,14 @@
 
 namespace FSO { namespace SimAntics { namespace Primitives {
 
+class VMReachOperand;
 class VMReach : public Engine::VMPrimitiveHandler {
 public:
     bool failed = false;
 
     Engine::VMPrimitiveExitCode Execute(Engine::VMStackFrame* context, Engine::VMPrimitiveOperand* args) override;
+private:
+    Engine::VMPrimitiveExitCode ExecuteOriginal(Engine::VMStackFrame* context, VMReachOperand* args);
 };
 
 class VMReachOperand : public Engine::VMPrimitiveOperand {

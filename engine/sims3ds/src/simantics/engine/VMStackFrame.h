@@ -61,6 +61,9 @@ public:
     /// Original frame state (+8); Idle For Input sets 1 while retrying after
     /// a pushed child. Independent of belonging to an interaction tree.
     int32_t PrimitiveState = 0;
+    // Native<=23 Reach had no per-operation phase/ownership. Keep that exact
+    // unfinished operation on its legacy handler until its authored branch.
+    bool TS1LegacyReach = false;
     // Native identity of a shared TS1 model request. It is independent of the
     // original frame state and is persisted by ODHI18, never as a pointer.
     uint64_t TS1MotionToken = 0;

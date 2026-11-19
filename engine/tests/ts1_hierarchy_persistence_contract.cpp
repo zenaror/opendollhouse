@@ -119,4 +119,91 @@ static void NativeScalarAuthority(){
  }
  vm.RemoveEntity(&entity);
 }
-int main(){try{VM::UseWorld(false);WireExtent();Staging();NativeScalarAuthority();std::cout<<"TS1 hierarchy persistence contract passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+// 4333c0 -> 432a70(commit=false), destination has a physical parent.
+// These are source numeric rejection codes, independent of misleading legacy
+// placement-error enum labels. Query must not publish or invoke callbacks.
+static void ContainedAdmission() {
+ VMContext context(nullptr);VM vm(&context,nullptr);vm.GlobalState.assign(38,0);IffFile iff;
+ FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"contained-admission",true);
+ OBJD definition;definition.GUID=0x7814;FSO::Content::GameObject object;
+ object.OBJ=&definition;object.GUID=definition.GUID;object.Resource=&resource;
+ context.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&context));
+ auto* arch=context.Architecture();arch->TS1WaterTiles.assign(64,-1);arch->TS1PoolTiles.assign(64,0);
+ arch->TS1FloorPresent.assign(2,std::vector<uint8_t>(64,1));
+ arch->TS1TileFlags.assign(2,std::vector<uint8_t>(64,255));
+ for(auto& heads:context.SpatialTileHeads)heads.assign(64,0);
+ auto* moved=vm.OwnEntity(new VMGameObject(&object,nullptr));
+ auto* parent=vm.OwnEntity(new VMGameObject(&object,nullptr));
+ auto* other=vm.OwnEntity(new VMGameObject(&object,nullptr));
+ OBJD personDefinition;personDefinition.GUID=0x7815;personDefinition.ObjectType=OBJDType::Person;
+ FSO::Content::GameObject personObject;personObject.OBJ=&personDefinition;personObject.GUID=personDefinition.GUID;personObject.Resource=&resource;
+ auto* person=vm.OwnEntity(new VMAvatar(&personObject));
+ for(auto* e:{moved,parent,other,person}) {
+  vm.AddEntity(e);e->Position(FSO::LotView::Model::LotTilePos(24,24,1));context.TS1EnsureHierarchy(e);
+  e->ObjectData[4]=1;e->ObjectData[27]=10;e->ObjectData[28]=10;e->ObjectData[8]=0;e->ObjectData[42]=0;
+ }
+ auto& node=context.TS1HierarchyNodes.at(parent->ObjectID);node.Slots={0,0,0};node.Metadata.resize(3);
+ node.Metadata[1].Height=1;node.Metadata[2].Height=2;
+ auto request=context.TS1PhysicalRequest(moved,parent,0);
+ // Some negative cases intentionally supply an invalid edge. Snapshot raw
+ // channels without invoking a separate graph-validation gate before the query.
+ const auto snapshot=[&](){std::ostringstream out;
+  for(auto* e:vm.Entities){out<<e->ObjectID<<':'<<e->Container<<':'<<e->ContainerSlot<<';';
+   for(auto value:e->ObjectData)out<<value<<',';
+   const auto& n=context.TS1HierarchyNodes.at(e->ObjectID);out<<n.NeedsPlacement<<';';
+   for(auto value:n.Slots)out<<value<<',';
+   for(const auto& m:n.Metadata)out<<m.Offset.X<<','<<m.Offset.Y<<','<<m.Offset.Z<<','<<m.Height<<','<<m.Capacity<<','<<m.Flags<<','<<m.ResourceRow<<','<<m.BoneName<<';';
+  }return out.str();};
+ const auto query=[&](int expected,const char* why) {
+  auto raw=moved->ObjectData;auto parentRaw=parent->ObjectData;auto graph=snapshot();
+  const auto result=context.TS1QueryContainedPlacement(moved,request);
+  Need(int(result.Status)==expected-1,why);
+  Need(moved->ObjectData==raw && parent->ObjectData==parentRaw && snapshot()==graph,
+       "contained query changed source state");
+ };
+ query(0,"equal signed weight must be admitted");
+ arch->TS1TileFlags[0][9]=0;query(0,"ARRY8 flags must not be mistaken for ARRY9 pool coverage");
+ node.Metadata[1].Capacity=-99;node.Metadata[1].Flags=-1;query(0,"unread capacity/flags must not invent gates");
+ request.Position.x=4112;query(0,"source signed-byte tile narrowing lost");request.Position.x=24;
+ request.Position.x=0;query(1,"contained interior bounds gate missing");request.Position.x=24;
+ request.Position.Level=0;query(2,"contained level gate missing");request.Position.Level=2;
+ moved->ObjectData[42]=0x1000;query(31,"upper pool-only gate missing");moved->ObjectData[42]=0;
+ arch->TS1FloorPresent[1][9]=0;query(41,"upper floor coverage gate missing");
+ moved->ObjectData[42]=0x200;query(0,"in-air flag must bypass upper floor coverage");
+ moved->ObjectData[42]=0;arch->TS1FloorPresent[1][9]=1;request.Position.Level=1;
+ moved->ObjectData[42]=0x2000;query(47,"water-only flag on dry tile admitted");moved->ObjectData[42]=0;
+ arch->TS1WaterTiles[9]=0;query(29,"signed water tile gate missing");
+ moved->ObjectData[42]=4;query(0,"water admission flag ignored");moved->ObjectData[42]=0;
+ context.SpatialTileHeads[0][9]=parent->ObjectID;node.Slots[2]=other->ObjectID;other->ObjectData[8]=0x1000;
+ query(0,"water bridge in source DFS not found");node.Slots[2]=0;other->ObjectData[8]=0;
+ arch->TS1WaterTiles[9]=-1;arch->TS1PoolTiles[9]=1;query(29,"pool gate missing");
+ moved->ObjectData[42]=0x800;query(0,"pool flag ignored");moved->ObjectData[42]=0;arch->TS1PoolTiles[9]=0;
+ moved->ObjectData[42]=0x1000;query(30,"pool-required gate missing");moved->ObjectData[42]=0;
+ moved->ObjectData[8]=4;query(12,"moved raw zero-extent flag ignored");moved->ObjectData[8]=0;
+ parent->ObjectData[8]=4;query(12,"parent raw zero-extent flag ignored");parent->ObjectData[8]=0;
+ request.PhysicalSlot=2;query(13,"physical index source extent gate missing");request.PhysicalSlot=0;
+ node.Slots[1]=other->ObjectID;query(11,"occupied slot accepted");node.Slots[1]=moved->ObjectID;
+ query(0,"self occupant rejected");node.Slots[1]=0;
+ vm.GlobalState[19]=2;node.Metadata[1].Offset.X=1;query(3,"off-center multi-slot mode2 gate missing");
+ moved->ObjectData[8]=0x2000;query(0,"raw mode2 exemption ignored");moved->ObjectData[8]=0;
+ vm.GlobalState[19]=0;node.Metadata[1].Offset.X=0;
+ request.ParentID=person->ObjectID;vm.GlobalState[19]=1;query(13,"person support mode restriction missing");
+ request.ParentID=parent->ObjectID;vm.GlobalState[19]=0;
+ node.Slots[2]=other->ObjectID;node.Metadata[2].Height=1;
+ query(11,"same-height centered sibling admitted");other->ObjectData[8]=0x2000;
+ query(11,"requested centered slot needs separate exemption");moved->ObjectData[8]=0x2000;
+ query(0,"both centered exemptions ignored");node.Metadata[2].Offset.X=1;other->ObjectData[8]=0;
+ query(0,"noncentered other needs no exemption");moved->ObjectData[8]=0;
+ query(11,"requested center gate ignored");node.Metadata[1].Offset.Y=1;query(0,"noncentered pair incorrectly rejected");
+ node.Metadata[1].Offset.Y=0;node.Slots[2]=0;
+ moved->ObjectData[27]=11;query(14,"signed support strength gate missing");moved->ObjectData[27]=-1;
+ parent->ObjectData[28]=-1;query(0,"signed equal weight rejected");parent->ObjectData[28]=10;moved->ObjectData[27]=10;
+ parent->ObjectData[26]=moved->ObjectID;parent->ObjectData[14]=1;query(11,"ancestor self containment admitted");
+ parent->ObjectData[26]=0;parent->ObjectData[14]=-1;
+ node.Metadata[1].Height=0;query(24,"zero height accepted");node.Metadata[1].Height=33;
+ query(0,"x86 height shift must mask count to five bits");node.Metadata[1].Height=2;query(24,"height mask ignored");
+ node.Metadata[1].Height=16;moved->ObjectData[4]=int16_t(0x8000);query(0,"signed height flags must preserve sign extension");
+ node.Metadata[1].Height=32;query(0,"sign extended allowed heights lost upper bits");
+ definition.MasterID=1;query(16,"factory-selected MT class must reject containment");definition.MasterID=0;
+}
+int main(){try{VM::UseWorld(false);WireExtent();Staging();NativeScalarAuthority();ContainedAdmission();std::cout<<"TS1 hierarchy persistence contract passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

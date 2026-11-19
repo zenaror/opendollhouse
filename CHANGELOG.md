@@ -7,6 +7,10 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Reaching for objects uses the original height and animation-event rules,
+  including child and seated animations and pickup/put callbacks. New native
+  saves preserve the current step of these actions and require updated builds
+  when shared between platforms.
 - Fixed loading some saves from earlier experimental builds, preserving their
   object relationships and the loading order needed to continue playing.
 - Sims can autonomously join activities already being used by another Sim,

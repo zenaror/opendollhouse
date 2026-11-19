@@ -95,6 +95,72 @@ static void legacyPhysicalSlotPrefixContract() {
  for(auto* e:{&parent,&child,&neighbor})vm.ObjectsById.erase(e->ObjectID);
 }
 
+static void reachContinuationPolicyContract() {
+ VMContext context(nullptr);VM vm(&context,nullptr);vm.TS1=true;
+ IffFile iff;FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"reach-continuation",true);
+ auto tree=new BHAV();tree->ChunkID=4096;tree->ChunkProcessed=true;
+ BHAVInstruction reach;reach.Opcode=47;reach.TruePointer=1;reach.FalsePointer=1;tree->Instructions.push_back(reach);
+ BHAVInstruction effect;effect.Opcode=2;effect.TruePointer=254;effect.FalsePointer=255;
+ Primitives::VMExpressionOperand expression;expression.LhsOwner=Scopes::VMVariableScope::MyObjectAttributes;
+ expression.RhsOwner=Scopes::VMVariableScope::Literal;expression.RhsData=1;expression.Operator=Primitives::VMExpressionOperator::PlusEquals;expression.Write(effect.Operand.data());
+ tree->Instructions.push_back(effect);iff.AddChunk(tree);
+ auto callback=new BHAV();callback->ChunkID=4097;callback->ChunkProcessed=true;callback->Instructions.push_back(effect);iff.AddChunk(callback);
+ OBJD definition;definition.GUID=0xee47cafe;
+ FSO::Content::GameObject object;object.OBJ=&definition;object.GUID=definition.GUID;object.Resource=&resource;
+ VMAvatar actor(&object);actor.ObjectID=77;vm.ObjectsById[77]=&actor;
+ auto content=FSO::Content::Content::Get();content->WorldObjects->Cache[definition.GUID]=std::make_unique<FSO::Content::GameObject>(object);
+ actor.Thread=std::make_unique<VMThread>(&context,&actor,16);auto& thread=*actor.Thread;
+ auto frame=std::make_shared<VMStackFrame>();frame->Thread=&thread;frame->Routine=vm.Assemble(tree);frame->CodeOwner=&object;
+ frame->Caller=frame->Callee=&actor;frame->Args.assign(4,0);thread.Stack.push_back(frame);
+ auto write=[&](uint32_t version){st::Writer out(st::Endian::Little);Archive archive(out);InteractionCheckpointCodec codec(vm,archive,version);codec.thread(thread);return out.ToArray();};
+ auto read=[&](const std::vector<uint8_t>& bytes,uint32_t version){auto restored=std::make_unique<VMThread>(&context,&actor,16);st::Reader in(bytes);Archive archive(in);InteractionCheckpointCodec codec(vm,archive,version);codec.thread(*restored);check(!in.has_more(),"Reach policy thread consumes its versioned wire");return restored;};
+ frame->TS1LegacyReach=true;frame->PrimitiveState=0;
+ auto legacy=read(write(23),23);check(legacy->Stack.front()->TS1LegacyReach&&legacy->Stack.front()->PrimitiveState==0,"old current-PC Reach is legacy without a clip or phase guess");
+ frame->PrimitiveState=2;auto committed=read(write(23),23);
+ check(committed->Stack.front()->TS1LegacyReach&&committed->Stack.front()->PrimitiveState==2,"old completed-transfer frame preserves its literal phase with legacy policy");
+ frame->TS1LegacyReach=false;actor.TS1AnimationController.OriginalLifecycle=false;
+ check(read(write(23),23)->Stack.front()->TS1LegacyReach,"old legacy-lifecycle Reach still receives a structural continuation marker");
+ actor.TS1AnimationController.OriginalLifecycle=true;actor.TS1ExternalAnimationClock=true;
+ check(read(write(23),23)->Stack.front()->TS1LegacyReach,"old external-clock Reach still receives a structural continuation marker");
+ actor.TS1ExternalAnimationClock=false;frame->TS1LegacyReach=true;
+ auto old24=read(write(24),24);check(old24->Stack.front()->TS1LegacyReach,"Native24 retains a migrated legacy Reach operation");
+ AvatarRecord sourceController;sourceController.animationController.Events={7,0,9};
+ sourceController.animationController.ModelState=0;sourceController.animationController.CarrySuppressed=1;
+ st::Writer controllerBytes(st::Endian::Little);Archive controllerOut(controllerBytes);InteractionCheckpointCodec controllerWriter(vm,controllerOut,24);controllerWriter.animationController(sourceController);
+ const auto controllerWire=controllerBytes.ToArray();st::Reader controllerInput(controllerWire);Archive controllerIn(controllerInput);InteractionCheckpointCodec controllerReader(vm,controllerIn,24);AvatarRecord restoredController;controllerReader.animationController(restoredController);
+ check(!controllerInput.has_more()&&restoredController.animationController.Events==std::vector<int32_t>({7,0,9})&&restoredController.animationController.CarrySuppressed==1&&restoredController.animationController.ModelState==0&&restoredController.animationController.ScriptActive==0,
+       "Reach source FIFO and carry suppression persist without inventing script admission");
+ frame->TS1LegacyReach=false;
+ for(int phase=0;phase<=3;++phase){frame->PrimitiveState=phase;
+  auto restored=read(write(24),24);check(!restored->Stack.front()->TS1LegacyReach&&restored->Stack.front()->PrimitiveState==phase,"Native24 preserves each source Reach retry/commit/failure phase");
+  rejects([&]{write(23);},"old writer rejects source Reach even before its first transfer");}
+ frame->PrimitiveState=4;rejects([&]{write(24);},"new source Reach phase outside0..3 rejected on capture");
+ // Compare otherwise-identical current records to locate the policy byte;
+ // corruption controls do not mirror a hand-coded wire offset.
+ frame->PrimitiveState=1;const auto source=write(24);frame->TS1LegacyReach=true;const auto older=write(24);
+ size_t marker=source.size(),differences=0;for(size_t i=0;i<source.size();++i)if(source[i]!=older[i]){marker=i;++differences;}
+ check(source.size()==older.size()&&differences==1,"Reach policy is one independent Native24 field");
+ auto malformed=source;malformed[marker]=2;rejects([&]{read(malformed,24);},"malformed Reach boolean rejected during staged decode");
+ frame->TS1LegacyReach=false;frame->InstructionPointer=1;auto wrongInstruction=write(24);wrongInstruction[marker]=1;
+ rejects([&]{read(wrongInstruction,24);},"legacy Reach marker cannot attach to another primitive");
+ frame->InstructionPointer=0;frame->PrimitiveState=4;actor.TS1AnimationController.OriginalLifecycle=false;const auto oldPolicy=write(24);
+ actor.TS1AnimationController.OriginalLifecycle=true;
+ std::map<int16_t,Record> staged;auto& record=staged[77];record.entity=&actor;record.preparedThread=read(oldPolicy,24);record.avatar=std::make_unique<AvatarRecord>();
+ st::Writer unused;Archive archive(unused);InteractionCheckpointCodec validator(vm,archive,24);
+ record.avatar->animationController.OriginalLifecycle=false;validator.validateReachContinuations(staged);
+ check(record.preparedThread->Stack.front()->PrimitiveState==4,"read validation uses the staged legacy controller rather than live constructor policy");
+ record.avatar->animationController.OriginalLifecycle=true;rejects([&]{validator.validateReachContinuations(staged);},"staged source controller rejects invalid Reach phase before publication");
+ check(actor.Thread.get()==&thread&&thread.Stack.front()==frame&&frame->PrimitiveState==4,"failed policy preparation leaves live execution untouched");
+ auto truncated=source;truncated.pop_back();rejects([&]{read(truncated,24);},"late truncated Reach thread rejects without publishing live state");
+ frame->PrimitiveState=2;frame->TS1LegacyReach=true;
+ auto child=std::make_shared<VMStackFrame>();child->Thread=&thread;child->Routine=vm.Assemble(callback);child->CodeOwner=&object;child->Caller=child->Callee=&actor;child->Args.assign(4,0);
+ const auto attribute=actor.GetAttribute(0);check(thread.RunTS1SynchronousCall(child)&&actor.GetAttribute(0)==attribute+1&&thread.Stack.size()==1&&thread.Stack.front()==frame&&frame->TS1LegacyReach&&frame->PrimitiveState==2,
+       "synchronous authored callback retains the suspended Reach policy and phase");
+ thread.MoveToInstruction(frame.get(),0,true);
+ check(!frame->TS1LegacyReach&&frame->PrimitiveState==0&&frame->InstructionPointer==0,"completed same-PC authored branch clears one-operation Reach policy");
+ content->WorldObjects->Cache.erase(definition.GUID);vm.ObjectsById.erase(77);
+}
+
 static void sourceAnimationPersistenceContract() {
  VMContext context(nullptr);VM vm(&context,nullptr);
  FSO::Vitaboy::Animation asset;asset.Name="source-clock-fixture";asset.Duration=1000;asset.Distance=3;
@@ -700,6 +766,7 @@ int main(){try{
  check(thread.Queue.size()==1&&thread.Queue[0]==pending&&thread.TempRegisters[2]==73&&thread.ActiveQueueBlock==-1,"failed route leaves pending work and thread registers intact");
  portalPreviewContract();
  legacyPhysicalSlotPrefixContract();
+ reachContinuationPolicyContract();
  sourceAnimationPersistenceContract();
  sourceRouteCodecContract();
  classicContract();

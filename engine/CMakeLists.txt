@@ -93,6 +93,7 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/entities/VMAvatar.cpp
   sims3ds/src/simantics/entities/VMAvatarLocomotion.cpp
   sims3ds/src/simantics/entities/VMAvatarCarry.cpp
+  sims3ds/src/simantics/entities/VMAvatarReach.cpp
   sims3ds/src/simantics/entities/VMAvatarAnimationEvents.cpp
   sims3ds/src/simantics/entities/VMAvatarMotiveDecay.cpp
   sims3ds/src/simantics/entities/VMEntity.cpp
@@ -280,6 +281,8 @@ add_library(odh_engine STATIC ${ODH_ENGINE_SOURCES})
 # Original simulation arithmetic has individual binary32 rounding steps. Keep
 # these consumers independent of platform FMA or relaxed floating-point flags.
 set(ODH_ORIGINAL_ARITHMETIC_SOURCES
+  sims3ds/src/simantics/primitives/VMReach.cpp
+  sims3ds/src/simantics/entities/VMAvatarReach.cpp
   sims3ds/src/vitaboy/Animator.cpp
   sims3ds/src/common/TS1/TS1Curve.cpp
   sims3ds/src/simantics/primitives/VMFindBestAction.cpp
@@ -601,6 +604,9 @@ if(BUILD_TESTING)
   add_executable(odh-ts1-carry-lifecycle tests/ts1_carry_lifecycle.cpp)
   target_link_libraries(odh-ts1-carry-lifecycle PRIVATE odh_engine)
   add_test(NAME ts1-carry-lifecycle COMMAND odh-ts1-carry-lifecycle)
+  add_executable(odh-ts1-reach-source-contract tests/ts1_reach_source_contract.cpp)
+  target_link_libraries(odh-ts1-reach-source-contract PRIVATE odh_engine)
+  add_test(NAME ts1-reach-source-contract COMMAND odh-ts1-reach-source-contract)
   add_executable(odh-ts1-animation-binding-events tests/ts1_animation_binding_events.cpp)
   target_link_libraries(odh-ts1-animation-binding-events PRIVATE odh_engine)
   add_test(NAME ts1-animation-binding-events COMMAND odh-ts1-animation-binding-events)
@@ -609,7 +615,8 @@ if(BUILD_TESTING)
   add_test(NAME ts1-animation-controller-checkpoint-contract COMMAND odh-ts1-animation-controller-checkpoint-contract)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     foreach(contract odh-ts1-script-animation-contract odh-ts1-carry-lifecycle
-        odh-ts1-animation-binding-events odh-ts1-animation-controller-checkpoint-contract)
+        odh-ts1-animation-binding-events odh-ts1-animation-controller-checkpoint-contract
+        odh-ts1-reach-source-contract)
       target_compile_options(${contract} PRIVATE -g0)
       target_link_options(${contract} PRIVATE -Wl,--strip-debug)
     endforeach()

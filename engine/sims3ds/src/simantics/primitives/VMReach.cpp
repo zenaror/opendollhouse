@@ -13,6 +13,7 @@
 #include "content/ContentManager.h"
 #include "simantics/engine/VMStackFrame.h"
 #include "simantics/engine/VMSimanticsException.h"
+#include "simantics/engine/VMThread.h"
 #include "simantics/entities/VMEntity.h"
 #include "simantics/entities/VMAvatar.h"
 #include "simantics/model/VMAnimationState.h"
@@ -52,6 +53,11 @@ int32_t SlotHeight(SLOTItem* slot, VMStackFrame* context)
 VMPrimitiveExitCode VMReach::Execute(VMStackFrame* context, VMPrimitiveOperand* args)
 {
     auto operand = static_cast<VMReachOperand*>(args);
+    auto* originalAvatar = dynamic_cast<VMAvatar*>(context->Caller);
+    if (context->VM()->TS1 && originalAvatar && !context->TS1LegacyReach &&
+        !originalAvatar->TS1ExternalAnimationClock && originalAvatar->TS1AnimationController.OriginalLifecycle)
+        return ExecuteOriginal(context, operand);
+    if (context->VM()->TS1) context->TS1LegacyReach = true;
     auto completedPickup = false;
 
     int32_t height;
@@ -197,6 +203,136 @@ VMPrimitiveExitCode VMReach::Execute(VMStackFrame* context, VMPrimitiveOperand* 
             return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
         }
     }
+}
+
+namespace {
+struct ReachEndpoints {
+    VMEntity* Moved = nullptr;
+    VMEntity* Support = nullptr;
+    int PhysicalSlot = -1;
+    int8_t Level = 1;
+    float Height = 0;
+};
+
+float ReachHeight(VMStackFrame* frame, VMEntity* support, int slot) {
+    auto& ctx = *frame->VM()->Context;
+    if (!support || slot < 0 || size_t(slot + 1) >= ctx.TS1SourceVectorExtent(support)) return 0.f;
+    float height = 0.f;
+    size_t visits = 0;
+    while (support) {
+        if (++visits > frame->VM()->Entities.size() + 1)
+            throw VMSimanticsException("Original Reach has cyclic support ancestry.", frame);
+        if (slot >= 0 && size_t(slot + 1) < ctx.TS1SourceVectorExtent(support)) {
+            const auto* metadata = ctx.TS1SourceSlotMetadata(support, slot + 1);
+            if (!metadata) throw VMSimanticsException("Original Reach lacks source slot metadata.", frame);
+            //4340f2 stores binary32 after every ancestor addition.
+            volatile float sum = height + metadata->Offset.Z;
+            height = sum;
+        }
+        const auto placement = ctx.TS1ResolvePhysicalPlacement(support, false);
+        support = frame->VM()->GetObjectById(placement.ParentID);
+        slot = placement.PhysicalSlot;
+    }
+    //454f69 caches this binary32 reciprocal of 2*sqrt(6), followed by *3.
+    //The two products have no intervening source memory store.
+    return float(double(height) * double(0.204124152660369873f) * 3.0);
+}
+
+bool ResolveReach(VMStackFrame* frame, const VMReachOperand& operand, ReachEndpoints& result) {
+    auto* vm = frame->VM();
+    auto& ctx = *vm->Context;
+    if (operand.Mode == 2) { result.Height = -1.f; return true; }
+    auto* target = vm->GetObjectById(frame->StackObjectID());
+    if (!target || target->Dead) return false;
+    if (operand.Mode == 0) {
+        result.Moved = target;
+        const auto placement = ctx.TS1ResolvePhysicalPlacement(target, false);
+        result.Support = vm->GetObjectById(placement.ParentID);
+        result.PhysicalSlot = placement.PhysicalSlot;
+    } else if (operand.Mode == 1) {
+        //45c9b4: mode1 puts the item from caller physical0 onto StackObject.
+        //It does not turn an empty hand into a grab from the support.
+        if (!frame->Routine || operand.SlotParam >= frame->Routine->Arguments || operand.SlotParam >= frame->Args.size())
+            throw VMSimanticsException("Original Reach slot parameter is outside the authored arguments.", frame);
+        result.Moved = ctx.TS1SourceSlot(frame->Caller, 1);
+        result.Support = target;
+        result.PhysicalSlot = frame->Args[operand.SlotParam];
+    } else return false;
+    if (result.Support) {
+        if (result.PhysicalSlot < 0 || size_t(result.PhysicalSlot + 1) >= ctx.TS1SourceVectorExtent(result.Support)) return false;
+        result.Level = result.Support->Position().Level;
+        result.Height = ReachHeight(frame, result.Support, result.PhysicalSlot);
+    }
+    return true;
+}
+
+void ReachCallback(VMStackFrame* parent, VMEntity* moved, const char* name) {
+    if (!moved || !moved->Object || !moved->Object->Resource) return;
+    const auto& names = moved->Object->Resource->TreeByName;
+    const auto found = names.find(name);
+    if (found == names.end() || !found->second.bhav) return;
+    auto frame = std::make_shared<VMStackFrame>();
+    frame->Caller = parent->Caller;
+    frame->Callee = moved;
+    frame->StackObject = moved;
+    frame->StackObjectRawID = moved->ObjectID;
+    frame->CodeOwner = moved->Object;
+    frame->Routine = parent->VM()->Assemble(found->second.bhav);
+    const auto count = size_t(frame->Routine->Arguments);
+    if (count > parent->Thread->TempRegisters.size())
+        throw VMSimanticsException("Original Reach callback exceeds the interpreter argument bank.", parent);
+    frame->Args.assign(std::max<size_t>(4, count), 0);
+    std::copy_n(parent->Thread->TempRegisters.begin(), count, frame->Args.begin());
+    //452c2d ->474b22: same interpreter, NULL argument pointer fallback,
+    //moved object's resource and StackOID; result does not undo the transfer.
+    parent->Thread->RunTS1SynchronousCall(std::move(frame));
+}
+}
+
+VMPrimitiveExitCode VMReach::ExecuteOriginal(VMStackFrame* context, VMReachOperand* operand) {
+    auto& avatar = *static_cast<VMAvatar*>(context->Caller);
+    auto& model = avatar.TS1AnimationController;
+    auto failResolution = [&] { return operand->GrabOrDrop == 0 ? VMPrimitiveExitCode::GOTO_TRUE : VMPrimitiveExitCode::GOTO_FALSE; };
+    if (context->PrimitiveState == 0) {
+        ReachEndpoints endpoints;
+        if (!ResolveReach(context, *operand, endpoints)) return VMPrimitiveExitCode::GOTO_FALSE;
+        if (!avatar.StartTS1ReachAnimation(endpoints.Height)) return failResolution();
+        context->PrimitiveState = 1;
+        return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    }
+    if (context->PrimitiveState == 1) {
+        bool transfer = false;
+        for (const auto event : model.Events) if (event == 0) transfer = true;
+        model.Events.clear(); //45cb8e consumes the entire FIFO before one transfer.
+        if (!transfer && !avatar.TS1ReachAnimationComplete()) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+        ReachEndpoints endpoints;
+        if (!ResolveReach(context, *operand, endpoints)) return failResolution();
+        if (operand->GrabOrDrop == 0) {
+            context->PrimitiveState = 2;
+        } else if (operand->Mode == 0 || operand->Mode == 1) {
+            auto* parent = operand->Mode == 0 ? static_cast<VMEntity*>(&avatar) : endpoints.Support;
+            const auto slot = operand->Mode == 0 ? 0 : endpoints.PhysicalSlot;
+            bool success = endpoints.Moved && parent;
+            if (success) {
+                auto& ctx = *context->VM()->Context;
+                auto request = ctx.TS1PhysicalRequest(endpoints.Moved, parent, slot);
+                request.Position.Level = operand->Mode == 0 ? avatar.Position().Level : endpoints.Level;
+                success = ctx.TS1QueryContainedPlacement(endpoints.Moved, request).Status == Model::VMPlacementError::Success;
+                if (success) success = parent->PlaceInSlot(endpoints.Moved, slot, true, &ctx);
+            }
+            if (success) ReachCallback(context, endpoints.Moved, operand->Mode == 0 ? "CT - Grab" : "CT - Put");
+            //Set AFTER the synchronous callback, which can replace FG/FIFO.
+            context->PrimitiveState = success ? 2 : 3;
+        }
+        return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    }
+    if (context->PrimitiveState == 2 || context->PrimitiveState == 3) {
+        if (!avatar.TS1ReachAnimationComplete()) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+        const bool success = context->PrimitiveState == 2;
+        avatar.EndTS1ReachAnimation();
+        return success ? VMPrimitiveExitCode::GOTO_TRUE : VMPrimitiveExitCode::GOTO_FALSE;
+    }
+    throw VMSimanticsException("Original Reach has an invalid primitive state.", context);
 }
 
 void VMReachOperand::Read(const uint8_t* bytes)

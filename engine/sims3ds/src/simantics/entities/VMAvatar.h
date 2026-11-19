@@ -92,6 +92,9 @@ public:
     int64_t TS1MotionRateTick = -1;
     int32_t TS1AnimationTimestamp() const;
     void StartTS1Animation(const std::shared_ptr<Model::VMAnimationState>& state, float rate = 1.f);
+    bool StartTS1ReachAnimation(float convertedHeight);
+    bool TS1ReachAnimationComplete() const;
+    void EndTS1ReachAnimation();
     void UpdateTS1MotionRate(int modelState);
     Engine::Routing::TS1MotionRequest TS1ModelMotion;
     // Reconstructable setup cache, never active ownership or saved model state.

@@ -902,7 +902,7 @@ void VMThread::MoveToInstruction(VMStackFrame* frame, uint8_t instruction, bool 
 
     // DVD 00474e97 clears primitive state on a completed instruction branch,
     // while CONTINUE/next-tick retries retain it.
-    if (Context->VM->TS1) frame->PrimitiveState = 0;
+    if (Context->VM->TS1) { frame->PrimitiveState = 0; frame->TS1LegacyReach = false; }
     // A return can unwind an interaction and request a yield from Pop.
     // Seed the branch policy before dispatch, as in both pinned FreeSO versions.
     ContinueExecution = continueExecution;

@@ -219,6 +219,116 @@ void VMContext::TS1PreflightPhysicalPlacement(VMEntity* e,const VMTS1PhysicalPla
     if(previous && previous!=e)PreflightRawLink(c,TS1CaptureRawLink(previous));
 }
 
+VMPlacementResult VMContext::TS1QueryContainedPlacement(
+    VMEntity* e,const VMTS1PhysicalPlacement& request) const {
+    const auto& c=Owner(*this);
+    if(&c!=this)return c.TS1QueryContainedPlacement(e,request);
+    Need(VM && VM->TS1 && e && VM->GetObjectById(e->ObjectID)==e,
+         "Original contained query requires a live TS1 identity");
+    auto* parent=VM->GetObjectById(request.ParentID);
+    Need(request.Valid && parent,"Original contained query requires its destination parent");
+    const auto reject=[](int sourceCode,VMEntity* blocker=nullptr) {
+        return VMPlacementResult(static_cast<VMPlacementError>(sourceCode-1),blocker);
+    };
+    // 4409db selects cXMTObject (including portals) by MasterID, not the
+    // number of live group members. Its virtual54 rejects all containment.
+    if(e->Object && e->Object->OBJ && e->Object->OBJ->MasterID)
+        return reject(16);
+    const auto* arch=Architecture();
+    Need(arch,"Original contained query lacks architecture");
+    const auto& p=request.Position;
+    const auto signedByte=[](int value){const unsigned byte=unsigned(value)&255;return byte<128?int(byte):int(byte)-256;};
+    const int tileX=signedByte(p.TileX()),tileY=signedByte(p.TileY()); //433116/433136
+    if(tileX<1 || tileY<1 || tileX>=arch->Width-1 || tileY>=arch->Height-1)
+        return reject(1);
+    if(p.Level<1 || p.Level>3)return reject(2);
+    const auto flags=uint16_t(e->ObjectData[int(VMStackObjectVariable::PlacementFlags)]);
+    if(p.Level>1 && (flags&0x1000))return reject(31);
+    const size_t cell=size_t(tileY)*arch->Width+tileX;
+    if(p.Level>1 && !(flags&0x200)) {
+        const size_t story=size_t(p.Level-1);
+        Need(story<arch->TS1FloorPresent.size() && cell<arch->TS1FloorPresent[story].size(),
+             "Original contained query lacks logical floor coverage");
+        const bool floor=arch->TS1FloorPresent[story][cell]!=0;
+        if(!floor) {
+            const int active=World ? World->State.Level() : 1;
+            return reject(active==p.Level ? 18 : 41);
+        }
+    }
+    Need(p.Level!=1 || cell<arch->TS1WaterTiles.size(),"Original contained query lacks signed water data");
+    const bool water=p.Level==1 && arch->TS1WaterTiles[cell]!=-1;
+    if(!water && (flags&0x2000))return reject(47);
+    if(water && !(flags&4)) {
+        // 432b5f searches the source tile DFS, not only its physical root or
+        // the renderer's room/entity list. Keep signed ARRY10 independent.
+        bool bridge=false;
+        Need(cell<SpatialTileHeads[0].size(),"Original contained query lacks its tile object grid");
+        std::vector<VMEntity*> pending;
+        if(auto* root=VM->GetObjectById(SpatialTileHeads[0][cell]))pending.push_back(root);
+        size_t remaining=VM->Entities.size()+1;
+        while(!pending.empty()) {
+            Need(remaining-- > 0,"Original contained query has a cyclic tile hierarchy");
+            auto* member=pending.back();pending.pop_back();
+            if(uint16_t(member->ObjectData[int(VMStackObjectVariable::Flags)])&0x1000){bridge=true;break;}
+            for(size_t n=TS1SourceVectorExtent(member);n>0;--n)
+                if(auto* child=TS1SourceSlot(member,int(n-1)))pending.push_back(child);
+        }
+        if(!bridge)return reject(29);
+    }
+    if(p.Level==1) {
+        // 432c66 ->4790b4 returns architecture+60 (ARRY9), not the
+        // story's ARRY8 flags. The logical pool channel is exactly the
+        // raw-byte<16 predicate produced by VMWorldActivator, not a
+        // renderer sentinel or an inference from the drawing floor.
+        Need(cell<arch->TS1PoolTiles.size(),"Original contained query lacks logical pool coverage");
+        const bool pool=arch->TS1PoolTiles[cell]!=0;
+        if(pool && !(flags&0x800))return reject(29);
+        if(!pool && (flags&0x1000))return reject(30);
+    }
+    // 432e11..433077. Source error numbers are placement string index+1.
+    const auto rawFlags=[](const VMEntity* obj){return uint16_t(obj->ObjectData[int(VMStackObjectVariable::Flags)]);};
+    if((rawFlags(e)|rawFlags(parent))&4)return reject(12);
+    const size_t extent=TS1SourceVectorExtent(parent);
+    const int slot=request.PhysicalSlot;
+    if(slot<0 || size_t(slot)+1>=extent)return reject(13);
+    auto* occupant=TS1SourceSlot(parent,slot+1);
+    if(occupant && occupant!=e)return reject(11,occupant);
+    const auto* metadata=TS1SourceSlotMetadata(parent,slot+1);
+    Need(metadata,"Original contained query lacks slot metadata");
+    const bool person=e->Object && e->Object->OBJ &&
+        e->Object->OBJ->ObjectType==FSO::Files::Formats::IFF::Chunks::OBJDType::Person;
+    const int mode=VM->GetGlobalValue(19);
+    const auto centered=[](const TS1SlotMetadata& meta){return meta.Offset.X==0.f && meta.Offset.Y==0.f;};
+    if(!person && !(rawFlags(e)&0x2000) && mode==2 && !centered(*metadata) && extent>2)
+        return reject(3);
+    if(parent->Object && parent->Object->OBJ &&
+       parent->Object->OBJ->ObjectType==FSO::Files::Formats::IFF::Chunks::OBJDType::Person && mode!=0)
+        return reject(13);
+    for(size_t i=extent-1;i>0;--i) {
+        const auto* otherMetadata=TS1SourceSlotMetadata(parent,int(i));
+        Need(otherMetadata,"Original contained query lacks sibling metadata");
+        if(otherMetadata->Height!=metadata->Height)continue;
+        auto* other=TS1SourceSlot(parent,int(i));
+        if(!other || other==e)continue;
+        if(!person && centered(*otherMetadata) && !(rawFlags(other)&0x2000))return reject(11,other);
+        if(!person && centered(*metadata) && !(rawFlags(e)&0x2000))return reject(11,other);
+    }
+    if(e->GetValue(VMStackObjectVariable::Weight)>parent->GetValue(VMStackObjectVariable::SupportStrength))
+        return reject(14);
+    std::unordered_set<int16_t> ancestors;
+    auto* ancestor=parent;
+    while(ancestor) {
+        if(ancestor==e)return reject(11,ancestor);
+        Need(ancestors.insert(ancestor->ObjectID).second,"Original contained query has cyclic ancestry");
+        const auto placement=TS1ResolvePhysicalPlacement(ancestor,false);
+        ancestor=VM->GetObjectById(placement.ParentID);
+    }
+    const uint32_t bit=uint32_t(1)<<((uint32_t(metadata->Height)-1)&31);
+    const auto heights=uint32_t(int32_t(e->GetValue(VMStackObjectVariable::AllowedHeightFlags)));
+    if(metadata->Height==0 || !(heights&bit))return reject(24);
+    return VMPlacementResult();
+}
+
 void VMContext::TS1CommitPhysicalPlacement(VMEntity* e,const VMTS1PhysicalPlacement& request) {
     auto& c=Owner(*this);if(&c!=this){c.TS1CommitPhysicalPlacement(e,request);return;}
     TS1EnsureHierarchy(e);TS1PreflightPhysicalPlacement(e,request);
