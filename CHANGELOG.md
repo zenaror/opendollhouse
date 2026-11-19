@@ -7,6 +7,8 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Fixed loading some saves from earlier experimental builds, preserving their
+  object relationships and the loading order needed to continue playing.
 - Sims can autonomously join activities already being used by another Sim,
   using the original eligibility checks and selection rules.
 - Sims keep their walking animation and direction when passing through doors,

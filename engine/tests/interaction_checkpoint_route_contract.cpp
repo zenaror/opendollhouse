@@ -42,6 +42,59 @@ static int cases=0;
 static void check(bool ok,const char* name){if(!ok)throw std::runtime_error(name);++cases;printf("PASS %s\n",name);}
 template<class F> static void rejects(F f,const char* name){bool rejected=false;try{f();}catch(const std::runtime_error&){rejected=true;}check(rejected,name);}
 
+static OBJTEntry classicType(uint32_t guid,uint16_t type);
+
+// Exercise the production record reader, not a stand-alone vector padder.
+static void legacyPhysicalSlotPrefixContract() {
+ VMContext context(nullptr);VM vm(&context,nullptr);vm.TS1=true;
+ IffFile iff;FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"legacy-slot-prefix",true);
+ OBJD definition;definition.GUID=0x16802113;
+ FSO::Content::GameObject object;object.OBJ=&definition;object.GUID=definition.GUID;object.Resource=&resource;
+ VMGameObject parent(&object,nullptr),child(&object,nullptr),neighbor(&object,nullptr);
+ parent.ObjectID=7;child.ObjectID=8;neighbor.ObjectID=9;
+ for(auto* e:{&parent,&child,&neighbor}){vm.ObjectsById[e->ObjectID]=e;e->Thread=std::make_unique<VMThread>(&context,e,16);}
+ auto type=classicType(definition.GUID,7);
+ OBJM classic;auto& mapped=classic.ObjectData[7];mapped.GUID=definition.GUID;mapped.Instance=std::make_shared<OBJMInstance>();
+ auto& instance=*mapped.Instance;instance.OBJT=&type;
+ // Source0 is a separate tile-list neighbor, never a physical occupant.
+ instance.LinkedSlot.ObjectID=neighbor.ObjectID;
+ auto bind=[&](size_t count){instance.SavedSlotRecordCount=int32_t(count+1);instance.Slots.assign(count,OBJMSlot());};
+ auto write=[&](size_t count,uint32_t version,bool occupied=false){parent.Contained.assign(count,nullptr);if(occupied)parent.Contained[0]=&child;
+  st::Writer out(st::Endian::Little);Archive archive(out);InteractionCheckpointCodec codec(vm,archive,version);Record r;r.entity=&parent;codec.record(r);return out.ToArray();};
+ auto read=[&](const std::vector<uint8_t>& bytes,uint32_t version,bool bound=true){st::Reader in(bytes);Archive archive(in);InteractionCheckpointCodec codec(vm,archive,version);if(bound)codec.BoundClassic=&classic;Record r;codec.record(r);check(!in.has_more(),"legacy slot reader consumes the complete production record");return r;};
+ auto* originalThread=parent.Thread.get();parent.SetAttribute(0,27);
+ for(uint32_t version:{13u,21u}){
+  const auto bytes=write(0,version);parent.Contained.assign(1,nullptr);bind(1);
+  auto restored=read(bytes,version);
+  check(restored.slots==std::vector<VMEntity*>({nullptr})&&instance.LinkedSlot.ObjectID==neighbor.ObjectID,
+        "legacy empty native prefix retains empty classic physical suffix independently of source0");
+  check(parent.Thread.get()==originalThread&&parent.GetAttribute(0)==27&&parent.TotalSlots()==1&&!parent.GetSlot(0),
+        "legacy slot migration remains staged before publication");
+ }
+ const auto occupied=write(1,13,true);parent.Contained.assign(2,nullptr);parent.Contained[0]=&child;bind(2);instance.Slots[0].ObjectID=child.ObjectID;
+ auto restored=read(occupied,13);check(restored.slots==std::vector<VMEntity*>({&child,nullptr}),"legacy occupied prefix preserves exact child identity and extends only null cells");
+ instance.Slots[0].ObjectID=neighbor.ObjectID;rejects([&]{read(occupied,13);},"legacy prefix disagreement rejects independently bound classic children");instance.Slots[0].ObjectID=child.ObjectID;
+ instance.Slots[1].ObjectID=neighbor.ObjectID;rejects([&]{read(occupied,13);},"legacy migration cannot omit an occupied classic suffix");instance.Slots[1].ObjectID=0;
+ parent.Contained[1]=&neighbor;rejects([&]{read(occupied,13);},"legacy migration cannot replace an occupied live suffix");parent.Contained[1]=nullptr;
+ rejects([&]{read(occupied,13,false);},"legacy slot migration requires the hash-bound classic input");
+ ++type.GUID;rejects([&]{read(occupied,13);},"legacy slot migration rejects a different bound classic identity");--type.GUID;
+ instance.SavedSlotRecordCount=2;rejects([&]{read(occupied,13);},"legacy slot migration rejects a different bound classic extent");instance.SavedSlotRecordCount=3;
+ SLOT changedResource;changedResource.Slots[0].resize(2);parent.Slots=&changedResource;
+ rejects([&]{read(occupied,13);},"legacy slot migration rejects newly declared constructor slots");parent.Slots=nullptr;
+ auto truncated=occupied;truncated.pop_back();rejects([&]{read(truncated,13);},"late truncated record rejects after staged slot migration");
+ check(parent.Thread.get()==originalThread&&parent.GetAttribute(0)==27&&parent.Contained==std::vector<VMEntity*>({&child,nullptr})&&instance.LinkedSlot.ObjectID==neighbor.ObjectID,
+       "all failed legacy preparations preserve live thread attributes physical children and source0");
+ for(uint32_t version:{22u,23u}){const auto bytes=write(0,version);parent.Contained.assign(1,nullptr);bind(1);
+  rejects([&]{read(bytes,version);},"current checkpoint versions retain strict physical slot extent");}
+ const auto empty=write(0,13);parent.Contained.assign(1025,nullptr);bind(1025);
+ rejects([&]{read(empty,13);},"classic domain cannot enlarge native slot count beyond1024");
+ const auto longer=write(2,13);parent.Contained.assign(1,nullptr);bind(1);
+ rejects([&]{read(longer,13);},"legacy slot migration never truncates a longer native vector");
+ const auto exact=write(1,23);parent.Contained.assign(1,nullptr);
+ check(read(exact,23,false).slots.size()==1,"equal current extents retain the existing unadapted record path");
+ for(auto* e:{&parent,&child,&neighbor})vm.ObjectsById.erase(e->ObjectID);
+}
+
 static void sourceAnimationPersistenceContract() {
  VMContext context(nullptr);VM vm(&context,nullptr);
  FSO::Vitaboy::Animation asset;asset.Name="source-clock-fixture";asset.Duration=1000;asset.Distance=3;
@@ -646,6 +699,7 @@ int main(){try{
  check(thread.Stack.size()==1&&thread.Stack[0]==mainFrame&&mainFrame->InstructionPointer==2&&mainFrame->Args==std::vector<int16_t>{42}&&mainFrame->Locals==std::vector<int16_t>{123},"real VMThread preserves Main and takes authored false edge");
  check(thread.Queue.size()==1&&thread.Queue[0]==pending&&thread.TempRegisters[2]==73&&thread.ActiveQueueBlock==-1,"failed route leaves pending work and thread registers intact");
  portalPreviewContract();
+ legacyPhysicalSlotPrefixContract();
  sourceAnimationPersistenceContract();
  sourceRouteCodecContract();
  classicContract();

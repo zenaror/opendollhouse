@@ -105,7 +105,8 @@ static void provenance() {
     instance->X=entity.Position().x;instance->Y=entity.Position().y;instance->Level=entity.Position().Level;
     instance->SavedSlotRecordCount=int32_t(context.TS1SourceVectorExtent(&entity));
     instance->Slots.resize(size_t(instance->SavedSlotRecordCount-1));
-    objm->ObjectData[entity.ObjectID].Instance=instance; house.AddChunk(objm);
+    objm->ObjectData[entity.ObjectID].Instance=instance;objm->RecordOrder.push_back(entity.ObjectID);house.AddChunk(objm);
+    need(vm.EstablishTS1ObjectManagerOrderFromClassic(*objm),"bind actual classic manager order before legacy continuation");
     auto chunk=new ODHI(); chunk->ChunkID=1; chunk->ChunkProcessed=true; chunk->Data=native; house.AddChunk(chunk);
     need(native[9]==0,"direct capture claimed scheduler provenance");
     entity.TS1SchedulerState=0;
@@ -124,6 +125,63 @@ static void provenance() {
     rejects([&]{VMTS1InteractionCheckpoint::Restore(vm,house);},"future native version accepted");
     need(entity.Thread.get()==thread && entity.TS1SchedulerState==0xabc10005u,
          "bad version partially published state");
+}
+
+// Full native Restore must retain an independently established classic order
+// when that field did not yet exist, without inventing a sorted replacement.
+static void legacyManagerOrder() {
+    VM::UseWorld(false);VMContext context(nullptr);VM vm(&context,nullptr);vm.GlobalState.resize(64,0);
+    context.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&context));
+    context.Architecture()->Rooms[0].Map.assign(64,0);context.RoomInfo.resize(1);context.RebuildEnvironmentGeometry();
+    IffFile resources;FSO::Content::GameObjectResource resource(&resources,nullptr,nullptr,"legacy-manager",true);
+    OBJD definition;definition.GUID=0x71001913;
+    FSO::Content::GameObject object;object.OBJ=&definition;object.GUID=definition.GUID;object.Resource=&resource;
+    VMGameObject first(&object,nullptr),second(&object,nullptr),birth(&object,nullptr),replacement(&object,nullptr);
+    Entities::VMMultitileGroup firstGroup,secondGroup,birthGroup;
+    auto add=[&](VMGameObject& entity,Entities::VMMultitileGroup& group,int16_t id){entity.MultitileGroup=&group;group.AddObject(&entity);vm.PendingIDsByGUID[definition.GUID]=id;vm.AddEntity(&entity);entity.Thread=std::make_unique<VMThread>(&context,&entity,16);};
+    add(first,firstGroup,10);add(second,secondGroup,20);
+    IffFile house;auto* classic=new OBJM();classic->ChunkID=1;classic->ChunkProcessed=true;classic->Decoded=true;classic->Version=0x49;
+    auto definitionType=type(definition.GUID);
+    for(auto* entity:{&second,&first}){
+        auto instance=std::make_shared<OBJMInstance>();instance->OBJT=&definitionType;instance->ObjectData=entity->ObjectData;
+        instance->X=entity->Position().x;instance->Y=entity->Position().y;instance->Level=entity->Position().Level;
+        instance->SavedSlotRecordCount=int32_t(context.TS1SourceVectorExtent(entity));instance->Slots.resize(size_t(instance->SavedSlotRecordCount-1));
+        classic->ObjectData[entity->ObjectID].Instance=instance;classic->RecordOrder.push_back(entity->ObjectID);
+    }
+    house.AddChunk(classic);need(vm.EstablishTS1ObjectManagerOrderFromClassic(*classic),"establish genuine classic record-order provenance before capture");auto* native=new ODHI();native->ChunkID=1;native->ChunkProcessed=true;house.AddChunk(native);
+    auto capture=[&](uint32_t version){IffRawFile raw;raw.Set("ObjM",1,{1,2,3});VMTS1InteractionCheckpoint::Capture(vm,raw,false,false,version);
+        classic->SourceSignature=FSO::Files::Hash::CalculateHash(raw.Find("ObjM",1)->Data);return raw.Find("ODHI",1)->Data;};
+    const auto legacy13=capture(13),legacy18=capture(18),current19=capture(19);
+    auto restore=[&](const std::vector<uint8_t>& data,bool validateOnly=false){native->Data=data;VMTS1InteractionCheckpoint::Restore(vm,house,false,validateOnly);};
+    need(vm.TS1ObjectManagerOrder==std::vector<VMEntity*>({&second,&first}),"fixture uses actual reverse-birth order rather than sorted IDs");
+    add(birth,birthGroup,30); // genuine new head after the native/classic snapshot
+    auto unchanged=[&](const std::vector<uint8_t>& data,const char* why){auto* thread=first.Thread.get();first.SetAttribute(0,71);
+        const auto order=vm.TS1ObjectManagerOrder;const auto known=vm.TS1ObjectManagerOrderKnown;
+        const auto heads=context.SpatialTileHeads;const auto nodes=context.TS1CaptureHierarchy();
+        rejects([&]{restore(data);},why);
+        need(first.Thread.get()==thread&&first.GetAttribute(0)==71&&vm.TS1ObjectManagerOrder==order&&vm.TS1ObjectManagerOrderKnown==known&&context.SpatialTileHeads==heads&&context.TS1SourceVectorExtent(&first)==nodes.Records.at(first.ObjectID).Node.Slots.size(),
+             "invalid legacy structural preparation leaves threads manager and hierarchy untouched");};
+    vm.TS1ObjectManagerOrderKnown=false;vm.TS1ObjectManagerOrder.clear();unchanged(legacy13,"legacy missing manager provenance rejected before publication");
+    vm.TS1ObjectManagerOrderKnown=true;vm.TS1ObjectManagerOrder={&birth,&first,&second};unchanged(legacy13,"legacy wrong classic traversal order rejected");
+    vm.TS1ObjectManagerOrder={&second,&birth,&first};unchanged(legacy13,"legacy birth inside saved suffix rejected");
+    vm.TS1ObjectManagerOrder={&birth,&second,&first,&first};unchanged(legacy13,"legacy duplicate live manager entry rejected");
+    vm.TS1ObjectManagerOrder={&birth,&second};unchanged(legacy13,"legacy missing live manager identity rejected");
+    vm.TS1ObjectManagerOrder={&birth,&second,&replacement};unchanged(legacy13,"legacy replaced live manager identity rejected");
+    vm.TS1ObjectManagerOrder={&birth,&second,&first};definitionType.GUID^=1;unchanged(legacy13,"legacy changed classic GUID rejected");definitionType.GUID=definition.GUID;
+    classic->RecordOrder={10,20};unchanged(legacy13,"legacy changed independently bound disk order rejected");classic->RecordOrder={20,10};
+    auto truncated=legacy13;truncated.pop_back();unchanged(truncated,"late truncated legacy input leaves validated manager intact");
+    for(const auto& data:{legacy13,legacy18}){
+        auto* thread=first.Thread.get();restore(data,true);
+        need(first.Thread.get()==thread&&vm.TS1ObjectManagerOrder==std::vector<VMEntity*>({&birth,&second,&first}),"legacy validation-only retains live state and genuine head");
+        restore(data);need(vm.TS1ObjectManagerOrderKnown&&vm.TS1ObjectManagerOrder==std::vector<VMEntity*>({&birth,&second,&first}),"legacy full Restore retains validated source order and genuine birth prefix");
+    }
+    vm.RemoveEntity(&birth);
+    vm.TS1ObjectManagerOrder={&first,&second};restore(current19);
+    need(vm.TS1ObjectManagerOrderKnown&&vm.TS1ObjectManagerOrder==std::vector<VMEntity*>({&second,&first}),"native19 still restores its explicit serialized order");
+    vm.TS1ObjectManagerOrderKnown=false;vm.TS1ObjectManagerOrder.clear();const auto unknown19=capture(19);
+    vm.TS1ObjectManagerOrderKnown=true;vm.TS1ObjectManagerOrder={&second,&first};restore(unknown19);
+    need(!vm.TS1ObjectManagerOrderKnown&&vm.TS1ObjectManagerOrder.empty(),"native19 explicit unknown order is not upgraded from the constructor");
+    vm.TS1ObjectManagerOrderKnown=true;vm.TS1ObjectManagerOrder={&second,&first};
 }
 
 // An unchanged pose must not make the classic writer preserve a stale larger
@@ -201,5 +259,5 @@ static void samePoseFootprint() {
          reopenedCtx.TS1SourceVectorExtent(&loaded)==ctx.TS1SourceVectorExtent(&actor),
          "synthetic saver/native restore lost the source hierarchy root/vector");
 }
-int main() { try { wire(); provenance(); samePoseFootprint(); std::printf("PASS %d scheduler persistence checks\n",checks); return 0; }
+int main() { try { wire(); provenance(); legacyManagerOrder(); samePoseFootprint(); std::printf("PASS %d scheduler persistence checks\n",checks); return 0; }
     catch (const std::exception& e) { std::fprintf(stderr,"FAIL %s\n",e.what()); return 1; } }

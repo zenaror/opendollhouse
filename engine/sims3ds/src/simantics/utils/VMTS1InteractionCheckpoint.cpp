@@ -312,6 +312,8 @@ public:
         ModelTickLimit(vm.Context && vm.Context->Clock ? vm.Context->Clock->Ticks : 0),
         vm(vm), io(archive), version(version) {}
     bool PreviewUnpublishedPortals = false;
+    // Available only to native restore after the ODHI/ObjM signature check.
+    const OBJM* BoundClassic = nullptr;
     int64_t ModelTickLimit;
 
     static void validateNumericFootprint(const Record& r) {
@@ -366,6 +368,46 @@ public:
                     included.count(entity->ObjectID), "object-manager identity outside saved graph");
             Require(seen.insert(entity->ObjectID).second, "duplicate object-manager identity");
         }
+    }
+
+    void prepareLegacyManagerOrder(const std::map<int16_t, Record>& records, const OBJM& classic,
+                                   bool& known, std::vector<VMEntity*>& order) {
+        Require(io.in && vm.TS1 && version < 19, "unexpected legacy object-manager migration");
+        Require(vm.TS1ObjectManagerOrderKnown, "legacy object-manager order is unavailable");
+        vm.ValidateTS1ObjectManagerOrder();
+        Require(classic.Decoded && classic.RecordOrder.size() == classic.ObjectData.size(),
+                "legacy classic object-manager domain is incomplete");
+        std::set<int32_t> saved;
+        for (const auto id : classic.RecordOrder)
+            Require(id > 0 && id <= 32767 && classic.ObjectData.count(id) && saved.insert(id).second,
+                    "legacy classic object-manager identity is invalid");
+        std::set<int16_t> matched;
+        size_t index = 0;
+        for (auto* entity : vm.TS1ObjectManagerOrder) {
+            const auto id = entity->ObjectID; // live coverage/pointer identity checked above
+            const auto source = classic.ObjectData.find(id);
+            if (source == classic.ObjectData.end()) {
+                // Genuine births already occupy the loader's authoritative
+                // prefix. Their order is retained, never inferred from IDs.
+                Require(index == 0 && !records.count(id), "legacy object-manager birth prefix changed");
+                continue;
+            }
+            Require(index < classic.RecordOrder.size() && classic.RecordOrder[index++] == id,
+                    "legacy object-manager order disagrees with classic records");
+            Require(source->second.Instance && source->second.Instance->OBJT &&
+                    source->second.Instance->OBJT->GUID == entity->Object->OBJ->GUID,
+                    "legacy object-manager identity changed");
+            const auto native = records.find(id);
+            if (native != records.end()) {
+                Require(native->second.entity == entity, "legacy native object-manager identity changed");
+                matched.insert(id);
+            }
+        }
+        Require(index == classic.RecordOrder.size() && matched.size() == records.size(),
+                "legacy object-manager coverage changed");
+        auto prepared = vm.TS1ObjectManagerOrder;
+        order.swap(prepared);
+        known = true;
     }
 
     static int64_t motivePhase(const VMAvatar& avatar) { return avatar.MotiveDecay->LastTick; }
@@ -1660,6 +1702,39 @@ public:
         }
         Require(a.leftHand >= 0 && a.leftHand <= 3 && a.rightHand >= 0 && a.rightHand <= 3, "invalid hand gesture");
     }
+    void extendLegacyPhysicalPrefix(Record& r, unsigned slotsNow) {
+        auto& e = *r.entity;
+        const size_t savedCount = r.slots.size();
+        Require(io.in && vm.TS1 && version <= 21 && savedCount < slotsNow && slotsNow <= 1024,
+                "incompatible legacy slot prefix");
+        Require(BoundClassic, "legacy slot prefix lacks a bound classic graph");
+        const auto found = BoundClassic->ObjectData.find(e.ObjectID);
+        Require(found != BoundClassic->ObjectData.end() && found->second.Instance &&
+                found->second.Instance->OBJT && e.Object && e.Object->OBJ &&
+                found->second.Instance->OBJT->GUID == e.Object->OBJ->GUID,
+                "legacy slot prefix identity changed");
+        const auto& classic = *found->second.Instance;
+        Require(VMTS1HierarchyPersistence::SavedExtent(classic) == size_t(slotsNow) + 1 &&
+                classic.Slots.size() == slotsNow, "legacy slot prefix classic extent changed");
+        size_t constructorCount = 0;
+        if (e.Slots) {
+            const auto physical = e.Slots->Slots.find(0);
+            if (physical != e.Slots->Slots.end()) constructorCount = physical->second.size();
+        }
+        if (dynamic_cast<VMAvatar*>(&e)) constructorCount += 5;
+        // This proves no new declared slots, not arbitrary historical SLOT
+        // identity: old supplements did not store a resource signature here.
+        Require(constructorCount <= savedCount, "legacy slot prefix constructor grew");
+        for (size_t i = 0; i < savedCount; ++i)
+            Require(classic.Slots[i].ObjectID == (r.slots[i] ? r.slots[i]->ObjectID : 0),
+                    "legacy slot prefix child changed");
+        for (size_t i = savedCount; i < slotsNow; ++i)
+            Require(!classic.Slots[i].ObjectID && !e.GetSlot(int(i)),
+                    "legacy slot prefix omits an occupant");
+        // Original434578 retains an empty classic suffix that the old native
+        // physical view did not expose. LinkedSlot is source0, not physical0.
+        r.slots.resize(slotsNow, nullptr);
+    }
     void record(Record& r) {
         reference(r.entity, "participant");
         Require(r.entity && r.entity->Thread, "participant has no thread");
@@ -1686,9 +1761,12 @@ public:
         auto n = io.count(r.slots.size(), 1024);
         const auto slotsNow = unsigned(e.TotalSlots());
         const bool legacyAvatarPrefix = io.in && av && slotsNow == 5 && n == 1;
-        Require(n == slotsNow || legacyAvatarPrefix, "slot count changed");
+        const bool legacyPhysicalPrefix = io.in && vm.TS1 && version <= 21 &&
+            n < slotsNow && slotsNow <= 1024 && !legacyAvatarPrefix;
+        Require(n == slotsNow || legacyAvatarPrefix || legacyPhysicalPrefix, "slot count changed");
         if (io.in) r.slots.resize(n);
         for (auto& s : r.slots) reference(s, "slot");
+        if (legacyPhysicalPrefix) extendLegacyPhysicalPrefix(r, slotsNow);
         if (legacyAvatarPrefix) {
             // Checkpoints written by the prior integrated avatar stored only
             // slot 0. Accept that exact old extent only when the independently
@@ -2263,6 +2341,7 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     const auto n = fields.count(0, 32767);
     Require(n, "empty execution supplement");
     InteractionCheckpointCodec codec(vm, fields, version);
+    codec.BoundClassic=objm;
     codec.ModelTickLimit=clock.Ticks;
     codec.PreviewUnpublishedPortals=previewUnpublishedPortals;
     std::map<int16_t, Record> records;
@@ -2314,6 +2393,11 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
             Require(records.count(saved.first) != 0,
                     "v7 lacks ObjM instance " + std::to_string(saved.first));
     }
+    // Pre-v19 supplements did not encode traversal order. The loader has
+    // already bound classic record order and genuine births; absence must not
+    // erase that independently validated structural channel.
+    if (vm.TS1 && version < 19)
+        codec.prepareLegacyManagerOrder(records, *objm, managerOrderKnown, managerOrder);
     // Prepare manager words from the same signature-bound classic graph before
     // publishing any field or thread. Older native supplements retain their
     // historical admitted behavior, rather than consuming a stale source word.
