@@ -113,6 +113,9 @@ enum class AvatarCullMode { None, Back, Front };
 struct AvatarDrawOptions {
     st::Color Tint = st::Color(255, 255, 255, 255); // AmbientLight * geom.Color (room light, ghost colour)
     bool Bilinear = false;      // XNA used Linear filtering; nearest is faster and close at Near zoom
+    // World-only source material selection; previews retain their own tint.
+    // This does not select texture filtering or certify the original light rig.
+    bool OriginalMaterials = false;
     bool DepthTest = true;
     bool DepthWrite = true;
     AvatarCullMode Cull = AvatarCullMode::Back;

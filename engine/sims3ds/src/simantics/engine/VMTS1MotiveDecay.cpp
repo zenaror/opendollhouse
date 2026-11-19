@@ -7,6 +7,7 @@
 #include "simantics/engine/VMTS1MotiveDecay.h"
 #include "simantics/entities/VMAvatar.h"
 #include "simantics/VMContext.h"
+#include "simantics/VM.h"
 #include "simantics/VMClock.h"
 #include "content/ContentManager.h"
 #include <algorithm>
@@ -38,7 +39,8 @@ const VMMotive VMTS1MotiveDecay::DecrementMotives[7] = {
 };
 
 void VMTS1MotiveDecay::Tick(VMAvatar* avatar, VMContext* context) {
-    const auto now = context->Clock->Ticks;
+    const auto now = context->VM && context->VM->TS1
+        ? avatar->TS1PersonTickCounter(context->Clock->Ticks) : context->Clock->Ticks;
     if (now < LastTick) { LastTick = now; return; }
     if (now - LastTick < 60) return;
     // The caller stamps even a bypassed update. Resume never catches up a

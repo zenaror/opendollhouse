@@ -256,11 +256,16 @@ void World::DrawAvatarComponents(Framebuffer& target) {
     FSO::Vitaboy::ZBuffer zb(target.Width, target.Height, target.Depth.data());
     for (auto ava : Blueprint->Avatars) {
         if (ava == nullptr || ava->Avatar == nullptr || !ava->Visible) continue;
+        if(State.CharacterDetail>=0) {
+            ava->Avatar->ApplyOriginalMaterialFlags(ava->MaterialFlags);
+            ava->Avatar->ApplyOriginalCharacterDetail(State.CharacterDetail,false);
+        }
         auto pos = ava->DrawPosition();
         if (pos.X < -2043 && pos.Y < -2043) continue; // out of world
         if (ava->Level > State.Level()) continue;
         if (DrawAvatarShadows) DrawAvatarShadow(target, st::Vector3(pos.X, pos.Y, (ava->Level - 1) * 2.95f), 0.3f);
         FSO::Vitaboy::AvatarDrawOptions opt;
+        opt.OriginalMaterials=State.CharacterDetail>=0;
         opt.DepthScale = 1.0f / a;
         opt.DepthOffset = -b / a;
         if (State._2D->AmbientLight != nullptr) opt.Tint = State._2D->AmbientLight[ava->Room];

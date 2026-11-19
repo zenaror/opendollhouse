@@ -15,8 +15,8 @@ or permission for an agent to start later work.
 | --- | --- |
 | **1 — Functional parity on Linux** | Cover the original-game functionality present in the selected original Simitone and alexjyong references, with their corresponding FreeSO revisions. Combine compatible capabilities and fixes from both; neither fork alone defines the whole baseline. Preserve the original PC interface and controls. This includes neighborhoods, families, home life and autonomy, buying/building, relationships and careers, pets and events, expansion destinations and activities, saving, languages and classic custom content within that baseline. |
 | **1.1 — Other platforms** | Adapt the same engine for Windows, macOS Intel/Apple Silicon, Android, New 3DS, Vita and Switch. Keep platform builds, emulator observations and physical-device results separate. Old 3DS support is desired and remains exploratory, not promised. Platform adaptations must not replace the PC experience. |
-| **2.1 — Match existing features to the original** | Compare implemented features directly with the original game and correct differences: AI choices and frequency, autonomy, interactions, menus, UI, rendering, sound, settings and their actual effects. Include the original Newbie family tutorial, its instructions, controls and learning sequence. Reference-project behavior is no longer sufficient evidence of fidelity. |
-| **2.2 — Complete the original feature set** | Implement original-game features still missing from the references or engine, covering the seven expansions and their rules. The goal is to match the original player's experience, including events, life cycles, travel and saving. |
+| **2.1 — Verify existing features** | Compare concrete behaviors with the DVD and correct functional differences in AI choices and frequency, autonomy, interactions, menus, controls, rendering, sound and settings. Verify the tutorial's learning flow and controls. Behavior in other reference projects does not establish the DVD baseline. |
+| **2.2 — Complete missing functionality** | Implement missing systems across the base game and seven expansions, including events, life cycles, travel and saving. Validate their behavior through playable scenarios. |
 | **3 — New expansions and mod tooling** | Discuss and design new content, such as apartments, and accessible extension interfaces and tools. These are future work, not current APIs or prerequisites for milestone 1. |
 
 Milestone 1 is a functional parity target, not just a small demonstration.
@@ -31,6 +31,9 @@ including what happens on entry, during play, and after saving and reopening.
 Use the original game data or executable to resolve a specific unanswered
 question. Record unverified differences separately. A missing option in an
 existing feature belongs to 2.1; a wholly absent system belongs to 2.2.
+Accept changes by their behavior and usability in these scenarios. Visual
+identity and exact reproduction of the DVD game are outside the acceptance
+criteria. Players supply their own game data.
 
 Two scope concessions apply to milestone 1: features missing from both selected
 Simitone references may wait until milestone 2, and an action in progress may
@@ -47,7 +50,8 @@ search, extra neighborhood entry/zoom steps or added weather are not part of
 the default product scope. A disabled-by-default toggle does not automatically
 make such a change acceptable.
 
-On PC, preserve the original single-screen interface, controls and presentation.
+On PC, keep the existing single-screen interface and controls, with targeted
+usability fixes and missing functionality where needed.
 On handhelds, choose rendering detail, internal resolution, input and frame
 scheduling to suit the device. For example, a touch menu can show the resident's
 portrait while the PC menu turns the resident's head toward the pointer.

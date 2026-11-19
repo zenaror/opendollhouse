@@ -77,6 +77,10 @@ public:
     /// Copies the neighbour record (person data) onto an avatar of that neighbour's GUID before its init tree
     /// runs, the way The Sims spawns a neighbour. Returns the neighbour id (0 if the GUID is not a neighbour).
     static int16_t InheritNeighbor(VMAvatar* avatar, FSO::SimAntics::VM* vm = nullptr);
+    static bool HasBirthNeighbor(VMAvatar* avatar);
+    // DVD4258ed and42597a are different profile-to-person filters.
+    static int16_t ApplyBirthProfile(VMAvatar* avatar);
+    static void RefreshBirthInterests(VMAvatar* avatar);
 
     // Conservative migration of a foreign NBRS social OID already saved into a lot.
     // Runs only after local objects and interaction checkpoints are restored.

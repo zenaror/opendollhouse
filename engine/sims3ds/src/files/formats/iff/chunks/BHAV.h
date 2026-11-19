@@ -33,8 +33,14 @@ public:
     uint8_t Args = 0;
     uint16_t Locals = 0;
     uint16_t Flags = 0;
+    // Parsed asset provenance; independent of the editor's RuntimeVer and
+    // never written into a saved interaction or inferred from Args.
+    uint16_t SourceFormatVersion = 0;
 
     uint32_t RuntimeVer = 0;
+    uint16_t PreviousDecoderLocals = 0;
+    uint8_t SourceParsedArgs = 0;
+    uint8_t SourceParsedLocals = 0;
 
     /// <summary>
     /// Reads a BHAV from a stream.

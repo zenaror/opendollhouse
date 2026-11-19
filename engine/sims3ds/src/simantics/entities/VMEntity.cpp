@@ -383,7 +383,7 @@ void VMEntity::Init(VMContext* context) {
 }
 
 void VMEntity::PrepareTS1Fresh(VMContext* context) {
-    if (!context->VM->TS1 || GhostImage || dynamic_cast<VMGameObject*>(this)==nullptr)
+    if (!context->VM->TS1 || GhostImage)
         throw std::runtime_error("invalid TS1 fresh-object lifecycle");
     PrepareForRestore(context);
     // DVD 431c90 installs function1 before invoking function0. For groups,
@@ -394,15 +394,7 @@ void VMEntity::PrepareTS1Fresh(VMContext* context) {
 void VMEntity::CompleteTS1Fresh(VMContext* context) {
     if (!context->VM->TS1 || GhostImage || !Thread || dynamic_cast<VMGameObject*>(this)==nullptr)
         throw std::runtime_error("invalid TS1 fresh-object lifecycle");
-    if (EntryPoints[0].ActionFunction>255) {
-        const auto tree=GetBHAVWithOwner(EntryPoints[0].ActionFunction,context);
-        if (tree) {
-            auto frame=std::make_shared<VMStackFrame>();
-            frame->Caller=this;frame->Callee=this;frame->CodeOwner=tree->owner;
-            frame->Routine=context->VM->Assemble(tree->bhav);frame->Args.assign(4,0);
-            Thread->RunTS1Initializer(std::move(frame));
-        }
-    }
+    RunTS1InitEntry(context, true);
     // Fresh reset's argument1 requests the first object run immediately,
     // before factory price/enabling and without advancing the global clock.
     // Person tick/animation setup has a separate original override; this
@@ -411,6 +403,23 @@ void VMEntity::CompleteTS1Fresh(VMContext* context) {
         Thread->RunTS1FreshTick();
         TS1PublishSimIndependent();
     }
+}
+
+void VMEntity::RunTS1InitEntry(VMContext* context, bool freshMachine) {
+    if (!context || !context->VM->TS1 || GhostImage || !Thread)
+        throw std::runtime_error("invalid original Init interpreter");
+    if (EntryPoints[0].ActionFunction <= 255) return;
+    const auto tree=GetBHAVWithOwner(EntryPoints[0].ActionFunction,context);
+    if (!tree) return;
+    auto frame=std::make_shared<VMStackFrame>();
+    frame->Caller=this;frame->Callee=this;frame->CodeOwner=tree->owner;
+    frame->Routine=context->VM->Assemble(tree->bhav);
+    const auto count=size_t(frame->Routine->Arguments);
+    if(count>Thread->TempRegisters.size()) throw std::runtime_error("Original Init argument bank overflow");
+    frame->Args.assign(std::max<size_t>(4,count),0);
+    std::copy_n(Thread->TempRegisters.begin(),count,frame->Args.begin());
+    if(freshMachine) Thread->RunTS1Initializer(std::move(frame));
+    else Thread->RunTS1SynchronousCall(std::move(frame));
 }
 
 void VMEntity::StartMainAfterRestore(VMContext* context) {

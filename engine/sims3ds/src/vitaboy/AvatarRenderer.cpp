@@ -269,6 +269,14 @@ AvatarDrawResult DrawAvatar(Framebuffer& color, ZBuffer& depth, const WorldCamer
     for (auto& binding : avatar.Bindings) {
         Mesh* mesh = binding->Mesh;
         if (mesh == nullptr) continue;
+        // DVD005d337d/005d378c: mode0 selects TEXTURE; modes1/2 modulate
+        // DIFFUSE. The existing ambient shader remains the lit fallback until
+        // the actor-owned light rig is available. Sampling stays independent.
+        const bool textureOnly=options.OriginalMaterials && binding->OriginalMaterial.Mode==0 &&
+            !binding->OriginalMaterial.SpecialBlend;
+        t.tintR=textureOnly?256:options.Tint.R+(options.Tint.R>>7);
+        t.tintG=textureOnly?256:options.Tint.G+(options.Tint.G>>7);
+        t.tintB=textureOnly?256:options.Tint.B+(options.Tint.B>>7);
         t.tex = binding->Texture;
         auto& vb = mesh->VertexBuffer;
         if (vb.empty()) continue;

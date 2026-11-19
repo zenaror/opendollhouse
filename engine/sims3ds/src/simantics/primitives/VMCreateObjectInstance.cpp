@@ -16,6 +16,7 @@
 #include "simantics/engine/VMActionCallback.h"
 #include "simantics/engine/VMSimanticsException.h"
 #include "simantics/entities/VMEntity.h"
+#include "simantics/entities/VMAvatar.h"
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/VM.h"
 #include "simantics/VMContext.h"
@@ -145,9 +146,10 @@ VMPrimitiveExitCode VMCreateObjectInstance::Execute(VMStackFrame* context, VMPri
         if (objs != nullptr) for (auto o : *objs) if (o->Object->OBJ->GUID == guid) return VMPrimitiveExitCode::GOTO_FALSE;
     }
 
+    const bool original=context->VM()->TS1;
     auto mobj = context->VM()->Context->CreateObjectInstance(guid, tpos, dir,
-        (operand->PassObjectIds() && context->StackObject != nullptr) ? (context->StackObject->ObjectID) : (int16_t)0,
-        (operand->PassTemp0()) ? (context->Thread->TempRegisters[0]) : (operand->PassObjectIds() ? context->Caller->ObjectID : (int16_t)0), false, false);
+        (!original && operand->PassObjectIds() && context->StackObject != nullptr) ? (context->StackObject->ObjectID) : (int16_t)0,
+        (!original && operand->PassTemp0()) ? context->Thread->TempRegisters[0] : (!original && operand->PassObjectIds() ? context->Caller->ObjectID : (int16_t)0), false, false);
 
     if (mobj == nullptr) return VMPrimitiveExitCode::GOTO_FALSE;
     // FIX(sims): FreeSO uses the group's BaseObject (lead tile); FreeSims took Objects[0]. Multitile objects such as the
@@ -155,6 +157,10 @@ VMPrimitiveExitCode VMCreateObjectInstance::Execute(VMStackFrame* context, VMPri
     // piece never found its passenger, honked and drove off - the Sim and their date could not take a cab home.
     auto obj = mobj->BaseObject();
     if (obj == nullptr) obj = mobj->Objects.at(0);
+
+    //44e648..67b refreshes only the narrow neighbor interest fields.
+    if(original)if(auto* avatar=dynamic_cast<VMAvatar*>(obj))
+        FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::RefreshBirthInterests(avatar);
 
     if (slotOwner && !slotOwner->PlaceInSlot(obj, containerSlot, true, context->VM()->Context)) {
         obj->Delete(true, context->VM()->Context);
@@ -164,6 +170,25 @@ VMPrimitiveExitCode VMCreateObjectInstance::Execute(VMStackFrame* context, VMPri
     if (operand->Position != VMCreateObjectPosition::OutOfWorld && obj->Position() == LotTilePos::OUT_OF_WORLD && obj->Container == nullptr) {
         obj->Delete(true, context->VM()->Context);
         return VMPrimitiveExitCode::GOTO_FALSE;
+    }
+    if(original){
+        if((operand->Flags&4)!=0)if(auto* avatar=dynamic_cast<VMAvatar*>(obj))
+            avatar->RunTS1VisitorInit(context->VM()->Context);
+        //44e8bc..94c patches the existing Main only after initialization,
+        //placement and the named visitor call have finished.
+        if(operand->PassObjectIds() && operand->PassTemp0())
+            throw VMSimanticsException("Original CreateObject: incompatible Main argument flags (source54)",context);
+        if(!obj->Dead && obj->Thread && !obj->Thread->Stack.empty()){
+            auto& main=*obj->Thread->Stack.front();
+            if(operand->PassObjectIds() || operand->PassTemp0()){
+                if(main.Args.empty())main.Args.resize(4,0);
+                main.Args[0]=operand->PassObjectIds()?context->Caller->ObjectID:context->Thread->TempRegisters[0];
+            }
+            if(operand->PassObjectIds()){
+                main.StackObject=context->VM()->GetObjectById(context->StackObjectID());
+                main.StackObjectRawID=context->StackObjectID();
+            }
+        }
     }
     if (!context->VM()->TS1 && (operand->Flags & (1 << 6)) > 0) {
         int16_t interaction = operand->InteractionCallback;

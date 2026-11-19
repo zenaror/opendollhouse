@@ -21,6 +21,7 @@ public:
     FSO::Vitaboy::SimAvatar* Avatar = nullptr;
     float RadianDirection = 0;
     AvatarDisplayFlags DisplayFlags = AvatarDisplayFlags::Normal;
+    FSO::Common::TS1::AvatarMaterialFlags MaterialFlags;
     bool IsPet = false;
     /// TS1(sims): person data CensorshipFlags (FreeSO VMCensorshipFlags: 1 pelvis, 2 spine if female, 4 head,
     /// 8/16 left/right hand, 32/64 left/right foot, 128 full body), set by the VM; World draws the TS1 mosaic.

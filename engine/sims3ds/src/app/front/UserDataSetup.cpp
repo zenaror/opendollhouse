@@ -362,16 +362,32 @@ bool UserDataSetup::CanRestore(int index) const {
         (FileExists(_Data + "/" + FolderName(index) + "/Neighborhood.iff") || FileExists(_Data + "/TemplateUserData/Neighborhood.iff"));
 }
 
+static std::string UnusedRestoreBackup(const std::string& path) {
+    for (int slot = 1; slot <= 100; ++slot) {
+        const auto candidate = path + ".damaged" + (slot == 1 ? "" : std::to_string(slot));
+        struct stat info;
+#if defined(__linux__) || defined(__APPLE__)
+        const int result = lstat(candidate.c_str(), &info);
+#else
+        const int result = stat(candidate.c_str(), &info);
+#endif
+        if (result == 0) continue;
+        if (errno == ENOENT) return candidate;
+        break;
+    }
+    return {};
+}
+
 bool UserDataSetup::RestoreFromInstall(int index, std::string* error, std::string* log) {
     auto say = [&](const std::string& l) { printf("[save] %s\n", l.c_str()); fflush(stdout); if (log) *log += l + "\n"; };
     if (!CanRestore(index)) { if (error) *error = "The game's original of this neighborhood was not found."; return false; }
     std::string dir = NeighbourhoodDir(index);
     FSO::Files::FilePool::CloseAll(); // no handle may stay open inside the folder (the 3DS refuses to rename it)
     if (DirExists(dir)) {
-        std::string aside;
-        for (int n = 0; n < 100; n++) {
-            aside = dir + ".damaged" + (n ? std::to_string(n + 1) : std::string());
-            if (!DirExists(aside) && !FileExists(aside)) break;
+        const auto aside = UnusedRestoreBackup(dir);
+        if (aside.empty()) {
+            if (error) *error = "Could not find a free backup name. Restore requires a backup of the current save.";
+            return false;
         }
         if (rename(dir.c_str(), aside.c_str()) == 0) say("restore: moved " + dir + " to " + aside);
         else {
@@ -380,12 +396,19 @@ bool UserDataSetup::RestoreFromInstall(int index, std::string* error, std::strin
             int e = errno;
             say("restore: cannot rename " + dir + " (" + std::to_string(e) + " " + strerror(e) + "): replacing Neighborhood.iff only");
             std::string nh = dir + "/Neighborhood.iff";
-            if (FileExists(nh)) { remove((nh + ".damaged").c_str()); rename(nh.c_str(), (nh + ".damaged").c_str()); }
+            if (FileExists(nh)) {
+                const auto backup = UnusedRestoreBackup(nh);
+                if (backup.empty() || rename(nh.c_str(), backup.c_str()) != 0) {
+                    if (error) *error = "Could not back up Neighborhood.iff. Check file permissions and available storage.";
+                    return false;
+                }
+            }
             remove((dir + "/" + MARKER).c_str());
             // Preserve the legacy family-install receipt; it grants no bootstrap authority.
         }
     }
     size_t jobs = _Jobs.size();
+    _FailedGroups.erase(dir);
     // Explicit restore retains the displaced folder, and imports the selected
     // install save as-is. If rename failed, only replace Neighborhood.iff.
     if (DirExists(dir)) {
@@ -397,10 +420,12 @@ bool UserDataSetup::RestoreFromInstall(int index, std::string* error, std::strin
     if (_Jobs.size() == jobs) { if (error) *error = "Nothing to copy for " + dir; return false; }
     while (Step(4u << 20)) {}
     _Checked.erase(index);
-    _Broken.erase(index);
-    bool ok = FileExists(dir + "/Neighborhood.iff");
-    say(std::string("restore: ") + FolderName(index) + (ok ? " copied from the original game" : " FAILED (SD card full?)"));
-    if (!ok && error) *error = "Could not copy the neighborhood (SD card full?).";
+    const bool ok = FileExists(dir + "/Neighborhood.iff") &&
+        !_FailedGroups.count(dir) && !PreparationPending(index);
+    if (ok) _Broken.erase(index);
+    else _Broken.insert(index);
+    say(std::string("restore: ") + FolderName(index) + (ok ? " copied from the original game" : " copy incomplete"));
+    if (!ok && error) *error = "Could not finish copying the neighborhood. Check available storage and file permissions.";
     return ok;
 }
 

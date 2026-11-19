@@ -43,6 +43,32 @@ Avatar::Avatar(const Avatar& old) {
     //just shallow copy the binding and accessory list, as the data inside isn't going to change any time soon...
 }
 
+void Avatar::ApplyOriginalCharacterDetail(int requested,bool applyExisting) {
+    if(requested<0 || requested>2) return;
+    const int previous=OriginalCharacterDetail;
+    if(previous<0) {
+        for(auto& binding:Bindings) if(binding)
+            binding->OriginalMaterial.Initialize(requested,OriginalMaterialFlags);
+    } else if(applyExisting) {
+        for(auto& binding:Bindings) if(binding)
+            binding->OriginalMaterial.ApplyDetail(requested,previous,OriginalMaterialFlags);
+    }
+    OriginalCharacterDetail=requested;
+}
+
+void Avatar::ApplyOriginalMaterialFlags(FSO::Common::TS1::AvatarMaterialFlags flags) {
+    if(flags==OriginalMaterialFlags) return;
+    OriginalMaterialFlags=flags;
+    if(OriginalCharacterDetail>=0) RebuildOriginalMaterials();
+}
+
+void Avatar::RebuildOriginalMaterials() {
+    if(OriginalCharacterDetail<0) return;
+    // 0058a17c applies005a1917 to the entire instance after rebuilding parts.
+    for(auto& binding:Bindings) if(binding)
+        binding->OriginalMaterial.ApplyFlags(OriginalMaterialFlags,OriginalCharacterDetail);
+}
+
 void Avatar::AddAccessory(Appearance* apr) {
     if (apr == nullptr) return;
     // C# wrapped this in `if (Accessories.Count > 0)`, so no accessory could ever be added
@@ -119,13 +145,19 @@ std::shared_ptr<AvatarBindingInstance> Avatar::AddBinding(const Binding& binding
     if (instance->Mesh == nullptr) return nullptr;
 
     if (Skeleton->RootBone != nullptr) instance->Mesh->Prepare(Skeleton->RootBone);
+    if(OriginalCharacterDetail>=0)
+        instance->OriginalMaterial.Initialize(OriginalCharacterDetail,OriginalMaterialFlags);
     Bindings.push_back(instance);
+    RebuildOriginalMaterials();
     return instance;
 }
 
 void Avatar::RemoveBinding(const std::shared_ptr<AvatarBindingInstance>& instance, bool /*dispose*/) {
     auto it = std::find(Bindings.begin(), Bindings.end(), instance);
-    if (it != Bindings.end()) Bindings.erase(it);
+    if (it != Bindings.end()) {
+        Bindings.erase(it);
+        RebuildOriginalMaterials();
+    }
 }
 
 void Avatar::ReloadSkeleton() {

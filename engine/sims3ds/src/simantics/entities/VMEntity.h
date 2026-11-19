@@ -283,6 +283,7 @@ public:
     /// and groups. Saved-instance loading deliberately does not enter them.
     void PrepareTS1Fresh(VMContext* context);
     void CompleteTS1Fresh(VMContext* context);
+    void RunTS1InitEntry(VMContext* context, bool freshMachine);
     virtual void PrepareForRestore(VMContext* context);
     virtual void FinishRestore(VMContext* context);
     void StartMainAfterRestore(VMContext* context);

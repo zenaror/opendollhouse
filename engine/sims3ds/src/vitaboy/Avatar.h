@@ -13,6 +13,7 @@
 #include "vitaboy/Mesh.h"
 #include "vitaboy/Texture.h"
 #include "vitaboy/Binding.h"
+#include "common/TS1/TS1AvatarMaterial.h"
 
 namespace FSO { namespace Vitaboy {
 
@@ -25,6 +26,7 @@ class AvatarBindingInstance {
 public:
     FSO::Vitaboy::Mesh* Mesh = nullptr;          // owned by the content cache
     FSO::Vitaboy::Texture* Texture = nullptr;    // owned by the content cache (C#: ITextureRef)
+    FSO::Common::TS1::AvatarPartMaterial OriginalMaterial;
 };
 
 /// <summary>
@@ -45,6 +47,13 @@ public:
     std::vector<std::shared_ptr<AvatarBindingInstance>> Bindings;
     // STUB(3ds): static Effect Effect / setVitaboyEffect (the HLSL Vitaboy.fx shader). The software
     // renderer implements vsVitaboy/psVitaboy in AvatarRenderer.cpp.
+
+    // Transient renderer state: no material history belongs in a game save.
+    int OriginalCharacterDetail=-1;
+    FSO::Common::TS1::AvatarMaterialFlags OriginalMaterialFlags;
+    void ApplyOriginalCharacterDetail(int requested,bool applyExisting);
+    void ApplyOriginalMaterialFlags(FSO::Common::TS1::AvatarMaterialFlags flags);
+    void RebuildOriginalMaterials();
 
     /// Skeleton { get; internal set; } - the animated copy (owned by this avatar).
     FSO::Vitaboy::Skeleton* Skeleton = nullptr;

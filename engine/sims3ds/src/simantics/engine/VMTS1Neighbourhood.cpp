@@ -1,3 +1,4 @@
+#include "common/TS1/TS1PersonBirth.h"
 /*
  * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
  * If a copy of the MPL was not distributed with this file, You can obtain one at
@@ -205,6 +206,37 @@ std::vector<int16_t>* VMTS1Neighbourhood::GetRelationship(int16_t from, int16_t 
         neigh->RelationshipOrder.push_back(to);
     }
     return &it->second;
+}
+
+namespace {
+FSO::Files::Formats::IFF::Chunks::Neighbour* BirthNeighbor(VMAvatar* avatar,int16_t& id) {
+    auto* provider=VMTS1Neighbourhood::Provider();
+    if(!provider || !avatar || !avatar->Object || !avatar->Object->OBJ ||
+       !provider->GetNeighborIDForGUID(avatar->Object->OBJ->GUID,id))return nullptr;
+    return provider->GetNeighborByID(id);
+}
+}
+bool VMTS1Neighbourhood::HasBirthNeighbor(VMAvatar* avatar) {
+    int16_t id=0;return BirthNeighbor(avatar,id)!=nullptr;
+}
+int16_t VMTS1Neighbourhood::ApplyBirthProfile(VMAvatar* avatar) {
+    int16_t id=0;auto* neighbor=BirthNeighbor(avatar,id);if(!neighbor)return 0;
+    avatar->SetPersonData((VMPersonDataVariable)31,id);
+    FSO::Common::TS1::VisitBirthProfileFields(neighbor->PersonMode,[&](int index){
+        const auto value=size_t(index)<neighbor->PersonData.size()?neighbor->PersonData[index]:0;
+        avatar->SetPersonData((VMPersonDataVariable)index,int16_t(value));
+    });
+    const auto family=neighbor->PersonData.size()>61?neighbor->PersonData[61]:0;
+    avatar->SetPersonData((VMPersonDataVariable)61,int16_t(family));
+    return id;
+}
+void VMTS1Neighbourhood::RefreshBirthInterests(VMAvatar* avatar) {
+    int16_t id=0;auto* neighbor=BirthNeighbor(avatar,id);if(!neighbor)return;
+    avatar->SetPersonData((VMPersonDataVariable)31,id);
+    FSO::Common::TS1::VisitBirthInterestFields(neighbor->PersonMode,[&](int index){
+        const auto value=size_t(index)<neighbor->PersonData.size()?neighbor->PersonData[index]:0;
+        avatar->SetPersonData((VMPersonDataVariable)index,int16_t(value));
+    });
 }
 
 int16_t VMTS1Neighbourhood::InheritNeighbor(VMAvatar* avatar, FSO::SimAntics::VM* vm)

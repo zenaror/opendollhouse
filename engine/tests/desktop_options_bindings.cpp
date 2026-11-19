@@ -145,6 +145,41 @@ int main(){try{
     avatar.Avatar=&geometryFreeAvatar;avatar.Position=st::Vector3(16,16,0);avatar.Level=1;
     blueprint.AddAvatar(&avatar);world.InitBlueprint(&blueprint);
     world.State.Level(1);world.State.CenterTile(st::Vector2(16,16));
+    // Real preference/save/App boundary must reach actors even when no draw
+    // visits them (hidden, upstairs, or outside the current camera).
+    FSO::Vitaboy::SimAvatar hiddenAvatar;
+    FSO::LotView::Components::AvatarComponent hiddenComponent;
+    hiddenComponent.Avatar=&hiddenAvatar;hiddenComponent.Visible=false;
+    hiddenComponent.Position=st::Vector3(-3000,-3000,0);
+    hiddenComponent.Level=3;
+    auto visiblePart=std::make_shared<FSO::Vitaboy::AvatarBindingInstance>();
+    auto hiddenPart=std::make_shared<FSO::Vitaboy::AvatarBindingInstance>();
+    geometryFreeAvatar.Bindings.push_back(visiblePart);
+    hiddenAvatar.Bindings.push_back(hiddenPart);
+    blueprint.AddAvatar(&hiddenComponent);
+    graphics.CharacterDetail=2;graphics.CharacterDetailRevision=0;
+    app.ApplyPlaySettings();
+    need(visiblePart->OriginalMaterial.Mode==2&&hiddenPart->OriginalMaterial.Mode==2,
+        "first App bind initializes visible and unrendered actors from the preference");
+    // This data-free scene has no roof resource. Model the same already
+    // available original graphics capability used above, then use real events.
+    world.State.OriginalRoofLighting=true;
+    const auto actorOptions=CaptureDesktopOptions(graphics,false,{},&world);
+    for(const auto step:std::vector<std::pair<int,int>>{{0,2},{1,0},{2,1},{2,2}}) {
+        need(ApplyDesktopOption(graphics,{Id::character_detail,step.first},actorOptions.capabilities),
+            "real character-detail radio command accepted");
+        app._Front->SaveSettings();
+        need(visiblePart->OriginalMaterial.Mode==step.second&&hiddenPart->OriginalMaterial.Mode==step.second,
+            "actual save callback preserves original command ordering for every actor");
+        app.ApplyPlaySettings();
+        need(hiddenPart->OriginalMaterial.Mode==step.second,
+            "ordinary preference bind does not replay the material command");
+    }
+    front::FrontSettings actorReopened;actorReopened.Load((dir/"sims_options.txt").string());
+    need(actorReopened.CharacterDetail==2&&actorReopened.CharacterDetailRevision==0,
+        "cold preferences retain the chosen value without serializing transient command history");
+    blueprint.Avatars.erase(std::remove(blueprint.Avatars.begin(),blueprint.Avatars.end(),&hiddenComponent),blueprint.Avatars.end());
+    geometryFreeAvatar.Bindings.clear();
     // The normal World2D pass supplies this scroll before the avatar pass.
     // This geometry-free fixture skips that pass, so establish its camera state.
     const auto offset=world.State.WorldSpace.GetScreenOffset();

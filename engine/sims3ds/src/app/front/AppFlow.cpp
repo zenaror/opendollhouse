@@ -153,6 +153,18 @@ void App::ApplyPlaySettings() {
             const bool materialCommand = !firstBind &&
                 (state.CharacterDetailRevision != st.CharacterDetailRevision ||
                  state.CharacterDetail != st.CharacterDetail);
+            if(firstBind || materialCommand) for(auto component:blueprint->Avatars) {
+                if(!component || !component->Avatar) continue;
+                if(auto vm=_Session->VM()) if(auto actor=dynamic_cast<FSO::SimAntics::VMAvatar*>(vm->GetObjectById(component->ObjectID))) {
+                    using Word=FSO::SimAntics::Model::VMPersonDataVariable;
+                    component->MaterialFlags=FSO::Common::TS1::AvatarFlagsFromPersonWords(
+                        actor->GetPersonData(Word(68)),actor->GetPersonData(Word(74)),actor->GetPersonData(Word(84)));
+                }
+                component->Avatar->ApplyOriginalMaterialFlags(component->MaterialFlags);
+                if(materialCommand && component->Avatar->OriginalCharacterDetail<0)
+                    component->Avatar->ApplyOriginalCharacterDetail(state.CharacterDetail,false);
+                component->Avatar->ApplyOriginalCharacterDetail(st.CharacterDetail,materialCommand);
+            }
             if (firstBind || materialCommand)
                 roof.SetCharacterDetail(st.CharacterDetail, materialCommand);
             // Ordinary DVD world roof draws retain zero D3D ambient at day,

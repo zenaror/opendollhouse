@@ -13,6 +13,7 @@
 #include "simantics/primitives/VMSnap.h"
 #include "simantics/primitives/VMFindLocationFor.h"
 #include "files/formats/iff/chunks/BHAV.h"
+#include "files/formats/iff/chunks/SLOT.h"
 #include <array>
 #include <iostream>
 #include <stdexcept>
@@ -46,6 +47,12 @@ struct Fixture {
   Context.Architecture()->Rooms[0].Map.assign(64,0);Context.RoomInfo.resize(1);Context.RebuildEnvironmentGeometry();
   // Explicit fresh manager provenance, with actual AddEntity prepend lifecycle.
   Machine.TS1ObjectManagerOrderKnown=true;
+  auto* supportSlots = new SLOT();
+  supportSlots->ChunkID = 1;
+  supportSlots->ChunkProcessed = true;
+  supportSlots->Slots[0].resize(1);
+  Iff.AddChunk(supportSlots);
+  Definitions[1].SlotID = 1;
   for(size_t n=0;n<Owned.size();++n){
    Definitions[n].GUID=0xf0310500+uint32_t(n);Definitions[n].ObjectType=OBJDType::Normal;Definitions[n].TileWidth=n==0?1:16;
    Objects[n].OBJ=&Definitions[n];Objects[n].GUID=Definitions[n].GUID;Objects[n].Resource=&Resource;
@@ -55,12 +62,15 @@ struct Fixture {
    for(size_t k=0;k<5;++k)e->Thread->TempRegisters[k]=int16_t(100+n*10+k);
   }
   Caller=Owned[0].get();Support=Owned[1].get();Candidate=Owned[2].get();Tail=Owned[3].get();
-  Support->Contained.resize(1,nullptr);Support->SetValue(VMStackObjectVariable::Flags,16);
+  Support->SetValue(VMStackObjectVariable::Flags,16);
   Position(*Caller,40,40);Position(*Support,96,96);Position(*Candidate,72,72);Position(*Tail,96,48);
   Check(Machine.TS1ObjectManagerOrder==std::vector<VMEntity*>{Tail,Candidate,Support,Caller},"fixture manager birth order differs");
   Check(Caller->TS1NumericFootprint==std::array<int32_t,4>{40,40,40,40}&&Caller->Footprint&&Caller->Footprint->x1==32,
         "caller width1 did not distinguish source numeric from physical rectangle");
-  Machine.OnSimanticsException=[&](VMEntity*,VMEntity*,const std::string&){++Exceptions;};
+  Machine.OnSimanticsException=[&](VMEntity*,VMEntity*,const std::string& error){
+   ++Exceptions;
+   std::cerr<<"Entry 5 exception: "<<error<<'\n';
+  };
   Machine.OnDialog=[&](Model::VMDialogInfo&){++Dialogs;};
   // Observation only: all mutation below belongs to authored BHAV primitives.
   Machine.OnTraceInstruction=[&](VMStackFrame* frame,uint16_t opcode,int){

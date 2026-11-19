@@ -44,6 +44,18 @@ using FSO::LotView::Components::ObjectComponent;
 using FSO::Common::Utils::DirectionUtils;
 using FSO::Vitaboy::AppearanceType;
 
+static void PublishOriginalAvatarMaterialFlags(VMAvatar& actor) {
+    if(!actor.UseWorld || !actor.WorldUI || !actor.Thread || !actor.Thread->Context || !actor.Thread->Context->VM ||
+       !actor.Thread->Context->VM->TS1) return;
+    // Original cXPerson short array+58c: opaque fields68/74/84 feed
+    // 00435294/00590c09. Do not use the later TSO names for these bits.
+    auto ui=static_cast<AvatarComponent*>(actor.WorldUI.get());
+    ui->MaterialFlags=FSO::Common::TS1::AvatarFlagsFromPersonWords(
+        actor.GetPersonData(VMPersonDataVariable(68)),actor.GetPersonData(VMPersonDataVariable(74)),
+        actor.GetPersonData(VMPersonDataVariable(84)));
+    if(ui->Avatar) ui->Avatar->ApplyOriginalMaterialFlags(ui->MaterialFlags);
+}
+
 uint32_t VMAvatar::TEMPLATE_PERSON = 0x7FD96B54;
 uint32_t VMAvatar::TEMPLATE_NPC = 0x7FD96B56;
 uint32_t VMAvatar::NPC_MAID = 0xC61931DC;
@@ -912,13 +924,22 @@ void VMAvatar::Init(VMContext* context) {
             if (personal.Ambiguous) printf("[identity] ambiguous personal CTSS language for GUID %08x\n", (unsigned)Object->OBJ->GUID);
         }
         InitBodyData(context);
-        for (size_t i = 0; i < MotiveData.size(); i++) {
-            MotiveData[i] = 75;
+        const bool sourceBirth = !GhostImage && FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::HasBirthNeighbor(this);
+        if (sourceBirth) {
+            //4594bc ->420f9d: two independent sixteen-float banks, not a snapshot.
+            MotiveData.fill(0); OldMotiveData.fill(0);
+            MotiveData[5] = OldMotiveData[5] = 70.0f;
+            MotiveData[7] = -40.0f;
+        } else {
+            //Keep the supported unknown-resource/ghost compatibility path.
+            MotiveData.fill(75);
+            SetMotiveData(VMMotive::SleepState, 0);
+            SnapshotMotiveData();
         }
-        SetMotiveData(VMMotive::SleepState, 0); //max all motives except sleep state
-        SnapshotMotiveData();
         FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::InheritNeighbor(this, context->VM);
-        VMEntity::Init(context);
+        if (sourceBirth)
+            InitTS1FreshBirth(context);
+        else VMEntity::Init(context); // unknown-resource/ghost compatibility; no invented NBRS registration.
         return;
     }
 
@@ -1010,12 +1031,16 @@ void VMAvatar::HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool
     auto rhevt = get("righthand");
     if (rhevt != nullptr) {
         auto eventValue = (int16_t)atoi(rhevt->c_str());
-        avatar->Avatar->RightHandGesture = (FSO::Vitaboy::SimHandGesture)eventValue;
+        // DVD0058a17c compares the current hand words before rebuilding all
+        // parts/materials. A repeated event is not another appearance rebuild.
+        if(avatar->Avatar->RightHandGesture.Value()!=FSO::Vitaboy::SimHandGesture(eventValue))
+            avatar->Avatar->RightHandGesture = (FSO::Vitaboy::SimHandGesture)eventValue;
     }
     auto lhevt = get("lefthand");
     if (lhevt != nullptr) {
         auto eventValue = (int16_t)atoi(lhevt->c_str());
-        avatar->Avatar->LeftHandGesture = (FSO::Vitaboy::SimHandGesture)eventValue;
+        if(avatar->Avatar->LeftHandGesture.Value()!=FSO::Vitaboy::SimHandGesture(eventValue))
+            avatar->Avatar->LeftHandGesture = (FSO::Vitaboy::SimHandGesture)eventValue;
     }
 
     auto soundevt = get("sound");
@@ -1098,6 +1123,7 @@ void VMAvatar::Tick() {
     if (Thread && Thread->Context) Thread->Context->ObserveVisualActor(this);
     Velocity = st::Vector3(0, 0, 0);
     VMEntity::Tick();
+    PublishOriginalAvatarMaterialFlags(*this);
 
     if (m_Message != "") {
         if (MessageTimeout-- > 0) {
@@ -1110,7 +1136,10 @@ void VMAvatar::Tick() {
 
     if (Thread != nullptr && Thread->ThreadBreak == Engine::VMThreadBreakMode::Pause) return;
 
-    if (PersonData[(int)VMPersonDataVariable::OnlineJobStatusFlags] == 0) PersonData[(int)VMPersonDataVariable::OnlineJobStatusFlags] = 1;
+    //Online job status has no source45cdf8 producer: raw TS1 PD98 must
+    //remain authored state, including the immediate fresh-person Tick(0).
+    if ((!Thread || !Thread->Context->VM->TS1) && PersonData[(int)VMPersonDataVariable::OnlineJobStatusFlags] == 0)
+        PersonData[(int)VMPersonDataVariable::OnlineJobStatusFlags] = 1;
     if (Thread != nullptr) {
         MotiveDecay->Tick(this, Thread->Context);
         SetPersonData(VMPersonDataVariable::OnlineJobGrade, std::max((int16_t)0, Thread->Context->VM->GetGlobalValue(11))); //force job grade to what we expect
@@ -1550,10 +1579,13 @@ bool VMAvatar::SetPersonData(VMPersonDataVariable variable, int16_t value) {
             break;
         case VMPersonDataVariable::RenderDisplayFlags:
             if (WorldUI != nullptr) AvaUI()->DisplayFlags = (FSO::LotView::Components::AvatarDisplayFlags)value;
-            return true;
+            if(Thread && Thread->Context && Thread->Context->VM && !Thread->Context->VM->TS1) return true;
+            break;
         default: break;
     }
     PersonData[(uint16_t)variable] = value;
+    if(variable==VMPersonDataVariable::IsGhost || variable==VMPersonDataVariable::RenderDisplayFlags ||
+       uint16_t(variable)==84) PublishOriginalAvatarMaterialFlags(*this);
     return true;
 }
 

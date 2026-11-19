@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "simantics/utils/VMTS1InteractionCheckpoint.h"
+#include "simantics/utils/VMTS1BehaviorIdentity.h"
 #include "simantics/utils/VMTS1ActionIcon.h"
 #include "simantics/engine/VMTS1Neighbourhood.h"
 #include "files/formats/iff/chunks/ODHI.h"
@@ -144,17 +145,7 @@ void RouteRoomCounts(Archive& io, const VMContext& context, std::vector<int32_t>
 }
 
 uint32_t BehaviorSignature(BHAV& tree) {
-    st::Writer bytes(st::Endian::Little);
-    bytes.WriteByte(tree.Type);
-    bytes.WriteByte(tree.Args);
-    bytes.WriteUInt16(tree.Locals);
-    for (auto& op : tree.Instructions) {
-        bytes.WriteUInt16(op.Opcode);
-        bytes.WriteByte(op.TruePointer);
-        bytes.WriteByte(op.FalsePointer);
-        bytes.WriteBytes(op.Operand.data(), op.Operand.size());
-    }
-    return Files::Hash::CalculateHash(bytes.ToArray());
+    return TS1BehaviorSignature(tree);
 }
 
 uint32_t AnimationSignature(const Vitaboy::Animation& anim, const VMAnimationState& full,
@@ -620,7 +611,7 @@ public:
                     frame->StackObject = vm.GetObjectById(source.StackObjectID);
                     frame->Args = source.Parameters;
                     frame->Args.resize(std::max(size_t(4), frame->Args.size()), 0);
-                    const size_t localCount = std::max(frame->Routine->Locals, frame->Routine->Arguments);
+                    const size_t localCount = frame->Routine->Locals;
                     Require(source.Locals.size() <= localCount, "classic frame local bank changed");
                     frame->Locals = source.Locals; frame->Locals.resize(localCount, 0);
                     thread.Stack.push_back(std::move(frame));
@@ -786,7 +777,8 @@ public:
         if (io.in) obj = Content::Content::Get()->WorldObjects->Get(guid, false);
         Require(obj && obj->OBJ && obj->OBJ->GUID == guid, "missing code owner " + std::to_string(guid));
     }
-    void behavior(VMRoutine*& routine, Content::GameObject* obj, bool optional) {
+    void behavior(VMRoutine*& routine, Content::GameObject* obj, bool optional, bool* historicalIdentity = nullptr) {
+        if (historicalIdentity) *historicalIdentity = false;
         uint16_t id = routine ? routine->ID : 0;
         io.value(id);
         if (!id && optional) return;
@@ -796,7 +788,9 @@ public:
         Require(bhav && !bhav->Instructions.empty() && (!io.out || (routine && routine->Chunk == bhav)), "unresolved BHAV " + std::to_string(id));
         uint32_t actual = BehaviorSignature(*bhav), signature = actual;
         io.value(signature);
-        Require(actual == signature, "changed BHAV " + std::to_string(id));
+        Require(TS1BehaviorSignatureMatches(*bhav, signature, io.in && version <= 24),
+                "changed BHAV " + std::to_string(id));
+        if (historicalIdentity) *historicalIdentity = io.in && signature != actual;
         if (io.in) routine = vm.Assemble(bhav);
     }
     void animationTiming(VMAnimationState& state, uint32_t propertyCount) {
@@ -917,7 +911,8 @@ public:
         uint32_t actual=BehaviorSignature(*resolved->bhav), signature=actual;
         uint16_t savedTree=tree;
         io.value(savedTree); io.value(signature);
-        Require(savedTree==tree && signature==actual, "callback routine changed");
+        Require(savedTree==tree && TS1BehaviorSignatureMatches(*resolved->bhav, signature, io.in && version <= 24),
+                "callback routine changed");
     }
     void action(VMQueuedAction& a) {
         reference(a.Callee, "action target"); reference(a.StackObject, "action stack object");
@@ -1205,7 +1200,8 @@ public:
                 f->Thread = &t;
             }
             Require(bool(f), "empty stack frame");
-            owner(f->CodeOwner); behavior(f->Routine, f->CodeOwner, false);
+            bool historicalIdentity = false;
+            owner(f->CodeOwner); behavior(f->Routine, f->CodeOwner, false, &historicalIdentity);
             reference(f->Caller, "frame caller"); reference(f->Callee, "frame callee");
             // FreeSO's frame marshal saves StackObjectID even when the instance
             // has been deleted. Preserve the scalar without reviving the object
@@ -1231,6 +1227,8 @@ public:
             }
             io.value(f->SpecialResult); io.value(f->ActionTree);
             io.vector(f->Args, 4096); io.vector(f->Locals, 4096);
+            if (io.in && !routing && vm.TS1)
+                TS1ExpandHistoricalLocals(*f->Routine->Chunk, f->Locals, historicalIdentity, version);
             Require(f->Caller && f->Callee && f->InstructionPointer < f->Routine->Instructions.size() &&
                     f->SpecialResult <= VMSpecialResult::Retry, "invalid saved frame");
             const bool reach = !routing && f->GetCurrentInstruction().Opcode == 47;
@@ -1246,7 +1244,8 @@ public:
             Require(!io.out || !sourceReach || (f->PrimitiveState >= 0 && f->PrimitiveState <= 3),
                     "invalid source Reach phase");
             if (routing) { auto rf=static_cast<VMRoutingFrame*>(f.get()); route(*rf, parent); parent=rf; }
-            else Require(f->Locals.size() == std::max(f->Routine->Locals, f->Routine->Arguments), "local bank has wrong size");
+            else Require(TS1SavedLocalsSizeValid(*f->Routine->Chunk, f->Locals.size(), vm.TS1, version),
+                         "local bank has wrong size");
             if (f->SpecialResult == VMSpecialResult::Interaction) ++boundaries;
         }
         Require(boundaries == t.ActiveQueueBlock + 1, "action frames disagree with active queue");

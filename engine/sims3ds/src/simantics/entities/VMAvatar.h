@@ -188,6 +188,9 @@ public:
     void SetAvatarData(XmlCharacter* charInfo);
     void InitBodyData(VMContext* context);
     void Init(VMContext* context) override;
+    void InitTS1FreshBirth(VMContext* context, bool runFirstTick = true);
+    void RunTS1VisitorInit(VMContext* context);
+    int64_t TS1PersonTickCounter(int64_t ordinary) const { return TS1FreshPersonTick ? 0 : ordinary; }
     void PrepareForRestore(VMContext* context) override;
     void FinishRestore(VMContext* context) override;
     /// Saved data installation without action/UI callbacks; FinishRestore publishes visuals.
@@ -243,6 +246,7 @@ public:
     void* GetIcon(void* gd, int32_t store) override; // STUB(3ds)
 
 private:
+    bool TS1FreshPersonTick = false; // synchronous Tick(0) argument; never model clock/persistent state
     void UpdateHeadSeek();
     void ApplyHeadSeek(float fraction);
     friend class FSO::SimAntics::Engine::Utils::InteractionCheckpointCodec;

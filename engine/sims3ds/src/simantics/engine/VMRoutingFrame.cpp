@@ -596,7 +596,25 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
         if (model.PendingCollisionStatus >= 0) {
             const auto status = model.PendingCollisionStatus;
             auto blocker = VM()->GetObjectById(model.PendingCollisionObject);
+            bool stalledAtObject = false;
+            if (TS1OriginalGraphRouting && UsesTS1SourceLookahead()
+                && State == VMRoutingFrameState::WALKING
+                && status == int16_t(VMPlacementError::CantIntersectOtherObjects)
+                && dynamic_cast<VMGameObject*>(blocker) && !model.Path.empty()) {
+                const auto position = Caller->Position();
+                const auto& start = model.Path.front();
+                const int64_t dx = int64_t(position.x) - start.X;
+                const int64_t dy = int64_t(position.y) - start.Y;
+                // A failed attempt with at most eight units of movement
+                // cannot restart the ordinary approach. Keep any other
+                // selected destinations available to the route.
+                stalledAtObject = std::abs(dx) <= 8 && std::abs(dy) <= 8 && dx * dx + dy * dy <= 64;
+            }
             avatar->DetachTS1MotionRequest(model.Token);
+            if (stalledAtObject) {
+                SoftFail(VMRouteFailCode::NoPath, blocker);
+                return VMPrimitiveExitCode::CONTINUE;
+            }
             return ResolveMovementCollision(status, blocker);
         }
         if (model.PendingFailureCode >= 0) {

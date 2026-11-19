@@ -91,6 +91,7 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/engine/Routing/VMTS1RouteWorld.cpp
   sims3ds/src/simantics/engine/translator/VMTranslator.cpp
   sims3ds/src/simantics/entities/VMAvatar.cpp
+  sims3ds/src/simantics/entities/VMAvatarBirth.cpp
   sims3ds/src/simantics/entities/VMAvatarLocomotion.cpp
   sims3ds/src/simantics/entities/VMAvatarCarry.cpp
   sims3ds/src/simantics/entities/VMAvatarReach.cpp
@@ -292,6 +293,7 @@ set(ODH_ORIGINAL_ARITHMETIC_SOURCES
   sims3ds/src/simantics/engine/Routing/VMTS1RouteGraph.cpp
   sims3ds/src/simantics/engine/VMRoutingFrame.cpp
   sims3ds/src/simantics/entities/VMAvatar.cpp
+  sims3ds/src/simantics/entities/VMAvatarBirth.cpp
   sims3ds/src/simantics/entities/VMAvatarLocomotion.cpp
   sims3ds/src/simantics/engine/Routing/VMTS1RouteWorld.cpp
   sims3ds/src/simantics/primitives/VMLookTowards.cpp
@@ -470,7 +472,7 @@ if(BUILD_TESTING)
     target_link_options(odh-visual-lighting PRIVATE -Wl,--strip-debug)
   endif()
   add_test(NAME visual-lighting COMMAND odh-visual-lighting)
-  foreach(lighting_test spatial-lighting spatial-light-render desktop-family-friends terrain-lighting terrain-raster roof-lighting roof-geometry roof-sampling lot-picture-placement lot-picture-generation)
+  foreach(lighting_test spatial-lighting spatial-light-render desktop-family-friends terrain-lighting terrain-raster roof-lighting roof-geometry roof-sampling lot-picture-placement lot-picture-generation avatar-material-contract)
     string(REPLACE "-" "_" lighting_source "${lighting_test}")
     add_executable(odh-${lighting_test} tests/${lighting_source}.cpp)
     target_link_libraries(odh-${lighting_test} PRIVATE odh_engine)
@@ -704,6 +706,20 @@ if(BUILD_TESTING)
   add_executable(odh-ts1-fresh-lifecycle tests/ts1_fresh_lifecycle.cpp)
   target_link_libraries(odh-ts1-fresh-lifecycle PRIVATE odh_engine)
   add_test(NAME ts1-fresh-lifecycle COMMAND odh-ts1-fresh-lifecycle)
+  add_executable(odh-ts1-person-birth-contract tests/ts1_person_birth_contract.cpp)
+  target_link_libraries(odh-ts1-person-birth-contract PRIVATE odh_engine)
+  add_test(NAME ts1-person-birth-contract COMMAND odh-ts1-person-birth-contract)
+  add_executable(odh-ts1-behavior-identity-contract tests/ts1_behavior_identity_contract.cpp)
+  target_link_libraries(odh-ts1-behavior-identity-contract PRIVATE odh_engine)
+  add_test(NAME ts1-behavior-identity-contract COMMAND odh-ts1-behavior-identity-contract)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_options(odh-ts1-behavior-identity-contract PRIVATE -g0)
+    target_link_options(odh-ts1-behavior-identity-contract PRIVATE -Wl,--strip-debug)
+  endif()
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_options(odh-ts1-person-birth-contract PRIVATE -g0 -fno-fast-math -ffp-contract=off)
+    target_link_options(odh-ts1-person-birth-contract PRIVATE -Wl,--strip-debug)
+  endif()
   add_executable(odh-ts1-portal-terminal-contract tests/ts1_portal_terminal_contract.cpp)
   target_link_libraries(odh-ts1-portal-terminal-contract PRIVATE odh_engine)
   add_test(NAME ts1-portal-terminal-contract COMMAND odh-ts1-portal-terminal-contract)

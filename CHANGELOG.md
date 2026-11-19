@@ -7,6 +7,20 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Newly arriving neighbors use the original initialization order, profile
+  fields and starting needs. This also removes an online-game state change
+  that does not belong in The Sims 1. Broader autonomy differences remain
+  under comparison.
+- Character Detail changes reach Sims outside the current view as well as
+  visible Sims, preserving the original material-setting behavior. Full Sim
+  lighting is still under comparison.
+- Older behavior scripts retain their declared arguments and local variables.
+  Saves from earlier debug builds can still load the affected actions.
+- Sims stop repeating the same route when they make no progress around a
+  blocking object. In the Novato household, this lets a visitor continue
+  to the next destination.
+- Restoring an incomplete neighborhood reports failed copies and preserves
+  older backups.
 - Reaching for objects uses the original height and animation-event rules,
   including child and seated animations and pickup/put callbacks. New native
   saves preserve the current step of these actions and require updated builds

@@ -107,10 +107,41 @@ int main() {
         fs::permissions(locked,fs::perms::none);
         UserDataSetup listingFailed; listingFailed.Configure(install.string(),(root/"listing-failed").string()); listingFailed.PlanAll(); Run(listingFailed);
         Require(!fs::exists(root/"listing-failed/UserData/sims_setup.txt"), "failed subtree listing published completion");
+        const auto beforeFailedRestore = Snapshot(root/"imported/UserData");
+        Require(!imported.RestoreFromInstall(0,&error), "partial restore reported success");
+        Require(!error.empty() && imported.PreparationPending(0), "partial restore was not reported as pending");
+        Require(imported.Available().empty(), "partial restore appeared available");
+        Require(Snapshot(root/"imported/UserData.damaged2")==beforeFailedRestore, "partial restore lost the displaced save");
         fs::permissions(locked,fs::perms::owner_all);
         UserDataSetup listingRetry; listingRetry.Configure(install.string(),(root/"listing-failed").string()); listingRetry.PlanAll(); Run(listingRetry);
         Require(Read(root/"listing-failed/UserData/PhotoAlbum/locked/record.txt")=="preserved after listing retry", "listing retry lost nested data");
+        UserDataSetup restoreRetry; restoreRetry.Configure(install.string(),(root/"imported").string()); restoreRetry.PlanAll(); Run(restoreRetry);
+        Require(restoreRetry.Available()==std::vector<int>{0}, "completed restore was not available after restart");
+        Require(Read(root/"imported/UserData/PhotoAlbum/locked/record.txt")=="preserved after listing retry", "restored save lost nested data");
         std::cout << "PASS failed subtree listing remains recoverable\n";
+        const auto crowded = root/"crowded";
+        Put(crowded/"UserData/Neighborhood.iff", "current save");
+        for (int slot = 1; slot <= 100; ++slot)
+            fs::create_directories(crowded/("UserData.damaged" + (slot == 1 ? "" : std::to_string(slot))));
+        UserDataSetup exhausted; exhausted.Configure(install.string(), crowded.string());
+        Require(!exhausted.RestoreFromInstall(0,&error), "restore reused an occupied backup name");
+        Require(Read(crowded/"UserData/Neighborhood.iff")=="current save", "restore changed save without a backup slot");
+        Require(fs::is_empty(crowded/"UserData.damaged100"), "restore changed an existing backup directory");
+        std::cout << "PASS restore requires a free backup name\n";
+#ifndef _WIN32
+        const auto fallback = root/"fallback";
+        Put(fallback/"UserData/Neighborhood.iff", "current index");
+        Put(fallback/"UserData/Neighborhood.iff.damaged", "earlier backup");
+        Put(fallback/"UserData/Houses/House05.iff", "keep the house");
+        Permissions fallbackPermissions{fallback};
+        fs::permissions(fallback, fs::perms::owner_read | fs::perms::owner_exec);
+        UserDataSetup indexOnly; indexOnly.Configure(install.string(), fallback.string());
+        Require(indexOnly.RestoreFromInstall(0,&error), "index-only restore failed");
+        Require(Read(fallback/"UserData/Neighborhood.iff.damaged")=="earlier backup", "index-only restore replaced an older backup");
+        Require(Read(fallback/"UserData/Neighborhood.iff.damaged2")=="current index", "index-only restore did not keep the displaced index");
+        Require(Read(fallback/"UserData/Houses/House05.iff")=="keep the house", "index-only restore replaced a house");
+        std::cout << "PASS index-only restore preserves previous backups\n";
+#endif
         return 0;
     } catch(const std::exception& e) { std::cerr<<e.what()<<"\n"; return 1; }
 }

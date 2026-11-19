@@ -1014,7 +1014,8 @@ bool VMThread::Push(std::shared_ptr<VMStackFrame> frame) {
     Stack.push_back(frame);
 
     /** Initialize the locals **/
-    auto numLocals = std::max(frame->Routine->Locals, frame->Routine->Arguments);
+    auto numLocals = Context && Context->VM && Context->VM->TS1 ? frame->Routine->Locals :
+        std::max(frame->Routine->Locals, frame->Routine->Arguments);
     frame->Locals.assign(numLocals, 0);
     frame->Thread = this;
 

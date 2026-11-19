@@ -6,6 +6,7 @@
 // Translated from FreeSims sims.files/formats/iff/chunks/BHAV.cs
 #include "files/formats/iff/chunks/BHAV.h"
 #include "files/formats/iff/IffFile.h"
+#include <stdexcept>
 
 namespace FSO { namespace Files { namespace Formats { namespace IFF { namespace Chunks {
 
@@ -16,25 +17,33 @@ void BHAV::Read(IffFile* iff, st::Reader& stream)
     io.ByteOrder(st::Endian::Little);
     {
         auto version = io.ReadUInt16();
+        Type = Args = 0; Locals = Flags = 0;
+        PreviousDecoderLocals = 0; SourceParsedArgs = SourceParsedLocals = 0;
+        SourceFormatVersion = version;
         uint32_t count = 0;
 
         if (version == 0x8000)
         {
             count = io.ReadUInt16();
             io.Skip(8);
+            this->Args = 4; // DVD474add: the oldest format defaults to four.
         }
         else if (version == 0x8001)
         {
             count = io.ReadUInt16();
-            auto unknown = io.ReadBytes(8);
-            (void)unknown;
+            const auto metadata = io.ReadBytes(8);
+            if (metadata.size() != 8) throw std::runtime_error("Truncated BHAV 8001 header");
+            // DVD474acc..df: wire byte5 declares args, capped at four.
+            this->Args = metadata[1] < 4 ? metadata[1] : 4;
+            this->Locals = metadata[2] < 4 ? metadata[2] : 4;
         }
         else if (version == 0x8002)
         {
             count = io.ReadUInt16();
             this->Type = io.ReadByte();
             this->Args = io.ReadByte();
-            this->Locals = io.ReadUInt16();
+            PreviousDecoderLocals = io.ReadUInt16();
+            this->Locals = PreviousDecoderLocals & 255; // DVD474a90: wire byte6 only.
             this->Flags = io.ReadUInt16();
             io.Skip(2);
         }
@@ -47,6 +56,9 @@ void BHAV::Read(IffFile* iff, st::Reader& stream)
             this->Flags = io.ReadUInt16();
             count = io.ReadUInt32();
         }
+        SourceParsedArgs = Args;
+        SourceParsedLocals = uint8_t(Locals);
+        if (version == 0x8003) PreviousDecoderLocals = Locals;
 
         Instructions = std::vector<BHAVInstruction>(count);
         for (uint32_t i = 0; i < count; i++)
