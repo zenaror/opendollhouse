@@ -12,6 +12,7 @@
 #include "simantics/utils/VMTS1ObjectNames.h"
 #include "simantics/utils/VMTS1ObjectGroups.h"
 #include "simantics/utils/VMTS1InteractionCheckpoint.h"
+#include "simantics/utils/VMTS1HierarchyPersistence.h"
 #include "files/formats/iff/chunks/ODHI.h"
 #include "simantics/utils/VMTS1FamilyLoader.h"
 #include "simantics/engine/VMTS1Neighbourhood.h"
@@ -73,6 +74,9 @@ void VMWorldActivator::RunTS1LoadCallbacks(FSO::SimAntics::VM* vm) {
         if (current->Object && current->Object->OBJ &&
             current->Object->OBJ->ObjectType != OBJDType::Person)
             current->ExecuteEntryPoint(2, vm->Context, true);
+        // The source base post-load tail runs even for a missing Load routine
+        // and for Person2, whose authored Load is skipped above.
+        current->TS1PublishSimIndependent();
         const auto& order = vm->TS1ObjectManagerOrder;
         const auto found = std::find(order.begin(), order.end(), current);
         if (found == order.end())
@@ -783,6 +787,12 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
     const auto* importedGUIDs = objm->ChunkParent ? objm->ChunkParent->Get<GTAB>(1) : nullptr;
     auto* hood = FSO::SimAntics::Engine::Utils::VMTS1Neighbourhood::Provider();
     auto ctx = VM->Context;
+    std::unique_ptr<Engine::VMTS1HierarchyState> sourceHierarchy;
+    std::unique_ptr<Engine::Utils::VMTS1HierarchyPersistence::PublicationScope> hierarchyPublication;
+    if(VM->TS1){
+        sourceHierarchy=std::make_unique<Engine::VMTS1HierarchyState>(Engine::Utils::VMTS1HierarchyPersistence::Stage(*VM,*objm));
+        hierarchyPublication=std::make_unique<Engine::Utils::VMTS1HierarchyPersistence::PublicationScope>(*ctx);
+    }
     // Identity, pose and room are installed/derived by this loader. All other
     // persistent fields, including flags/placement/slot policy, precede spatial
     // consumers. Both pins restore ObjectData rather than rerun Init to get it.
@@ -841,6 +851,14 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
         auto entity = VM->GetObjectById(int16_t(saved.first));
         if (entity && !entity->Dead) entity->FinishRestore(ctx);
     }
+    std::set<VMEntity*> detached;
+    if(sourceHierarchy){
+        // Source0 siblings may share a physical owner/slot. Replaying physical
+        // PlaceInSlot one sibling at a time would reject the second occupant.
+        auto prepared=*sourceHierarchy;
+        ctx->TS1PublishHierarchy(std::move(prepared));
+        for(const auto& record:sourceHierarchy->Records)if(record.second.RawContainer)++LastRestore.Contained;
+    } else {
     // Validate the saved containment graph before publishing any slot link.
     // Native runtime restoration follows later; this does not execute actions.
     std::set<std::pair<int32_t, int32_t>> occupiedSlots;
@@ -867,7 +885,6 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
     // Init may have linked a saved entity to a different slot or populated
     // its slots. Detach those links before publishing the validated snapshot;
     // merely comparing Container would miss a wrong slot in the same object.
-    std::set<VMEntity*> detached;
     auto detach = [&](VMEntity* entity) {
         if (entity && entity->Container && detached.insert(entity).second)
             entity->PrePositionChange(ctx);
@@ -901,6 +918,7 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
         bound.insert(id);
     };
     for (const auto& saved : objm->ObjectData) bind(saved.first);
+    }
     // Validate any native graph before root PositionChange can execute entry 8.
     // Only old checkpoints require separate legacy purse promotion.
     if (objm->ChunkParent) {
@@ -947,6 +965,7 @@ void VMWorldActivator::RestoreSavedState(OBJM* objm) {
         const auto& bounds = instance->Footprint;
         entity->RestoreTS1Footprint(bounds.MinX, bounds.MinY, bounds.MaxX, bounds.MaxY);
     }
+    if(sourceHierarchy)ctx->TS1PublishHierarchy(std::move(*sourceHierarchy));
     if (getenv("WA_DEBUG")) printf("WA: restored %d objects (%d persons, %d placed at their saved position, %d interaction objects left fresh), %d contained, %d records without object\n",
         LastRestore.Objects, LastRestore.Persons, LastRestore.PersonsPlaced, LastRestore.Skipped, LastRestore.Contained, LastRestore.Missing);
 }

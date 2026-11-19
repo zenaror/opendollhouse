@@ -15,6 +15,7 @@
 #include "files/formats/iff/chunks/BHAV.h"
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <stdexcept>
 
 using namespace FSO::SimAntics;
@@ -468,6 +469,19 @@ static void restoredLoadPhaseOrder() {
     person->Object->OBJ->ObjectType=OBJDType::Person;
     for(auto* entity:{first,second,person})entity->EntryPoints[2].ActionFunction=4096;
     missing->EntryPoints[2].ActionFunction=0;
+    // Restored records can contain an old bit17 while the final OD60 is
+    // republished by432028..432045, even without a Load body/person callback.
+    const auto independent=Model::VMStackObjectVariable::SimIndependent;
+    first->ObjectData[int(independent)]=1;
+    second->ObjectData[int(independent)]=0;
+    person->ObjectData[int(independent)]=-7;
+    missing->ObjectData[int(independent)]=0;
+    first->TS1SchedulerState=0xabcf0003u; // Load clears a formerly true value.
+    second->TS1SchedulerState=0xabcd0004u; // Load publishes signed nonzero.
+    person->TS1SchedulerState=0xabcd0005u; // Person skips Load, still publishes.
+    missing->TS1SchedulerState=0xabcf0006u; // Missing Load still publishes zero.
+    std::map<VMEntity*,uint32_t> schedulerBefore;
+    for(auto* entity:{first,second,person,missing})schedulerBefore.emplace(entity,entity->TS1SchedulerState);
     std::vector<std::pair<VMEntity*,std::shared_ptr<VMStackFrame>>> mains;
     for(auto* entity:{first,second,person,missing}){
         mains.emplace_back(entity,entity->Thread->Stack.front());auto action=std::make_shared<VMQueuedAction>();
@@ -478,17 +492,42 @@ static void restoredLoadPhaseOrder() {
     f.Init=[&](VMStackFrame* frame){
         if(frame->Thread->TS1InitializerRunning())return VMPrimitiveExitCode::GOTO_TRUE;
         order.push_back(frame->Caller->ObjectID);
-        if(frame->Caller==second){child=f.create(0xf02000a4)->BaseObject();child->EntryPoints[2].ActionFunction=4096;}
-        if(frame->Caller==first){Primitives::VMRemoveObjectInstance remove;Primitives::VMRemoveObjectInstanceOperand operand;operand.Target=0;operand.Flags=0;return remove.Execute(frame,&operand);}
+        // Direct authored storage writes intentionally avoid setter effects:
+        // this fixture verifies the final post-Load publication itself.
+        if(frame->Caller==second){
+            frame->Caller->ObjectData[int(independent)]=-1;
+            child=f.create(0xf02000a4)->BaseObject();child->EntryPoints[2].ActionFunction=4096;
+        }
+        if(frame->Caller==first){
+            frame->Caller->ObjectData[int(independent)]=0;
+            Primitives::VMRemoveObjectInstance remove;Primitives::VMRemoveObjectInstanceOperand operand;operand.Target=0;operand.Flags=0;return remove.Execute(frame,&operand);}
         return VMPrimitiveExitCode::GOTO_TRUE;
     };
     VMWorldActivator::RunTS1LoadCallbacks(&f.Machine);
     need(order==std::vector<int16_t>({second->ObjectID,first->ObjectID}),"Load phase missed birth order, skipped person/missing entry incorrectly, or revisited a created head");
+    for(auto* entity:{first,second,person,missing}){
+        const auto literal=entity->GetValue(independent);
+        const auto expected=(schedulerBefore.at(entity)&~0x00020000u)|(literal?0x00020000u:0u);
+        need(entity->TS1SchedulerState==expected,"post-Load independent publication lost literal truth, changed other scheduler bits/delay, or skipped person/missing Load");
+    }
+    need(first->GetValue(independent)==0&&second->GetValue(independent)==-1&&
+        person->GetValue(independent)==-7&&missing->GetValue(independent)==0,
+        "post-Load publication changed authored OD60 literals or skipped ordinary Load changes");
     need(child&&f.Machine.TS1ObjectManagerOrder.front()==child&&!first->Dead&&f.Machine.GetTS1PendingRemovalIDs()==std::vector<int16_t>({first->ObjectID}),"Load phase drained removal or lost newly created manager head");
     for(auto& saved:mains)need(saved.first->Thread->Stack.size()==1&&saved.first->Thread->Stack.front()==saved.second&&saved.first->Thread->ActiveQueueBlock==0&&saved.first->Thread->Queue.size()==1,"restored Load phase replaced prepared Main/action state");
     need(f.Context.Clock->Ticks==232560,"Load phase advanced simulation time");
     f.Machine.Ready=false;f.Machine.Update();
     need(first->Dead&&!f.Machine.HasTS1PendingRemovals()&&f.Context.Clock->Ticks==232561,"Load removal did not wait for the first ordinary sweep");
+}
+
+static void freshIndependentPublication() {
+    for(int16_t literal:{int16_t(0),int16_t(1),int16_t(-1)}){
+        Fixture f;f.define(0xf02000b0);
+        f.Main=[&](VMStackFrame* frame){frame->Caller->ObjectData[int(Model::VMStackObjectVariable::SimIndependent)]=literal;return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;};
+        auto entity=f.create(0xf02000b0)->BaseObject();
+        need((entity->TS1SchedulerState&0x00020000u)==(literal?0x00020000u:0u),"fresh lifecycle did not publish the final independent value after initial Main");
+        need((entity->TS1SchedulerState&0x00010000u)!=0&&entity->GetValue(Model::VMStackObjectVariable::SimIndependent)==literal,"independent publication changed factory admission or authored value");
+    }
 }
 
 static void legacyAndRestoreBoundaries() {
@@ -511,7 +550,7 @@ int main(){try{
     VM::UseWorld(false);
     for(auto run:{singleAndNestedCreation,groupPhases,blockingInitRestoresMain,creationInOwnerDispatch,
                  groupMutationAndSelfDeletion,realNestedSubroutines,realRemovalDuringInit,
-                 realRemovalDuringInitialMain,nestedInitializerOverridesOwnerMode,sameMachineLoad,loadArgumentBank,loadRemovalAndLiveQueueMutation,restoredLoadPhaseOrder,legacyAndRestoreBoundaries}){
+                 realRemovalDuringInitialMain,nestedInitializerOverridesOwnerMode,sameMachineLoad,loadArgumentBank,loadRemovalAndLiveQueueMutation,restoredLoadPhaseOrder,freshIndependentPublication,legacyAndRestoreBoundaries}){
         run();need(VM::ReleaseAssembled(),"fixture leaked its VM into routine cache cleanup");
     }
     std::printf("PASS %d TS1 fresh-object lifecycle checks\n",checks);return 0;

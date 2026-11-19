@@ -31,11 +31,15 @@ struct Fixture {
     std::shared_ptr<VMAnimationState> Sentinel, Foreground, Background;
     Fixture() {
         Machine.TS1=true; Context.Clock->Ticks=500;
+        Definition.GUID=0xf0630001;Object.GUID=Definition.GUID;
         Object.OBJ=&Definition; Object.Resource=&Resource;
         Actor=std::make_unique<VMAvatar>(&Object); Actor->ObjectID=1;
         Actor->Thread=std::make_unique<VMThread>(&Context,Actor.get(),16);
         First=std::make_unique<VMGameObject>(&Object,nullptr);First->ObjectID=2;
         Second=std::make_unique<VMGameObject>(&Object,nullptr);Second->ObjectID=3;
+        // Actual hierarchy/hand publication requires registered live identities.
+        // Raw ObjectID assignment alone does not make an object part of the VM.
+        Machine.AddEntity(Actor.get());Machine.AddEntity(First.get());Machine.AddEntity(Second.get());
         Actor->WalkAnimations[0x26]="fixture-specific-carry";
         auto asset=FSO::Content::Content::Get()->AvatarAnimations->Get("fixture-specific-carry.anim");
         check(asset!=nullptr,"synthetic carry resource resolves");asset->Duration=1200;
@@ -47,12 +51,23 @@ struct Fixture {
         Actor->CarryAnimationState=Sentinel; Actor->Animations={Foreground};
         Actor->TS1BackgroundAnimationState=Background;
     }
-    bool Place(VMEntity* obj,int slot) { return Actor->PlaceInSlot(obj,slot,false,nullptr); }
+    ~Fixture() {
+        for(auto* entity:{static_cast<VMEntity*>(First.get()),static_cast<VMEntity*>(Second.get()),static_cast<VMEntity*>(Actor.get())})
+            if(Machine.GetObjectById(entity->ObjectID)==entity)Machine.RemoveEntity(entity);
+    }
+    bool Place(VMEntity* obj,int slot) {
+        const bool source=Machine.TS1&&Actor->TS1AnimationController.OriginalLifecycle&&!Actor->TS1ExternalAnimationClock;
+        // Original gameplay uses the hierarchy transaction; CAS/old/native
+        // adapter controls intentionally exercise their retained attachment API.
+        return Actor->PlaceInSlot(obj,slot,false,source?&Context:nullptr);
+    }
     void Update() { Actor->UpdateTS1CarryAnimation(); }
 };
 void DefaultSelection() {
     Fixture f;
     check(f.Place(f.First.get(),0),"valid first logical attachment accepts held object");
+    check(f.Context.TS1SourceSlot(f.Actor.get(),1)==f.First.get()&&f.Actor->GetSlot(0)==f.First.get(),
+        "registered original hand must publish source slot1 and logical physical slot0 together");
     check(f.Actor->CarryAnimationState==f.Sentinel,
         "placing held object defers original carry selection until model prepass");
     f.Update(); auto original=f.Actor->CarryAnimationState;
@@ -121,10 +136,14 @@ void BoundsAndMissingClip() {
     check(!f.Actor->CarryAnimationState,"missing-clip recovery waits for desired-index change rather than retrying each tick");
     f.Actor->ClearSlot(0);f.Update();check(f.Place(f.First.get(),0),"default carry fixture can reattach");
     f.Update();check(bool(f.Actor->CarryAnimationState),"next actual selection transition retries the restored default clip");
-    // Source589fd2 tests nonzero attachment OID, not every nonnull native pointer.
-    f.Actor->ClearSlot(0);f.Update();f.First->ObjectID=0;check(f.Place(f.First.get(),0),"synthetic zero-ID pointer can exercise source identity boundary");
+    // A removed object must not become an occupied source attachment through
+    // a stale pointer. Never mutate an ID while its VM identity is registered.
+    f.Actor->ClearSlot(0);f.Update();f.Machine.RemoveEntity(f.First.get());
+    f.First->ObjectID=0;
+    check(!f.Place(f.First.get(),0)&&f.Actor->GetSlot(0)==nullptr,
+        "removed zero-ID pointer must not publish a source held-object identity");
     f.Update();check(f.Actor->TS1AnimationController.CarryKind==0&&!f.Actor->CarryAnimationState,
-        "zero raw object identity is not a source occupied attachment");
+        "removed identity cannot recreate automatic carry on an empty hand");
 }
 void LegacyGuards() {
     Fixture f;f.Actor->TS1ExternalAnimationClock=true;

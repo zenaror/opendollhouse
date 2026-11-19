@@ -982,9 +982,15 @@ void VMThread::Pop(VMPrimitiveExitCode result) {
         const bool originalParent = Context->VM->TS1 && !Stack.empty() &&
             !Stack.back()->IsRoutingFrame() &&
             (interaction == nullptr || (interaction->Flags & TTABFlags::RunImmediately) == 0);
-        if (!originalParent || Stack.back()->PrimitiveState != 0)
+        if (originalParent) {
+            //474f17 ->474cf4 returns0 for the retrying parent.475027
+            //loops that parent in the SAME owner visit, without changing PC
+            //or primitive state. Its authored Sleep owns any later yield.
+            if(Stack.back()->PrimitiveState!=0)result=VMPrimitiveExitCode::CONTINUE;
+        } else {
             result = (interaction == nullptr || (interaction->Flags & TTABFlags::RunImmediately) == 0)
                 ? VMPrimitiveExitCode::CONTINUE_NEXT_TICK : VMPrimitiveExitCode::CONTINUE;
+        }
     } else if (discardResult == VMSpecialResult::Retry) {
         result = VMPrimitiveExitCode::CONTINUE;
     }

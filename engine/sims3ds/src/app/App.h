@@ -27,6 +27,7 @@
 #include "app/UIStrings.h"
 #include "app/LotScreen.h"
 #include "app/ui/UICheatConsole.h"
+#include "common/TS1/TS1DispatchCadence.h"
 
 namespace simapp { namespace front { class FrontEnd; class FrontDialog; class SimDialogView; class SaveOverlay; } }
 
@@ -193,6 +194,8 @@ private:
     bool _AudioLotPaused = false;
     bool _HostFocused = true;
     double _UpdateAccum = 0;
+    FSO::Common::TS1::DispatchCadence _TS1Cadence;
+    uint64_t _TS1AppliedRawSpeedRevision = 0;
     void LiveFrame(const AppInput& in, double dtMs);
     // TS1(sims): L+R chord: a shoulder press waits a few frames to see whether the other shoulder joins it
     uint32_t _ShoulderPending = 0;

@@ -27,6 +27,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 namespace simapp {
 
@@ -171,8 +172,16 @@ bool UICheatConsole::ExecuteOne(const std::string& cheat, std::vector<std::strin
     if (name == "draw_all_frames") { C.DrawAllFrames = OnOff(a, C.DrawAllFrames); return true; }
     if (name == "draw_floorable") { C.DrawFloorable = OnOff(a, C.DrawFloorable); return true; }
     if (name == "sweep") { C.Sweep = OnOff(a, C.Sweep); return true; }
-    // ---- sim_speed <-1000..1000>: slower / faster simulation at every speed setting (0 = normal)
-    if (name == "sim_speed") { int v; if (IntArg(a, -1000, 1000, v)) C.SimSpeed = v; return true; }
+    // DVD command25 writes signed UI+44; owner46d7b3 later clamps0..1000.
+    // It changes the same rate as the HUD, without changing the pause flag.
+    if (name == "sim_speed") {
+        int v;
+        if (vm && vm->TS1) {
+            if (IntArg(a, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), v))
+                C.SetTS1RawSimSpeed(v);
+        } else if (IntArg(a, -1000, 1000, v)) C.SimSpeed = v;
+        return true;
+    }
     // ---- autonomy <1-100>: how much the Sims act on their own (App::LiveFrame applies it, see README "Cheats")
     if (name == "autonomy") { int v; if (IntArg(a, 1, 100, v)) C.Autonomy = v; return true; }
     // ---- grow_grass <0-150>: the whole lawn at that growth (0 = dead brown, 150 = lush green)

@@ -76,11 +76,14 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/engine/VMSlotParser.cpp
   sims3ds/src/simantics/engine/VMStackFrame.cpp
   sims3ds/src/simantics/engine/VMSuitProvider.cpp
+  sims3ds/src/simantics/engine/VMTS1Hierarchy.cpp
+  sims3ds/src/simantics/engine/VMTS1HierarchyState.cpp
   sims3ds/src/simantics/engine/VMTS1MotiveDecay.cpp
   sims3ds/src/simantics/engine/VMTS1Neighbourhood.cpp
   sims3ds/src/simantics/engine/VMTS1Outfits.cpp
   sims3ds/src/simantics/engine/VMTS1Travel.cpp
   sims3ds/src/simantics/engine/VMThread.cpp
+  sims3ds/src/simantics/engine/TS1SlotMetadata.cpp
   sims3ds/src/simantics/engine/TS1SlotGeometry.cpp
   sims3ds/src/simantics/engine/Routing/VMTS1RoutePath.cpp
   sims3ds/src/simantics/engine/Routing/VMTS1RouteGraph.cpp
@@ -88,6 +91,7 @@ set(ODH_ENGINE_SOURCES
   sims3ds/src/simantics/engine/Routing/VMTS1RouteWorld.cpp
   sims3ds/src/simantics/engine/translator/VMTranslator.cpp
   sims3ds/src/simantics/entities/VMAvatar.cpp
+  sims3ds/src/simantics/entities/VMAvatarLocomotion.cpp
   sims3ds/src/simantics/entities/VMAvatarCarry.cpp
   sims3ds/src/simantics/entities/VMAvatarAnimationEvents.cpp
   sims3ds/src/simantics/entities/VMAvatarMotiveDecay.cpp
@@ -279,11 +283,13 @@ set(ODH_ORIGINAL_ARITHMETIC_SOURCES
   sims3ds/src/vitaboy/Animator.cpp
   sims3ds/src/common/TS1/TS1Curve.cpp
   sims3ds/src/simantics/primitives/VMFindBestAction.cpp
+  sims3ds/src/simantics/engine/TS1SlotMetadata.cpp
   sims3ds/src/simantics/engine/TS1SlotGeometry.cpp
   sims3ds/src/simantics/engine/VMSlotParser.cpp
   sims3ds/src/simantics/engine/Routing/VMTS1RouteGraph.cpp
   sims3ds/src/simantics/engine/VMRoutingFrame.cpp
   sims3ds/src/simantics/entities/VMAvatar.cpp
+  sims3ds/src/simantics/entities/VMAvatarLocomotion.cpp
   sims3ds/src/simantics/engine/Routing/VMTS1RouteWorld.cpp
   sims3ds/src/simantics/primitives/VMLookTowards.cpp
   tests/original_autonomy_contract.cpp
@@ -667,9 +673,44 @@ if(BUILD_TESTING)
       target_link_options(${contract} PRIVATE -Wl,--strip-debug)
     endforeach()
   endif()
+  add_executable(odh-ts1-slot-metadata tests/ts1_slot_metadata.cpp)
+  target_link_libraries(odh-ts1-slot-metadata PRIVATE odh_engine)
+  add_test(NAME ts1-slot-metadata COMMAND odh-ts1-slot-metadata)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(odh-ts1-slot-metadata PRIVATE -g0)
+    target_link_options(odh-ts1-slot-metadata PRIVATE -Wl,--strip-debug)
+  endif()
+  add_executable(odh-ts1-hierarchy-runtime-contract tests/ts1_hierarchy_runtime_contract.cpp)
+  target_link_libraries(odh-ts1-hierarchy-runtime-contract PRIVATE odh_engine)
+  add_test(NAME ts1-hierarchy-runtime-contract COMMAND odh-ts1-hierarchy-runtime-contract)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_options(odh-ts1-hierarchy-runtime-contract PRIVATE -g0)
+    target_link_options(odh-ts1-hierarchy-runtime-contract PRIVATE -Wl,--strip-debug)
+  endif()
+  add_executable(odh-ts1-hierarchy-persistence-contract tests/ts1_hierarchy_persistence_contract.cpp)
+  target_link_libraries(odh-ts1-hierarchy-persistence-contract PRIVATE odh_engine)
+  add_test(NAME ts1-hierarchy-persistence-contract COMMAND odh-ts1-hierarchy-persistence-contract)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_options(odh-ts1-hierarchy-persistence-contract PRIVATE -g0)
+    target_link_options(odh-ts1-hierarchy-persistence-contract PRIVATE -Wl,--strip-debug)
+  endif()
   add_executable(odh-ts1-fresh-lifecycle tests/ts1_fresh_lifecycle.cpp)
   target_link_libraries(odh-ts1-fresh-lifecycle PRIVATE odh_engine)
   add_test(NAME ts1-fresh-lifecycle COMMAND odh-ts1-fresh-lifecycle)
+  add_executable(odh-ts1-portal-terminal-contract tests/ts1_portal_terminal_contract.cpp)
+  target_link_libraries(odh-ts1-portal-terminal-contract PRIVATE odh_engine)
+  add_test(NAME ts1-portal-terminal-contract COMMAND odh-ts1-portal-terminal-contract)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_options(odh-ts1-portal-terminal-contract PRIVATE -g0 -fno-fast-math -ffp-contract=off)
+    target_link_options(odh-ts1-portal-terminal-contract PRIVATE -Wl,--strip-debug)
+  endif()
+  add_executable(odh-ts1-locomotion-transition-contract tests/ts1_locomotion_transition_contract.cpp)
+  target_link_libraries(odh-ts1-locomotion-transition-contract PRIVATE odh_engine)
+  add_test(NAME ts1-locomotion-transition-contract COMMAND odh-ts1-locomotion-transition-contract)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_options(odh-ts1-locomotion-transition-contract PRIVATE -g0 -fno-fast-math -ffp-contract=off)
+    target_link_options(odh-ts1-locomotion-transition-contract PRIVATE -Wl,--strip-debug)
+  endif()
   add_executable(odh-ts1-locomotion-contract tests/ts1_locomotion_contract.cpp)
   target_link_libraries(odh-ts1-locomotion-contract PRIVATE odh_engine)
   add_test(NAME ts1-locomotion-contract COMMAND odh-ts1-locomotion-contract)
@@ -725,6 +766,23 @@ if(BUILD_TESTING)
     target_link_options(odh-original-scheduler-contract PRIVATE -Wl,--strip-debug)
   endif()
   add_test(NAME original-scheduler-contract COMMAND odh-original-scheduler-contract)
+  add_executable(odh-ts1-dispatch-cadence tests/ts1_dispatch_cadence.cpp)
+  target_link_libraries(odh-ts1-dispatch-cadence PRIVATE odh_engine)
+  add_test(NAME ts1-dispatch-cadence COMMAND odh-ts1-dispatch-cadence)
+  add_executable(odh-ts1-visual-interpolation tests/ts1_visual_interpolation.cpp)
+  target_link_libraries(odh-ts1-visual-interpolation PRIVATE odh_engine)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(odh-ts1-visual-interpolation PRIVATE -g0)
+    target_link_options(odh-ts1-visual-interpolation PRIVATE -Wl,--strip-debug)
+  endif()
+  add_test(NAME ts1-visual-interpolation COMMAND odh-ts1-visual-interpolation)
+  add_executable(odh-ts1-footprint-wall-contract tests/ts1_footprint_wall_contract.cpp)
+  target_link_libraries(odh-ts1-footprint-wall-contract PRIVATE odh_engine)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(odh-ts1-footprint-wall-contract PRIVATE -g0)
+    target_link_options(odh-ts1-footprint-wall-contract PRIVATE -Wl,--strip-debug)
+  endif()
+  add_test(NAME ts1-footprint-wall-contract COMMAND odh-ts1-footprint-wall-contract)
   add_executable(odh-ts1-scheduler-persistence tests/ts1_scheduler_persistence.cpp)
   target_link_libraries(odh-ts1-scheduler-persistence PRIVATE odh_engine)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

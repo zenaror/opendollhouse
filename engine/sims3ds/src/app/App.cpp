@@ -237,12 +237,55 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
         machine->SetGlobalValue(19, originalMode);
         // Mode changes do not change the player's Pause preference. Public
         // editors cannot enter Live and have no observed player pause control.
-        if (s.CanEnterLive()) machine->SetGlobalValue(17, Speed == 0 ? 1 : 0);
+        if (s.CanEnterLive()) {
+            const int16_t pause = Speed == 0 ? 1 : 0;
+            // DVD46d956 clears the owner's accumulator on unpause, whereas
+            // entering pause preserves it. Token credit is unaffected.
+            if (machine->GetGlobalValue(17) != 0 && pause == 0) _TS1Cadence.ResetOwner();
+            machine->SetGlobalValue(17, pause);
+        }
     }
     PickMsLast = lot.PickMsLast;
     // lot.LeaveRequested / QuitRequested are answered by LotFlow next frame (the TS1 "Save?" dialogs)
 
-    // ---------------- simulation (TS1 speeds: normal = 30 ticks/s = 60 VM::Update calls)
+    // ---------------- simulation
+    double t0 = Now();
+    int done = 0;
+    if (s.VM()->TS1) {
+        const int requestedRaw = lot.OriginalRawSpeed();
+        if (_TS1AppliedRawSpeedRevision != lot.OriginalRawSpeedRevision()) {
+            _TS1AppliedRawSpeedRevision = lot.OriginalRawSpeedRevision();
+            // Original4ce710 compares the signed UI request to the owner
+            // BEFORE46d7b3 clamps it. An out-of-range new command therefore
+            // resets owner timing even if its effective rate stays the same.
+            if (_TS1Cadence.RawSpeed() != requestedRaw) _TS1Cadence.SetRawSpeed(requestedRaw);
+        }
+        const int raw = _TS1Cadence.RawSpeed();
+        s.VM()->SetGlobalValue(16, int16_t(raw));
+        const bool restricted = s.VM()->TS1RestrictedDispatch();
+        const bool modal = (_LotDialog && _LotDialog->Open) || lot.EffectiveSpeed() == 0;
+        // Focus/sweep remain transient host controls. Modal-only suspension
+        // has no proved original global binding; do not run ordinary life
+        // behind it. Actual Pause/Build/Buy/Options use the source restricted
+        // dispatcher, including independent tutorial/controller objects.
+        if (!HostPausesSimulation() && cheat.Sweep && (!modal || restricted)) {
+            _TS1Cadence.BeginFrame(dtMs);
+            while (_TS1Cadence.TakePass()) {
+                s.Update(1, true);
+                ++done;
+                if (_TravelPending || s.VM()->Departure.caller ||
+                    std::any_of(s.Dialogs.begin(), s.Dialogs.end(), [](const auto& d) { return d.Block; })) break;
+                if (_Cfg.VMBudgetMs > 0 && (Now() - t0) > _Cfg.VMBudgetMs) break;
+            }
+            // Reuse the existing presentation interpolator between owner
+            // passes. It changes no script events or simulation clock.
+            if (!s.VM()->TS1RestrictedDispatch()) for (auto obj : s.VM()->Entities) {
+                auto avatar = dynamic_cast<VMAvatar*>(obj);
+                if (avatar && !avatar->Dead) avatar->FractionalAnim(_TS1Cadence.Fraction());
+            }
+        }
+    } else {
+    // Preserve the non-TS1 legacy half-frame adapter and relative cheat.
     static const double UPS[4] = { 0, 60, 180, 600 };
     int speed = lot.EffectiveSpeed(); // paused in buy/build/options and while a blocking dialog waits (TS1)
     if (_LotDialog && _LotDialog->Open) speed = 0;
@@ -252,14 +295,12 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
     if (!cheat.Sweep) speed = 0; // TS1(sims): "sweep off" stops the simulation
     // TS1(sims): sim_speed -1000..1000 scales every speed setting, 1/16x .. 16x (the port's mapping; 0 = normal)
     double ups = UPS[speed] * std::pow(2.0, cheat.SimSpeed / 250.0);
-    double t0 = Now();
     // A paused/edit frame must not spend a fractional tick retained from play.
     // Unpause/travel starts accumulating normally on its next effective frame.
     if (speed == 0) _UpdateAccum = 0;
     _UpdateAccum += ups * dtMs / 1000.0;
     _UpdateAccum = std::min(_UpdateAccum, ups * 0.25 + 2); // never queue more than 1/4 s of catch-up
     int n = (int)_UpdateAccum;
-    int done = 0;
     while (done < n) {
         s.Update(1);
         done++;
@@ -273,6 +314,7 @@ void App::LiveFrame(const AppInput& in, double dtMs) {
         if (_Cfg.VMBudgetMs > 0 && (Now() - t0) > _Cfg.VMBudgetMs) { _UpdateAccum = 0; break; }
     }
     if (done == n) _UpdateAccum = std::max(0.0, _UpdateAccum - n);
+    }
     Stats.Updates = done;
     Stats.Vm = Now() - t0;
     entryMark("vm");
@@ -466,6 +508,10 @@ void App::Frame(const AppInput& inRaw, double dtMs) {
             _Front->EnteredLot();
             ApplyPlaySettings(); // Free Will -> global 30 (front/AppFlow.cpp)
             _UpdateAccum = 0;
+            _TS1Cadence = {};
+            // The entering HUD starts at Normal (possibly paused). A custom
+            // rate from another lot must not survive behind that selection.
+            CheatState::Get().SetTS1RawSimSpeed(760);
             // The original preserves the saved Pause word independently of
             // the mode used to save; its opened HUD always chooses Live/Build.
             Speed = _Session->CanEnterLive() && _Session->VM()->GetGlobalValue(17) == 0 ? 1 : 0;

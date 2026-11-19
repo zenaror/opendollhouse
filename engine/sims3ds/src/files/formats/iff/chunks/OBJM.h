@@ -161,6 +161,8 @@ struct OBJMInstance {
 
     /// Each tile has a linked list of objects on the same tile - this slot points to the next object.
     OBJMSlot LinkedSlot;
+    // Decoder metadata only: source434578 grows/overlays exactly this prefix.
+    int32_t SavedSlotRecordCount = -1;
     /// A pair for each object container slot. Second field appears to be the contained object ID.
     std::vector<OBJMSlot> Slots;
     std::vector<int16_t> DynamicSpriteFlags;

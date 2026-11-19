@@ -72,6 +72,7 @@ struct Fixture {
         // contract consults the canonical room map for candidate admission/cap.
         Context.Architecture()->Rooms[0].Map.assign(Width*Width,0);
         Context.RoomInfo.resize(1);
+        Context.RebuildEnvironmentGeometry();
         Context.EnvironmentMaps.resize(1);
         Context.EnvironmentMaps[0].assign(Width*Width,0x00010001u);
         Context.EnvironmentRooms.resize(3);
@@ -86,8 +87,15 @@ struct Fixture {
         Target->MultitileGroup=&TargetGroup;TargetGroup.AddObject(Target.get());
         WallObject->MultitileGroup=&WallObjectGroup;WallObjectGroup.AddObject(WallObject.get());
         Machine.AddEntity(Actor.get());Machine.AddEntity(Target.get());Machine.AddEntity(WallObject.get());
-        Actor->Position(LotTilePos(24,24,1));Target->Position(LotTilePos(Center,Center,1));
-        WallObject->Position(LotTilePos(Center,Center,1));
+        Actor->Thread=std::make_unique<VMThread>(&Context,Actor.get(),16);
+        Target->Thread=std::make_unique<VMThread>(&Context,Target.get(),16);
+        WallObject->Thread=std::make_unique<VMThread>(&Context,WallObject.get(),16);
+        //These are passable geometry markers until a control explicitly makes
+        //WallObject a chair. Register source numeric bounds and tile ownership
+        //without introducing unrelated blocking objects at the target center.
+        Target->SetFlag(VMEntityFlags::AllowPersonIntersection,true);
+        WallObject->SetFlag(VMEntityFlags::AllowPersonIntersection,true);
+        position(*Actor,24,24);position(*Target,Center,Center);position(*WallObject,Center,Center);
         Actor->SetValue(VMStackObjectVariable::PlacementFlags,int16_t(VMPlacementFlags::OnTerrain));
         Actor->SetPersonData(VMPersonDataVariable::RouteFootprintMask,8);
         Actor->RadianDirection(0.1234567f);
@@ -96,6 +104,11 @@ struct Fixture {
     std::vector<VMFindLocationResult> find(SLOTItem& slot) {
         VMSlotParser parser(&slot);
         return parser.FindAvaliableLocations(Target.get(),&Context,Actor.get());
+    }
+    void position(VMEntity& entity,int x,int y) {
+        entity.PrePositionChange(&Context);
+        entity.Position(LotTilePos(int16_t(x),int16_t(y),1));
+        entity.PositionChange(&Context,true);
     }
     void wall(int x,int y,uint8_t bits) {
         Context.Architecture()->Walls[0][size_t(y)*Width+x].Segments=static_cast<FSO::LotView::Model::WallSegments>(bits);
@@ -166,21 +179,26 @@ static void admissionRows() {
 
 static void chairs() {
     Fixture f;auto slot=authored(1,16,32);slot.Standing=0;slot.Sitting=1;
-    auto* chair=f.WallObject.get();chair->Position(LotTilePos(72,40,1));chair->Direction(Direction::SOUTH);
+    auto* chair=f.WallObject.get();chair->Direction(Direction::SOUTH);f.position(*chair,72,40);
+    chair->SetValue(VMStackObjectVariable::Flags,0);
     f.Definition.ChairEntryFlags=2;chair->EntryPoints[26].ActionFunction=1;chair->Contained.resize(2);
+    f.Context.TS1EnsureHierarchy(chair);
+    f.Context.TS1HierarchyNodes[chair->ObjectID].Slots.resize(3);
     f.Context.SpatialTileHeads[0][2*8+4]=chair->ObjectID;
     const auto got=f.find(slot);
     check(got.size()==1 && got[0].Chair==chair && got[0].RouteEntryFlags==SLOTFlags::NORTH_EAST,
         "generic chair consumer finds independent neighbor1 through canonical tile head");
     check(got[0].Position==LotTilePos(56,56,1) && got[0].Score==132,
         "chair neighbor scores its radius but retains original cell destination");
-    chair->Contained[1]=f.Target.get();
+    //Source1 is native physical0; physical1 must not select the occupant.
+    chair->Contained[1]=f.Actor.get();
+    f.Context.TS1HierarchyNodes[chair->ObjectID].Slots[1]=f.Target->ObjectID;
     VMSlotParser occupied(&slot);const auto blocked=occupied.FindAvaliableLocations(f.Target.get(),&f.Context,f.Actor.get());
     check(blocked.empty() && occupied.Blocker==f.Target.get() && occupied.FailCode==FSO::SimAntics::Model::Routing::VMRouteFailCode::DestChairOccupied,
-        "occupied second chair slot rejects and records occupant with source failure9 priority");
-    chair->Contained[1]=f.Actor.get();
+        "occupied source1 chair slot rejects and records occupant with source failure9 priority");
+    f.Context.TS1HierarchyNodes[chair->ObjectID].Slots[1]=f.Actor->ObjectID;
     check(f.find(slot).size()==1,"caller already occupying chair slot remains eligible");
-    chair->Contained[1]=nullptr;chair->SetValue(VMStackObjectVariable::Flags,16);
+    chair->Contained[1]=nullptr;f.Context.TS1HierarchyNodes[chair->ObjectID].Slots[1]=0;chair->SetValue(VMStackObjectVariable::Flags,16);
     check(f.find(slot).empty(),"tile-head object lookup excludes original flag16 objects");
     chair->SetValue(VMStackObjectVariable::Flags,6);
     check(f.find(slot).size()==1,"tile-head flags4+2 admit the original alternative object class");
@@ -212,26 +230,69 @@ static void chairs() {
 static void groupAndPreferred() {
     Fixture f;auto point=authored(0x10000);
     f.TargetGroup.MultiTile=true;f.TargetGroup.Objects.push_back(f.WallObject.get());
-    f.WallObject->Position(LotTilePos(73,74,1));
+    f.position(*f.WallObject,73,74);
     const auto average=f.find(point);
     check(average.size()==1 && average[0].Position==LotTilePos(72,73,1),
         "source group center integer-divides summed parts before offset projection");
-    f.WallObject->Position(LotTilePos(75,72,1));point.Facing=SLOTFacing::FaceTowardsObject;
+    f.position(*f.WallObject,75,72);point.Facing=SLOTFacing::FaceTowardsObject;
     const auto towardTarget=f.find(point);
     check(towardTarget.size()==1 && towardTarget.front().Position==LotTilePos(73,72,1) &&
         towardTarget.front().RadianDirection==float(6*(M_PI/4)),
         "group-centered point still finishes facing actual target position");
     f.TargetGroup.MultiTile=false;f.TargetGroup.Objects.pop_back();
-    auto* chair=f.WallObject.get();chair->Position(LotTilePos(72,40,1));chair->Direction(Direction::SOUTH);
+    auto* chair=f.WallObject.get();chair->Direction(Direction::SOUTH);f.position(*chair,72,40);
     f.Definition.ChairEntryFlags=2;chair->EntryPoints[26].ActionFunction=1;
-    f.Actor->Position(LotTilePos(72,40,1));f.Actor->Container=chair;
+    f.position(*f.Actor,72,40);
+    f.Actor->SetValue(VMStackObjectVariable::ParentId,chair->ObjectID);
+    f.Actor->SetValue(VMStackObjectVariable::SlotHierNumber,1);
     auto slot=authored(1,16,32);const auto seated=f.find(slot);
     check(!seated.empty() && seated.front().Position==LotTilePos(56,56,1) && seated.front().Score==154,
         "seated preferred point uses entry-mask exit and adds20 to integer-local comparison");
-    f.Actor->Container=nullptr;
+    f.Actor->SetValue(VMStackObjectVariable::ParentId,0);
+    f.Actor->SetValue(VMStackObjectVariable::SlotHierNumber,-1);
     const auto standing=f.find(slot);
     check(!standing.empty() && standing.front().Score==134,
         "same source candidate without chair exit preference retains unbonused score");
+}
+
+// Literal source vectors intentionally differ from physical Contained. These
+// controls execute the public SLOT consumer, rather than duplicating its walk.
+static void sourceHierarchyConsumers() {
+    Fixture f;auto slot=authored(0x55,16,32);
+    auto* root=f.Target.get();auto* child=f.WallObject.get();
+    f.Context.TS1EnsureHierarchy(root);f.Context.TS1EnsureHierarchy(child);
+    f.Context.SpatialTileHeads[0][4*8+4]=root->ObjectID;
+    f.Context.TS1HierarchyNodes[root->ObjectID].Slots={0,0};
+    f.Context.TS1HierarchyNodes[child->ObjectID].Slots={0};
+    root->Contained.resize(1);root->Contained[0]=child;
+    child->SetValue(VMStackObjectVariable::WallBlockFlags,255);
+    check(f.find(slot).size()==12,
+        "directional walls ignore a physical-only child absent from the source vector");
+    f.Context.TS1HierarchyNodes[root->ObjectID].Slots={child->ObjectID,0};
+    check(f.find(slot).empty(),
+        "directional wall DFS includes source0 even when physical containment differs");
+    f.Context.TS1HierarchyNodes[root->ObjectID].Slots={0,child->ObjectID};
+    root->Contained[0]=nullptr;
+    check(f.find(slot).empty(),
+        "directional wall DFS also includes source1 with no physical cached child");
+    child->SetValue(VMStackObjectVariable::WallBlockFlags,0);
+    f.Context.TS1HierarchyNodes[root->ObjectID].Slots={0};
+    child->Direction(Direction::SOUTH);f.position(*child,72,40);
+    child->SetValue(VMStackObjectVariable::Flags,0);
+    child->EntryPoints[26].ActionFunction=1;f.Definition.ChairEntryFlags=2;
+    f.Context.TS1HierarchyNodes[child->ObjectID].Slots={0,0};
+    root->SetValue(VMStackObjectVariable::Flags,16);
+    f.Context.SpatialTileHeads[0][2*8+4]=root->ObjectID;
+    f.Context.TS1HierarchyNodes[root->ObjectID].Slots={child->ObjectID,0};
+    slot=authored(1,16,32);slot.Standing=0;slot.Sitting=1;
+    const auto throughSourceZero=f.find(slot);
+    check(throughSourceZero.size()==1 && throughSourceZero.front().Chair==child,
+        "chair lookup follows independent source0 past an excluded tile root");
+    f.Context.TS1HierarchyNodes[root->ObjectID].Slots={0,child->ObjectID};
+    check(f.find(slot).empty(),
+        "chair lookup does not descend source1 like the directional wall DFS");
+    check(f.Context.RandomSeed==3,
+        "source hierarchy queries preserve the RNG for directed uncapped probes");
 }
 
 static void scoresAndReduction() {
@@ -263,7 +324,7 @@ static void scoresAndReduction() {
 }
 
 int main() {
-    try { pointAndMetadata();admissionRows();chairs();groupAndPreferred();scoresAndReduction();
+    try { pointAndMetadata();admissionRows();chairs();groupAndPreferred();sourceHierarchyConsumers();scoresAndReduction();
         std::cout << "TS1 authored SLOT consumer: " << checks << " checks passed\n";return 0;
     } catch (const std::exception& error) {
         std::cerr << "TS1 authored SLOT consumer failed: " << error.what() << "\n";return 1;

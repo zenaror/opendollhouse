@@ -224,11 +224,19 @@ uint64_t VMAvatar::StartTS1MotionRequest(Engine::VMStackFrame* owner,
     model.OwnerRoutine = owner->Routine ? owner->Routine->ID : 0;
     model.OwnerPC = owner->InstructionPointer;
     model.Path = path; model.PathCursor = 0;
+    if (UsesTS1OriginalLocomotion() && TS1AnimationController.MotionStepKnown) {
+        //589cab..cd5 rebases model88 from the published integer heading4c,
+        //alongside the integer position rebase. Preserve older native adapters.
+        Direction(Direction());
+    }
     TS1MotionX = Position().x; TS1MotionY = Position().y;
     TS1MotionPublishedX = Position().x; TS1MotionPublishedY = Position().y;
     TS1MotionLevel = Position().Level; TS1MotionPositionKnown = true;
     model.TargetX = TS1MotionX; model.TargetY = TS1MotionY; model.TargetHeading = RadianDirection();
-    model.Status = 1; model.ModelState = 3; model.Stopped = 0;
+    model.Status = 1; model.ModelState = UsesTS1OriginalLocomotion()
+        && TS1AnimationController.MotionTransitionKnown ? TS1AnimationController.ModelState : 3;
+    if (UsesTS1OriginalLocomotion()) TS1AnimationController.ModelState = model.ModelState;
+    model.Stopped = 0;
     model.StopRequested = false; model.Outcome = 0; model.SegmentProgress = 0;
     SetTS1StopProfile(*this);
     return model.Token;
@@ -252,7 +260,30 @@ int VMAvatar::PollTS1MotionRequest(uint64_t token) {
     if (!std::isfinite(TS1MotionX) || !std::isfinite(TS1MotionY)
         || TS1MotionX < -32768.f || TS1MotionX > 32767.f || TS1MotionY < -32768.f || TS1MotionY > 32767.f) return 0;
     auto target = Position();
-    target.x = static_cast<int16_t>(TS1MotionX); target.y = static_cast<int16_t>(TS1MotionY);
+    if (UsesTS1OriginalLocomotion() && TS1AnimationController.MotionStepKnown) {
+        //589d8c..c0: round model80/84, then48329c(path,-1) chooses the
+        //closest physical segment, excluding the final orientation point.
+        const int x = int(double(TS1MotionX) + 0.5), y = int(double(TS1MotionY) + 0.5);
+        Engine::Routing::TS1ConstrainedPoint closest{x,y};
+        if (model.Path.size() >= 3) {
+            closest = {model.Path[0].X,model.Path[0].Y};
+            auto distance = [x,y](int px,int py) {
+                const double dx = double(px)-x, dy = double(py)-y;
+                return float(dx*dx+dy*dy);
+            };
+            float best = distance(closest.X,closest.Y);
+            for (size_t i=0;i+2<model.Path.size();++i) {
+                const auto point = Engine::Routing::TS1ConstrainToSegment(x,y,
+                    model.Path[i].X,model.Path[i].Y,model.Path[i+1].X,model.Path[i+1].Y);
+                const float d = distance(point.X,point.Y);
+                if (d < best) { best=d; closest=point; }
+            }
+        }
+        if (closest.X < -32768 || closest.X > 32767 || closest.Y < -32768 || closest.Y > 32767) return 0;
+        target.x = int16_t(closest.X); target.y = int16_t(closest.Y);
+    } else {
+        target.x = static_cast<int16_t>(TS1MotionX); target.y = static_cast<int16_t>(TS1MotionY);
+    }
     const auto valid = PositionValid(target, Direction(), Thread->Context);
     if (valid.Status != VMPlacementError::Success) return 0;
     const auto heading = RadianDirection();
@@ -270,7 +301,7 @@ bool VMAvatar::StopTS1MotionRequest(uint64_t token) {
     if (model.Status == 1 || model.Status == -1) { model.StopRequested = true; return false; }
     model.Status = 0; model.PathCursor = -1; model.StopDeadline = 0;
     model.TargetX = TS1MotionX; model.TargetY = TS1MotionY; model.TargetHeading = RadianDirection();
-    model.Stopped = 1; model.ModelState = 3;
+    model.Stopped = 1; SetTS1MotionModelState(3);
     return true;
 }
 
@@ -282,6 +313,12 @@ void VMAvatar::DetachTS1MotionRequest(uint64_t token) {
         if (frame->TS1MotionToken == token) frame->TS1MotionToken = 0;
     }
     const auto next = model.NextToken;
+    if (UsesTS1OriginalLocomotion()) {
+        // A dead owner cannot continue its transition. Model selector/latches
+        // remain lifetime state; a later request must not inherit old anchors.
+        TS1AnimationController.MotionTransitionKnown = false;
+        TS1AnimationController.ModelState = 3;
+    }
     model = Engine::Routing::TS1MotionRequest{};
     model.NextToken = next;
 }
@@ -290,6 +327,14 @@ void VMAvatar::UpdateTS1ModelMotion() {
     using namespace Engine::Routing;
     auto& model = TS1ModelMotion;
     if (!Thread || !Thread->Context || !Thread->Context->Clock) return;
+    auto& controller = TS1AnimationController;
+    if (controller.OriginalLifecycle && !controller.OriginalLocomotion
+        && model.Kind == TS1MotionKind::None && controller.ModelState == 3 && !CurrentAnimationState()) {
+        controller.OriginalLocomotion = true;
+        controller.MotionCode = -1;
+        controller.Moving = controller.StopLatched = controller.StepLatched = controller.MotionForegroundTransfer = 0;
+        controller.MotionTransitionKnown = false;
+    }
     if (TS1AnimationController.OriginalLifecycle) {
         const auto state=model.Kind==TS1MotionKind::None ? TS1AnimationController.ModelState : model.ModelState;
         if ((state==2 || (state==1 && GetPersonData(VMPersonDataVariable::DecorationFlags)==0)) &&
@@ -310,6 +355,13 @@ void VMAvatar::UpdateTS1ModelMotion() {
         DetachTS1MotionRequest(model.Token); return;
     }
     model.LastModelTick = tick;
+    struct PublishModelState {
+        VMAvatar& Avatar;
+        ~PublishModelState() {
+            if (Avatar.UsesTS1OriginalLocomotion())
+                Avatar.TS1AnimationController.ModelState = Avatar.TS1ModelMotion.ModelState;
+        }
+    } publishModelState{*this};
     UpdateTS1MotionRate(model.ModelState);
     // Source190 state0 runs the script animation and common animator only.
     // A child script can enter this state while its parent still owns a route;
@@ -333,10 +385,17 @@ void VMAvatar::UpdateTS1ModelMotion() {
         // redispatch permits several state transitions, but not a second walk
         // displacement or consumption of a just-created stop window.
         for (size_t i = 0; i < model.Path.size() + 16; ++i) {
+            if (UsesTS1OriginalLocomotion() && model.ModelState == 3
+                && !controller.MotionTransitionKnown
+                && TryTS1ShortMotion(model.TargetX, model.TargetY, model.TargetHeading)) {
+                if (AdvanceTS1MotionTransition()) return;
+                continue;
+            }
             const auto state = route->State;
             const auto deadline = model.StopDeadline;
             const auto result = route->AdvanceTS1Model();
-            model.ModelState = model.Status == 2 ? 3 : route->TS1MotionModelState();
+            if (UsesTS1OriginalLocomotion()) model.ModelState = controller.ModelState;
+            else SetTS1MotionModelState(model.Status == 2 ? 3 : route->TS1MotionModelState());
             if (result == Engine::VMPrimitiveExitCode::RETURN_FALSE) {
                 model.Status = 3; model.Outcome = 3; return;
             }
@@ -352,6 +411,11 @@ void VMAvatar::UpdateTS1ModelMotion() {
     // Each iteration must change state or consume a path node. Source may
     // redispatch3→9→3 in one update, unlike a per-state tick delay.
     for (size_t i = 0; i < model.Path.size() + 16; ++i) {
+        if (UsesTS1OriginalLocomotion() && (controller.MotionTransitionKnown || controller.ModelState == 12)) {
+            if (AdvanceTS1MotionTransition()) return;
+            if (model.Status == 2 || model.Status == 3) return;
+            continue;
+        }
         if (model.ModelState == 4) {
             auto clip = CurrentAnimationState();
             if (clip && clip->TS1Phase < 1.f) {
@@ -366,6 +430,7 @@ void VMAvatar::UpdateTS1ModelMotion() {
             continue;
         }
         if (model.ModelState == 3) {
+            if (TryTS1ShortMotion(model.TargetX, model.TargetY, model.TargetHeading)) continue;
             const auto turn = TS1SelectTurn((model.TargetHeading - RadianDirection()) / eighthTurn,
                 TS1MotionRate, GetPersonData(VMPersonDataVariable::Gender));
             if (turn.Animate) {
@@ -375,15 +440,28 @@ void VMAvatar::UpdateTS1ModelMotion() {
                 if (!animation) { model.Status = 3; model.Outcome = 3; return; }
                 model.TurnStart = RadianDirection();
                 model.TurnResidual = turn.Residual * eighthTurn;
-                Animations.clear();
-                auto clip = std::make_shared<VMAnimationState>(animation, false);
-                StartTS1Animation(clip, TS1MotionRate); Animations.push_back(clip);
-                model.ForegroundAnimation = animation->Name; model.ForegroundInterruptible = 0;
-                model.BlendActive = false;
-                model.ModelState = 4;
+                if (UsesTS1OriginalLocomotion()) {
+                    auto clip = SelectTS1MotionAnimation(turn.ClipCode, false);
+                    clip->TS1CompositionPriority = 5;
+                    BeginTS1MotionTransition(4, TS1MotionX, TS1MotionY,
+                        model.TurnStart + model.TurnResidual, TS1MotionX, TS1MotionY, model.TargetHeading);
+                } else {
+                    Animations.clear();
+                    auto clip = std::make_shared<VMAnimationState>(animation, false);
+                    StartTS1Animation(clip, TS1MotionRate); Animations.push_back(clip);
+                    model.ForegroundAnimation = animation->Name; model.ForegroundInterruptible = 0;
+                    model.BlendActive = false;
+                    model.ModelState = 4;
+                }
                 continue;
             }
-            if (model.Status == -1) { model.Status = 2; model.Outcome = 2; return; }
+            if (model.Status == -1) {
+                model.Status = 2;
+                if (!(UsesTS1OriginalLocomotion() && controller.MotionStepKnown
+                    && GetValue(VMStackObjectVariable::RoutePrefference) != 0 && model.Outcome == 1))
+                    model.Outcome = 2;
+                return;
+            }
             model.ModelState = 9;
             continue;
         }
@@ -397,12 +475,25 @@ void VMAvatar::UpdateTS1ModelMotion() {
         auto clip = CurrentAnimationState();
         const bool direct = PersonData[64] != 0;
         const bool alternate = GetValue(VMStackObjectVariable::RoutePrefference) != 0;
+        if (alternate && UsesTS1OriginalLocomotion() && controller.MotionStepKnown) {
+            const float threshold = GetValue(VMStackObjectVariable::WalkStyle) == 1 ? 3.f : 2.f;
+            if (model.Outcome == 0 && distance >= threshold*1.5f) return;
+            const float tx = float(int64_t(tangent.X)-anchor.X), ty = float(int64_t(tangent.Y)-anchor.Y);
+            const float goalHeading = tx == 0.f && ty == 0.f ? 2.f*eighthTurn : std::atan2(tx,-ty);
+            const int terminal = PrepareTS1NoStopTerminal(float(anchor.X),float(anchor.Y),goalHeading);
+            if (terminal == 1) { AdvanceTS1NoStopTerminal(); return; }
+            if (terminal == 2) return;
+            if (terminal == 3) continue;
+        }
         const auto step = alternate ? TS1StopWindowStep::Finalize
             : TS1StepStopWindow(model, distance, clip ? clip->TS1Phase : 0.f,
                 clip != nullptr, clip && clip->EndReached, clip ? clip->Speed : 0.f,
                 clip && clip->Anim ? clip->Anim->Duration : 0.f, TS1MotionRate,
                 GetValue(VMStackObjectVariable::WalkStyle), direct, now, clip ? clip->Weight : 1.f);
+        if (UsesTS1OriginalLocomotion() && step == TS1StopWindowStep::Created)
+            controller.StopLatched = 1;
         if (step != TS1StopWindowStep::Finalize) return;
+        if (UsesTS1OriginalLocomotion()) controller.StopLatched = controller.StepLatched = 0;
         // Body-facing paths have duplicate physical nodes; target is a copied
         // tangent, so deleting/moving that object cannot change this request.
         TS1MotionX = model.TargetX = float(anchor.X);
@@ -413,7 +504,8 @@ void VMAvatar::UpdateTS1ModelMotion() {
         model.TargetHeading = alternate && !direct ? RadianDirection()
             : tx == 0.f && ty == 0.f ? 2.f * eighthTurn : std::atan2(tx, -ty);
         model.StopDeadline = 0; model.Status = -1; model.ModelState = 3; model.SegmentProgress = 1.f;
-        Animations.clear();
+        if (UsesTS1OriginalLocomotion()) ClearTS1MotionAnimation();
+        else Animations.clear();
         model.BlendActive = false; model.ForegroundAnimation.clear(); model.ForegroundInterruptible = 0;
     }
 }
@@ -466,7 +558,10 @@ void VMAvatar::SkinTone(AppearanceType value) {
 }
 
 st::Vector3 VMAvatar::VisualPosition() const { return (UseWorld && WorldUI) ? WorldUI->Position : st::Vector3(); }
-void VMAvatar::VisualPosition(const st::Vector3& value) { if (UseWorld && WorldUI) WorldUI->Position = value; }
+void VMAvatar::VisualPosition(const st::Vector3& value) {
+    TS1VisualPassBaseValid = false;
+    if (UseWorld && WorldUI) WorldUI->Position = value;
+}
 
 void VMAvatar::RadianDirection(float value) {
     _RadianDirection = value;
@@ -498,6 +593,9 @@ bool VMAvatar::IsCat() {
 }
 
 VMAvatar::VMAvatar(FSO::Content::GameObject* obj) : VMEntity(obj) {
+    // Use the same physical cache as VMEntity; the old shadow array could
+    // not grow when an original saved slot prefix exceeded the resource.
+    Contained.assign(5, nullptr);
     PersonData.fill(0);
     MotiveData.fill(0);
     auto state = std::make_shared<TSOPlatform::VMTSOAvatarState>(); //todo: ts1 switch
@@ -996,6 +1094,7 @@ void VMAvatar::SubmitSourceVars(FSO::HIT::HITThread* thread, int16_t objectID) {
 }
 
 void VMAvatar::Tick() {
+    TS1VisualPassBaseValid = false;
     if (Thread && Thread->Context) Thread->Context->ObserveVisualActor(this);
     Velocity = st::Vector3(0, 0, 0);
     VMEntity::Tick();
@@ -1358,9 +1457,15 @@ void VMAvatar::FractionalAnim(float fraction) {
     }
     ApplyHeadSeek(fraction); // after all ordinary/carry channels, before absolute matrices
 
-    //TODO: if this gets changed to run at variable framerate need to "remember" visual position
     avatar->Avatar->ReloadSkeleton();
-    VisualPosition(VisualPosition() + fraction * Velocity);
+    if (Thread && Thread->Context && Thread->Context->VM->TS1) {
+        if (!TS1VisualPassBaseValid) {
+            TS1VisualPassBase = VisualPosition();
+            TS1VisualPassBaseValid = true;
+        }
+        // Do not invalidate the anchor through the external position setter.
+        if (UseWorld && WorldUI) WorldUI->Position = TS1VisualPassBase + fraction * Velocity;
+    } else VisualPosition(VisualPosition() + fraction * Velocity);
 }
 
 int16_t VMAvatar::GetPersonData(VMPersonDataVariable variable) {
@@ -1542,7 +1647,12 @@ void VMAvatar::PrePositionChange(VMContext* context) {
     }
 
     context->UnregisterObjectPos(this);
-    if (Container != nullptr) {
+    const bool wasContained=Container!=nullptr;
+    if(context->VM && context->VM->TS1 && !GhostImage && !context->TS1HierarchyPublication) {
+        context->TS1RemovePlacement(this);
+        ClearTS1PhysicalPlacement(context);
+        if(wasContained)return;
+    } else if (Container != nullptr) {
         Container->ClearSlot(ContainerSlot);
         return;
     }
@@ -1556,12 +1666,42 @@ int32_t VMAvatar::TotalSlots() {
     return (int32_t)Contained.size();
 }
 
+void VMAvatar::TS1PhysicalHandChanged(VMEntity* previous) {
+    const bool original=TS1AnimationController.OriginalLifecycle && !TS1ExternalAnimationClock &&
+        Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1;
+    if(original)return; // source model prepass owns custom/suppressed carry
+    auto* current=GetSlot(0);
+    if(previous && !current)CarryAnimationState=nullptr;
+    else if(current && !CarryAnimationState) {
+        auto content=FSO::Content::Content::Get();
+        if(!content || !content->AvatarAnimations)return; // no model resources yet
+        CarryAnimationState=std::make_shared<VMAnimationState>(content->AvatarAnimations->Get("a2o-rarm-carry-loop.anim"),false);
+        StartTS1Animation(CarryAnimationState);
+        if(CarryAnimationState->TS1Clock)CarryAnimationState->Loop=true;
+    }
+}
+
 bool VMAvatar::PlaceInSlot(VMEntity* obj, int32_t slot, bool cleanOld, VMContext* context) {
     if (!obj || obj->Dead || obj == this || slot < 0 || slot >= TotalSlots()) return false;
     std::set<VMEntity*> ancestors;
     for (auto parent = this->Container; parent != nullptr; parent = parent->Container)
         if (parent == obj || !ancestors.insert(parent).second) return false;
     if (!cleanOld && obj->Container && (obj->Container != this || obj->ContainerSlot != slot)) return false;
+    if(context && context->VM && context->VM->TS1 && !context->TS1HierarchyPublication &&
+        !obj->GhostImage && !GhostImage) {
+        auto* old=GetSlot(0);
+        const auto request=context->TS1PhysicalRequest(obj,this,slot);
+        context->TS1PreflightPhysicalPlacement(obj,request);
+        if(cleanOld)obj->PrePositionChange(context);
+        context->TS1CommitPhysicalPlacement(obj,request);
+        if(slot==0)TS1PhysicalHandChanged(old);
+        if(UseWorld && obj->WorldUI)
+            if(auto* component=dynamic_cast<ObjectComponent*>(obj->WorldUI.get()))component->ForceDynamic=true;
+        obj->Position(Position());
+        context->InvalidateRoofObject(obj);
+        if(cleanOld)obj->PositionChange(context,false);
+        return true;
+    }
     if (GetSlot(slot) == obj) return true; //already in slot
     if (GetSlot(slot) != nullptr) return false;
     if (cleanOld) obj->PrePositionChange(context);
@@ -1594,7 +1734,11 @@ bool VMAvatar::PlaceInSlot(VMEntity* obj, int32_t slot, bool cleanOld, VMContext
     return true;
 }
 
-int32_t VMAvatar::GetSlotHeight(int32_t /*slot*/) {
+int32_t VMAvatar::GetSlotHeight(int32_t slot) {
+    if(Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1 && !GhostImage) {
+        const auto* metadata=Thread->Context->TS1SourceSlotMetadata(this,slot<0?-1:slot+1);
+        return metadata?metadata->Height:-1;
+    }
     return 5; //in hand
     //TODO: verify
 }
@@ -1606,6 +1750,16 @@ VMEntity* VMAvatar::GetSlot(int32_t slot) {
 void VMAvatar::ClearSlot(int32_t slot) {
     auto child = GetSlot(slot);
     if (child == nullptr) return;
+    if(Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1 &&
+        !Thread->Context->TS1HierarchyPublication && !GhostImage &&
+        Thread->Context->TS1SourceSlot(this,slot+1)==child) {
+        auto* context=Thread->Context;
+        context->TS1RemovePlacement(child);
+        child->ClearTS1PhysicalPlacement(context);
+        if (slot == 0) TS1PhysicalHandChanged(child);
+        context->InvalidateRoofObject(child);
+        return;
+    }
     if (Thread && Thread->Context) Thread->Context->InvalidateRoofObject(child);
     child->Container = nullptr;
     child->ContainerSlot = -1;

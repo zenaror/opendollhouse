@@ -335,8 +335,10 @@ uint8_t TS1WallDirections(VMContext* context, const LotTilePos& point, unsigned 
             if (!object || object->Dead) continue;
             const int direction=TS1Heading(object);
             if (direction>=0) mask|=TS1ObjectWallMask(object->GetValue(VMStackObjectVariable::WallBlockFlags),unsigned(direction));
-            for (int slot=object->TotalSlots()-1;slot>=0;--slot)
-                if (auto* child=object->GetSlot(slot)) pending.push_back(child);
+            //435a8f uses43f3b9: ascending source0..N preorder.
+            //Push in reverse because pending is a LIFO stack.
+            for (size_t slot=context->TS1SourceVectorExtent(object);slot>0;--slot)
+                if (auto* child=context->TS1SourceSlot(object,int(slot-1))) pending.push_back(child);
         }
     }
     return TS1RotateMask(mask,heading);
@@ -358,7 +360,7 @@ VMEntity* TS1ObjectAt(VMContext* context, const LotTilePos& point) {
     while (object && remaining--) {
         const auto flags=uint16_t(object->GetValue(VMStackObjectVariable::Flags));
         if ((flags&4) ? bool(flags&2) : !(flags&16)) return object;
-        object=object->TotalSlots()>0?object->GetSlot(0):nullptr;
+        object=context->TS1SourceSlot(object,0);
     }
     return nullptr;
 }
@@ -459,9 +461,10 @@ std::vector<VMFindLocationResult> VMSlotParser::FindTS1Locations(
     // exit. These probes precede generation and consume no score-noise draws.
     const st::Point callerPoint(caller->Position().x,caller->Position().y);
     st::Point preferred=callerPoint;
-    auto* seated=caller->Container;
-    size_t containmentLimit=context->VM->Entities.size()+1;
-    while (seated && seated->Container && containmentLimit--) seated=seated->Container;
+    //483432 calls43270d/432664 once: collapse source0 ancestors,
+    //then use the resolved physical parent; do not climb physical owners.
+    const auto placement=context->TS1ResolvePhysicalPlacement(caller,true);
+    auto* seated=context->VM->GetObjectById(placement.ParentID);
     if (TS1HasChairEntry(seated) && seated->Object && seated->Object->OBJ) {
         const int heading=TS1Heading(seated);
         const unsigned entry=seated->Object->OBJ->ChairEntryFlags;
@@ -511,7 +514,7 @@ std::vector<VMFindLocationResult> VMSlotParser::FindTS1Locations(
                     chair=TS1ObjectAt(context,lookup);
                     if (!TS1HasChairEntry(chair) || TS1Heading(chair)!=int((cell.Heading+4)&7) ||
                         !chair->Object || !chair->Object->OBJ || !(chair->Object->OBJ->ChairEntryFlags&(1u<<probe))) continue;
-                    auto* occupant=chair->TotalSlots()>1?chair->GetSlot(1):nullptr;
+                    auto* occupant=context->TS1SourceSlot(chair,1);
                     if (occupant && occupant!=caller) { Blocker=occupant;chairOccupied=true;continue; }
                     entry=uint8_t(1u<<probe);weight=sitting;
                 }

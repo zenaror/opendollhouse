@@ -23,6 +23,7 @@
 #include "simantics/model/VMSetToNextCache.h"
 #include "simantics/engine/VMPrimitiveRegistration.h"
 #include "common/TS1/TS1SpatialLighting.h"
+#include "simantics/engine/VMTS1Hierarchy.h"
 
 namespace FSO { namespace SimAntics {
 class VM;
@@ -82,6 +83,31 @@ public:
     FSO::Common::TS1::SpatialRoomSchedule SpatialSchedule;
     std::vector<int16_t> SpatialCanonicalIds;
     std::array<std::vector<int16_t>, 2> SpatialTileHeads;
+    // Original source-slot0 tile links are not physical Contained entries.
+    std::unordered_map<int16_t, Engine::VMTS1HierarchyNode> TS1HierarchyNodes;
+    bool TS1HierarchyPublication = false; // transient validated restore scope
+    void TS1EnsureHierarchy(VMEntity* entity);
+    VMEntity* TS1SourceSlot(const VMEntity* entity, int sourceIndex) const;
+    const Engine::TS1SlotMetadata* TS1SourceSlotMetadata(const VMEntity* entity, int sourceSlot) const;
+    size_t TS1SourceVectorExtent(const VMEntity* entity) const;
+    VMEntity* TS1SourceParent(const VMEntity* entity) const;
+    Engine::VMTS1RawPlacementLink TS1CaptureRawLink(const VMEntity* entity) const;
+    Engine::VMTS1PhysicalPlacement TS1PhysicalRequest(const VMEntity* entity,
+        VMEntity* parent, int physicalSlot) const;
+    static Engine::VMTS1RawPlacementLink TS1NormalizePhysicalRequest(
+        const Engine::VMTS1PhysicalPlacement& request);
+    void TS1PublishRawLink(VMEntity* entity, const Engine::VMTS1RawPlacementLink& link);
+    void TS1DetachRawLink(VMEntity* entity);
+    void TS1RemovePlacement(VMEntity* entity);
+    void TS1PreflightPhysicalPlacement(VMEntity* entity, const Engine::VMTS1PhysicalPlacement& request);
+    void TS1CommitPhysicalPlacement(VMEntity* entity,
+        const Engine::VMTS1PhysicalPlacement& request);
+    Engine::VMTS1PhysicalPlacement TS1ResolvePhysicalPlacement(VMEntity* entity,
+        bool normalizeOrphan = true) const;
+    Engine::VMTS1HierarchyState TS1CaptureHierarchy() const;
+    void TS1ValidateHierarchy(const Engine::VMTS1HierarchyState& state) const;
+    void TS1PublishHierarchy(Engine::VMTS1HierarchyState&& state,
+        bool preservePhysicalViews = false);
     struct SpatialPlacement { int Room = -5; bool Registered = false; };
     std::unordered_map<const VMEntity*, SpatialPlacement> SpatialPlacements;
     int SpatialPeriod = -1;

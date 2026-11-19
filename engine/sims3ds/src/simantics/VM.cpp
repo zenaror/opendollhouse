@@ -178,6 +178,20 @@ void VM::Tick() {
     Ready = true;
 }
 
+bool VM::TS1RestrictedDispatch() const {
+    return TS1 && (GlobalState.at(17) != 0 ||
+        (GlobalState.at(19) != 0 && GlobalState.at(10) != 0));
+}
+
+void VM::DispatchTS1Owner() {
+    const bool restricted = TS1RestrictedDispatch();
+    const bool wasReady = Ready;
+    Tick();
+    // A paused owner pass must not choose the next branch of the legacy
+    // fractional-animation adapter or initialize an ordinary actor pose.
+    if (restricted) Ready = wasReady;
+}
+
 // DVD daily callback4322f2: calendar age precedes value depreciation.
 static void TS1DailyObjects(VM& vm) {
     using V=FSO::SimAntics::Model::VMStackObjectVariable;
@@ -235,6 +249,7 @@ void VM::InternalTick() {
             GlobalState[8]=int16_t(Context->Clock->Year);
         }
     };
+    const bool restricted = TS1RestrictedDispatch();
     // TS1 dispatch observes the old time; the clock advances only after the
     // completed ordinary sweep. Keep the independent TSO order unchanged.
     if (TS1) publishClock();
@@ -258,14 +273,15 @@ void VM::InternalTick() {
             if (!TS1) Context->NextRandom(1);
             // The DVD gates the whole virtual Tick, including person motive
             // work. Direct checks/Init/callbacks do not enter this dispatch.
-            // Its conditional bit17 context has no native binding yet.
-            if (TS1 && (obj->Dead || !obj->TS1AdmitSchedulerTick())) continue;
+            if (TS1 && (obj->Dead || !obj->TS1AdmitSchedulerTick(restricted))) continue;
             obj->Tick(); //run object specific tick behaviors, like lockout count decrement
         }
     }
-    if (TS1) advanceClock();
-    if (TS1) DrainTS1Removals();
-    if (TS1) Engine::Utils::VMTS1Travel::KeepSelectedSim(this); // FIX(sims) H1: global 3 names a living Sim
+    if (TS1 && !restricted) advanceClock();
+    // DVD46d461 passes !ordinary to441311. Queued script removals remain
+    // pending during restricted scans and are drained after an ordinary one.
+    if (TS1 && !restricted) DrainTS1Removals();
+    if (TS1 && !restricted) Engine::Utils::VMTS1Travel::KeepSelectedSim(this); // FIX(sims) H1
     //Context.SetToNextCache.VerifyPositions(); use only for debug!
 }
 
@@ -292,6 +308,7 @@ void VM::AddEntity(VMEntity* entity) {
         entity->Object && entity->Object->OBJ)
         TS1ObjectManagerOrder.insert(TS1ObjectManagerOrder.begin(), entity);
     if (!entity->GhostImage) Context->SetToNextCache->NewObject(entity);
+    if (TS1 && !entity->GhostImage) Context->TS1EnsureHierarchy(entity);
     ObjectId = NextObjID();
 }
 
@@ -500,6 +517,7 @@ void VM::RemoveEntity(VMEntity* entity) {
     TS1ObjectManagerOrder.erase(std::remove(TS1ObjectManagerOrder.begin(),
         TS1ObjectManagerOrder.end(), entity), TS1ObjectManagerOrder.end());
     Context->RemoveSpatialEntity(entity);
+    if (TS1 && entity) Context->TS1HierarchyNodes.erase(entity->ObjectID);
     if (TS1) for (auto other : Entities)
         if (other && other!=entity && other->Thread) other->Thread->TS1ObjectUseTargetRemoved(entity);
     if (TS1 && entity && entity->Thread) entity->Thread->DiscardTS1ObjectUses();
@@ -594,6 +612,10 @@ void VM::SignalDialog(VMDialogInfo& info) {
 
 std::unique_ptr<VMSandboxRestoreState> VM::Sandbox() {
     std::unique_ptr<VMSandboxRestoreState> state(new VMSandboxRestoreState());
+    std::array<std::vector<int16_t>,2> privateHeads;
+    for(size_t story=0;story<privateHeads.size();++story)
+        privateHeads[story].assign(Context->SpatialTileHeads[story].size(),0);
+    auto privateQueries=std::make_unique<VMSetToNextCache>(Context);
     state->Entities = Entities;
     state->ObjectId = ObjectId;
     state->ObjectsById = ObjectsById;
@@ -602,9 +624,15 @@ std::unique_ptr<VMSandboxRestoreState> VM::Sandbox() {
     state->TS1ObjectManagerOrderKnown = TS1ObjectManagerOrderKnown;
     state->TS1ObjectManagerOrder = std::move(TS1ObjectManagerOrder);
     state->TS1RemovedObjectIdentities = std::move(TS1RemovedObjectIdentities);
+    state->TS1HierarchyNodes = std::move(Context->TS1HierarchyNodes);
+    state->TS1TileHeads = std::move(Context->SpatialTileHeads);
+    state->TS1HierarchyPublication = Context->TS1HierarchyPublication;
+    Context->TS1HierarchyNodes.clear();
+    Context->SpatialTileHeads=std::move(privateHeads);
+    Context->TS1HierarchyPublication=false;
     TS1PendingRemovals.clear();
 
-    Context->SetToNextCache.reset(new VMSetToNextCache(Context));
+    Context->SetToNextCache=std::move(privateQueries);
     Entities.clear();
     ObjectsById.clear();
     ObjectId = 1;
@@ -616,14 +644,17 @@ std::unique_ptr<VMSandboxRestoreState> VM::Sandbox() {
 }
 
 void VM::SandboxRestore(std::unique_ptr<VMSandboxRestoreState> state) {
-    Entities = state->Entities;
-    ObjectsById = state->ObjectsById;
+    Entities = std::move(state->Entities);
+    ObjectsById = std::move(state->ObjectsById);
     ObjectId = state->ObjectId;
     Context->SetToNextCache = std::move(state->SetToNext);
     TS1PendingRemovals = std::move(state->PendingRemovals);
     TS1ObjectManagerOrder = std::move(state->TS1ObjectManagerOrder);
     TS1ObjectManagerOrderKnown = state->TS1ObjectManagerOrderKnown;
     TS1RemovedObjectIdentities = std::move(state->TS1RemovedObjectIdentities);
+    Context->TS1HierarchyNodes=std::move(state->TS1HierarchyNodes);
+    Context->SpatialTileHeads=std::move(state->TS1TileHeads);
+    Context->TS1HierarchyPublication=state->TS1HierarchyPublication;
 }
 
 void VM::BreakpointHit(VMEntity* entity) {

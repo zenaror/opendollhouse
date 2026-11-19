@@ -74,7 +74,7 @@ void UIObjectHolder::MoveSelected(st::Vector2 pos, int8_t level) {
 
     //first, eject the object from any slots
     for (auto obj : Holding->Group->Objects) {
-        if (obj->Container != nullptr) obj->Container->ClearSlot(obj->ContainerSlot);
+        if (!vm->TS1 && obj->Container != nullptr) obj->Container->ClearSlot(obj->ContainerSlot);
     }
 
     //rotate through to try all configurations
@@ -397,7 +397,7 @@ bool UIObjectHolder::MoveObject(int16_t ObjectID, int16_t x, int16_t y, int8_t l
     VMEntity* obj = vm->GetObjectById(ObjectID);
     if (obj == nullptr) return false;
     if (auto av = dynamic_cast<VMAvatar*>(obj)) { // TS1(sims): move_objects: the Sim goes there and resets
-        if (av->Container != nullptr) av->Container->ClearSlot(av->ContainerSlot);
+        if (!vm->TS1 && av->Container != nullptr) av->Container->ClearSlot(av->ContainerSlot);
         auto r = av->SetPosition(LotTilePos(x, y, level), dir, vm->Context);
         if (r.Status != VMPlacementError::Success) return false;
         av->Reset(vm->Context);

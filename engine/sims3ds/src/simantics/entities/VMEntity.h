@@ -184,14 +184,26 @@ public:
     void TS1SetSchedulerDelay(int16_t value) {
         TS1SchedulerState = (TS1SchedulerState & 0xffff0000u) | static_cast<uint16_t>(value);
     }
-    bool TS1AdmitSchedulerTick() {
-        if ((TS1SchedulerState & 0x00010000u) == 0) return false;
+    // Lifecycle publication (431e31/42320a/432028), independent of the
+    // retained delay and all other manager flags.
+    void TS1PublishSimIndependent() {
+        const uint32_t mask=0x00020000u;
+        TS1SchedulerState=(TS1SchedulerState&~mask) |
+            (GetValue(Model::VMStackObjectVariable::SimIndependent)!=0 ? mask : 0u);
+    }
+    bool TS1AdmitSchedulerTick(bool restricted = false) {
+        if ((TS1SchedulerState & 0x00010000u) == 0 ||
+            (restricted && (TS1SchedulerState & 0x00020000u) == 0)) return false;
         const auto delay = TS1SchedulerDelay();
         if (delay > 0) { TS1SetSchedulerDelay(static_cast<int16_t>(delay - 1)); return false; }
         return true;
     }
 
     std::vector<VMEntity*> Contained;
+    // Silent publication of the physical cache after source graph validation.
+    // This does not run placement, scripts, Init, or carry transitions.
+    void PublishTS1PhysicalSlots(const std::vector<VMEntity*>& slots);
+    void ClearTS1PhysicalPlacement(VMContext* context);
     VMEntity* Container = nullptr;
     int16_t ContainerSlot = 0;
     bool Dead = false; //set when the entity is removed, threads owned by this object or with this object as callee will be cancelled/have their stack emptied.
@@ -324,6 +336,8 @@ public:
     void SetWallUse(VMArchitecture* arch, bool set);
 
     void Delete(bool cleanupAll, VMContext* context);
+    // Original virtual50/4331d4: unplace without inventing a new placement.
+    void UnplaceTS1(VMContext* context, bool notifyOldParent = true);
 
     /// Returns null for zero-extent objects. (caller owns the result)
     virtual std::unique_ptr<Model::Routing::VMObstacle> GetObstacle(const LotTilePos& pos, DirectionT dir) = 0;
@@ -348,6 +362,9 @@ public:
 
 private:
     friend class FSO::SimAntics::Engine::Utils::InteractionCheckpointCodec;
+    bool TS1FinalDeleting = false; // transient recursion guard, never a saved request
+    void PublishTS1UnplacedPose(VMContext* context, size_t& remaining);
+    void DeleteTS1(VMContext* context);
     std::vector<int16_t> Attributes;
     LotTilePos _Position = LotTilePos::OUT_OF_WORLD;
     Model::VMPlacementError IndividualUserMovable(VMContext* context, bool deleting);

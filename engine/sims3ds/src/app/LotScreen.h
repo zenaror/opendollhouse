@@ -103,6 +103,10 @@ public:
     double Time = 0;          // ms (animations)
     int Speed = 1;            // 0..3 (TS1)
     int LastSpeed = 1;
+    /// HUD selections and sim_speed share the original raw rate. Pause retains it.
+    void SelectSpeedPreset(int speed);
+    int OriginalRawSpeed() const;
+    uint64_t OriginalRawSpeedRevision() const;
     bool LeaveRequested = false, QuitRequested = false;
     bool CheatRequested = false; // TS1(sims): the Options panel's "Cheat" button (the App opens the cheat console)
     /// TS1(sims): the funds changed without a "+§" balloon (cheats): the next TrackBudget sees no difference.

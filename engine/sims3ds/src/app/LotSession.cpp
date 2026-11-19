@@ -460,8 +460,10 @@ int LotSession::IndexOfFamily(VMEntity* e) const {
     return -1;
 }
 
-void LotSession::Update(int n) {
-    if (!CanEnterLive()) return; // Direct community/vacant openings are editing sessions.
+void LotSession::Update(int n, bool originalOwnerPass) {
+    // An editor cannot run ordinary life, but source-independent controllers
+    // still receive the restricted owner passes used by the original editor.
+    if (!CanEnterLive() && !(originalOwnerPass && _VM && _VM->TS1RestrictedDispatch())) return;
     for (int i = 0; i < n; i++) {
         // Keep only the visible roster here. FAMI and the authored travelling
         // subset remain authoritative; a death or birth must not be undone by UI.
@@ -475,7 +477,9 @@ void LotSession::Update(int n) {
                 && !candidate->Dead && candidate->Object && candidate->Object->OBJ)
                 priorSelectedGUID = candidate->Object->OBJ->GUID;
         }
-        _VM->Update(); Updates++;
+        if (originalOwnerPass && _VM->TS1) _VM->DispatchTS1Owner();
+        else _VM->Update();
+        Updates++;
         auto content = FSO::Content::Content::Get();
         auto hood = content ? content->Neighborhood.get() : nullptr;
         auto family = Engine::Utils::VMTS1Neighbourhood::CurrentFamily(_VM.get());

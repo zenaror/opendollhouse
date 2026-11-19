@@ -19,6 +19,7 @@
 #include "files/formats/iff/chunks/ODHI.h"
 #include "files/formats/iff/chunks/ODMP.h"
 #include "files/formats/iff/chunks/OBJT.h"
+#include "files/formats/iff/chunks/ARRY.h"
 #include "files/Hash.h"
 #include "content/ContentManager.h"
 #include <cstdio>
@@ -77,6 +78,11 @@ static void wire() {
 static void provenance() {
     VM::UseWorld(false); VMContext context(nullptr); VM vm(&context,nullptr);
     vm.GlobalState.resize(64,0);
+    // Native hierarchy restore operates in a real architecture identity
+    // domain even when this test isolates only manager-word provenance.
+    context.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&context));
+    context.Architecture()->Rooms[0].Map.assign(64,0);context.RoomInfo.resize(1);
+    context.RebuildEnvironmentGeometry();
     IffFile resources; FSO::Content::GameObjectResource resource(&resources,nullptr,nullptr,"scheduler",true);
     OBJD definition; definition.GUID=0x12345678;
     FSO::Content::GameObject object; object.OBJ=&definition; object.Resource=&resource;
@@ -95,6 +101,10 @@ static void provenance() {
     objm->SourceSignature=FSO::Files::Hash::CalculateHash(raw.Find("ObjM",1)->Data);
     auto entry=type(definition.GUID); auto instance=std::make_shared<OBJMInstance>();
     instance->OBJT=&entry; instance->UnknownInt=0x80000;
+    instance->ObjectData=entity.ObjectData;instance->ObjectData[11]=entity.ObjectID;
+    instance->X=entity.Position().x;instance->Y=entity.Position().y;instance->Level=entity.Position().Level;
+    instance->SavedSlotRecordCount=int32_t(context.TS1SourceVectorExtent(&entity));
+    instance->Slots.resize(size_t(instance->SavedSlotRecordCount-1));
     objm->ObjectData[entity.ObjectID].Instance=instance; house.AddChunk(objm);
     auto chunk=new ODHI(); chunk->ChunkID=1; chunk->ChunkProcessed=true; chunk->Data=native; house.AddChunk(chunk);
     need(native[9]==0,"direct capture claimed scheduler provenance");
@@ -110,7 +120,7 @@ static void provenance() {
     rejects([&]{VMTS1InteractionCheckpoint::Restore(vm,house);},"corrupt word identity accepted");
     need(entity.Thread.get()==thread && entity.TS1SchedulerState==0xabc10005u,
          "corrupt binding partially published a thread or manager word");
-    entry.GUID=definition.GUID; chunk->Data[0]=13;
+    entry.GUID=definition.GUID; chunk->Data[0]=VMTS1InteractionCheckpoint::CurrentVersion+1;
     rejects([&]{VMTS1InteractionCheckpoint::Restore(vm,house);},"future native version accepted");
     need(entity.Thread.get()==thread && entity.TS1SchedulerState==0xabc10005u,
          "bad version partially published state");
@@ -127,12 +137,14 @@ static void samePoseFootprint() {
     VMContext ctx(nullptr); VM vm(&ctx,nullptr); vm.GlobalState.resize(64,0);
     ctx.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&ctx));
     ctx.Architecture()->Rooms[0].Map.assign(64,0); ctx.RoomInfo.resize(1);
+    ctx.RebuildEnvironmentGeometry();
     IffFile resources; FSO::Content::GameObjectResource resource(&resources,nullptr,nullptr,"same-pose",true);
     OBJD definition; definition.GUID=0x42bbaacc; definition.ObjectType=OBJDType::Person;
     FSO::Content::GameObject object; object.OBJ=&definition; object.GUID=definition.GUID; object.Resource=&resource;
     VMAvatar actor(&object); Entities::VMMultitileGroup group;actor.MultitileGroup=&group;group.AddObject(&actor);
     vm.AddEntity(&actor);actor.Thread=std::make_unique<VMThread>(&ctx,&actor,16);
     const LotTilePos pose(64,64,1);actor.Position(pose);actor.Direction(Direction::NORTH);
+    ctx.TS1CommitPhysicalPlacement(&actor,ctx.TS1PhysicalRequest(&actor,nullptr,-1));
     actor.SetPersonData(VMPersonDataVariable::FootprintExtension,8);actor.RefreshTS1Footprint();
     need(actor.Footprint&&actor.Footprint->x1==61&&actor.Footprint->y1==53&&actor.Footprint->x2==67&&actor.Footprint->y2==67,"fixture starts with extended bounds");
     // The imported classic record has the same pose/direction and larger cache.
@@ -158,7 +170,9 @@ static void samePoseFootprint() {
     VMTS1LotSaver saver(&vm);std::vector<uint8_t> bytes;
     if(!saver.BuildHouse(sourcePath.string(),bytes))throw std::runtime_error("synthetic lot save: "+saver.Error);
     IffRawFile saved;need(saved.Parse(bytes,&error),"decode saved IFF");
-    auto rawObjm=saved.Find("ObjM",1);auto rawOdhi=saved.Find("ODHI",1);need(rawObjm&&rawOdhi&&rawOdhi->Data[0]==12,"bound save emitted ObjM and ODHI12");
+    auto rawObjm=saved.Find("ObjM",1);auto rawOdhi=saved.Find("ODHI",1);
+    need(rawObjm&&rawOdhi&&rawOdhi->Data[0]==VMTS1InteractionCheckpoint::CurrentVersion,
+         "bound save emitted ObjM and the current native checkpoint");
     st::Reader savedTypesInput(saved.Find("objt",0)->Data);OBJT savedTypes;savedTypes.Read(nullptr,savedTypesInput);
     auto objm=new OBJM();objm->ChunkID=1;objm->ChunkProcessed=true;st::Reader objmInput(rawObjm->Data);objm->Read(nullptr,objmInput);
     need(objm->Prepare([&](uint16_t id){OBJMResource result;for(auto& t:savedTypes.Entries)if(t.TypeID==id){result.OBJT=&t;result.OBJD=&definition;}return result;}),"decode actual saved classic object");
@@ -166,16 +180,26 @@ static void samePoseFootprint() {
     const auto& stored=*savedRecord->second.Instance;need(stored.X==pose.x&&stored.Y==pose.y&&stored.Level==pose.Level&&stored.UnknownData==0x57&&
         stored.Footprint.MinX==61&&stored.Footprint.MinY==61&&stored.Footprint.MaxX==67&&stored.Footprint.MaxY==67,
         "classic store publishes shrunk rectangle at unchanged pose and preserves unknown data");
-    IffFile house;house.AddChunk(objm);auto odhi=new ODHI();odhi->ChunkID=1;odhi->ChunkProcessed=true;odhi->Data=rawOdhi->Data;house.AddChunk(odhi);
+    IffFile house;house.AddChunk(objm);
+    // Restore the complete saved architecture root channel rather than asking
+    // native continuation to infer source tile roots from physical pointers.
+    for(uint16_t id:{uint16_t(3),uint16_t(103)})if(auto* raw=saved.Find("Arry",id)){
+        auto* layer=new ARRY();layer->ChunkID=id;layer->ChunkProcessed=true;st::Reader input(raw->Data);layer->Read(&house,input);house.AddChunk(layer);
+    }
+    auto odhi=new ODHI();odhi->ChunkID=1;odhi->ChunkProcessed=true;odhi->Data=rawOdhi->Data;house.AddChunk(odhi);
     if(auto marker=saved.Find("ODMP",1)){auto odmp=new ODMP();odmp->ChunkID=1;odmp->ChunkProcessed=true;odmp->Data=marker->Data;house.AddChunk(odmp);}
     VMContext reopenedCtx(nullptr);VM reopened(&reopenedCtx,nullptr);reopened.GlobalState.resize(64,0);
     reopenedCtx.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&reopenedCtx));reopenedCtx.Architecture()->Rooms[0].Map.assign(64,0);reopenedCtx.RoomInfo.resize(1);
+    reopenedCtx.RebuildEnvironmentGeometry();
     VMAvatar loaded(&object);Entities::VMMultitileGroup loadedGroup;loaded.MultitileGroup=&loadedGroup;loadedGroup.AddObject(&loaded);reopened.AddEntity(&loaded);
     loaded.Thread=std::make_unique<VMThread>(&reopenedCtx,&loaded,16);loaded.Position(pose);loaded.Direction(Direction::NORTH);loaded.RestoreTS1Footprint(61,53,67,67);
     VMTS1InteractionCheckpoint::Restore(reopened,house);
     need(loaded.Position()==pose&&loaded.Direction()==Direction::NORTH&&loaded.GetPersonData(VMPersonDataVariable::FootprintExtension)==0&&
          loaded.Footprint&&loaded.Footprint->x1==61&&loaded.Footprint->y1==61&&loaded.Footprint->x2==67&&loaded.Footprint->y2==67,
          "bound native restore reinstates exact saved cache without movement");
+    need(reopenedCtx.SpatialTileHeads[0][4*8+4]==loaded.ObjectID&&
+         reopenedCtx.TS1SourceVectorExtent(&loaded)==ctx.TS1SourceVectorExtent(&actor),
+         "synthetic saver/native restore lost the source hierarchy root/vector");
 }
 int main() { try { wire(); provenance(); samePoseFootprint(); std::printf("PASS %d scheduler persistence checks\n",checks); return 0; }
     catch (const std::exception& e) { std::fprintf(stderr,"FAIL %s\n",e.what()); return 1; } }

@@ -14,6 +14,7 @@
 #include "simantics/primitives/VMFindBestAction.h"
 #include "simantics/primitives/VMGosubFoundAction.h"
 #include "simantics/primitives/VMIdleForInput.h"
+#include "simantics/primitives/VMSleep.h"
 #include "simantics/primitives/VMPushInteraction.h"
 #include "simantics/utils/VMTS1ActionIcon.h"
 #include "app/ui/OriginalPCUI.h"
@@ -149,6 +150,27 @@ int main(){try{VM::UseWorld(false);
  scenario("Idle return clears its state when the instruction completes",[]{Fixture f;f.start();auto& t=*f.actor->Thread;auto p=t.Stack.front();
   t.Pop(VMPrimitiveExitCode::RETURN_FALSE);require(p->PrimitiveState==1&&p->InstructionPointer==0,"pushed result is ignored while original parent state1 retries");
   (t.*field(NextField{}))();require(p->InstructionPointer==1&&p->PrimitiveState==0,"actual instruction consumer branches once and clears retry state");
+ });
+ for(bool childTrue:{false,true})scenario(childTrue?"completed Idle action reaches authored Sleep in the same owner":"failed Idle action reaches authored Sleep in the same owner",[=]{
+  Fixture f;auto p=f.parent(17);auto& t=*f.actor->Thread;
+  BHAVInstruction idle;idle.Opcode=17;idle.TruePointer=1;idle.FalsePointer=255;
+  VMIdleForInputOperand idleOperand;idleOperand.AllowPush=1;idleOperand.Write(idle.Operand.data());
+  auto counter=expression(0,1,VMExpressionOperator::Assign,2);VMExpressionOperand assign;
+  assign.LhsOwner=Scope::Parameters;assign.LhsData=0;assign.RhsOwner=Scope::Literal;assign.RhsData=1;assign.Operator=VMExpressionOperator::Assign;assign.Write(counter.Operand.data());
+  BHAVInstruction sleep;sleep.Opcode=0;sleep.TruePointer=3;sleep.FalsePointer=255;VMSleepOperand wait;wait.StackVarToDec=0;wait.Write(sleep.Operand.data());
+  p->Routine=f.vm.Assemble(f.tree(4501,{idle,counter,sleep,expression(3,66,VMExpressionOperator::Assign)}));
+  // Start the real queue handover; do not construct a synthetic retry state
+  // or call Pop directly. The action's instruction actually returns here.
+  auto action=f.action();action->ActionRoutine->Instructions[0].TruePointer=childTrue?254:255;
+  require(t.EnqueueAction(action)&&f.idle(p.get(),1)==VMPrimitiveExitCode::CONTINUE,"actual Idle handover did not start the queued action");
+  f.context.Clock->Ticks=232856;f.actor->TS1SetSchedulerDelay(-1);
+  t.Tick(1000,false);
+  require(t.ActiveQueueBlock==-1&&t.Queue.empty()&&t.Stack.size()==1&&t.Stack.back()==p,"completed child did not return to its original parent");
+  require(p->InstructionPointer==2&&p->Args[0]==0&&p->PrimitiveState==0&&f.actor->GetAttribute(3)==0,
+      "interaction return inserted a tick before the parent's authored Sleep1, or skipped its real yield");
+  require(f.context.Clock->Ticks==232856,"interpreter fixture advanced the owner clock itself");
+  ++f.context.Clock->Ticks;t.Tick(1000,false);
+  require(f.actor->GetAttribute(3)==66&&t.Stack.empty(),"next visit did not complete Sleep0 and its continuation");
  });
  scenario("failed pending checks discard one record per tick",[]{Fixture f;auto p=f.parent(17);auto& t=*f.actor->Thread;
   auto bad=f.action();bad->CheckRoutine->Instructions[0].TruePointer=255;auto row=std::make_unique<TTABInteraction>();row->TTAIndex=1;row->ActionFunction=4096;f.table.InteractionByIndex[1]=row.get();f.table.Interactions.push_back(std::move(row));auto good=f.target->GetAction(1,f.actor.get(),&f.context);

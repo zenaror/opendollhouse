@@ -117,8 +117,8 @@ public:
     int IndexOfFamily(FSO::SimAntics::VMEntity* e) const;
 
     // ---- simulation ----
-    /// Runs n VM updates (VM::Update alternates a tick and a fractional-animation step).
-    void Update(int n);
+    /// Runs n legacy half-frames, or n complete original owner passes when requested.
+    void Update(int n, bool originalOwnerPass = false);
     /// TS1(sims): the daily object depreciation (run when the game day changes)
     void DepreciateObjects();
     /// TS1(sims): build / buy spending of this session (the saver adds it to SIMI Architecture/ObjectsValue)

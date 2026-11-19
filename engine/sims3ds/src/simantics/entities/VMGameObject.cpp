@@ -195,6 +195,23 @@ int32_t VMGameObject::TotalSlots() {
 }
 
 bool VMGameObject::PlaceInSlot(VMEntity* obj, int32_t slot, bool cleanOld, VMContext* context) {
+    if(context && context->VM && context->VM->TS1 && !context->TS1HierarchyPublication &&
+        obj && !obj->GhostImage && !GhostImage) {
+        if(obj==this || obj->Dead || slot<0 || slot>=TotalSlots())return false;
+        size_t remaining=context->VM->Entities.size()+1;
+        for(auto* parent=Container;parent;parent=parent->Container) {
+            if(parent==obj || !remaining--)return false;
+        }
+        if(!cleanOld && obj->Container && (obj->Container!=this || obj->ContainerSlot!=slot))return false;
+        const auto request=context->TS1PhysicalRequest(obj,this,slot);
+        context->TS1PreflightPhysicalPlacement(obj,request);
+        if(cleanOld)obj->PrePositionChange(context);
+        context->TS1CommitPhysicalPlacement(obj,request);
+        obj->Position(Position());
+        context->InvalidateRoofObject(obj);
+        if(cleanOld)obj->PositionChange(context,false);
+        return true;
+    }
     auto occupant = GetSlot(slot);
     if (occupant == obj) return true; //already in slot
     // A ghost may share only its original group's slot. It has no logical
@@ -229,6 +246,10 @@ VMEntity* VMGameObject::GetSlot(int32_t slot) {
 }
 
 int32_t VMGameObject::GetSlotHeight(int32_t slot) {
+    if(Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1 && !GhostImage) {
+        const auto* metadata=Thread->Context->TS1SourceSlotMetadata(this,slot<0?-1:slot+1);
+        return metadata?metadata->Height:-1;
+    }
     if (slot < TotalSlots()) return Slots->Slots[0][0].Height;
     else return -1;
 }
@@ -236,6 +257,14 @@ int32_t VMGameObject::GetSlotHeight(int32_t slot) {
 void VMGameObject::ClearSlot(int32_t slot) {
     if (slot > -1 && slot < (int32_t)Contained.size()) {
         if (Contained[slot] == nullptr) return; //what..
+        if(Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1 &&
+            !Thread->Context->TS1HierarchyPublication && !GhostImage) {
+            auto* child=Contained[size_t(slot)];auto* context=Thread->Context;
+            context->TS1RemovePlacement(child);
+            child->ClearTS1PhysicalPlacement(context);
+            context->InvalidateRoofObject(child);
+            return;
+        }
         if (Thread && Thread->Context) Thread->Context->InvalidateRoofObject(Contained[slot]);
         Contained[slot]->Container = nullptr;
         Contained[slot]->ContainerSlot = -1;
@@ -274,7 +303,12 @@ void VMGameObject::PrePositionChange(VMContext* context) {
     }
 
     context->UnregisterObjectPos(this);
-    if (Container != nullptr) {
+    const bool wasContained=Container!=nullptr;
+    if(context->VM && context->VM->TS1 && !GhostImage && !context->TS1HierarchyPublication) {
+        context->TS1RemovePlacement(this);
+        ClearTS1PhysicalPlacement(context);
+        if(wasContained)return;
+    } else if (Container != nullptr) {
         Container->ClearSlot(ContainerSlot);
         return;
     }

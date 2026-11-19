@@ -16,6 +16,7 @@
 #include "simantics/_files_contract.h"
 #include "simantics/engine/translator/VMRoutine.h"
 #include "simantics/engine/VMTS1Travel.h"
+#include "simantics/engine/VMTS1Hierarchy.h"
 #include "simantics/model/VMDialogInfo.h"
 #include "simantics/model/VMInventoryItem.h"
 #include "simantics/model/VMTuningCache.h"
@@ -55,6 +56,9 @@ public:
     bool TS1ObjectManagerOrderKnown = false;
     std::vector<VMEntity*> TS1ObjectManagerOrder;
     std::vector<VMTS1ObjectIdentity> TS1RemovedObjectIdentities;
+    std::unordered_map<int16_t, Engine::VMTS1HierarchyNode> TS1HierarchyNodes;
+    std::array<std::vector<int16_t>, 2> TS1TileHeads;
+    bool TS1HierarchyPublication = false;
 };
 
 // TS1 source purse and six ordered daily records: current, then five older.
@@ -262,6 +266,9 @@ private:
     int16_t NextObjID();
     void VM_OnBHAVChange() { BHAVDirty = true; }
 public:
+    bool TS1RestrictedDispatch() const;
+    /// One original owner pass, independent of the legacy half-frame adapter.
+    void DispatchTS1Owner();
     // Original TS1 dialog Type3 -> global string006e4a70 -> Make19.
     // The submitted input is UTF8; it never renames an existing entity.
     // Native checkpoints preserve this last-input channel (including empty).

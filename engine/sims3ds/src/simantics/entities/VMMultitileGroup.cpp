@@ -112,6 +112,8 @@ VMPlacementResult VMMultitileGroup::ChangePositionInternal(const LotTilePos& pos
         return VMPlacementResult(VMPlacementError::Success);
     if (pos.Level > context->Architecture()->Stories) return VMPlacementResult(VMPlacementError::NotAllowedOnFloor);
 
+    const bool source=context->VM && context->VM->TS1 &&
+        std::all_of(Objects.begin(),Objects.end(),[](VMEntity* object){return !object->GhostImage;});
     std::vector<VMEntity*> OldContainers(Objects.size());
     std::vector<int16_t> OldSlotNum(Objects.size());
     // Preserve the actual published masks, not copies recomputed from a facing
@@ -120,8 +122,10 @@ VMPlacementResult VMMultitileGroup::ChangePositionInternal(const LotTilePos& pos
     for (size_t i = 0; i < Objects.size(); i++) {
         OldContainers[i] = Objects[i]->Container;
         OldSlotNum[i] = Objects[i]->ContainerSlot;
-        oldFootprints[i] = std::move(Objects[i]->Footprint);
-        Objects[i]->PrePositionChange(context);
+        if(!source) {
+            oldFootprints[i] = std::move(Objects[i]->Footprint);
+            Objects[i]->PrePositionChange(context);
+        }
     }
 
     int Dir = DirToNotch(direction);
@@ -151,6 +155,9 @@ VMPlacementResult VMMultitileGroup::ChangePositionInternal(const LotTilePos& pos
                 auto sub = Objects[i];
                 places[i] = sub->PositionValid(targetPositions[i], targetDirections[i], context);
                 if (places[i].Status != VMPlacementError::Success) {
+                    //432a70 validates before committing any placement links.
+                    //A rejected source move must retain its old source0 order.
+                    if(source)return places[i];
                     //go back to where we started: we're no longer out of world.
                     for (size_t j = 0; j < Objects.size(); j++) {
                         //need to restore slot we were in
@@ -170,6 +177,10 @@ VMPlacementResult VMMultitileGroup::ChangePositionInternal(const LotTilePos& pos
         }
 
         //verification success
+        if(source)for(size_t i=0;i<Objects.size();++i) {
+            oldFootprints[i]=std::move(Objects[i]->Footprint);
+            Objects[i]->PrePositionChange(context);
+        }
 
         for (size_t i = 0; i < Objects.size(); i++) {
             auto sub = Objects[i];

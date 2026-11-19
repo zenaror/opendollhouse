@@ -423,6 +423,10 @@ public:
     SLOTFacing Facing = SLOTFacing::FaceTowardsObject;
     int32_t Resolution = 16;
     int32_t Height = 0;
+    int32_t RawHeight = 0;
+    int32_t PhysicalCapacity = 0;
+    int32_t PhysicalFlags = 0;
+    int32_t SourceRowIndex = -1;
     SLOTRoutingPolicy RoutingPolicy = SLOTRoutingPolicy::Authored;
 };
 

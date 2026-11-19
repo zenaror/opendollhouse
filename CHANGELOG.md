@@ -7,6 +7,9 @@ Notable changes for players and contributors, following
 
 ### Changed
 
+- Sims keep their walking animation and direction when passing through doors,
+  following the original movement rules. New saves also retain the movement
+  history needed to continue these actions; earlier engine saves remain readable.
 - Objects run their original loading routines when a lot opens, including
   newly created expansion helpers. Helpers that do not belong on the current
   lot can leave normally instead of repeatedly failing.

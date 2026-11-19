@@ -14,6 +14,7 @@
 #include "simantics/entities/VMMultitileGroup.h"
 #include "simantics/engine/VMRoutingFrame.h"
 #include "simantics/engine/VMThread.h"
+#include "simantics/engine/TS1FootprintWall.h"
 #include "simantics/engine/VMAmbientSound.h"
 #include "simantics/engine/VMChangeActionString.h"
 #include "simantics/model/VMBuildableAreaInfo.h"
@@ -490,8 +491,8 @@ void VMContext::FlushSpatialLighting() {
                     if ((source.Flags2 & 0x400) && SpatialLights.Interior(source.Position) && type != OBJDType::Portal) ++lamps;
                 }
                 SpatialLights.CollectVisit(source, map);
-                for (int slot = entity->TotalSlots() - 1; slot >= 0; --slot)
-                    if (auto* child = entity->GetSlot(slot)) pending.push_back(child);
+                for (int slot = int(TS1SourceVectorExtent(entity)) - 1; slot >= 0; --slot)
+                    if (auto* child = TS1SourceSlot(entity,slot)) pending.push_back(child);
             }
         }
         const float factor = Common::TS1::DirectVisualFactor(room.LightFactor, room.Pool,
@@ -511,10 +512,23 @@ void VMContext::RemoveSpatialEntity(VMEntity* entity) {
     if (found != SpatialPlacements.end() && found->second.Registered) {
         const auto source = SpatialSource(*this, entity);
         SpatialLights.Unregister(source);
-        if (SpatialLights.Interior(source.Position) && !entity->Container)
-            SpatialTileHeads[size_t(source.Position.Story - 1)][size_t(source.Position.Y) * SpatialLights.Width + source.Position.X] = 0;
         if (source.Flags2 & 0x400) RefreshSpatialObject(entity);
         SpatialSnapshotDirty = true;
+    }
+    if(VM && VM->TS1 && !TS1HierarchyPublication && entity && TS1HierarchyNodes.count(entity->ObjectID)) {
+        auto* parent=TS1SourceParent(entity);
+        const int slot=entity->ObjectData[int(VMStackObjectVariable::SlotHierNumber)];
+        bool attached=parent && slot>=0 && size_t(slot)<TS1SourceVectorExtent(parent) && TS1SourceSlot(parent,slot)==entity;
+        const auto p=entity->Position();
+        if(!parent && p.Level>=1 && p.Level<=2 && p.TileX()>=0 && p.TileY()>=0 &&
+            Architecture() && p.TileX()<Architecture()->Width && p.TileY()<Architecture()->Height) {
+            const size_t cell=size_t(p.TileY())*Architecture()->Width+p.TileX();
+            attached=cell<SpatialTileHeads[p.Level-1].size() && SpatialTileHeads[p.Level-1][cell]==entity->ObjectID;
+        }
+        // A direct RemoveEntity still unlinks its actual source membership.
+        // Normal PrePositionChange already lifted its successor; do not clear
+        // that successor's head a second time.
+        if(attached)TS1RemovePlacement(entity);
     }
     InvalidateRoofObject(entity);
     // 0044127f captures old room before removing and sends F3 afterward,
@@ -753,8 +767,15 @@ void VMContext::RegisterObjectPos(VMEntity* obj) {
             SpatialSchedule.Mark(previous.Room); SpatialSchedule.Mark(source.ObjectRoom);
         }
         previous = {source.ObjectRoom, true};
-        if (!obj->Container && SpatialLights.Interior(source.Position))
-            SpatialTileHeads[size_t(source.Position.Story - 1)][size_t(source.Position.Y) * SpatialLights.Width + source.Position.X] = obj->ObjectID;
+        if (!TS1HierarchyPublication && !obj->GhostImage) {
+            TS1EnsureHierarchy(obj);
+            // Re-publishing room/light caches for a supported child does not
+            // detach its original source link or reverse its sibling order.
+            // In particular, literal script writes to raw14/26 are not an
+            // implicit request to repair or relink the independent vector.
+            if(TS1HierarchyNodes.at(obj->ObjectID).NeedsPlacement)TS1CommitPhysicalPlacement(obj,TS1PhysicalRequest(obj,obj->Container,
+                obj->Container?obj->ContainerSlot:-1));
+        }
     }
     InvalidateRoofObject(obj);
     if (obj->GetValue(VMStackObjectVariable::LightingContribution) > 0)
@@ -770,8 +791,8 @@ void VMContext::UnregisterObjectPos(VMEntity* obj) {
     if (VM && VM->TS1) {
         const auto source = SpatialSource(*this, obj);
         SpatialLights.Unregister(source);
-        if (!obj->Container && SpatialLights.Interior(source.Position))
-            SpatialTileHeads[size_t(source.Position.Story - 1)][size_t(source.Position.Y) * SpatialLights.Width + source.Position.X] = 0;
+        // Source unlink is an explicit placement operation. This cache-only
+        // unregister also runs for children while their owner moves.
         SpatialPlacements[obj].Registered = false;
         if (source.Flags2 & 0x400) RefreshSpatialObject(obj);
         SpatialSnapshotDirty = true;
@@ -874,16 +895,130 @@ VMPlacementResult VMContext::GetAvatarPlace(VMEntity* target, const LotTilePos& 
     return GetAvatarPlace(target, pos, dir, false);
 }
 
+namespace {
+bool TS1ResolvedPlacementParent(VMContext& context, VMEntity& entity) {
+    //432664 resolves ParentId while the literal SlotHierNumber(+66) is zero,
+    //then returns that resolved object's parent. This is unrelated to a child
+    //occupying this entity's own slot0 or its native zero-based ContainerSlot.
+    return context.TS1ResolvePhysicalPlacement(&entity,true).ParentID!=0;
+}
+
+VMEntity* TS1AvatarPlacementBlocker(VMContext& context, VMAvatar& actor,
+    const LotTilePos& position, const std::array<int32_t,4>& bounds) {
+    //4338a5 uses4325af's tile head and live4328d2(slot0) successors, across
+    //room boundaries. The authored rectangle can overlap a neighboring room
+    //even though the candidate's center passed481593's room test.
+    static constexpr int offsets[9][2]={{0,-1},{1,-1},{1,0},{1,1},{0,1},
+        {-1,1},{-1,0},{-1,-1},{0,0}}; //006c2924/006c2948
+    const auto& arch=*context.Architecture();
+    const auto& heads=context.VM->Context->SpatialTileHeads[position.Level-1];
+    for (const auto& offset : offsets) {
+        const int x=position.TileX()+offset[0],y=position.TileY()+offset[1];
+        if (x<1 || y<1 || x>=arch.Width-1 || y>=arch.Height-1) continue;
+        auto* object=context.VM->GetObjectById(heads[size_t(y)*arch.Width+x]);
+        size_t visited=0;
+        while (object) {
+            if (++visited>context.VM->Entities.size()+1) throw std::runtime_error("Original placement has a cyclic tile object chain");
+            if (object!=&actor) { //Person virtual5c is433c4e: exact self only.
+                const auto flags=uint16_t(object->GetValue(VMStackObjectVariable::Flags));
+                const bool walkable=(flags&4) ? !(flags&2) : bool(flags&16);
+                if (!walkable &&
+                    !actor.ExecuteEntryPoint(5,&context,true,object) &&
+                    !object->ExecuteEntryPoint(5,&context,true,&actor)) {
+                    //Both callbacks run before overlap. The caller's bounds
+                    //remain frozen; the other object's numeric fields are read
+                    //after callbacks, even if its occupancy has disappeared.
+                    if (!object->TS1NumericFootprintKnown)
+                        throw std::runtime_error("Original placement lacks numeric object bounds");
+                    const auto& other=object->TS1NumericFootprint;
+                    if (other[0]<bounds[2] && other[2]>bounds[0] &&
+                        other[1]<bounds[3] && other[3]>bounds[1]) return object;
+                }
+            }
+            object=context.TS1SourceSlot(object,0);
+        }
+    }
+    return nullptr;
+}
+
+bool TS1PlacementCrossesWall(VMContext& context, VMEntity& target,
+    const LotTilePos& pos, const std::array<int32_t,4>& bounds) {
+    //4338a5 checks this flag after object callbacks. Its numeric rectangle was
+    // captured before them; neither registered occupancy nor callback-mutated
+    // placement bounds substitute for that rectangle.
+    if (!context.VM || !context.VM->TS1 ||
+        (uint16_t(target.GetValue(VMStackObjectVariable::PlacementFlags))&0x400)) return false;
+    const auto& arch=*context.Architecture();
+    if (pos.Level<1 || size_t(pos.Level)>arch.Walls.size()) return false;
+    const auto& walls=arch.Walls[pos.Level-1];
+    const auto count=size_t(arch.Width)*arch.Height;
+    const auto& left=arch.TS1WallStyleTopLeft[pos.Level-1];
+    const auto& right=arch.TS1WallStyleTopRight[pos.Level-1];
+    const auto style=[&](int x,int y,bool topLeft) -> uint16_t {
+        const auto offset=size_t(y)*arch.Width+x;
+        const auto& logical=topLeft?left:right;
+        return logical.size()==count ? logical[offset] :
+            (topLeft?walls[offset].TopLeftStyle:walls[offset].TopRightStyle);
+    };
+    //476f46..476f72 uses min>>4 through (max-1)>>4. Do not normalize or
+    // categorically discard empty/inverted numeric rectangles: the literal
+    // source loops can still visit a tile when both endpoints occupy it.
+    const int minX=std::max<int64_t>(0,int64_t(bounds[0])>>4);
+    const int minY=std::max<int64_t>(0,int64_t(bounds[1])>>4);
+    const int maxX=std::min<int64_t>(arch.Width-1,(int64_t(bounds[2])-1)>>4);
+    const int maxY=std::min<int64_t>(arch.Height-1,(int64_t(bounds[3])-1)>>4);
+    for (int y=minY;y<=maxY;++y) for (int x=minX;x<=maxX;++x) {
+        const auto offset=size_t(y)*arch.Width+x;
+        uint8_t bits=uint8_t(walls[offset].Segments)&0x33;
+        std::array<uint16_t,6> styles{style(x,y,true),style(x,y,false),0,0,
+            style(x,y,false),style(x,y,false)};
+        //479737 includes the two neighbor-owned sides.476f33 ignores their
+        // geometry, but their place in its bit traversal must remain intact.
+        if (x+1<arch.Width && (int(walls[offset+1].Segments)&1)) {
+            bits|=4;styles[2]=style(x+1,y,true);
+        }
+        if (y+1<arch.Height && (int(walls[offset+arch.Width].Segments)&2)) {
+            bits|=8;styles[3]=style(x,y+1,false);
+        }
+        if (Engine::TS1FootprintCrossesWall(bounds,x,y,bits,styles)) return true;
+    }
+    return false;
+}
+}
+
 VMPlacementResult VMContext::GetAvatarPlace(VMEntity* target, const LotTilePos& pos, Direction dir, bool allAvatarsSolid) {
     //avatars cannot be placed in slots under any circumstances, so we skip a few steps.
 
     auto footprint = target->GetObstacle(pos, dir);
+    const auto ts1Bounds=VM && VM->TS1 ? target->GetTS1NumericFootprint(pos,dir) : std::array<int32_t,4>{};
     uint16_t room = GetRoomAt(pos);
 
     VMPlacementError status = VMPlacementError::Success;
     VMEntity* statusObj = nullptr;
 
+    if (VM && VM->TS1) {
+        if (auto* actor=dynamic_cast<VMAvatar*>(target)) {
+            //4338cb: source ghosts bypass the whole object/wall check.4338e2
+            //also admits a PD84 person without a slot1 occupant or a resolved
+            //placement parent; this is independent of allAvatarsSolid.
+            const bool ghost=actor->GetPersonData(static_cast<VMPersonDataVariable>(68))&1;
+            const bool special=actor->GetPersonData(static_cast<VMPersonDataVariable>(84))&1;
+            if (ghost || (special && !TS1SourceSlot(actor,1) && !TS1ResolvedPlacementParent(*this,*actor))) return VMPlacementResult();
+            if (pos.Level<1 || size_t(pos.Level)>SpatialTileHeads.size() ||
+                SpatialTileHeads[pos.Level-1].size()!=size_t(_Arch->Width)*_Arch->Height)
+                throw std::runtime_error("Original avatar placement lacks its tile object grid");
+            if (auto* blocker=TS1AvatarPlacementBlocker(*this,*actor,pos,ts1Bounds))
+                return VMPlacementResult(VMPlacementError::CantIntersectOtherObjects,blocker);
+            return TS1PlacementCrossesWall(*this,*target,pos,ts1Bounds)
+                ? VMPlacementResult(VMPlacementError::CantBeThroughWall) : VMPlacementResult();
+        }
+    }
+
     if (footprint == nullptr || pos.Level < 1 || room >= RoomInfo.size()) {
+        //4338a5 still passes433dbb's numeric rectangle to476f33 when the
+        //object has no registered/physical occupancy (including zero extent).
+        if (TS1PlacementCrossesWall(*this,*target,pos,ts1Bounds))
+            return VMPlacementResult(VMPlacementError::CantBeThroughWall);
         return VMPlacementResult(status);
     }
 
@@ -907,6 +1042,8 @@ VMPlacementResult VMContext::GetAvatarPlace(VMEntity* target, const LotTilePos& 
             }
         }
     }
+    if (status==VMPlacementError::Success && TS1PlacementCrossesWall(*this,*target,pos,ts1Bounds))
+        return VMPlacementResult(VMPlacementError::CantBeThroughWall);
     return VMPlacementResult(status, statusObj);
 }
 
@@ -920,12 +1057,15 @@ VMPlacementResult VMContext::GetObjPlace(VMEntity* target, const LotTilePos& pos
     bool allowAvatars = ((flags & VMEntityFlags::DisallowPersonIntersection) == 0) && ((flags & VMEntityFlags::AllowPersonIntersection) > 0);
 
     auto footprint = target->GetObstacle(pos, dir);
+    const auto ts1Bounds=VM && VM->TS1 ? target->GetTS1NumericFootprint(pos,dir) : std::array<int32_t,4>{};
     uint16_t room = GetRoomAt(pos);
 
     VMPlacementError status = (noFloor) ? VMPlacementError::HeightNotAllowed : VMPlacementError::Success;
     VMEntity* statusObj = nullptr;
 
     if (footprint == nullptr || pos.Level < 1 || room >= RoomInfo.size()) {
+        if (status==VMPlacementError::Success && TS1PlacementCrossesWall(*this,*target,pos,ts1Bounds))
+            return VMPlacementResult(VMPlacementError::CantBeThroughWall);
         return VMPlacementResult(status);
     }
 
@@ -973,6 +1113,8 @@ VMPlacementResult VMContext::GetObjPlace(VMEntity* target, const LotTilePos& pos
             }
         }
     }
+    if (status==VMPlacementError::Success && TS1PlacementCrossesWall(*this,*target,pos,ts1Bounds))
+        return VMPlacementResult(VMPlacementError::CantBeThroughWall);
     return VMPlacementResult(status, statusObj);
 }
 

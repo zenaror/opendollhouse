@@ -59,6 +59,11 @@ public:
     SLOTFacing Facing = SLOTFacing::FaceTowardsObject;
     int32_t Resolution = 16;
     int32_t Height = 0;
+    //DVD46e1fa retains these separately from the routing-height adapter.
+    int32_t RawHeight = 0;
+    int32_t PhysicalCapacity = 0; //file i9 -> normalized+10 -> physical+18
+    int32_t PhysicalFlags = 0;    //file i10 -> normalized+14 -> physical+1c
+    int32_t SourceRowIndex = -1; //global file ordinal, including other types
     SLOTRoutingPolicy RoutingPolicy = SLOTRoutingPolicy::Authored;
 };
 

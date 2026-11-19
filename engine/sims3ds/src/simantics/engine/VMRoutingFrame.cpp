@@ -574,6 +574,11 @@ bool VMRoutingFrame::UsesTS1SourceLookahead() const {
 }
 
 int VMRoutingFrame::TS1MotionModelState() {
+    auto avatar = static_cast<VMAvatar*>(Caller);
+    if (TS1SharedModelRouting && avatar->UsesTS1OriginalLocomotion()
+        && (avatar->TS1AnimationController.MotionTransitionKnown
+            || avatar->TS1AnimationController.ModelState == 12))
+        return avatar->TS1AnimationController.ModelState;
     switch (State) {
         case VMRoutingFrameState::BEGIN_TURN:
         case VMRoutingFrameState::END_TURN:
@@ -657,7 +662,7 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
             }
             if (!avatar->StartTS1MotionRequest(this, Routing::TS1MotionKind::Route, path))
                 return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
-            avatar->TS1ModelMotion.ModelState = TS1MotionModelState();
+            avatar->SetTS1MotionModelState(TS1MotionModelState());
         }
         const int result = avatar->PollTS1MotionRequest(TS1MotionToken);
         if (result == 2) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
@@ -672,6 +677,20 @@ VMPrimitiveExitCode VMRoutingFrame::Tick() {
 }
 
 VMPrimitiveExitCode VMRoutingFrame::AdvanceTS1Model() {
+    auto avatar = static_cast<VMAvatar*>(Caller);
+    if (avatar->UsesTS1OriginalLocomotion() && (avatar->TS1AnimationController.MotionTransitionKnown
+        || avatar->TS1AnimationController.ModelState == 12)) {
+        const auto previous = avatar->TS1AnimationController.ModelState;
+        if (avatar->AdvanceTS1MotionTransition()) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+        if (previous == 4 && State == VMRoutingFrameState::BEGIN_TURN) {
+            State = VMRoutingFrameState::WALKING;
+            WalkDirection = TargetDirection;
+        } else if (previous == 4 && State == VMRoutingFrameState::END_TURN) {
+            return CompleteRoute();
+        }
+        if (avatar->TS1ModelMotion.Status == 2 || avatar->TS1ModelMotion.Status == 3)
+            return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+    }
     // Planning/portal/chair/failure BHAV dispatch belongs to the interpreter.
     // Invalidating rooms from placement cannot execute scripts in this stage.
     if ((RoomRouteInvalid && State != VMRoutingFrameState::BEGIN_TURN && State != VMRoutingFrameState::END_TURN)
@@ -869,8 +888,14 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
             return VMPrimitiveExitCode::RETURN_FALSE;
         case VMRoutingFrameState::TURN_ONLY:
             if (TS1SharedModelRouting && avatar->OwnsTS1MotionRequest(this)
-                && avatar->TS1ModelMotion.Status == 1 && StepTS1FinalAnchor() != 2)
-                return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+                && avatar->TS1ModelMotion.Status == 1) {
+                const int terminal = StepTS1FinalAnchor();
+                if (terminal == 3) {
+                    State = VMRoutingFrameState::WALKING;
+                    return VMPrimitiveExitCode::CONTINUE;
+                }
+                if (terminal != 2) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+            }
             return (EndWalk()) ? CompleteRoute() : VMPrimitiveExitCode::CONTINUE;
         case VMRoutingFrameState::SHOOED:
             StartWalkAnimation();
@@ -935,6 +960,12 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
                 && avatar->OwnsTS1MotionRequest(this)) {
                 const int anchor = StepTS1FinalAnchor();
                 if (anchor == 2) return EndWalk() ? CompleteRoute() : VMPrimitiveExitCode::CONTINUE;
+                if (anchor == 3) {
+                    if (!avatar->AdvanceTS1NoStopTerminal()) return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+                    return EndWalk() ? CompleteRoute() : VMPrimitiveExitCode::CONTINUE;
+                }
+                if (avatar->UsesTS1OriginalLocomotion() && avatar->TS1AnimationController.MotionTransitionKnown)
+                    return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
                 const float dx = CurrentWaypoint.x - avatar->TS1MotionX;
                 const float dy = CurrentWaypoint.y - avatar->TS1MotionY;
                 if (anchor == 1 && dx * dx + dy * dy <= 1e-12f)
@@ -951,8 +982,9 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
                 if (Velocity < 8) Velocity++;
             }
 
-            if (UsesTS1SourceLocomotion()) StartWalkAnimation();
-            else {
+            if (UsesTS1SourceLocomotion()) {
+                if (!TS1SharedModelRouting || !avatar->UsesTS1OriginalLocomotion()) StartWalkAnimation();
+            } else {
                 if (avatar->Animations.size() < 3) StartWalkAnimation();
                 avatar->Animations[0]->Weight = (8 - Velocity) / 8.0f;
                 avatar->Animations[1]->Weight = (Velocity / 8.0f) * 0.66f;
@@ -980,6 +1012,7 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
 
             auto nextPosition = PreviousPosition + diff;
             float motionX = 0, motionY = 0;
+            float analyticalStepX = 0, analyticalStepY = 0;
             if (UsesTS1SourceLocomotion()) {
                 const auto position = Caller->Position();
                 const bool externalPlacement = avatar->TS1MotionPositionKnown && (UsesTS1SourceLookahead()
@@ -998,22 +1031,29 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
                 }
                 motionX = avatar->TS1MotionX;
                 motionY = avatar->TS1MotionY;
-                const auto animation = avatar->Animations.front();
+                const bool original = TS1SharedModelRouting && avatar->UsesTS1OriginalLocomotion();
+                auto animation = avatar->CurrentAnimationState();
+                auto& locomotionNames = InPool() ? avatar->SwimAnimations : avatar->WalkAnimations;
+                auto locomotion = original ? FSO::Content::Content::Get()->AvatarAnimations->Get(
+                    locomotionNames[WalkStyle() == 1 ? 21 : 20] + ".anim") : animation->Anim;
+                if (!locomotion) throw std::runtime_error("Missing TS1 locomotion resource");
                 auto aim = Point(CurrentWaypoint.x, CurrentWaypoint.y);
                 if (UsesTS1SourceLookahead()) {
                     // Source model initializer 00588351 / virtual120=00588f0b
                     // derives this radius from the chosen walk/run Distance.
-                    const float radius = animation->Anim->Distance * 0.5f * (16.0f / 3.0f);
+                    const float radius = locomotion->Distance * 0.5f * (16.0f / 3.0f);
                     aim = TS1Lookahead(motionX, motionY, radius);
                 }
-                const float dx = aim.X - motionX;
-                const float dy = aim.Y - motionY;
+                const float dx = aim.X-motionX;
+                const float dy = aim.Y-motionY;
                 const float remaining = std::sqrt(dx * dx + dy * dy);
+                float steeringDifference = 0.f;
                 if (UsesTS1SourceLookahead() && remaining > 1e-6f) {
                     const float desired = std::atan2(dx, -dy);
                     const float difference = Routing::TS1SelectTurn(
                         static_cast<float>(DirectionUtils::Difference(avatar->RadianDirection(), desired) / (M_PI / 4.0)),
                         avatar->TS1MotionRate, avatar->GetPersonData(VMPersonDataVariable::Gender)).Difference;
+                    steeringDifference = difference;
                     const bool pet = avatar->GetPersonData(VMPersonDataVariable::Gender) > 1;
                     const float factor = avatar->TS1MotionRate < 1.0f ? avatar->TS1MotionRate : 1.0f;
                     const float turnThreshold = pet ? 0.8f : 2.0f / factor;
@@ -1028,15 +1068,25 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
                     const float headingStep = std::max(-limit, std::min(limit, difference));
                     avatar->RadianDirection(avatar->RadianDirection() + headingStep * static_cast<float>(M_PI / 4.0));
                 }
-                const float step = Routing::TS1MotionStep(animation->Anim->Distance,
-                    animation->Anim->Duration, animation->Speed);
+                if (original) {
+                    if (avatar->TryTS1StartMotion(dx, dy, steeringDifference))
+                        return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
+                    StartWalkAnimation();
+                    animation = avatar->CurrentAnimationState();
+                }
+                const float step = Routing::TS1MotionStep(locomotion->Distance,
+                    locomotion->Duration, animation->Speed);
                 if ((!UsesTS1SourceLookahead() || WalkTo->empty()) && remaining <= step) {
+                    analyticalStepX = CurrentWaypoint.x - motionX;
+                    analyticalStepY = CurrentWaypoint.y - motionY;
                     motionX = CurrentWaypoint.x;
                     motionY = CurrentWaypoint.y;
                     MoveFrames = MoveTotalFrames;
                 } else if (remaining > 0.0f) {
-                    motionX += step * dx / remaining;
-                    motionY += step * dy / remaining;
+                    analyticalStepX = step * dx / remaining;
+                    analyticalStepY = step * dy / remaining;
+                    motionX += analyticalStepX;
+                    motionY += analyticalStepY;
                 }
                 // Finite metadata can still produce a step larger than the
                 // coordinate type. Reject the proposal before any float-to-
@@ -1061,6 +1111,13 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
                         static_cast<int16_t>(motionY), position.Level);
                 }
             }
+            if (TS1SharedModelRouting && avatar->UsesTS1OriginalLocomotion()) {
+                //58ee50/5b: remember the analytical proposal before validation,
+                //not a rounded physical displacement or renderer velocity.
+                auto& controller = avatar->TS1AnimationController;
+                controller.MotionStepX = analyticalStepX; controller.MotionStepY = analyticalStepY;
+                controller.MotionStepKnown = true;
+            }
             auto storedDir = avatar->RadianDirection();
             auto result = Caller->SetPosition(nextPosition, VM()->TS1 ? Caller->Direction() : FSO::LotView::Model::Direction::NORTH, VM()->Context);
             avatar->RadianDirection(storedDir);
@@ -1082,6 +1139,8 @@ VMPrimitiveExitCode VMRoutingFrame::TickCore() {
                 avatar->TS1MotionPublishedY = Caller->Position().y;
                 Caller->VisualPosition(st::Vector3(motionX / 16.0f, motionY / 16.0f,
                     (Caller->Position().Level - 1) * 2.95f));
+                if (TS1SharedModelRouting && avatar->TryTS1StopMotion())
+                    return VMPrimitiveExitCode::CONTINUE_NEXT_TICK;
             } else {
                 float t = (MoveTotalFrames == 0) ? 1.0f : MoveFrames / (float)MoveTotalFrames;
                 Caller->VisualPosition(st::Vector3::Lerp(PreviousPosition.ToVector3(), CurrentWaypoint.ToVector3(), t));
@@ -1290,7 +1349,7 @@ void VMRoutingFrame::BeginWalk() { //faces the avatar towards the initial walk d
             State = VMRoutingFrameState::BEGIN_TURN;
         } else {
             State = VMRoutingFrameState::WALKING;
-            StartWalkAnimation();
+            if (!TS1SharedModelRouting || !avatar->UsesTS1OriginalLocomotion()) StartWalkAnimation();
         }
         return;
     }
@@ -1309,8 +1368,10 @@ VMPrimitiveExitCode VMRoutingFrame::CompleteRoute() {
     auto avatar = static_cast<VMAvatar*>(Caller);
     if (TS1SharedModelRouting && avatar->TS1ModelMotion.ModelUpdating && avatar->OwnsTS1MotionRequest(this)) {
         avatar->TS1ModelMotion.Status = 2;
-        avatar->TS1ModelMotion.ModelState = 3;
-        avatar->TS1ModelMotion.Outcome = 2;
+        avatar->SetTS1MotionModelState(3);
+        if (!(avatar->UsesTS1OriginalLocomotion() && avatar->TS1AnimationController.MotionStepKnown
+            && Caller->GetValue(VMStackObjectVariable::RoutePrefference) != 0
+            && avatar->TS1ModelMotion.Outcome == 1)) avatar->TS1ModelMotion.Outcome = 2;
         return VMPrimitiveExitCode::RETURN_TRUE;
     }
     const auto request = TS1PendingFootprintKnown ? TS1PendingFootprint : int16_t(0);
@@ -1342,6 +1403,10 @@ bool VMRoutingFrame::EndWalk() { //returns true if we should exit immediately.
     TargetDirection = CurRoute->RadianDirection;
 
     avatar->SetPersonData(VMPersonDataVariable::RouteEntryFlags, (int16_t)CurRoute->RouteEntryFlags);
+    //45b951: OD9 bypasses the final facing assignment, not just its animation.
+    if (TS1SharedModelRouting && avatar->UsesTS1OriginalLocomotion()
+        && avatar->TS1AnimationController.MotionStepKnown
+        && Caller->GetValue(VMStackObjectVariable::RoutePrefference) != 0) return true;
 
     auto directionDiff = DirectionUtils::Difference(Caller->RadianDirection(), TargetDirection);
     if (!CurRoute->FaceAnywhere && CanPortalTurn() && Turn(directionDiff)) {
@@ -1367,6 +1432,11 @@ int VMRoutingFrame::StepTS1FinalAnchor() {
         const float threshold = WalkStyle() == 1 ? 3.f : 2.f;
         if (model.Outcome == 0 && distance >= threshold * 1.5f) return 0;
         model.Outcome = 1;
+        const int terminal = avatar->PrepareTS1NoStopTerminal(CurRoute->Position.x, CurRoute->Position.y,
+            CurRoute->FaceAnywhere ? avatar->RadianDirection() : CurRoute->RadianDirection);
+        if (terminal == 1) return 3; // last-direction proposal through WALKING validation
+        if (terminal == 2) return 2;
+        if (terminal == 3) return 1; // reversed-start state7, no displacement this call
         step = Routing::TS1StopWindowStep::Finalize;
     } else {
         step = Routing::TS1StepStopWindow(model, distance, clip ? clip->TS1Phase : 0.f,
@@ -1374,15 +1444,20 @@ int VMRoutingFrame::StepTS1FinalAnchor() {
             clip && clip->Anim ? clip->Anim->Duration : 0.f, avatar->TS1MotionRate,
             WalkStyle(), direct, avatar->TS1AnimationTimestamp(), clip ? clip->Weight : 1.f);
     }
+    if (avatar->UsesTS1OriginalLocomotion() && step == Routing::TS1StopWindowStep::Created)
+        avatar->TS1AnimationController.StopLatched = 1;
     if (step != Routing::TS1StopWindowStep::Finalize)
         return step == Routing::TS1StopWindowStep::Created ? 1 : 0;
+    if (avatar->UsesTS1OriginalLocomotion())
+        avatar->TS1AnimationController.StopLatched = avatar->TS1AnimationController.StepLatched = 0;
     model.TargetX = avatar->TS1MotionX = CurRoute->Position.x;
     model.TargetY = avatar->TS1MotionY = CurRoute->Position.y;
     model.TargetHeading = CurRoute->FaceAnywhere ? avatar->RadianDirection() : CurRoute->RadianDirection;
     model.PathCursor = model.Path.size() >= 2 ? int32_t(model.Path.size() - 2) : -1;
-    model.StopDeadline = 0; model.Status = -1; model.ModelState = 3;
+    model.StopDeadline = 0; model.Status = -1; avatar->SetTS1MotionModelState(3);
     model.SegmentProgress = 1.f;
-    avatar->Animations.clear();
+    if (avatar->UsesTS1OriginalLocomotion()) avatar->ClearTS1MotionAnimation();
+    else avatar->Animations.clear();
     model.BlendActive = false; model.ForegroundAnimation.clear(); model.ForegroundInterruptible = 0;
     return 2;
 }
@@ -1399,8 +1474,21 @@ bool VMRoutingFrame::Turn(double directionDiff) {
         if (!turn.Animate) return false;
         WalkDirection = obj->RadianDirection();
         TurnTweak = turn.Residual * static_cast<float>(M_PI / 4.0);
-        obj->Animations.clear();
-        PlayAnim(anims[turn.ClipCode], obj);
+        if (TS1SharedModelRouting && obj->UsesTS1OriginalLocomotion()) {
+            if (!obj->OwnsTS1MotionRequest(this)) {
+                obj->TS1MotionX = obj->Position().x; obj->TS1MotionY = obj->Position().y;
+                obj->TS1MotionPublishedX = obj->Position().x; obj->TS1MotionPublishedY = obj->Position().y;
+                obj->TS1MotionPositionKnown = true;
+            }
+            obj->ClearTS1MotionAnimation();
+            auto clip = obj->SelectTS1MotionAnimation(turn.ClipCode, false);
+            clip->TS1CompositionPriority = 5; //58f5ea→598687
+            obj->BeginTS1MotionTransition(4, obj->TS1MotionX, obj->TS1MotionY,
+                float(WalkDirection + TurnTweak), obj->TS1MotionX, obj->TS1MotionY, float(TargetDirection));
+        } else {
+            obj->Animations.clear();
+            PlayAnim(anims[turn.ClipCode], obj);
+        }
         return true;
     }
 
@@ -1437,6 +1525,19 @@ void VMRoutingFrame::StartWalkAnimation() {
     auto& anims = (pool) ? obj->SwimAnimations : obj->WalkAnimations;
 
     if (UsesTS1SourceLocomotion()) {
+        if (TS1SharedModelRouting && obj->UsesTS1OriginalLocomotion()) {
+            const int code = WalkStyle() == 1 ? 21 : 20;
+            const auto previous = obj->CurrentAnimationState();
+            const bool replacing = !previous || obj->TS1AnimationController.MotionCode != code;
+            const float phase = previous && previous->Anim->IsMoving ? previous->TS1Phase : 0.f;
+            const auto clip = obj->SelectTS1MotionAnimation(code, true);
+            if (replacing) { clip->TS1Phase = phase; clip->SyncTS1Frame(); }
+            clip->Speed = obj->TS1MotionRate;
+            auto& controller = obj->TS1AnimationController;
+            controller.Moving = controller.StepLatched = 1;
+            obj->SetTS1MotionModelState(WalkStyle() == 1 ? 10 : 9);
+            return;
+        }
         const auto& name = anims[(WalkStyle() == 1) ? 21 : 20];
         if (obj->Animations.size() != 1 || obj->Animations[0]->Anim->Name != name ||
             !obj->Animations[0]->TS1Clock) {

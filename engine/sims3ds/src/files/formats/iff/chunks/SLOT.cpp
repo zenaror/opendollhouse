@@ -35,6 +35,13 @@ void SLOT::Read(IffFile* iff, st::Reader& stream)
         (void)slotMagic;
         auto numSlots = io.ReadUInt32();
 
+        //Source46e2f6 consumes the five extension DWORDs from version5.
+        //Bound the resource count before any partial row publication.
+        const size_t rowBytes=34+(version>=5?20:0)+(version>=7?4:0)+
+            (version>=8?4:0)+(version>=9?4:0)+(version>=10?4:0);
+        if (numSlots>uint32_t(INT32_MAX) || io.pos()>io.size() ||
+            size_t(numSlots)>(io.size()-io.pos())/rowBytes)
+            throw std::runtime_error("SLOT rows exceed resource bounds");
         Slots.clear();
 
         /** The span for version 4 is 34. 
@@ -45,6 +52,7 @@ void SLOT::Read(IffFile* iff, st::Reader& stream)
          * The span for version 10 is 70.  **/
         for (uint32_t i = 0; i < numSlots; i++){
             SLOTItem item;
+            item.SourceRowIndex=int32_t(i+1);
             item.Type = io.ReadUInt16();
             float ox = io.ReadFloat();
             float oy = io.ReadFloat();
@@ -65,14 +73,15 @@ void SLOT::Read(IffFile* iff, st::Reader& stream)
             item.Rsflags = (SLOTFlags)rsflags;
             item.SnapTargetSlot = snaptargetslot;
 
-            if (version >= 6)
+            if (version >= 5)
             {
                 auto minproximity = io.ReadInt32();
                 auto maxproximity = io.ReadInt32();
                 auto optimalproximity = io.ReadInt32();
                 auto i9 = io.ReadInt32();
                 auto i10 = io.ReadInt32();
-                (void)i9; (void)i10;
+                item.PhysicalCapacity = i9;
+                item.PhysicalFlags = i10;
 
                 item.MinProximity = minproximity;
                 item.MaxProximity = maxproximity;
@@ -88,6 +97,7 @@ void SLOT::Read(IffFile* iff, st::Reader& stream)
             if (version >= 7) item.Gradient = io.ReadFloat();
 
             if (version >= 8) item.Height = io.ReadInt32();
+            item.RawHeight = item.Height;
 
             //the below cases are just here for breakpoint purposes
             //TODO: find use cases?

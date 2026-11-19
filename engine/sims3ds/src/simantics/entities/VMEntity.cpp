@@ -84,6 +84,25 @@ void VMEntity::Position(const LotTilePos& value) {
     VisualPosition(st::Vector3(_Position.x / 16.0f, _Position.y / 16.0f, (_Position.Level - 1) * 2.95f));
 }
 
+void VMEntity::PublishTS1PhysicalSlots(const std::vector<VMEntity*>& slots) {
+    if (slots.size() > 32766) throw std::runtime_error("Original physical slot cache exceeds its source domain");
+    Contained = slots;
+}
+
+void VMEntity::ClearTS1PhysicalPlacement(VMContext* context) {
+    auto* previous=Container;
+    const bool hand=previous && ContainerSlot==0;
+    Container=nullptr;ContainerSlot=-1;
+    ObjectData[int(VMStackObjectVariable::ContainerId)]=0;
+    ObjectData[int(VMStackObjectVariable::SlotNumber)]=-1;
+    if(WorldUI){
+        WorldUI->Container=nullptr;WorldUI->ContainerSlot=0;
+        if(hand)if(auto* component=dynamic_cast<FSO::LotView::Components::ObjectComponent*>(WorldUI.get()))component->ForceDynamic=false;
+    }
+    if(hand && context && !context->TS1HierarchyPublication)
+        if(auto* actor=dynamic_cast<VMAvatar*>(previous))actor->TS1PhysicalHandChanged(this);
+}
+
 /// Constructs a new VMEntity instance.
 VMEntity::VMEntity(FSO::Content::GameObject* obj) {
     this->Object = obj;
@@ -388,7 +407,10 @@ void VMEntity::CompleteTS1Fresh(VMContext* context) {
     // before factory price/enabling and without advancing the global clock.
     // Person tick/animation setup has a separate original override; this
     // non-person path must not manufacture a full avatar update here.
-    if (!Dead) Thread->RunTS1FreshTick();
+    if (!Dead) {
+        Thread->RunTS1FreshTick();
+        TS1PublishSimIndependent();
+    }
 }
 
 void VMEntity::StartMainAfterRestore(VMContext* context) {
@@ -491,6 +513,11 @@ bool VMEntity::ExecuteEntryPoint(int32_t entry, VMContext* context, bool runImme
     bool result = false;
     if (entry < (int32_t)EntryPoints.size() && EntryPoints[entry].ActionFunction > 255) {
         std::unique_ptr<VMSandboxRestoreState> SandboxState;
+        struct RestoreSandboxOnExit {
+            VM* Machine;
+            std::unique_ptr<VMSandboxRestoreState>& State;
+            ~RestoreSandboxOnExit(){if(State)Machine->SandboxRestore(std::move(State));}
+        } restoreSandbox{context->VM,SandboxState};
         if (GhostImage && runImmediately) {
             SandboxState = context->VM->Sandbox();
             for (size_t i = 0; i < MultitileGroup->Objects.size(); i++) {
@@ -639,12 +666,21 @@ int16_t VMEntity::GetValue(VMStackObjectVariable var) {
                 case DirectionT::NORTH: return 0;
                 default: return 0;
             }
+        case VMStackObjectVariable::ParentId:
+            if (Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1)
+                return ObjectData[(int)var];
+            return (Container == nullptr) ? (int16_t)0 : Container->ObjectID;
         case VMStackObjectVariable::ContainerId:
-        case VMStackObjectVariable::ParentId: //TODO: different?
+            if (Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1)
+                return ObjectData[(int)var];
             return (Container == nullptr) ? (int16_t)0 : Container->ObjectID;
         case VMStackObjectVariable::SlotNumber:
+            if (Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1)
+                return ObjectData[(int)var];
             return (Container == nullptr) ? (int16_t)-1 : ContainerSlot;
         case VMStackObjectVariable::SlotCount:
+            if (Thread && Thread->Context && Thread->Context->VM && Thread->Context->VM->TS1)
+                return ObjectData[(int)var];
             return (int16_t)TotalSlots();
         case VMStackObjectVariable::UseCount:
             // TS1(sims): FreeSO — "TS1 Person to Person: use count is checked to see if both avatars still have the
@@ -834,6 +870,20 @@ VMPlacementResult VMEntity::PositionValid(const LotTilePos& pos, DirectionT dire
 
     auto arch = context->Architecture();
     auto wall = arch->GetWall(pos.TileX(), pos.TileY(), pos.Level); //todo: preprocess to check which walls are real solid walls and not fences.
+    if(context->VM && context->VM->TS1 && MultitileGroup && !GhostImage) {
+        // Source validation precedes unplacement. The copied wall query must
+        // exclude our own group's published wall use, without unlinking the
+        // source hierarchy or changing the live architecture on rejection.
+        for(auto* part:MultitileGroup->Objects) {
+            const auto own=part->Position();
+            if(part->Container || own.Level!=pos.Level || own.TileX()!=pos.TileX() || own.TileY()!=pos.TileY())continue;
+            const auto node=context->VM->Context->TS1HierarchyNodes.find(part->ObjectID);
+            if(node==context->VM->Context->TS1HierarchyNodes.end() || node->second.NeedsPlacement)continue;
+            const int rotate=(8-(DirectionToWallOff(part->Direction())+1))%4;
+            const auto mask=RotateWallSegs(static_cast<WallSegments>(int(part->ObjectData[int(VMStackObjectVariable::WallPlacementFlags)])%15),rotate);
+            wall.OccupiedWalls &= static_cast<WallSegments>(~mask);
+        }
+    }
 
     if (dynamic_cast<VMGameObject*>(this) != nullptr) //needs special handling for avatar eventually
     {
@@ -937,7 +987,94 @@ void VMEntity::SetWallUse(VMArchitecture* arch, bool set) {
     arch->SetWall(Position().TileX(), Position().TileY(), Position().Level, wall);
 }
 
+void VMEntity::PublishTS1UnplacedPose(VMContext* context, size_t& remaining) {
+    if (!remaining--) throw std::runtime_error("Cyclic original physical pose hierarchy");
+    //433ef5 recurses over source1..N only. In particular, a supported
+    //object's source0 successor retains its own numeric pose.
+    context->UnregisterObjectPos(this);
+    Position(LotTilePos(-16,-16,1));
+    RefreshTS1Footprint();
+    Footprint.reset();
+    //433c6a returns signed -5 for these out-of-interior coordinates.
+    SetValue(VMStackObjectVariable::Room,-5);
+    const size_t extent=context->TS1SourceVectorExtent(this);
+    for (size_t slot=1;slot<extent;++slot)
+        if (auto* child=context->TS1SourceSlot(this,int(slot)))
+            child->PublishTS1UnplacedPose(context,remaining);
+}
+
+void VMEntity::UnplaceTS1(VMContext* context, bool notifyOldParent) {
+    if (!context || !context->VM || !context->VM->TS1)
+        throw std::runtime_error("Original unplace requires a TS1 context");
+    //4331d4 invokes pickup before capturing/removing the old placement,
+    //and only for a non-multitile definition (OBJD payload+14 MasterID).
+    if (Object && Object->OBJ && Object->OBJ->MasterID==0)
+        ExecuteEntryPoint(10,context,true);
+    if (Dead) return;
+    const auto previous=context->TS1ResolvePhysicalPlacement(this,true);
+    PrePositionChange(context);
+    //Base/adapter implementations may already remove the link; the source
+    //core's placement marker makes this explicit call safe for base entities.
+    context->TS1RemovePlacement(this);
+    ClearTS1PhysicalPlacement(context);
+    size_t remaining=context->VM->Entities.size()+1;
+    PublishTS1UnplacedPose(context,remaining);
+    //43334f: old support receives placement only after scalar/numeric commit.
+    if (notifyOldParent)
+        if (auto* parent=context->VM->GetObjectById(previous.ParentID))
+            if (!parent->Dead) parent->ExecuteEntryPoint(9,context,true);
+}
+
+void VMEntity::DeleteTS1(VMContext* context) {
+    if (Dead || TS1FinalDeleting) return;
+    struct DeletionScope {
+        bool& Flag;
+        explicit DeletionScope(bool& flag):Flag(flag){Flag=true;}
+        ~DeletionScope(){Flag=false;}
+    } deleting(TS1FinalDeleting);
+    for (auto& thread:SoundThreads)
+        if (thread.Sound) thread.Sound->RemoveOwner(ObjectID);
+    SoundThreads.clear();
+    RememberTS1Footprint();
+    context->UnregisterObjectPos(this);
+    Footprint.reset();
+    //440f2b virtual38 while manager identity is live. Base43206d runs
+    //authored Cleanup3 when present, otherwise virtual50 unplaces self.
+    if (EntryPoints.size()>3 && EntryPoints[3].ActionFunction)
+        ExecuteEntryPoint(3,context,true);
+    else UnplaceTS1(context);
+    if (Dead) return;
+    const size_t extent=context->TS1SourceVectorExtent(this);
+    //441127..1db captures count once, rereads each source1..N record once.
+    //Never recurse over source0 or revisit a promoted successor in this slot.
+    for (size_t slot=1;slot<extent;++slot) {
+        auto* child=context->TS1SourceSlot(this,int(slot));
+        if (!child || child->Dead || child==this || child->TS1FinalDeleting) continue;
+        const auto childID=child->ObjectID;
+        child->UnplaceTS1(context);
+        if (context->VM->GetObjectById(childID)==child && !child->Dead)
+            child->Delete(true,context);
+    }
+    context->TS1DetachRawLink(this);
+    ClearTS1PhysicalPlacement(context);
+    //RemoveObjectInstance repeats native prechange for occupancy/rendering.
+    //Only this callback-free publication scope suppresses a second source
+    //unlink; the physical pointer was cleared before its legacy branch runs.
+    struct PublicationScope {
+        bool& Flag; bool Previous;
+        explicit PublicationScope(bool& flag):Flag(flag),Previous(flag){Flag=true;}
+        ~PublicationScope(){Flag=Previous;}
+    } publication(context->TS1HierarchyPublication);
+    context->RemoveObjectInstance(this);
+    if (MultitileGroup) MultitileGroup->RemoveObject(this);
+}
+
 void VMEntity::Delete(bool cleanupAll, VMContext* context) {
+    if (TS1FinalDeleting && context && context->VM && context->VM->TS1) return;
+    if (context && context->VM && context->VM->TS1 && !GhostImage && !cleanupAll) {
+        DeleteTS1(context);
+        return;
+    }
     if (cleanupAll) MultitileGroup->Delete(context);
     else {
         auto& threads = SoundThreads;
@@ -947,8 +1084,11 @@ void VMEntity::Delete(bool cleanupAll, VMContext* context) {
         threads.clear();
 
         PrePositionChange(context);
-        context->RemoveObjectInstance(this);
-        MultitileGroup->RemoveObject(this); //we're no longer part of the multitile group
+        const bool source=context->VM && context->VM->TS1;
+        if(!source) {
+            context->RemoveObjectInstance(this);
+            MultitileGroup->RemoveObject(this);
+        }
 
         // FIX(sims) QA4: FreeSO first takes each contained object out of the world (always succeeds and detaches it),
         // unhides it, then finds it a place next to us. FreeSims only tried SetPosition(our position), which fails
@@ -967,6 +1107,13 @@ void VMEntity::Delete(bool cleanupAll, VMContext* context) {
                     FSO::SimAntics::Primitives::VMFindLocationFor::FindLocationFor(obj, this, context);
                 }
             }
+        }
+        // Original440f2b keeps the parent's manager identity alive while its
+        // logical children are cleaned up. Their raw parent links still need
+        // ID lookup; unlinking the manager first can clear a neighbor's head.
+        if(source) {
+            context->RemoveObjectInstance(this);
+            MultitileGroup->RemoveObject(this);
         }
     }
 }

@@ -106,12 +106,30 @@ public:
     bool StopTS1MotionRequest(uint64_t token);
     void DetachTS1MotionRequest(uint64_t token);
     void UpdateTS1ModelMotion();
+    bool UsesTS1OriginalLocomotion() const;
+    void SetTS1MotionModelState(int32_t state);
+    Model::VMAnimationState* SelectTS1MotionAnimation(int32_t code, bool loop, bool reverse = false);
+    void ClearTS1MotionAnimation();
+    void BeginTS1MotionTransition(int32_t state, float endX, float endY, float endHeading,
+        float savedX, float savedY, float savedHeading);
+    bool AdvanceTS1MotionTransition();
+    bool TryTS1StartMotion(float dx, float dy, float headingDifference);
+    bool TryTS1ShortMotion(float targetX, float targetY, float heading);
+    bool TryTS1StopMotion();
+    //0 adapter,1 ordinary final proposal,2 ready,3 reverse-stop transition.
+    int PrepareTS1NoStopTerminal(float goalX, float goalY, float goalHeading);
+    bool AdvanceTS1NoStopTerminal();
+    void FinalizeTS1NoStopTerminal();
 
     const std::string& Message() const { return m_Message; }
     void Message(const std::string& value);
 
     int32_t MessageTimeout = 0;
     st::Vector3 Velocity; //used for 60 fps walking animation
+    // Presentation-only anchor: repeated renders between TS1 owner passes
+    // sample one position, rather than accumulating interpolation offsets.
+    st::Vector3 TS1VisualPassBase;
+    bool TS1VisualPassBaseValid = false;
     bool Visitor = false;
 
     /*
@@ -184,6 +202,7 @@ public:
     void HandleTimePropsEvent(FSO::Vitaboy::TimePropertyListItem& tp, bool allowSound, Model::VMAnimationState* eventOwner);
     void UserLeaveLot();
     void FractionalAnim(float fraction);
+    void TS1PhysicalHandChanged(VMEntity* previous);
 
     virtual int16_t GetPersonData(Model::VMPersonDataVariable variable);
     virtual void SetMotiveChange(Model::VMMotive motive, int16_t PerHourChange, int16_t MaxValue);
@@ -231,8 +250,6 @@ private:
     std::array<float, 16> MotiveData;
     std::array<float, 16> OldMotiveData{};
     std::vector<Model::VMTS1MotiveChange> TS1MotiveChanges;
-    // TS1 cXPerson initializes five independent containment slots.
-    std::array<VMEntity*, 5> Contained{};
     float _RadianDirection = 0;
 
     int32_t KillTimeout = -1;

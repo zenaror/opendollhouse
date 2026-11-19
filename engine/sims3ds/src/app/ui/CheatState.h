@@ -8,6 +8,7 @@
 // the lot UI (move_objects in UIObjectHolder, tile_info / route_balloons in LotScreen) and App::LiveFrame
 // (sim_speed, sweep, autonomy, map_edit).
 #pragma once
+#include <cstdint>
 
 namespace simapp {
 
@@ -21,7 +22,16 @@ struct CheatState {
     bool DrawAllFrames = false;  // draw_all_frames on|off (accepted, the port always draws every frame)
     bool DrawFloorable = false;  // draw_floorable on|off (accepted, no effect)
     bool Sweep = true;           // sweep on|off: the simulation ticks (off = frozen)
-    int SimSpeed = 0;            // sim_speed -1000..1000 (0 = normal)
+    int SimSpeed = 0;            // non-TS1 legacy relative speed override
+    // DVD sim_speed and the HUD presets write the same UI raw speed field.
+    // Keep the signed UI value; the original scheduler clamps only at its
+    // owner boundary. Literal0 is a valid slow rate, not an unset override.
+    int TS1RawSimSpeed = 760;
+    uint64_t TS1RawSimSpeedRevision = 0;
+    void SetTS1RawSimSpeed(int raw) {
+        TS1RawSimSpeed = raw;
+        ++TS1RawSimSpeedRevision;
+    }
     int Autonomy = 0;            // autonomy 1..100 (0 = not set by a cheat)
 
     static CheatState& Get() { static CheatState s; return s; }

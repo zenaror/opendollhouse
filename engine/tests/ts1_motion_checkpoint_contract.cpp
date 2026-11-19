@@ -94,6 +94,14 @@ void CodecContracts(VM& vm){
  original.BlendFrom=1;original.BlendTo=1.1f;Reject([&]{Write(vm,original);},"active blend admitted excessive target weight");
  original.BlendTo=1;original.ForegroundAnimation.clear();Reject([&]{Write(vm,original);},"active blend admitted missing foreground binding");
  for(int state:{0,1,2,5,8,10,11}){original=Request();original.ModelState=state;Reject([&]{Write(vm,original);},"body model admitted ungenerated state");}
+ for(auto kind:{TS1MotionKind::Body,TS1MotionKind::Route})for(int state:{5,6,7,11,12}){
+  original=Request();original.Kind=kind;original.ModelState=state;
+  auto payload=Write(vm,original,22);TS1MotionRequest candidate;Read(vm,payload,candidate,22);AllFields(original,candidate);
+  Reject([&]{Write(vm,original,21);},"old model layout admitted new transition state");
+ }
+ original=Request();original.Status=2;original.ModelState=3;original.Outcome=1;
+ {auto payload=Write(vm,original,23);TS1MotionRequest candidate;Read(vm,payload,candidate,23);AllFields(original,candidate);}
+ Reject([&]{Write(vm,original,22);},"Native22 admitted newly observed ready/no-stop outcome1");
  original=Request();original.Status=4;Reject([&]{Write(vm,original);},"unknown model status admitted");
  original=Request();original.Outcome=4;Reject([&]{Write(vm,original);},"unknown model outcome admitted");
  original=Request();original.Stopped=2;Reject([&]{Write(vm,original);},"unknown model stopped flag admitted");
@@ -315,28 +323,26 @@ void NumericBoundsContracts(){
 // models a real restore callback and proves publication must be a final pass,
 // rather than an assignment inside the per-record appearance/placement loop.
 struct NumericCommitObject : VMGameObject {
- std::array<VMEntity*,1> Children{};VMEntity* Peer=nullptr;int Commits=0;
+ VMEntity* Peer=nullptr;int Commits=0;
  explicit NumericCommitObject(FSO::Content::GameObject* def):VMGameObject(def,nullptr){}
  int32_t TotalSlots() override{return 1;}
- VMEntity* GetSlot(int32_t slot) override{return slot==0?Children[0]:nullptr;}
- void ClearSlot(int32_t slot) override{if(slot==0&&Children[0]){Children[0]->Container=nullptr;Children[0]->ContainerSlot=-1;Children[0]=nullptr;}}
- bool PlaceInSlot(VMEntity* child,int32_t slot,bool,VMContext*) override{
-  if(slot!=0||Children[0])return false;Children[0]=child;child->Container=this;child->ContainerSlot=0;child->Position(Position());return true;
- }
  void PositionChange(VMContext*,bool) override{
   ++Commits;TS1NumericFootprintKnown=true;TS1NumericFootprint={900,901,902,903};
   if(Peer){Peer->TS1NumericFootprintKnown=true;Peer->TS1NumericFootprint={800,801,802,803};}
  }
 };
-void NumericPublishContracts(){
- VMContext context(nullptr);VM vm(&context,nullptr);IffFile iff;
+void NumericPublishContracts(bool originalHierarchy){
+ VMContext context(nullptr);VM vm(&context,nullptr);vm.TS1=originalHierarchy;IffFile iff;
  FSO::Content::GameObjectResource resource(&iff,nullptr,nullptr,"numeric publish",true);OBJD def;def.GUID=0xf0490511;
  FSO::Content::GameObject object;object.OBJ=&def;object.GUID=def.GUID;object.Resource=&resource;
  context.Architecture(std::make_unique<VMArchitecture>(8,8,nullptr,&context));context.Architecture()->Rooms[0].Map.assign(64,0);context.RoomInfo.resize(1);context.RebuildEnvironmentGeometry();
  NumericCommitObject parent(&object),child(&object),absent(&object);
- for(auto* e:{&parent,&child,&absent}){vm.AddEntity(e);e->Thread=std::make_unique<VMThread>(&context,e,16);}
+ for(auto* e:{&parent,&child,&absent}){vm.AddEntity(e);e->Thread=std::make_unique<VMThread>(&context,e,16);e->PublishTS1PhysicalSlots({nullptr});}
  parent.Position(FSO::LotView::Model::LotTilePos(40,56,1));child.Position(parent.Position());absent.Position(FSO::LotView::Model::LotTilePos::OUT_OF_WORLD);
- parent.Children[0]=&child;child.Container=&parent;child.ContainerSlot=0;child.Peer=&parent;
+ // Use the live original placement producer for the independent source graph;
+ // the fixture's callback slot still exercises the final numeric commit pass.
+ if(originalHierarchy)context.TS1CommitPhysicalPlacement(&parent,context.TS1PhysicalRequest(&parent,nullptr,-1));
+ Check(parent.PlaceInSlot(&child,0,false,&context),"numeric fixture real physical attachment failed");child.Peer=&parent;
  parent.TS1NumericFootprintKnown=child.TS1NumericFootprintKnown=absent.TS1NumericFootprintKnown=true;
  parent.TS1NumericFootprint={1,2,3,4};child.TS1NumericFootprint={5,6,7,8};absent.TS1NumericFootprint={9,10,11,12};
  // Exercise the production common record consumer, not only its scalar helper:
@@ -357,13 +363,30 @@ void NumericPublishContracts(){
   r.numericFootprint=e==&parent?std::array<int32_t,4>{-5,17,-9,17}:e==&child?std::array<int32_t,4>{31,32,0,-1}:std::array<int32_t,4>{INT32_MIN,0,INT32_MAX,0};
  }return records;};
  st::Writer unused;Archive fields(unused);InteractionCheckpointCodec codec(vm,fields,19);OBJM classic;
+ st::Writer typeBytes(st::Endian::Little);typeBytes.WriteUInt32(def.GUID);
+ for(int i=0;i<6;++i)typeBytes.WriteUInt16(0);typeBytes.WriteByte(0);typeBytes.WriteByte(0);
+ auto typeData=typeBytes.ToArray();st::Reader typeInput(typeData);OBJTEntry type(typeInput,2);
+ const auto source=originalHierarchy?context.TS1CaptureHierarchy():VMTS1HierarchyState{};
+ for(const auto& item:source.Records){const auto& r=item.second;auto* e=vm.GetObjectById(item.first);
+  auto saved=std::make_shared<OBJMInstance>();saved->OBJT=&type;saved->ObjectData=e->ObjectData;
+  saved->X=r.Position.x;saved->Y=r.Position.y;saved->Level=r.Position.Level;
+  saved->SavedSlotRecordCount=int32_t(r.Node.Slots.size());
+  if(!r.Node.Slots.empty()){saved->LinkedSlot.ObjectID=r.Node.Slots[0];saved->Slots.resize(r.Node.Slots.size()-1);
+   for(size_t i=1;i<r.Node.Slots.size();++i)saved->Slots[i-1].ObjectID=r.Node.Slots[i];}
+  classic.ObjectData[item.first].Instance=saved;
+ }
+
  auto invalid=stage();invalid.at(absent.ObjectID).numericFootprintKnown=false;
  const auto liveThread=parent.Thread.get();Reject([&]{codec.publish(invalid,classic);},"late malformed generic numeric state was published");
- Check(parent.Thread.get()==liveThread&&parent.Children[0]==&child&&child.Container==&parent&&child.Commits==0&&parent.TS1NumericFootprint==std::array<int32_t,4>{1,2,3,4},"failed generic preflight mutated live placement/thread/cache");
+ Check(parent.Thread.get()==liveThread&&parent.GetSlot(0)==&child&&child.Container==&parent&&child.Commits==0&&parent.TS1NumericFootprint==std::array<int32_t,4>{1,2,3,4},"failed generic preflight mutated live placement/thread/cache");
  auto prepared=stage();codec.publish(prepared,classic,true);
  Check(parent.Thread.get()==liveThread&&child.Commits==0&&parent.TS1NumericFootprint==std::array<int32_t,4>{1,2,3,4},"validate-only restore published generic state");
  codec.publish(prepared,classic);
- Check(child.Commits==1&&child.Container==&parent&&parent.Children[0]==&child,"actual container restore was not exercised");
+ // Original hierarchy restore publishes the exact staged physical cache
+ // without replaying position callbacks. The legacy common placement path
+ // deliberately runs one callback, which attempts to overwrite both bounds.
+ Check(child.Commits==(originalHierarchy?0:1)&&child.Container==&parent&&parent.GetSlot(0)==&child,
+       "restore did not use its selected hierarchy/legacy placement contract");
  Check(parent.TS1NumericFootprint==std::array<int32_t,4>{-5,17,-9,17}&&child.TS1NumericFootprint==std::array<int32_t,4>{31,32,0,-1},"later container callback overwrote already restored numeric state");
  Check(absent.TS1NumericFootprintKnown&&absent.TS1NumericFootprint==std::array<int32_t,4>{INT32_MIN,0,INT32_MAX,0},"out-of-world generic literal rectangle was normalized");
  FSO::SimAntics::Engine::Routing::TS1RouteObjectObstacleInput obstacle;
@@ -373,8 +396,8 @@ void NumericPublishContracts(){
  Check(inflated&&inflated->X1==INT32_MAX-2&&inflated->Y1==-3&&
        inflated->X2==INT32_MIN+2&&inflated->Y2==3,
        "published endpoint numeric state overflowed or normalized in route obstacle construction");
- vm.Entities.clear();vm.ObjectsById.clear();child.Container=nullptr;parent.Children[0]=nullptr;
+ parent.ClearSlot(0);vm.RemoveEntity(&child);vm.RemoveEntity(&absent);vm.RemoveEntity(&parent);
 }
 
 }
-int main(){try{VM::UseWorld(false);VMContext context(nullptr);VM vm(&context,nullptr);CodecContracts(vm);OwnershipContracts();StopProfileContracts();FrameTokenContracts();ManagerOrderContracts();OriginalRoutePolicyContracts();RoomCountContracts();NumericBoundsContracts();NumericPublishContracts();std::cout<<"PASS native TS1 motion checkpoint: "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
+int main(){try{VM::UseWorld(false);VMContext context(nullptr);VM vm(&context,nullptr);CodecContracts(vm);OwnershipContracts();StopProfileContracts();FrameTokenContracts();ManagerOrderContracts();OriginalRoutePolicyContracts();RoomCountContracts();NumericBoundsContracts();NumericPublishContracts(true);NumericPublishContracts(false);std::cout<<"PASS native TS1 motion checkpoint: "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}

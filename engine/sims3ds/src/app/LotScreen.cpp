@@ -346,6 +346,27 @@ void LotScreen::SetMode(Mode m) {
     if (Log) *Log += std::string("mode ") + (m == Mode::Live ? "live" : m == Mode::Buy ? "buy" : m == Mode::Build ? "build" : "options") + "\n";
 }
 
+void LotScreen::SelectSpeedPreset(int speed) {
+    Speed = std::max(0, std::min(3, speed));
+    if (Speed) {
+        LastSpeed = Speed;
+        if (S && S->VM() && S->VM()->TS1) {
+            // DVD selectors1/2/3:4425e2/46d380/46d386. Publish even when
+            // reselecting the highlighted preset after a sim_speed command.
+            static constexpr int raw[] = {760,760,924,994};
+            CheatState::Get().SetTS1RawSimSpeed(raw[Speed]);
+        }
+    }
+}
+
+int LotScreen::OriginalRawSpeed() const {
+    return CheatState::Get().TS1RawSimSpeed;
+}
+
+uint64_t LotScreen::OriginalRawSpeedRevision() const {
+    return CheatState::Get().TS1RawSimSpeedRevision;
+}
+
 int LotScreen::EffectiveSpeed() const {
     if (!S->CanEnterLive()) return 0;
     for (auto& d : S->Dialogs) if (d.Block) return 0; // TS1 pauses while a dialog waits for an answer
@@ -765,8 +786,7 @@ void LotScreen::HandleTap(const std::string& id) {
     if (id.rfind("speed", 0) == 0) {
         if (!S->CanEnterLive()) return;
         int sp = id[5] - '0';
-        Speed = std::max(0, std::min(3, sp));
-        if (Speed) LastSpeed = Speed;
+        SelectSpeedPreset(sp);
         if (CurrentMode != Mode::Live) SetMode(Mode::Live);
         return;
     }
@@ -804,8 +824,7 @@ void LotScreen::HandleButtons(const AppInput& in) {
         case C::Build: SetMode(Mode::Build); break;
         case C::SpeedNormal: case C::SpeedFast: case C::SpeedUltra:
             if (CurrentMode == Mode::Live) {
-                Speed = in.DesktopAction == C::SpeedNormal ? 1 : in.DesktopAction == C::SpeedFast ? 2 : 3;
-                LastSpeed = Speed;
+                SelectSpeedPreset(in.DesktopAction == C::SpeedNormal ? 1 : in.DesktopAction == C::SpeedFast ? 2 : 3);
             }
             break;
         case C::ZoomIn: S->Zoom(1); break;

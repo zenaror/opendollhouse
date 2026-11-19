@@ -201,6 +201,7 @@ void OBJMInstance::Read(uint32_t version, IffFieldEncode& iop, const std::functi
 
     auto slotsCount = iop.ReadInt16();
     if (slotsCount < 0) throw std::runtime_error("Unknown slots count: " + std::to_string(slotsCount));
+    SavedSlotRecordCount = slotsCount;
     Slots.assign((size_t)std::max(0, slotsCount - 1), OBJMSlot());
     for (int i = 0; i < slotsCount; i++) {
         OBJMSlot slot;

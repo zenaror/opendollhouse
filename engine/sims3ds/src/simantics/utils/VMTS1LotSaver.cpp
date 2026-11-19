@@ -11,6 +11,7 @@
 #include "files/formats/iff/chunks/SIMI.h"
 #include "simantics/primitives/VMTS1Budget.h"
 #include "simantics/utils/VMTS1InteractionCheckpoint.h"
+#include "simantics/utils/VMTS1HierarchyPersistence.h"
 #include "simantics/utils/VMTS1BudgetPersistence.h"
 #include "simantics/utils/VMTS1ActionIcon.h"
 #include "simantics/VM.h"
@@ -551,6 +552,11 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         if (e == nullptr || e->Dead || e->GhostImage || e->Object == nullptr || e->Object->OBJ == nullptr) continue;
         ents.push_back(e);
     }
+    std::unique_ptr<Engine::VMTS1HierarchyState> sourceHierarchy;
+    if (VM->TS1) {
+        sourceHierarchy=std::make_unique<Engine::VMTS1HierarchyState>(VM->Context->TS1CaptureHierarchy());
+        VM->Context->TS1ValidateHierarchy(*sourceHierarchy);
+    }
     std::set<int16_t> liveIds;
     for (auto e : ents) liveIds.insert(e->ObjectID);
     pDone = 4 + objm.Records.size(); // ADDED(sims) save progress
@@ -697,7 +703,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         // position (FreeSO: Position = X,Y,Level or OUT_OF_WORLD for -16,-16); contained objects carry the root
         // container's position, as in the shipped houses (a lamp on a table has the table's X/Y).
         VMEntity* root = RootContainer(e);
-        LotTilePos pos = root->Position();
+        LotTilePos pos = sourceHierarchy ? e->Position() : root->Position();
         int16_t dir = DirIndexOf(e);
         const bool numericObject = VM->TS1;
         if (pos == LotTilePos::OUT_OF_WORLD) {
@@ -757,8 +763,14 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         for (int i = 0; i < OBJMInstance::ObjectDataCount && i < (int)e->ObjectData.size(); i++) inst.ObjectData[i] = e->ObjectData[(size_t)i];
         inst.ObjectData[(int)VMStackObjectVariable::Direction] = dir;
         inst.ObjectData[(int)VMStackObjectVariable::ObjectId] = e->ObjectID;
-        inst.ObjectData[(int)VMStackObjectVariable::ContainerId] = e->Container ? e->Container->ObjectID : 0;
-        inst.ObjectData[(int)VMStackObjectVariable::SlotNumber] = e->Container ? e->ContainerSlot : (int16_t)-1;
+        inst.ObjectData[(int)VMStackObjectVariable::ContainerId] = sourceHierarchy ? sourceHierarchy->Records.at(e->ObjectID).RawContainer : (e->Container ? e->Container->ObjectID : 0);
+        inst.ObjectData[(int)VMStackObjectVariable::SlotNumber] = sourceHierarchy ? sourceHierarchy->Records.at(e->ObjectID).RawPhysicalSlot : (e->Container ? e->ContainerSlot : (int16_t)-1);
+        if (sourceHierarchy) {
+            const auto& source=sourceHierarchy->Records.at(e->ObjectID);
+            inst.ObjectData[int(VMStackObjectVariable::ParentId)]=source.RawParent;
+            inst.ObjectData[int(VMStackObjectVariable::SlotHierNumber)]=source.RawHierarchySlot;
+            inst.ObjectData[int(VMStackObjectVariable::SlotCount)]=source.RawSlotCount;
+        } else {
         // ParentId: the previous object in the tile's list, or the container (shipped houses)
         inst.ObjectData[(int)VMStackObjectVariable::ParentId] = e->Container ? e->Container->ObjectID
             : (prevOnTile.count(e->ObjectID) ? prevOnTile[e->ObjectID] : (int16_t)0);
@@ -775,6 +787,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         inst.ObjectData[(int)VMStackObjectVariable::SlotHierNumber] = e->Container
             ? (int16_t)(e->ContainerSlot + 1)
             : (inst.ObjectData[(int)VMStackObjectVariable::ParentId] != 0 ? (int16_t)0 : (int16_t)-1);
+        }
         if (inst.ObjectDataExtra.size() != (size_t)OBJMInstance::ExtraDataCount) inst.ObjectDataExtra.assign(OBJMInstance::ExtraDataCount, 0);
         {
             // Object data the engine computes, or that this port initialises differently from TS1 (measured with
@@ -789,7 +802,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                 int16_t bf = base->Inst.ObjectData[(int)VMStackObjectVariable::Flags];
                 inst.ObjectData[(int)VMStackObjectVariable::Flags] = (int16_t)((bf & portFlagBits) | (vmFlags & ~portFlagBits));
                 inst.ObjectData[(int)VMStackObjectVariable::FlagField2] = base->Inst.ObjectData[(int)VMStackObjectVariable::FlagField2];
-                inst.ObjectData[(int)VMStackObjectVariable::SlotCount] = base->Inst.ObjectData[(int)VMStackObjectVariable::SlotCount];
+                if(!sourceHierarchy)inst.ObjectData[(int)VMStackObjectVariable::SlotCount] = base->Inst.ObjectData[(int)VMStackObjectVariable::SlotCount];
                 if (sameSpot) {
                     inst.ObjectData[(int)VMStackObjectVariable::WallAdjacencyFlags] = base->Inst.ObjectData[(int)VMStackObjectVariable::WallAdjacencyFlags];
                     inst.ObjectData[(int)VMStackObjectVariable::Room] = base->Inst.ObjectData[(int)VMStackObjectVariable::Room];
@@ -797,7 +810,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             } else {
                 int16_t tf = (templ && templ->Inst.ObjectData.size() > 8) ? templ->Inst.ObjectData[8] : (int16_t)0;
                 inst.ObjectData[(int)VMStackObjectVariable::Flags] = (int16_t)((tf & portFlagBits) | (vmFlags & ~portFlagBits));
-                inst.ObjectData[(int)VMStackObjectVariable::SlotCount] = (int16_t)e->TotalSlots();
+                if(!sourceHierarchy)inst.ObjectData[(int)VMStackObjectVariable::SlotCount] = (int16_t)e->TotalSlots();
             }
         }
 
@@ -858,6 +871,14 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             inst.Relationships = rels;
         }
 
+        if (sourceHierarchy) {
+            const auto& slots=sourceHierarchy->Records.at(e->ObjectID).Node.Slots;
+            if (slots.empty() || slots.size()>32767) { Error="invalid source hierarchy slot extent"; return false; }
+            inst.LinkedSlot.Unknown=0;inst.LinkedSlot.ObjectID=slots[0];
+            inst.Slots.assign(slots.size()-1,OBJMSlot());
+            for(size_t i=1;i<slots.size();++i){inst.Slots[i-1].Unknown=0;inst.Slots[i-1].ObjectID=slots[i];if(slots[i])++LastStats.Contained;}
+            inst.SavedSlotRecordCount=int32_t(slots.size());
+        } else {
         // ---- tile list and container slots (FreeSO: ent.Contained = Slots[].ObjectID)
         inst.LinkedSlot.Unknown = 0;
         inst.LinkedSlot.ObjectID = (e->Container == nullptr && nextOnTile.count(e->ObjectID)) ? nextOnTile[e->ObjectID] : 0;
@@ -877,6 +898,8 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
                 if (in) LastStats.Contained++;
             }
             inst.Slots = slots;
+        }
+
         }
 
         // ---- dynamic sprite flags (FreeSO: DynamicSpriteFlags bit i <- record flag i != 0)
@@ -1019,6 +1042,7 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
             OBJMInstance keep = base->Inst;
             keep.X = inst.X; keep.Y = inst.Y; keep.Level = inst.Level; keep.Footprint = inst.Footprint;
             keep.LinkedSlot = inst.LinkedSlot;
+            if(sourceHierarchy){keep.Slots=inst.Slots;keep.SavedSlotRecordCount=inst.SavedSlotRecordCount;keep.ObjectData[67]=inst.ObjectData[67];}
             for (int k : { (int)VMStackObjectVariable::ParentId, (int)VMStackObjectVariable::ContainerId, (int)VMStackObjectVariable::SlotNumber, (int)VMStackObjectVariable::SlotHierNumber, (int)VMStackObjectVariable::Direction })
                 keep.ObjectData[k] = inst.ObjectData[k];
             keep.OBJD = inst.OBJD;
@@ -1124,7 +1148,14 @@ bool VMTS1LotSaver::BuildHouse(const std::string& sourcePath, std::vector<uint8_
         int32_t w = 64, h = 64;
         if (DecodeARRY(file, id, a)) { w = a.Width; h = a.Height; }
         std::vector<uint8_t> grid((size_t)w * h * 2, 0); // loader order (y * w + x)
-        for (auto& kv : tiles) {
+        if (sourceHierarchy) {
+            const auto* arch=VM->Context->Architecture();
+            const auto& heads=sourceHierarchy->TileHeads[size_t(lvl)];
+            for(int y=0;y<h&&y<arch->Height;++y)for(int x=0;x<w&&x<arch->Width;++x){
+                const uint16_t head=uint16_t(heads[size_t(y)*arch->Width+x]);
+                const size_t index=(size_t(y)*w+x)*2;grid[index]=uint8_t(head);grid[index+1]=uint8_t(head>>8);
+            }
+        } else for (auto& kv : tiles) {
             if (kv.first.Level != lvl + 1 || kv.second.empty()) continue;
             if (kv.first.X >= w || kv.first.Y >= h) continue;
             size_t idx = (size_t)kv.first.Y * w + kv.first.X;

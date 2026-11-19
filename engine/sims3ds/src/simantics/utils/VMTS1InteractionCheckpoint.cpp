@@ -7,6 +7,7 @@
 #include "simantics/utils/VMTS1MotivePersistence.h"
 #include "simantics/utils/VMTS1SchedulerState.h"
 #include "simantics/utils/VMTS1SpatialCheckpoint.h"
+#include "simantics/utils/VMTS1HierarchyPersistence.h"
 #include "simantics/utils/VMTS1BudgetPersistence.h"
 #include "simantics/primitives/VMTS1Budget.h"
 #include "files/formats/iff/chunks/SIMI.h"
@@ -699,6 +700,8 @@ public:
                 candidate.avatar->TS1BackgroundPosture = -1;
                 candidate.avatar->TS1AnimationController=Model::VMTS1AnimationControllerState{};
                 candidate.avatar->TS1AnimationController.OriginalLifecycle=false;
+                candidate.avatar->TS1AnimationController.OriginalLocomotion=false;
+                candidate.avatar->TS1AnimationController.MotionStepKnown=false;
                 candidate.avatar->MotiveData = candidate.precision.current;
                 candidate.avatar->OldMotiveData = candidate.precision.old;
                 candidate.avatar->TS1MotiveChanges = std::move(candidate.precision.changes);
@@ -1332,15 +1335,20 @@ public:
                     n >= 3 && m.PathCursor >= -1 && m.PathCursor <= int32_t(n)-2,
                     "invalid owned model motion record");
             const bool scriptState=allowScriptState && m.ModelState>=0 && m.ModelState<=2;
-            Require(scriptState || m.ModelState == 3 || m.ModelState == 4 || m.ModelState == 9 ||
-                    (m.Kind == Routing::TS1MotionKind::Route && m.ModelState == 10),
+            const bool transitionState = version >= 22 &&
+                (m.ModelState == 5 || m.ModelState == 6 || m.ModelState == 7 ||
+                 m.ModelState == 11 || m.ModelState == 12);
+            Require(scriptState || transitionState || m.ModelState == 3 || m.ModelState == 4 || m.ModelState == 9 ||
+                    ((version >= 22 || m.Kind == Routing::TS1MotionKind::Route) && m.ModelState == 10),
                     "invalid owned model state");
             Require(m.Status == 0 ? m.Stopped == 1 && m.PathCursor == -1 :
                     m.Stopped == 0 && m.PathCursor >= 0,
                     "model stopped state disagrees with its cursor");
-            Require((m.Status != 1 && m.Status != -1) || m.Outcome <= 1,
+            Require((m.Status != 1 && m.Status != -1) || m.Outcome <= 1 ||
+                    (version >= 22 && m.ModelState == 7),
                     "pending model has a terminal outcome");
-            Require(m.Status != 2 || (m.Outcome == 2 && (m.ModelState == 3 || scriptState)),
+            Require(m.Status != 2 || ((m.Outcome == 2 || (version >= 23 && m.Outcome == 1)) &&
+                    (m.ModelState == 3 || scriptState)),
                     "ready model has an inconsistent outcome or state");
             Require(m.Status != 3 || m.Outcome == 3,
                     "failed model has no failure outcome");
@@ -1408,9 +1416,10 @@ public:
                     "source model state requires checkpoint version15");
         }
     }
-    static void validateAnimationController(const Model::VMTS1AnimationControllerState& state) {
+    static void validateAnimationController(const Model::VMTS1AnimationControllerState& state,
+                                             bool fullLocomotion = false) {
         Require((state.ScriptActive==0 || state.ScriptActive==1) && state.EventsRun>=0 &&
-                state.ModelState>=0 && state.ModelState<=3 &&
+                state.ModelState>=0 && state.ModelState<=(fullLocomotion ? 12 : 3) &&
                 (state.CarrySuppressed==0 || state.CarrySuppressed==1) &&
                 state.CarryKind>=0 && state.CarryKind<=6 &&
                 state.CarryCachedIndex>=-1 && state.CarryCachedIndex<=0,
@@ -1418,6 +1427,25 @@ public:
     }
     void animationController(AvatarRecord& a) {
         auto& state=a.animationController;
+        if (version < 23 && io.out) {
+            const bool zero = state.MotionStepX == 0 && state.MotionStepY == 0;
+            const bool pristine = a.modelMotion.Kind == Routing::TS1MotionKind::None &&
+                state.ModelState == 3 && a.animations.empty();
+            Require(zero && (!state.MotionStepKnown || !state.OriginalLocomotion || pristine),
+                    "source analytic motion history requires checkpoint version23");
+        }
+        if (version < 22 && io.out) {
+            const bool defaults = state.MotionCode == -1 && state.Moving == 0 &&
+                state.StopLatched == 0 && state.StepLatched == 0 && state.MotionForegroundTransfer == 0 &&
+                !state.MotionTransitionKnown &&
+                state.MotionStartX == 0 && state.MotionStartY == 0 && state.MotionStartHeading == 0 &&
+                state.MotionEndX == 0 && state.MotionEndY == 0 && state.MotionEndHeading == 0 &&
+                state.MotionSavedX == 0 && state.MotionSavedY == 0 && state.MotionSavedHeading == 0;
+            const bool quiescent = a.modelMotion.Kind == Routing::TS1MotionKind::None &&
+                state.ModelState == 3 && a.animations.empty();
+            Require(defaults && (!state.OriginalLocomotion || quiescent),
+                    "source locomotion history requires checkpoint version22");
+        }
         if (version < 21) {
             if (io.out) {
                 // Old readers retain the legacy adapter. Only a pristine
@@ -1433,18 +1461,73 @@ public:
                 // source model's consumed events or script admission history.
                 state=Model::VMTS1AnimationControllerState{};
                 state.OriginalLifecycle=false;
+                state.OriginalLocomotion=false;
+                state.MotionStepKnown=false;
             }
             return;
         }
         io.value(state.OriginalLifecycle);io.value(state.ScriptActive);io.value(state.EventsRun);
         io.value(state.ModelState);io.vector(state.Events,65535);
         io.value(state.CarrySuppressed);io.value(state.CarryKind);io.value(state.CarryCachedIndex);
-        validateAnimationController(state);
+        if (version >= 22) {
+            io.value(state.OriginalLocomotion);
+            io.value(state.MotionCode);io.value(state.Moving);
+            io.value(state.StopLatched);io.value(state.StepLatched);
+            io.value(state.MotionForegroundTransfer);
+            io.value(state.MotionTransitionKnown);
+            io.value(state.MotionStartX);io.value(state.MotionStartY);io.value(state.MotionStartHeading);
+            io.value(state.MotionEndX);io.value(state.MotionEndY);io.value(state.MotionEndHeading);
+            io.value(state.MotionSavedX);io.value(state.MotionSavedY);io.value(state.MotionSavedHeading);
+            Require(state.MotionCode >= -1, "invalid source foreground code");
+            Require(!state.OriginalLocomotion || state.OriginalLifecycle,
+                    "source locomotion requires source animation lifecycle");
+        } else {
+            if (io.in) {
+                // Old files carry no model/channel locomotion history. Keep
+                // the adapter until an explicit quiescent promotion boundary.
+                state.OriginalLocomotion = false;
+                state.MotionCode = -1;
+                state.Moving = state.StopLatched = state.StepLatched = 0;
+                state.MotionForegroundTransfer = 0;
+                state.MotionTransitionKnown = false;
+                state.MotionStartX = state.MotionStartY = state.MotionStartHeading = 0;
+                state.MotionEndX = state.MotionEndY = state.MotionEndHeading = 0;
+                state.MotionSavedX = state.MotionSavedY = state.MotionSavedHeading = 0;
+            }
+        }
+        if (version >= 23) {
+            io.value(state.MotionStepKnown);
+            io.value(state.MotionStepX);io.value(state.MotionStepY);
+            Require(state.MotionStepKnown || (state.MotionStepX == 0 && state.MotionStepY == 0),
+                    "unknown analytic motion retains a displacement");
+        } else if (io.in) {
+            // No prior wire layout stored the original model's analytic
+            // steering vector. Preserve its qualified adapter until a real
+            // movement proposal supplies this history; never infer velocity.
+            state.MotionStepKnown = false;
+            state.MotionStepX = state.MotionStepY = 0;
+        }
+        validateAnimationController(state, version >= 22);
     }
     void validateAnimationModelCoupling(const AvatarRecord& a) {
         const auto& motion=a.modelMotion;
-        if (motion.Kind==Routing::TS1MotionKind::None || motion.ModelState<0 || motion.ModelState>2) return;
         const auto& controller=a.animationController;
+        if (motion.Kind==Routing::TS1MotionKind::None) return;
+        if (version >= 22) {
+            const bool sourceTransition = motion.ModelState == 5 || motion.ModelState == 6 ||
+                motion.ModelState == 7 || motion.ModelState == 11 || motion.ModelState == 12;
+            Require(!sourceTransition || controller.OriginalLocomotion,
+                    "source transition has no source locomotion policy");
+            if (controller.OriginalLocomotion) {
+                Require(controller.OriginalLifecycle && controller.ModelState == motion.ModelState,
+                        "owned source locomotion disagrees with its controller");
+                const bool needsAnchors = motion.ModelState == 4 || motion.ModelState == 5 ||
+                    motion.ModelState == 6 || motion.ModelState == 7 || motion.ModelState == 11;
+                Require(!needsAnchors || controller.MotionTransitionKnown,
+                        "source transition has no continuation anchors");
+            }
+        }
+        if (motion.ModelState<0 || motion.ModelState>2) return;
         Require(version>=21 && controller.OriginalLifecycle && controller.ModelState==motion.ModelState,
                 "owned model script state disagrees with animation controller");
         // This is source model history, not a derivation from current PD0:
@@ -1622,7 +1705,31 @@ public:
         numericFootprint(r);
     }
 
+    std::unique_ptr<VMTS1HierarchyState> PreparedHierarchy;
+    size_t HierarchyLegacyFieldsReconciled=0;
     void publish(std::map<int16_t, Record>& records, const OBJM& objm, bool validateOnly = false) {
+        if(vm.TS1){
+            PreparedHierarchy=std::make_unique<VMTS1HierarchyState>(VMTS1HierarchyPersistence::Stage(vm,objm));
+            for(const auto& entry:records){
+                auto found=PreparedHierarchy->Records.find(entry.first);
+                Require(found!=PreparedHierarchy->Records.end(),"native participant lacks a bound source hierarchy");
+                auto& r=records.at(entry.first);auto& value=found->second;
+                Require(r.objectData.size()>67,"native source scalar bank truncated");
+                const auto saved=objm.ObjectData.find(entry.first);
+                Require(saved!=objm.ObjectData.end()&&saved->second.Instance&&saved->second.Instance->ObjectData.size()>67,"native hierarchy has no bound classic scalar bank");
+                // <=21 writers computed several classic fields while retaining
+                // stale native raw words. The hash-bound classic bank is the
+                // explicit legacy migration authority. New captures preflight
+                // all five literal fields, so no new authored write is lost.
+                for(int index:{2,3,14,26,67})if(r.objectData[index]!=saved->second.Instance->ObjectData[index]){
+                    Require(version <= 21, "native source hierarchy disagrees with its bound classic scalar bank");
+                    r.objectData[index]=saved->second.Instance->ObjectData[index];++HierarchyLegacyFieldsReconciled;
+                }
+                value.Position=r.position;value.RawParent=r.objectData[26];value.RawHierarchySlot=r.objectData[14];
+                value.RawContainer=r.objectData[2];value.RawPhysicalSlot=r.objectData[3];value.RawSlotCount=r.objectData[67];
+            }
+            vm.Context->TS1ValidateHierarchy(*PreparedHierarchy);
+        }
         for (auto& p : participants) Require(records.count(p.first), "partial participant group");
         prepareNumericFootprints(records,objm);
         for (auto& p : records) {
@@ -1639,7 +1746,8 @@ public:
             }
             if (r.container) {
                 auto& slots = records.at(r.container->ObjectID).slots;
-                Require(r.slot >= 0 && size_t(r.slot) < slots.size() && slots[r.slot] == r.entity, "container links disagree");
+                const bool sourceSibling=PreparedHierarchy&&VMTS1HierarchyPersistence::PhysicalMember(*PreparedHierarchy,r.container->ObjectID,r.slot,r.entity->ObjectID);
+                Require(r.slot >= 0 && size_t(r.slot) < slots.size() && (slots[r.slot] == r.entity || sourceSibling), "container links disagree");
             } else Require(r.slot == -1, "invalid uncontained slot");
             std::set<VMEntity*> chain;
             for (auto cur = r.entity; cur; cur = records.at(cur->ObjectID).container)
@@ -1675,6 +1783,8 @@ public:
             Require(!r.entity->Container || records.count(r.entity->Container->ObjectID), "unexpected external container");
         }
         if (validateOnly) return;
+        std::unique_ptr<VMTS1HierarchyPersistence::PublicationScope> hierarchyPublication;
+        if(PreparedHierarchy)hierarchyPublication=std::make_unique<VMTS1HierarchyPersistence::PublicationScope>(*vm.Context);
         // Candidate belongs solely to the loader until it returns success. Detach
         // before rebuilding links; PlaceInSlot(false) dispatches no position EP.
         for (auto& p : records) {
@@ -1700,13 +1810,27 @@ public:
             if (!placed.insert(r.entity->ObjectID).second || !r.container) return;
             self(self, records.at(r.container->ObjectID));
             vm.Context->UnregisterObjectPos(r.entity);
-            Require(r.container->PlaceInSlot(r.entity, r.slot, false, vm.Context), "cannot bind validated slot");
-            r.entity->PositionChange(vm.Context, true);
+            if(!PreparedHierarchy){
+                Require(r.container->PlaceInSlot(r.entity, r.slot, false, vm.Context), "cannot bind validated slot");
+                r.entity->PositionChange(vm.Context, true);
+            } else {
+                // The exact source vector, published after all field commits,
+                // derives shared physical caches without evicting siblings.
+                r.entity->Position(r.position);
+            }
         };
         for (auto& p : records) place(place, p.second);
         for (auto& p : records) {
             auto& r = p.second; auto e = r.entity;
             Require(e->Position() == r.position, "saved participant position disagrees with its container");
+            if(PreparedHierarchy){
+                e->PublishTS1PhysicalSlots(r.slots);
+                e->Container=r.container;e->ContainerSlot=r.slot;
+                if(e->UseWorld&&e->WorldUI){
+                    e->WorldUI->Container=r.container&&r.container->WorldUI?r.container->WorldUI.get():nullptr;
+                    e->WorldUI->ContainerSlot=r.slot;
+                }
+            }
             e->ObjectData = std::move(r.objectData);
             e->Attributes = std::move(r.attributes); e->MyList.assign(r.list.begin(), r.list.end());
             e->MainParam = r.mainParam; e->MainStackOBJ = r.mainStack;
@@ -1858,7 +1982,7 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool d
     FSO::SimAntics::Utils::SyncTS1Budget(vm, house);
     if (outputVersion >= 14 && !vm.TS1Budget.Initialized)
         FSO::SimAntics::Utils::SyncTS1RandomState(vm, house);
-    if (schedulerWordsBound) {
+    if (schedulerWordsBound || (vm.TS1 && outputVersion>=21)) {
         auto rawObjects = house.Find("ObjM", 1);
         auto rawTypes = house.Find("objt", 0);
         Require(rawObjects && rawTypes, "scheduler binding lacks classic graph");
@@ -1880,14 +2004,15 @@ void VMTS1InteractionCheckpoint::Capture(VM& vm, IffRawFile& destination, bool d
             return resource;
         }), "scheduler binding cannot decode classic graph");
         Require(objects.ObjectData.size() == count, "scheduler binding instance count changed");
+        if(vm.TS1&&outputVersion>=21)VMTS1HierarchyPersistence::VerifyBoundClassic(vm,objects,&house);
         for (auto e : vm.Entities) if (e && !e->Dead && !e->GhostImage && e->Object && e->Object->OBJ) {
             const auto saved = objects.ObjectData.find(e->ObjectID);
             Require(saved != objects.ObjectData.end() && saved->second.Instance &&
                     saved->second.Instance->OBJT && saved->second.Instance->OBJT->GUID == e->Object->OBJ->GUID,
                     "scheduler binding instance identity changed");
-            Require(TS1SavedSchedulerState(*saved->second.Instance, objects.Version, 9) == e->TS1SchedulerState,
+            if(schedulerWordsBound)Require(TS1SavedSchedulerState(*saved->second.Instance, objects.Version, 9) == e->TS1SchedulerState,
                     "scheduler binding manager word changed");
-            if (dynamic_cast<VMAvatar*>(e) && !e->Container && e->Footprint &&
+            if (schedulerWordsBound && dynamic_cast<VMAvatar*>(e) && !e->Container && e->Footprint &&
                 e->Position() != LotView::Model::LotTilePos::OUT_OF_WORLD) {
                 const auto& b = saved->second.Instance->Footprint;
                 Require(e->Footprint->x1==b.MinX && e->Footprint->y1==b.MinY &&
@@ -2291,6 +2416,13 @@ void VMTS1InteractionCheckpoint::Restore(VM& vm, IffFile& house, bool resumeDisp
     for (size_t i=0;i<routeRoomCounts.size();++i)
         vm.Context->EnvironmentRooms[i].SpatialObjects=routeRoomCounts[i];
     if (spatialState) VMTS1SpatialCheckpoint::Publish(vm,std::move(*spatialState));
+    if(codec.PreparedHierarchy){
+        if(codec.HierarchyLegacyFieldsReconciled)std::fprintf(stderr,"[hierarchy-restore] reconciled_legacy_raw_words=%zu authority=bound-ObjM\n",codec.HierarchyLegacyFieldsReconciled);
+        // ObjM is the graph authority. Old <=21 spatial snapshots may have
+        // heads produced by the former physical-only registration; importing
+        // their cache history does not make those omitted links authoritative.
+        vm.Context->TS1PublishHierarchy(std::move(*codec.PreparedHierarchy),true);
+    }
     // Reopening the source of a saved visit must finish its accepted transfer.
     // Loading a previous home snapshot on arrival must never rearm that trip.
     if (departing && resumeDispatch) vm.Departure = std::move(departure);
